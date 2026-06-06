@@ -1,0 +1,135 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { api } from '../../api/client';
+import { useToast } from '../../components/ui/Toast';
+import Button from '../../components/ui/Button';
+import Spinner from '../../components/ui/Spinner';
+import PersonnelFormModal from './PersonnelFormModal';
+import PersonnelDetailPanel from './PersonnelDetailPanel';
+
+export default function PersonnelPage() {
+  const { addToast } = useToast();
+
+  const [personnel, setPersonnel]       = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+  const [creating, setCreating]         = useState(false);
+  const [selectedId, setSelectedId]     = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (showInactive) params.set('include_inactive', 'true');
+
+    api.get(`/personnel?${params}`)
+      .then(setPersonnel)
+      .catch(() => addToast('Failed to load personnel', 'error'))
+      .finally(() => setLoading(false));
+  }, [showInactive, addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = personnel.filter((p) =>
+    p.full_name.toLowerCase().includes(search.toLowerCase()) ||
+    (p.remarks ?? '').toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Personnel</h1>
+        <Button onClick={() => setCreating(true)}>+ Add Personnel</Button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <input
+          type="search"
+          placeholder="Search by name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
+                     focus:outline-none focus:ring-2 focus:ring-blue-600"
+          aria-label="Search personnel"
+        />
+        <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
+                          bg-white cursor-pointer select-none">
+          <input
+            type="checkbox" checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+            className="w-5 h-5 accent-blue-700"
+          />
+          <span className="text-base text-slate-700 font-medium whitespace-nowrap">Show inactive</span>
+        </label>
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
+      ) : filtered.length === 0 ? (
+        <p className="text-center text-slate-400 text-base py-20">
+          {search ? 'No personnel match your search.' : 'No personnel yet. Add someone to get started.'}
+        </p>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-base">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                <th className="text-left px-5 py-3 font-semibold">Name</th>
+                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Phone</th>
+                <th className="text-left px-5 py-3 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p) => (
+                <tr
+                  key={p.id}
+                  onClick={() => setSelectedId(p.id)}
+                  className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                >
+                  <td className="px-5 py-4">
+                    <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                      {p.full_name}
+                    </p>
+                  </td>
+                  <td className="px-5 py-4 text-slate-500 hidden md:table-cell">
+                    {p.phone ?? '—'}
+                  </td>
+                  <td className="px-5 py-4">
+                    {p.is_active ? (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold
+                                        bg-green-100 text-green-800 border border-green-300">
+                        Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold
+                                        bg-slate-100 text-slate-500 border border-slate-200">
+                        Inactive
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {creating && (
+        <PersonnelFormModal
+          onClose={() => setCreating(false)}
+          onSaved={() => { setCreating(false); load(); }}
+        />
+      )}
+
+      {selectedId !== null && (
+        <PersonnelDetailPanel
+          personnelId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onSaved={load}
+        />
+      )}
+    </div>
+  );
+}

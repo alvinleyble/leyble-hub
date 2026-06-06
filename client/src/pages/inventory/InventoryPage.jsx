@@ -1,0 +1,240 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { api } from '../../api/client';
+import { useToast } from '../../components/ui/Toast';
+import Button from '../../components/ui/Button';
+import Spinner from '../../components/ui/Spinner';
+import ProductFormModal from './ProductFormModal';
+import ProductDetailPanel from './ProductDetailPanel';
+
+const PHP = (n) =>
+  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+export default function InventoryPage() {
+  const { addToast } = useToast();
+
+  const [products, setProducts]         = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [stockFilter, setStockFilter]   = useState('all');
+  const [creating, setCreating]         = useState(false);
+  const [selectedId, setSelectedId]     = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
+      .then(setProducts)
+      .catch(() => addToast('Failed to load products', 'error'))
+      .finally(() => setLoading(false));
+  }, [showInactive, addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const allCategories = [...new Set(products.map((p) => p.category ?? 'Uncategorised'))].sort();
+
+  const filtered = products.filter((p) => {
+    const matchSearch =
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      (p.category ?? '').toLowerCase().includes(search.toLowerCase()) ||
+      (p.sku ?? '').toLowerCase().includes(search.toLowerCase());
+    const matchCategory =
+      categoryFilter === 'all' || (p.category ?? 'Uncategorised') === categoryFilter;
+    const matchStock =
+      stockFilter === 'all' ||
+      (stockFilter === 'out'  && p.current_stock === 0) ||
+      (stockFilter === 'low'  && p.current_stock > 0 && p.current_stock <= 10);
+    return matchSearch && matchCategory && matchStock;
+  });
+
+  const grouped = filtered.reduce((acc, p) => {
+    const cat = p.category ?? 'Uncategorised';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(p);
+    return acc;
+  }, {});
+
+  const categories = Object.keys(grouped).sort();
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* ── Header ───────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
+        <Button onClick={() => setCreating(true)}>+ Add Product</Button>
+      </div>
+
+      {/* ── Filters ──────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <input
+          type="search"
+          placeholder="Search by name, category, or SKU…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
+                     focus:outline-none focus:ring-2 focus:ring-blue-600"
+          aria-label="Search products"
+        />
+        <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
+                          bg-white cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+            className="w-5 h-5 accent-blue-700"
+          />
+          <span className="text-base text-slate-700 font-medium whitespace-nowrap">Show inactive</span>
+        </label>
+      </div>
+
+      {/* ── Category chips ───────────────────────────────────────── */}
+      {!loading && allCategories.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {['all', ...allCategories].map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setCategoryFilter(cat)}
+              className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
+                ${categoryFilter === cat
+                  ? 'bg-blue-700 text-white border-blue-700'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            >
+              {cat === 'all' ? 'All Categories' : cat}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Stock status filter ───────────────────────────────────── */}
+      {!loading && (
+        <div className="flex gap-1.5 mb-5">
+          {[
+            { value: 'all', label: 'All Stock' },
+            { value: 'low', label: 'Low Stock' },
+            { value: 'out', label: 'Out of Stock' },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setStockFilter(opt.value)}
+              className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
+                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
+                ${stockFilter === opt.value
+                  ? opt.value === 'out' ? 'bg-red-600 text-white border-red-600'
+                    : opt.value === 'low' ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-slate-700 text-white border-slate-700'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Table ────────────────────────────────────────────────── */}
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <Spinner size="lg" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <p className="text-center text-slate-400 text-base py-20">
+          {search ? 'No products match your search.' : 'No products yet. Add one to get started.'}
+        </p>
+      ) : (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-base">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                <th className="text-left px-5 py-3 font-semibold">Product</th>
+                <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">SKU</th>
+                <th className="text-right px-5 py-3 font-semibold">Price / Case</th>
+                <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Deposit / Case</th>
+                <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Btl / Case</th>
+                <th className="text-right px-5 py-3 font-semibold">Stock</th>
+                <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map((cat) => (
+                <React.Fragment key={cat}>
+                  <tr className="bg-slate-50/70">
+                    <td
+                      colSpan={7}
+                      className="px-5 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest"
+                    >
+                      {cat}
+                    </td>
+                  </tr>
+
+                  {grouped[cat].map((p) => (
+                    <tr
+                      key={p.id}
+                      onClick={() => setSelectedId(p.id)}
+                      className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                    >
+                      <td className="px-5 py-4">
+                        <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                          {p.name}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">{p.unit}</p>
+                      </td>
+                      <td className="px-5 py-4 text-slate-500 font-mono text-sm hidden sm:table-cell">
+                        {p.sku ?? '—'}
+                      </td>
+                      <td className="px-5 py-4 text-right font-semibold text-slate-900 tabular-nums">
+                        {PHP(p.base_wholesale_price)}
+                      </td>
+                      <td className="px-5 py-4 text-right text-slate-500 tabular-nums hidden md:table-cell">
+                        {Number(p.deposit_fee) > 0 ? PHP(p.deposit_fee) : '—'}
+                      </td>
+                      <td className="px-5 py-4 text-right text-slate-500 tabular-nums hidden md:table-cell">
+                        {p.units_per_case}
+                      </td>
+                      <td className="px-5 py-4 text-right tabular-nums">
+                        <span className={`font-bold text-base ${
+                          p.current_stock === 0  ? 'text-red-600'   :
+                          p.current_stock <= 10  ? 'text-amber-600' :
+                                                   'text-slate-900'
+                        }`}>
+                          {p.current_stock}
+                        </span>
+                        <span className="text-xs text-slate-400 ml-1">{p.unit}</span>
+                      </td>
+                      <td className="px-5 py-4 hidden lg:table-cell">
+                        {p.is_active ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-300">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                            Inactive
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Modals / Panels ──────────────────────────────────────── */}
+      {creating && (
+        <ProductFormModal
+          onClose={() => setCreating(false)}
+          onSaved={() => { setCreating(false); load(); }}
+        />
+      )}
+
+      {selectedId !== null && (
+        <ProductDetailPanel
+          productId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onSaved={load}
+        />
+      )}
+    </div>
+  );
+}

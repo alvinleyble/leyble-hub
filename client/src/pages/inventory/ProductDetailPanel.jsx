@@ -1,0 +1,394 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { api } from '../../api/client';
+import { useToast } from '../../components/ui/Toast';
+import Button from '../../components/ui/Button';
+import FormField from '../../components/ui/FormField';
+import Spinner from '../../components/ui/Spinner';
+
+const PHP = (n) =>
+  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
+               focus:outline-none focus:ring-2 focus:ring-blue-600`;
+
+const ACTION_TYPE_LABELS = {
+  manual_adjustment: 'Manual Adjustment',
+  restock:           'Restock',
+  price_change:      'Price Change',
+  order_fulfillment: 'Order Dispatched',
+  order_edit:        'Order Edited',
+  order_cancel:      'Order Cancelled',
+};
+
+export default function ProductDetailPanel({ productId, onClose, onSaved }) {
+  const { addToast } = useToast();
+
+  const [product, setProduct]       = useState(null);
+  const [auditLog, setAuditLog]     = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [saving, setSaving]         = useState(false);
+
+  const [form, setForm]             = useState(null);
+  const [formErrors, setFormErrors] = useState({});
+
+  // Stock adjustment
+  const [adjMode, setAdjMode]       = useState(false);
+  const [adjQty, setAdjQty]         = useState('');
+  const [adjReason, setAdjReason]   = useState('');
+  const [adjErrors, setAdjErrors]   = useState({});
+  const [adjSaving, setAdjSaving]   = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.get(`/products/${productId}`)
+      .then((data) => {
+        setProduct(data);
+        setAuditLog(data.audit_log ?? []);
+        setForm({
+          name:                 data.name,
+          category:             data.category ?? '',
+          unit:                 data.unit,
+          sku:                  data.sku ?? '',
+          base_wholesale_price: String(data.base_wholesale_price),
+          deposit_fee:          String(data.deposit_fee),
+          units_per_case:       String(data.units_per_case ?? 1),
+          current_stock:        String(data.current_stock),
+          is_active:            data.is_active,
+        });
+      })
+      .catch(() => addToast('Failed to load product.', 'error'))
+      .finally(() => setLoading(false));
+  }, [productId, addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const set = (field) => (e) => {
+    const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    setForm((f) => ({ ...f, [field]: val }));
+  };
+
+  const handleSaveDetails = async (e) => {
+    e.preventDefault();
+    const errs = {};
+    if (!form.name.trim())               errs.name = 'Required.';
+    if (!form.unit.trim())               errs.unit = 'Required.';
+    if (form.base_wholesale_price === '') errs.base_wholesale_price = 'Required.';
+    if (Number(form.units_per_case) < 1) errs.units_per_case = 'Must be at least 1.';
+    if (form.current_stock === '' || Number(form.current_stock) < 0) errs.current_stock = 'Must be 0 or more.';
+    if (Object.keys(errs).length) { setFormErrors(errs); return; }
+
+    setSaving(true);
+    try {
+      await api.patch(`/products/${productId}`, {
+        name:                 form.name.trim(),
+        category:             form.category.trim() || null,
+        unit:                 form.unit.trim(),
+        sku:                  form.sku.trim() || null,
+        base_wholesale_price: Number(form.base_wholesale_price),
+        deposit_fee:          Number(form.deposit_fee),
+        units_per_case:       Number(form.units_per_case),
+        current_stock:        Number(form.current_stock),
+        is_active:            form.is_active,
+      });
+      addToast('Product updated.', 'success');
+      onSaved();
+      load();
+    } catch (err) {
+      addToast(err.message || 'Failed to update product.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAdjust = async () => {
+    const errs = {};
+    const qty = Number(adjQty);
+    if (!adjMode)                         errs.adjMode = 'Select an adjustment type.';
+    if (!adjQty || isNaN(qty) || qty <= 0) errs.adjQty = 'Enter a positive number.';
+    if (Object.keys(errs).length) { setAdjErrors(errs); return; }
+
+    let newStock;
+    if (adjMode === 'add')           newStock = Number(product.current_stock) + qty;
+    else if (adjMode === 'subtract') newStock = Math.max(0, Number(product.current_stock) - qty);
+    else                             newStock = qty; // 'set'
+
+    setAdjSaving(true);
+    try {
+      await api.patch(`/products/${productId}`, {
+        current_stock: newStock,
+        reason:        adjReason.trim() || null,
+      });
+      addToast('Stock adjusted.', 'success');
+      setAdjMode(false);
+      setAdjQty('');
+      setAdjReason('');
+      setAdjErrors({});
+      onSaved();
+      load();
+    } catch (err) {
+      addToast(err.message || 'Failed to adjust stock.', 'error');
+    } finally {
+      setAdjSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} aria-hidden="true" />
+
+      <div
+        className="fixed top-0 right-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl flex flex-col"
+        role="dialog" aria-modal="true" aria-labelledby="product-detail-title"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+          <h2 id="product-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
+            {loading ? 'Loading…' : product?.name}
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label="Close panel"
+            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+                       hover:text-slate-700 hover:bg-slate-100
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+          >
+            ✕
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+
+            {/* ── Stock summary ─────────────────────────────────── */}
+            <div className="px-6 py-5 bg-slate-50 border-b border-slate-200">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Current Stock</p>
+                  <p className={`text-5xl font-bold tabular-nums mt-1 ${
+                    Number(product.current_stock) === 0 ? 'text-red-600' :
+                    Number(product.current_stock) <= 10 ? 'text-amber-600' : 'text-slate-900'
+                  }`}>
+                    {product.current_stock}
+                    <span className="text-xl font-medium text-slate-400 ml-2">{product.unit}</span>
+                  </p>
+                  {product.units_per_case > 1 && (
+                    <p className="text-sm text-slate-400 mt-1">
+                      {product.units_per_case} bottles per case
+                    </p>
+                  )}
+                </div>
+                {!adjMode && (
+                  <Button variant="secondary" onClick={() => setAdjMode('add')}>
+                    Adjust Stock
+                  </Button>
+                )}
+              </div>
+
+              {/* ── Stock adjustment form ──────────────────────── */}
+              {adjMode && (
+                <div className="mt-5 p-4 bg-white rounded-lg border border-slate-200">
+                  <p className="text-sm font-bold text-slate-700 mb-3">Adjust Stock</p>
+
+                  <div className="flex gap-2 mb-4">
+                    {[
+                      { value: 'add',      label: '+ Add' },
+                      { value: 'subtract', label: '− Remove' },
+                      { value: 'set',      label: '= Set to' },
+                    ].map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setAdjMode(value)}
+                        className={`flex-1 min-h-[44px] rounded-lg border text-sm font-semibold transition-colors
+                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
+                          ${adjMode === value
+                            ? 'bg-blue-700 text-white border-blue-700'
+                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                          }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <FormField
+                      label={adjMode === 'set' ? 'New stock count' : 'Cases'}
+                      error={adjErrors.adjQty}
+                    >
+                      <input
+                        type="number" min="0.5" step="0.5" value={adjQty}
+                        onChange={(e) => setAdjQty(e.target.value)}
+                        className={INPUT} placeholder="0"
+                      />
+                    </FormField>
+
+                    {adjMode !== 'set' && (
+                      <div className="flex items-end">
+                        <div className="px-3 py-2 bg-slate-50 rounded-lg border border-slate-200 text-sm text-slate-500 w-full">
+                          <span className="block text-xs text-slate-400 mb-0.5">Result</span>
+                          <span className="font-bold text-slate-800">
+                            {adjMode === 'add'
+                              ? Number(product.current_stock) + (Number(adjQty) || 0)
+                              : Math.max(0, Number(product.current_stock) - (Number(adjQty) || 0))
+                            } {product.unit}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <FormField label="Reason" hint="Optional — describe why stock is being changed">
+                    <input
+                      type="text" value={adjReason}
+                      onChange={(e) => setAdjReason(e.target.value)}
+                      className={INPUT}
+                      placeholder="e.g. Physical count correction"
+                    />
+                  </FormField>
+
+                  {adjErrors.adjMode && (
+                    <p className="text-sm text-red-600 mt-2">{adjErrors.adjMode}</p>
+                  )}
+
+                  <div className="flex gap-2 mt-4">
+                    <Button
+                      variant="secondary" size="sm"
+                      onClick={() => { setAdjMode(false); setAdjQty(''); setAdjReason(''); setAdjErrors({}); }}
+                      disabled={adjSaving}
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={handleAdjust} loading={adjSaving}>
+                      Apply
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ── Edit details form ─────────────────────────────── */}
+            <form onSubmit={handleSaveDetails} noValidate>
+              <div className="px-6 py-5 border-b border-slate-200">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                  <FormField label="Product Name" required error={formErrors.name} className="sm:col-span-2">
+                    <input type="text" value={form.name} onChange={set('name')} className={INPUT} />
+                  </FormField>
+
+                  <FormField label="Category">
+                    <input type="text" value={form.category} onChange={set('category')} className={INPUT}
+                      placeholder="e.g. Beer" />
+                  </FormField>
+
+                  <FormField label="Unit" required error={formErrors.unit}>
+                    <input type="text" value={form.unit} onChange={set('unit')} className={INPUT} />
+                  </FormField>
+
+                  <FormField label="SKU" hint="Optional">
+                    <input type="text" value={form.sku} onChange={set('sku')} className={INPUT} />
+                  </FormField>
+
+                  <FormField label="Bottles per Case" required error={formErrors.units_per_case}>
+                    <input type="number" min="1" step="1" value={form.units_per_case}
+                      onChange={set('units_per_case')} className={INPUT} />
+                  </FormField>
+
+                  <FormField label="Current Stock" required error={formErrors.current_stock}
+                    hint={`Cases — 0.5 = half case`}>
+                    <input type="number" min="0" step="0.5" value={form.current_stock}
+                      onChange={set('current_stock')} className={INPUT} />
+                  </FormField>
+
+                  <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
+                    <input
+                      type="checkbox" id="is_active" checked={form.is_active}
+                      onChange={set('is_active')} className="w-5 h-5 accent-blue-700"
+                    />
+                    <label htmlFor="is_active" className="text-base font-medium text-slate-700 cursor-pointer">
+                      Active (visible when creating orders)
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-6 py-5 border-b border-slate-200">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Pricing (per case)</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField label="Wholesale Price (₱)" required error={formErrors.base_wholesale_price}>
+                    <input type="number" min="0" step="0.01" value={form.base_wholesale_price}
+                      onChange={set('base_wholesale_price')} className={INPUT} />
+                  </FormField>
+                  <FormField label="Deposit Fee (₱)" hint="Per case, 0 if none">
+                    <input type="number" min="0" step="0.01" value={form.deposit_fee}
+                      onChange={set('deposit_fee')} className={INPUT} />
+                  </FormField>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 flex justify-end border-b border-slate-200">
+                <Button type="submit" loading={saving}>Save Changes</Button>
+              </div>
+            </form>
+
+            {/* ── Audit log ─────────────────────────────────────── */}
+            <div className="px-6 py-5">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+                Audit Log (last 50)
+              </p>
+              {auditLog.length === 0 ? (
+                <p className="text-slate-400 text-sm">No audit entries yet.</p>
+              ) : (
+                <ol className="relative border-l border-slate-200 ml-2 space-y-5">
+                  {auditLog.map((entry) => (
+                    <li key={entry.id} className="ml-4">
+                      <div className="absolute -left-1.5 mt-1.5 w-3 h-3 rounded-full bg-slate-300 border-2 border-white" />
+                      <p className="text-sm font-semibold text-slate-700">
+                        {ACTION_TYPE_LABELS[entry.action_type] ?? entry.action_type}
+                      </p>
+                      {entry.field_changed === 'current_stock' && (
+                        <p className="text-sm text-slate-500">
+                          Stock: <span className="font-mono">{entry.previous_value}</span>
+                          {' → '}
+                          <span className="font-mono font-semibold">{entry.new_value}</span>
+                          {entry.delta !== null && (
+                            <span className={`ml-2 font-semibold ${Number(entry.delta) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              ({Number(entry.delta) >= 0 ? '+' : ''}{Number(entry.delta)})
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      {entry.field_changed && entry.field_changed !== 'current_stock' && (
+                        <p className="text-sm text-slate-500 capitalize">
+                          {entry.field_changed.replace(/_/g, ' ')}:{' '}
+                          <span className="font-mono">{entry.previous_value}</span>
+                          {' → '}
+                          <span className="font-mono font-semibold">{entry.new_value}</span>
+                        </p>
+                      )}
+                      {entry.reason && (
+                        <p className="text-xs text-slate-400 mt-0.5 italic">"{entry.reason}"</p>
+                      )}
+                      <p className="text-xs text-slate-400 mt-1">
+                        {entry.performed_by_name ?? 'System'}
+                        {' · '}
+                        {new Date(entry.created_at).toLocaleString('en-PH', {
+                          month: 'short', day: 'numeric', year: 'numeric',
+                          hour: 'numeric', minute: '2-digit',
+                        })}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
