@@ -5,11 +5,15 @@ const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 router.use(requireAuth);
 
-const ALLOWED_TRANSITIONS = {
-  pending:    ['in_transit', 'cancelled'],
-  in_transit: ['completed', 'cancelled'],
-  completed:  ['done', 'cancelled'],
-};
+// Allowed status transitions depend on order_type for pickup orders
+function getAllowedTransitions(status, orderType) {
+  const map = {
+    pending:    orderType === 'pickup' ? ['completed', 'cancelled'] : ['in_transit', 'cancelled'],
+    in_transit: ['completed', 'cancelled'],
+    completed:  ['done', 'cancelled'],
+  };
+  return map[status] || [];
+}
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -25,7 +29,7 @@ async function recomputeTotal(client, orderId) {
   return total;
 }
 
-async function insertItems(client, orderId, customerId, items, userId) {
+async function insertItems(client, orderId, customerId, orderType, items, userId) {
   for (const item of items) {
     const { product_id, quantity, unit_price, unit_deposit_fee = 0, is_price_overridden = false } = item;
 
@@ -45,10 +49,10 @@ async function insertItems(client, orderId, customerId, items, userId) {
     if (is_price_overridden) {
       await client.query(
         `INSERT INTO customer_product_prices
-           (customer_id, product_id, custom_unit_price, custom_deposit_fee, set_by_user_id, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+           (customer_id, product_id, custom_unit_price, custom_deposit_fee, set_by_user_id, notes, order_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [customerId, product_id, unit_price, unit_deposit_fee, userId,
-         `Set on order #${orderId}`]
+         `Set on order #${orderId}`, orderType || 'delivery']
       );
     }
   }
@@ -97,6 +101,120 @@ async function getFullOrder(orderId) {
   );
 
   return { ...order, items, personnel };
+}
+
+// Deduct stock for a set of order items. Throws 422 if insufficient.
+async function deductStock(client, items, orderId, userId, reason) {
+  const needed = {};
+  for (const item of items) {
+    needed[item.product_id] = (needed[item.product_id] || 0) + Number(item.quantity);
+  }
+
+  const productMap = {};
+  for (const productId of Object.keys(needed)) {
+    const { rows: [p] } = await client.query(
+      'SELECT * FROM products WHERE id = $1 FOR UPDATE',
+      [productId]
+    );
+    productMap[productId] = p;
+  }
+
+  const shortfalls = Object.entries(needed)
+    .filter(([pid, qty]) => Number(productMap[pid].current_stock) < qty)
+    .map(([pid, qty]) => ({
+      product_id:   Number(pid),
+      product_name: productMap[pid].name,
+      available:    productMap[pid].current_stock,
+      required:     qty,
+      shortfall:    qty - Number(productMap[pid].current_stock),
+    }));
+
+  if (shortfalls.length > 0) {
+    const err = new Error('Insufficient stock');
+    err.status = 422;
+    err.shortfalls = shortfalls;
+    throw err;
+  }
+
+  for (const [productId, qty] of Object.entries(needed)) {
+    const product  = productMap[productId];
+    const newStock = Number(product.current_stock) - qty;
+    await client.query(
+      'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
+      [newStock, productId]
+    );
+    await client.query(
+      `INSERT INTO inventory_audit_logs
+         (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
+       VALUES ($1, 'order_fulfillment', 'current_stock', $2, $3, $4, $5, $6, $7)`,
+      [productId, String(product.current_stock), String(newStock), -qty, reason, userId, orderId]
+    );
+  }
+}
+
+// Restore stock for a set of order items (cancellation).
+async function restoreStock(client, items, orderId, userId, reason) {
+  const needed = {};
+  for (const item of items) {
+    needed[item.product_id] = (needed[item.product_id] || 0) + Number(item.quantity);
+  }
+
+  for (const [productId, qty] of Object.entries(needed)) {
+    const { rows: [product] } = await client.query(
+      'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
+      [productId]
+    );
+    const newStock = Number(product.current_stock) + qty;
+    await client.query(
+      'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
+      [newStock, productId]
+    );
+    await client.query(
+      `INSERT INTO inventory_audit_logs
+         (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
+       VALUES ($1, 'order_cancel', 'current_stock', $2, $3, $4, $5, $6, $7)`,
+      [productId, String(product.current_stock), String(newStock), qty, reason, userId, orderId]
+    );
+  }
+}
+
+// Reconcile stock after editing a dispatched order (in_transit/completed/done).
+// oldItems: DB rows before replacement. newItems: req.body items array.
+async function reconcileStock(client, oldItems, newItems, orderId, userId) {
+  const oldMap = {};
+  for (const item of oldItems) {
+    oldMap[item.product_id] = (oldMap[item.product_id] || 0) + Number(item.quantity);
+  }
+  const newMap = {};
+  for (const item of newItems) {
+    newMap[item.product_id] = (newMap[item.product_id] || 0) + Number(item.quantity);
+  }
+
+  const allIds = [...new Set([...Object.keys(oldMap), ...Object.keys(newMap).map(String)])];
+
+  for (const productId of allIds) {
+    const oldQty = oldMap[productId] || 0;
+    const newQty = newMap[productId] || 0;
+    const delta  = oldQty - newQty; // positive = restore, negative = deduct more
+    if (delta === 0) continue;
+
+    const { rows: [product] } = await client.query(
+      'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
+      [productId]
+    );
+    const newStock = Number(product.current_stock) + delta;
+    await client.query(
+      'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
+      [newStock, productId]
+    );
+    await client.query(
+      `INSERT INTO inventory_audit_logs
+         (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
+       VALUES ($1, 'manual_adjustment', 'current_stock', $2, $3, $4, $5, $6, $7)`,
+      [productId, String(product.current_stock), String(newStock), delta,
+       `Order #${orderId} edited after dispatch`, userId, orderId]
+    );
+  }
 }
 
 // ─── routes ─────────────────────────────────────────────────────────────────
@@ -154,7 +272,7 @@ router.post('/', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
-    const { customer_id, notes, items, personnel = [] } = req.body;
+    const { customer_id, notes, items, personnel = [], order_type = 'delivery' } = req.body;
 
     if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
     if (!items?.length) return res.status(400).json({ error: 'At least one item is required' });
@@ -169,13 +287,13 @@ router.post('/', async (req, res, next) => {
     }
 
     const { rows: [order] } = await client.query(
-      `INSERT INTO orders (customer_id, notes, total_amount)
-       VALUES ($1, $2, 0)
+      `INSERT INTO orders (customer_id, notes, total_amount, order_type)
+       VALUES ($1, $2, 0, $3)
        RETURNING *`,
-      [customer_id, notes || null]
+      [customer_id, notes || null, order_type]
     );
 
-    await insertItems(client, order.id, customer_id, items, req.user.id);
+    await insertItems(client, order.id, customer_id, order_type, items, req.user.id);
     await recomputeTotal(client, order.id);
     await syncPersonnel(client, order.id, personnel);
 
@@ -200,7 +318,7 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// PATCH /api/v1/orders/:id — edit metadata and/or line items (pending only)
+// PATCH /api/v1/orders/:id — edit metadata and/or line items (all statuses)
 router.patch('/:id', async (req, res, next) => {
   const client = await db.connect();
   try {
@@ -214,12 +332,9 @@ router.patch('/:id', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
-    if (order.status !== 'pending') {
-      await client.query('ROLLBACK');
-      return res.status(422).json({ error: 'Only pending orders can be edited' });
-    }
 
     const { notes, items, personnel } = req.body;
+    const DISPATCHED_STATUSES = ['in_transit', 'completed', 'done'];
 
     await client.query(
       `UPDATE orders SET notes = $1, updated_at = NOW() WHERE id = $2`,
@@ -227,9 +342,19 @@ router.patch('/:id', async (req, res, next) => {
     );
 
     if (items !== undefined) {
+      // Snapshot old items before deletion for stock reconciliation
+      const { rows: oldItems } = await client.query(
+        'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
+        [order.id]
+      );
+
       await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
-      await insertItems(client, order.id, order.customer_id, items, req.user.id);
+      await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id);
       await recomputeTotal(client, order.id);
+
+      if (DISPATCHED_STATUSES.includes(order.status)) {
+        await reconcileStock(client, oldItems, items, order.id, req.user.id);
+      }
     }
 
     if (personnel !== undefined) {
@@ -243,6 +368,33 @@ router.patch('/:id', async (req, res, next) => {
     next(err);
   } finally {
     client.release();
+  }
+});
+
+// PATCH /api/v1/orders/:id/adjustment — set billing adjustment and reason
+router.patch('/:id/adjustment', async (req, res, next) => {
+  try {
+    const { adjustment, adjustment_reason } = req.body;
+    const adjNum = Number(adjustment);
+
+    if (isNaN(adjNum)) {
+      return res.status(400).json({ error: 'adjustment must be a number' });
+    }
+    if (adjNum !== 0 && !adjustment_reason?.trim()) {
+      return res.status(400).json({ error: 'adjustment_reason is required when adjustment is non-zero' });
+    }
+
+    const { rows: [order] } = await db.query('SELECT id FROM orders WHERE id = $1', [req.params.id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    await db.query(
+      `UPDATE orders SET adjustment = $1, adjustment_reason = $2, updated_at = NOW() WHERE id = $3`,
+      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, req.params.id]
+    );
+
+    res.json(await getFullOrder(req.params.id));
+  } catch (err) {
+    next(err);
   }
 });
 
@@ -262,7 +414,7 @@ router.post('/:id/status', async (req, res, next) => {
     }
 
     const { status: newStatus } = req.body;
-    const allowed = ALLOWED_TRANSITIONS[order.status] || [];
+    const allowed = getAllowedTransitions(order.status, order.order_type);
 
     if (!allowed.includes(newStatus)) {
       await client.query('ROLLBACK');
@@ -277,79 +429,30 @@ router.post('/:id/status', async (req, res, next) => {
       [req.params.id]
     );
 
-    // ── pending → in_transit: hard stock check then debit ───────────────────
-    if (newStatus === 'in_transit') {
-      const needed = {};
-      for (const item of items) {
-        needed[item.product_id] = (needed[item.product_id] || 0) + Number(item.quantity);
-      }
+    // Stock deduction: delivery uses in_transit, pickup uses completed
+    const isDeductTransition =
+      (order.order_type === 'delivery' && newStatus === 'in_transit') ||
+      (order.order_type === 'pickup'   && newStatus === 'completed' && order.status === 'pending');
 
-      const productMap = {};
-      for (const productId of Object.keys(needed)) {
-        const { rows: [p] } = await client.query(
-          'SELECT * FROM products WHERE id = $1 FOR UPDATE',
-          [productId]
-        );
-        productMap[productId] = p;
-      }
-
-      const shortfalls = Object.entries(needed)
-        .filter(([pid, qty]) => Number(productMap[pid].current_stock) < qty)
-        .map(([pid, qty]) => ({
-          product_id:   Number(pid),
-          product_name: productMap[pid].name,
-          available:    productMap[pid].current_stock,
-          required:     qty,
-          shortfall:    qty - Number(productMap[pid].current_stock),
-        }));
-
-      if (shortfalls.length > 0) {
+    if (isDeductTransition) {
+      try {
+        await deductStock(client, items, order.id, req.user.id, `Order #${order.id} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
+      } catch (err) {
         await client.query('ROLLBACK');
-        return res.status(422).json({ error: 'Insufficient stock', shortfalls });
-      }
-
-      for (const [productId, qty] of Object.entries(needed)) {
-        const product  = productMap[productId];
-        const newStock = Number(product.current_stock) - qty;
-        await client.query(
-          'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
-          [newStock, productId]
-        );
-        await client.query(
-          `INSERT INTO inventory_audit_logs
-             (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
-           VALUES ($1, 'order_fulfillment', 'current_stock', $2, $3, $4, $5, $6, $7)`,
-          [productId, String(product.current_stock), String(newStock), -qty,
-           `Order #${order.id} dispatched`, req.user.id, order.id]
-        );
+        if (err.status === 422) {
+          return res.status(422).json({ error: err.message, shortfalls: err.shortfalls });
+        }
+        throw err;
       }
     }
 
-    // ── cancelled from in_transit/completed: restore stock ──────────────────
+    // Stock restoration on cancellation (only if stock was previously deducted)
+    const stockWasDeducted =
+      order.status === 'in_transit' ||
+      order.status === 'completed' ||
+      (order.order_type === 'pickup' && order.status === 'completed');
     if (newStatus === 'cancelled' && ['in_transit', 'completed'].includes(order.status)) {
-      const needed = {};
-      for (const item of items) {
-        needed[item.product_id] = (needed[item.product_id] || 0) + Number(item.quantity);
-      }
-
-      for (const [productId, qty] of Object.entries(needed)) {
-        const { rows: [product] } = await client.query(
-          'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
-          [productId]
-        );
-        const newStock = Number(product.current_stock) + qty;
-        await client.query(
-          'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
-          [newStock, productId]
-        );
-        await client.query(
-          `INSERT INTO inventory_audit_logs
-             (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
-           VALUES ($1, 'order_cancel', 'current_stock', $2, $3, $4, $5, $6, $7)`,
-          [productId, String(product.current_stock), String(newStock), qty,
-           `Order #${order.id} cancelled`, req.user.id, order.id]
-        );
-      }
+      await restoreStock(client, items, order.id, req.user.id, `Order #${order.id} cancelled`);
     }
 
     const setClauses = ['status = $1', 'updated_at = NOW()'];

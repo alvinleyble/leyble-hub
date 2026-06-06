@@ -25,6 +25,9 @@ const ROLE_COLOR = {
   Helper: 'bg-teal-100 text-teal-800 border-teal-300',
 };
 
+const INPUT = `w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
+               focus:outline-none focus:ring-2 focus:ring-blue-600`;
+
 export default function OrderDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -35,13 +38,24 @@ export default function OrderDetailPage() {
   const [loading, setLoading]       = useState(true);
   const [notFound, setNotFound]     = useState(false);
   const [transitioning, setTransitioning] = useState(false);
-  const [confirmAction, setConfirmAction] = useState(null); // { newStatus, label, message, danger? }
+  const [confirmAction, setConfirmAction] = useState(null);
   const [editing, setEditing]       = useState(false);
+
+  // Adjustment form state
+  const [adjExpanded, setAdjExpanded] = useState(false);
+  const [adjValue, setAdjValue]       = useState('0');
+  const [adjReason, setAdjReason]     = useState('');
+  const [savingAdj, setSavingAdj]     = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
     api.get(`/orders/${id}`)
-      .then(setOrder)
+      .then((o) => {
+        setOrder(o);
+        setAdjValue(String(o.adjustment || '0'));
+        setAdjReason(o.adjustment_reason || '');
+        setAdjExpanded(Number(o.adjustment) !== 0);
+      })
       .catch((err) => {
         if (err.status === 404) setNotFound(true);
         else addToast('Failed to load order.', 'error');
@@ -71,6 +85,27 @@ export default function OrderDetailPage() {
       setConfirmAction(null);
     } finally {
       setTransitioning(false);
+    }
+  };
+
+  const saveAdjustment = async () => {
+    const adj = Number(adjValue);
+    if (isNaN(adj)) { addToast('Enter a valid number.', 'error'); return; }
+    if (adj !== 0 && !adjReason.trim()) { addToast('Adjustment reason is required.', 'error'); return; }
+    setSavingAdj(true);
+    try {
+      const updated = await api.patch(`/orders/${id}/adjustment`, {
+        adjustment: adj,
+        adjustment_reason: adjReason.trim(),
+      });
+      setOrder(updated);
+      setAdjValue(String(updated.adjustment || '0'));
+      setAdjReason(updated.adjustment_reason || '');
+      addToast('Adjustment saved.', 'success');
+    } catch (err) {
+      addToast(err.message || 'Failed to save adjustment.', 'error');
+    } finally {
+      setSavingAdj(false);
     }
   };
 
@@ -124,7 +159,9 @@ export default function OrderDetailPage() {
   if (!order) return null;
 
   const st = STATUS[order.status] ?? { label: order.status, color: 'bg-slate-100 text-slate-500 border-slate-200' };
-  const isOpen = !['done', 'cancelled'].includes(order.status);
+  const isPickup   = order.order_type === 'pickup';
+  const finalTotal = Number(order.total_amount) + Number(order.adjustment || 0);
+  const hasAdj     = Number(order.adjustment) !== 0;
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -152,9 +189,17 @@ export default function OrderDetailPage() {
             <h1 className="text-2xl font-bold text-slate-900">#{order.id}</h1>
             <p className="text-sm text-slate-500 mt-1">{fmtDate(order.created_at)}</p>
           </div>
-          <span className={`inline-flex items-center px-4 py-1.5 rounded-full text-sm font-bold border ${st.color}`}>
-            {st.label}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border
+              ${isPickup
+                ? 'bg-blue-100 text-blue-800 border-blue-300'
+                : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+              {isPickup ? '🏪 Pickup' : '🚚 Delivery'}
+            </span>
+            <span className={`inline-flex items-center px-4 py-1.5 rounded-full text-sm font-bold border ${st.color}`}>
+              {st.label}
+            </span>
+          </div>
         </div>
 
         {/* Customer */}
@@ -186,10 +231,10 @@ export default function OrderDetailPage() {
         {/* Timestamps */}
         <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Created',    val: order.created_at },
-            { label: 'Dispatched', val: order.dispatched_at },
-            { label: 'Delivered',  val: order.delivered_at },
-            { label: 'Closed',     val: order.closed_at },
+            { label: 'Created',                              val: order.created_at },
+            { label: 'Dispatched',                           val: !isPickup ? order.dispatched_at : null },
+            { label: isPickup ? 'Picked Up' : 'Delivered',  val: order.delivered_at },
+            { label: 'Closed',                               val: order.closed_at },
           ].filter((t) => t.val).map((t) => (
             <div key={t.label}>
               <p className="text-xs font-semibold text-slate-400 uppercase">{t.label}</p>
@@ -243,88 +288,187 @@ export default function OrderDetailPage() {
             ))}
           </tbody>
           <tfoot>
+            {hasAdj && (
+              <>
+                <tr className="border-t border-slate-200 bg-slate-50">
+                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Items Total</td>
+                  <td className="px-5 py-3 text-right tabular-nums text-slate-700">
+                    {PHP(order.total_amount)}
+                  </td>
+                </tr>
+                <tr className="border-t border-slate-100 bg-slate-50">
+                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">
+                    Adjustment
+                    {order.adjustment_reason && (
+                      <span className="ml-2 text-xs text-slate-400 italic">({order.adjustment_reason})</span>
+                    )}
+                  </td>
+                  <td className={`px-5 py-3 text-right tabular-nums font-medium
+                    ${Number(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                    {Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                  </td>
+                </tr>
+              </>
+            )}
             <tr className="border-t-2 border-slate-200 bg-slate-50">
-              <td colSpan={4} className="px-5 py-4 text-right font-bold text-slate-700">Order Total</td>
+              <td colSpan={4} className="px-5 py-4 text-right font-bold text-slate-700">
+                {hasAdj ? 'Final Total' : 'Order Total'}
+              </td>
               <td className="px-5 py-4 text-right font-bold text-xl tabular-nums text-slate-900">
-                {PHP(order.total_amount)}
+                {PHP(finalTotal)}
               </td>
             </tr>
           </tfoot>
         </table>
       </div>
 
-      {/* Actions */}
-      {isOpen && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Actions</p>
+      {/* Adjustment */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Adjustment</p>
+            {!adjExpanded && (
+              <p className="text-sm text-slate-500 mt-1">
+                {hasAdj
+                  ? <span className={Number(order.adjustment) > 0 ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}>
+                      {Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                      {order.adjustment_reason && ` — ${order.adjustment_reason}`}
+                    </span>
+                  : 'None'}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setAdjExpanded((v) => !v)}
+            className="text-sm text-blue-700 hover:text-blue-900 font-medium
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+          >
+            {adjExpanded ? 'Cancel' : hasAdj ? 'Edit' : '+ Add Adjustment'}
+          </button>
+        </div>
 
-          {confirmAction ? (
-            <div className={`p-4 rounded-lg border ${confirmAction.danger ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}`}>
-              <p className={`text-sm font-semibold mb-1 ${confirmAction.danger ? 'text-red-800' : 'text-blue-800'}`}>
-                Confirm: {confirmAction.label}
-              </p>
-              <p className={`text-sm mb-4 ${confirmAction.danger ? 'text-red-700' : 'text-blue-700'}`}>
-                {confirmAction.message}
-              </p>
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" onClick={() => setConfirmAction(null)} disabled={transitioning}>
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  variant={confirmAction.danger ? 'danger' : 'primary'}
-                  onClick={transition}
-                  loading={transitioning}
-                >
-                  {confirmAction.label}
-                </Button>
-              </div>
+        {adjExpanded && (
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Amount (₱) — use negative for discount
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={adjValue}
+                onChange={(e) => setAdjValue(e.target.value)}
+                className={INPUT}
+                placeholder="e.g. -50 for discount, 200 for surcharge"
+              />
             </div>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              {order.status === 'pending' && (
-                <>
-                  <Button
-                    onClick={() => setEditing(true)}
-                    variant="secondary"
-                  >
-                    Edit Order
-                  </Button>
-                  <Button
-                    onClick={() => setConfirmAction({
-                      newStatus: 'in_transit',
-                      label: 'Start Dispatch',
-                      message: 'Stock will be deducted from inventory. This cannot be undone without cancelling.',
-                    })}
-                  >
-                    Start Dispatch →
-                  </Button>
-                </>
-              )}
-              {order.status === 'in_transit' && (
-                <Button
-                  variant="warning"
-                  onClick={() => setConfirmAction({
-                    newStatus: 'completed',
-                    label: 'Mark as Delivered',
-                    message: 'Confirm that this order was received by the customer.',
-                  })}
-                >
-                  Mark as Delivered ✓
-                </Button>
-              )}
-              {order.status === 'completed' && (
-                <Button
-                  variant="secondary"
-                  onClick={() => setConfirmAction({
-                    newStatus: 'done',
-                    label: 'Close Order',
-                    message: 'Close and archive this order. No further changes will be allowed.',
-                  })}
-                >
-                  Close Order
-                </Button>
-              )}
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">
+                Reason {Number(adjValue) !== 0 && <span className="text-red-500">*</span>}
+              </label>
+              <textarea
+                value={adjReason}
+                onChange={(e) => setAdjReason(e.target.value)}
+                rows={2}
+                className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
+                           focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
+                placeholder="e.g. Customer rejected 2 cases, negotiated price"
+              />
+            </div>
+            <Button onClick={saveAdjustment} loading={savingAdj}>
+              Save Adjustment
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Actions</p>
+
+        {confirmAction ? (
+          <div className={`p-4 rounded-lg border ${confirmAction.danger ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}`}>
+            <p className={`text-sm font-semibold mb-1 ${confirmAction.danger ? 'text-red-800' : 'text-blue-800'}`}>
+              Confirm: {confirmAction.label}
+            </p>
+            <p className={`text-sm mb-4 ${confirmAction.danger ? 'text-red-700' : 'text-blue-700'}`}>
+              {confirmAction.message}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setConfirmAction(null)} disabled={transitioning}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant={confirmAction.danger ? 'danger' : 'primary'}
+                onClick={transition}
+                loading={transitioning}
+              >
+                {confirmAction.label}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3">
+            {/* Edit is always available */}
+            <Button variant="secondary" onClick={() => setEditing(true)}>
+              Edit Order
+            </Button>
+
+            {/* Delivery pending: Start Dispatch */}
+            {order.status === 'pending' && !isPickup && (
+              <Button
+                onClick={() => setConfirmAction({
+                  newStatus: 'in_transit',
+                  label: 'Start Dispatch',
+                  message: 'Stock will be deducted from inventory. This cannot be undone without cancelling.',
+                })}
+              >
+                Start Dispatch →
+              </Button>
+            )}
+
+            {/* Pickup pending: Mark as Picked Up */}
+            {order.status === 'pending' && isPickup && (
+              <Button
+                onClick={() => setConfirmAction({
+                  newStatus: 'completed',
+                  label: 'Mark as Picked Up',
+                  message: 'Stock will be deducted from inventory once the customer picks up.',
+                })}
+              >
+                Mark as Picked Up ✓
+              </Button>
+            )}
+
+            {order.status === 'in_transit' && (
+              <Button
+                variant="warning"
+                onClick={() => setConfirmAction({
+                  newStatus: 'completed',
+                  label: 'Mark as Delivered',
+                  message: 'Confirm that this order was received by the customer.',
+                })}
+              >
+                Mark as Delivered ✓
+              </Button>
+            )}
+
+            {order.status === 'completed' && (
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmAction({
+                  newStatus: 'done',
+                  label: 'Close Order',
+                  message: 'Close and archive this order.',
+                })}
+              >
+                Close Order
+              </Button>
+            )}
+
+            {!['done', 'cancelled'].includes(order.status) && (
               <Button
                 variant="danger"
                 onClick={() => setConfirmAction({
@@ -338,10 +482,10 @@ export default function OrderDetailPage() {
               >
                 Cancel Order
               </Button>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Hidden receipt for print */}
       <div ref={printRef} style={{ display: 'none' }}>
@@ -351,6 +495,7 @@ export default function OrderDetailPage() {
         <table style={{ marginBottom: '4px' }}>
           <tbody>
             <tr><td>Order #:</td><td>{order.id}</td></tr>
+            <tr><td>Type:</td><td>{isPickup ? 'Pickup' : 'Delivery'}</td></tr>
             <tr><td>Date:</td><td>{fmtDate(order.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}</td></tr>
             <tr><td>Customer:</td><td>{order.customer_name}</td></tr>
             {order.personnel?.length > 0 && (
@@ -387,9 +532,23 @@ export default function OrderDetailPage() {
             ))}
           </tbody>
           <tfoot>
+            {hasAdj && (
+              <>
+                <tr>
+                  <td colSpan={2}>Items Total</td>
+                  <td>{PHP(order.total_amount)}</td>
+                </tr>
+                <tr>
+                  <td colSpan={2}>
+                    Adjustment{order.adjustment_reason ? ` (${order.adjustment_reason})` : ''}
+                  </td>
+                  <td>{Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}</td>
+                </tr>
+              </>
+            )}
             <tr className="total-row">
-              <td colSpan={2}>TOTAL</td>
-              <td>{PHP(order.total_amount)}</td>
+              <td colSpan={2}>{hasAdj ? 'FINAL TOTAL' : 'TOTAL'}</td>
+              <td>{PHP(finalTotal)}</td>
             </tr>
           </tfoot>
         </table>

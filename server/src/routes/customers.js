@@ -117,12 +117,13 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// GET /api/v1/customers/:id/prices — most recent custom price per product
+// GET /api/v1/customers/:id/prices — most recent custom price per product, filtered by order_type
 router.get('/:id/prices', async (req, res, next) => {
   try {
+    const orderType = req.query.order_type || 'delivery';
     const { rows } = await db.query(
       `SELECT DISTINCT ON (cpp.product_id)
-         cpp.id, cpp.product_id, cpp.customer_id,
+         cpp.id, cpp.product_id, cpp.customer_id, cpp.order_type,
          p.name AS product_name, p.unit,
          cpp.custom_unit_price, cpp.custom_deposit_fee,
          cpp.notes, cpp.created_at,
@@ -130,9 +131,9 @@ router.get('/:id/prices', async (req, res, next) => {
        FROM customer_product_prices cpp
        JOIN  products p ON p.id = cpp.product_id
        LEFT JOIN users u ON u.id = cpp.set_by_user_id
-       WHERE cpp.customer_id = $1
+       WHERE cpp.customer_id = $1 AND cpp.order_type = $2
        ORDER BY cpp.product_id, cpp.created_at DESC`,
-      [req.params.id]
+      [req.params.id, orderType]
     );
     res.json(rows);
   } catch (err) {
@@ -149,18 +150,18 @@ router.post('/:id/prices', async (req, res, next) => {
     );
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    const { product_id, custom_unit_price, custom_deposit_fee = 0, notes } = req.body;
+    const { product_id, custom_unit_price, custom_deposit_fee = 0, notes, order_type = 'delivery' } = req.body;
     if (!product_id || custom_unit_price === undefined) {
       return res.status(400).json({ error: 'product_id and custom_unit_price are required' });
     }
 
     const { rows: [entry] } = await db.query(
       `INSERT INTO customer_product_prices
-         (customer_id, product_id, custom_unit_price, custom_deposit_fee, notes, set_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (customer_id, product_id, custom_unit_price, custom_deposit_fee, notes, set_by_user_id, order_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [req.params.id, product_id, custom_unit_price, custom_deposit_fee,
-       notes || null, req.user.id]
+       notes || null, req.user.id, order_type]
     );
 
     const { rows: [enriched] } = await db.query(

@@ -156,7 +156,7 @@ export default function OrdersPage() {
                     <span className="block truncate">{o.personnel_summary ?? '—'}</span>
                   </td>
                   <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums">
-                    {PHP(o.total_amount)}
+                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
                   <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell">
                     {new Date(o.created_at).toLocaleDateString('en-PH', {
@@ -164,9 +164,16 @@ export default function OrdersPage() {
                     })}
                   </td>
                   <td className="px-5 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                      {STATUS_LABEL[o.status] ?? o.status}
-                    </span>
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                        {STATUS_LABEL[o.status] ?? o.status}
+                      </span>
+                      {o.order_type === 'pickup' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                          Pickup
+                        </span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

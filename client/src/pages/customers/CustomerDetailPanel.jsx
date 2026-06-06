@@ -39,6 +39,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [saving, setSaving]         = useState(false);
 
   const [sukiPrices, setSukiPrices]         = useState([]);
+  const [sukiTab, setSukiTab]               = useState('delivery');
   const [products, setProducts]             = useState([]);
   const [pricingOpen, setPricingOpen]       = useState(false);
   const [priceForm, setPriceForm]           = useState(DEFAULT_PRICE_FORM);
@@ -46,6 +47,11 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [priceSaving, setPriceSaving]       = useState(false);
   const [productSearch, setProductSearch]   = useState('');
   const [productDropOpen, setProductDropOpen] = useState(false);
+
+  const loadSukiPrices = useCallback(async (orderType = sukiTab) => {
+    const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`).catch(() => []);
+    setSukiPrices(prices);
+  }, [customerId, sukiTab]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -62,7 +68,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           is_active:     data.is_active,
         });
         if (data.customer_type === 'suki') {
-          const prices = await api.get(`/customers/${customerId}/prices`).catch(() => []);
+          const prices = await api.get(`/customers/${customerId}/prices?order_type=${sukiTab}`).catch(() => []);
           setSukiPrices(prices);
         } else {
           setSukiPrices([]);
@@ -70,7 +76,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       })
       .catch(() => addToast('Failed to load customer.', 'error'))
       .finally(() => setLoading(false));
-  }, [customerId, addToast]);
+  }, [customerId, addToast, sukiTab]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -144,13 +150,14 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         custom_unit_price:  Number(priceForm.custom_unit_price),
         custom_deposit_fee: Number(priceForm.custom_deposit_fee),
         notes:              priceForm.notes.trim() || null,
+        order_type:         sukiTab,
       });
       addToast('Custom price set.', 'success');
       setPricingOpen(false);
       setPriceForm(DEFAULT_PRICE_FORM);
       setPriceErrors({});
       setProductSearch('');
-      const updated = await api.get(`/customers/${customerId}/prices`);
+      const updated = await api.get(`/customers/${customerId}/prices?order_type=${sukiTab}`);
       setSukiPrices(updated);
     } catch (err) {
       addToast(err.message || 'Failed to set price.', 'error');
@@ -252,7 +259,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             {/* ── Suki Pricing ──────────────────────────────────── */}
             {customer.customer_type === 'suki' && (
               <div className="px-6 py-5 border-b border-slate-200">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Suki Custom Prices</p>
                   {!pricingOpen && (
                     <Button size="sm" variant="secondary" onClick={openPricingForm}>
@@ -261,9 +268,36 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                   )}
                 </div>
 
+                {/* Delivery / Pickup tab switcher */}
+                <div className="flex gap-1.5 mb-4">
+                  {['delivery', 'pickup'].map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => {
+                        setSukiTab(type);
+                        setPricingOpen(false);
+                        api.get(`/customers/${customerId}/prices?order_type=${type}`)
+                          .then(setSukiPrices)
+                          .catch(() => {});
+                      }}
+                      className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
+                        ${sukiTab === type
+                          ? type === 'delivery'
+                            ? 'bg-slate-800 text-white border-slate-800'
+                            : 'bg-blue-700 text-white border-blue-700'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                    >
+                      {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                    </button>
+                  ))}
+                </div>
+
                 {pricingOpen && (
                   <div className="mb-5 p-4 bg-amber-50 rounded-lg border border-amber-200">
-                    <p className="text-sm font-bold text-amber-900 mb-3">Set Custom Price</p>
+                    <p className="text-sm font-bold text-amber-900 mb-3">
+                      Set {sukiTab === 'pickup' ? 'Pickup' : 'Delivery'} Price
+                    </p>
                     <div className="grid grid-cols-1 gap-3">
                       <FormField label="Product" required error={priceErrors.product_id}>
                         <div className="relative">

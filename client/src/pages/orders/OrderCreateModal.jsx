@@ -37,6 +37,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const [loading, setLoading]             = useState(true);
   const [saving, setSaving]               = useState(false);
 
+  const [orderType, setOrderType]         = useState(editOrder?.order_type ?? 'delivery');
   const [customerId, setCustomerId]       = useState(editOrder?.customer_id ?? '');
   const [customerSearch, setCustomerSearch] = useState('');
   const [sukiPrices, setSukiPrices]       = useState({});
@@ -82,20 +83,20 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId));
 
-  // Load suki prices when customer changes
+  // Load suki prices when customer or order_type changes
   useEffect(() => {
     if (!customerId || selectedCustomer?.customer_type !== 'suki') {
       setSukiPrices({});
       return;
     }
-    api.get(`/customers/${customerId}/prices`)
+    api.get(`/customers/${customerId}/prices?order_type=${orderType}`)
       .then((prices) => {
         const map = {};
         prices.forEach((p) => { map[p.product_id] = p; });
         setSukiPrices(map);
       })
       .catch(() => {});
-  }, [customerId, selectedCustomer?.customer_type]);
+  }, [customerId, selectedCustomer?.customer_type, orderType]);
 
   const filteredCustomers = customers.filter((c) =>
     c.is_active && c.name.toLowerCase().includes(customerSearch.toLowerCase())
@@ -191,6 +192,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     try {
       const payload = {
         customer_id: Number(customerId),
+        order_type:  orderType,
         notes:       notes.trim() || null,
         items: items.map((i) => ({
           product_id:       Number(i.product_id),
@@ -243,6 +245,37 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         ) : (
           <>
             <div className="flex-1 overflow-y-auto">
+
+              {/* ── Dispatched warning ──────────────────────────────── */}
+              {isEdit && ['in_transit', 'completed', 'done'].includes(editOrder?.status) && (
+                <div className="mx-6 mt-5 p-3 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-800">
+                  ⚠ This order has been dispatched — changing items will automatically adjust inventory.
+                </div>
+              )}
+
+              {/* ── Order Type ──────────────────────────────────────── */}
+              {!isEdit && (
+                <div className="px-6 py-5 border-b border-slate-200">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Order Type</p>
+                  <div className="flex gap-2">
+                    {['delivery', 'pickup'].map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setOrderType(type)}
+                        className={`flex-1 h-11 rounded-lg text-sm font-semibold border transition-colors
+                          ${orderType === type
+                            ? type === 'delivery'
+                              ? 'bg-slate-800 text-white border-slate-800'
+                              : 'bg-blue-700 text-white border-blue-700'
+                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                      >
+                        {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* ── Customer ────────────────────────────────────────── */}
               <div className="px-6 py-5 border-b border-slate-200">
@@ -526,7 +559,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                     rows={3}
                     className="w-full px-4 py-3 border border-slate-300 rounded-lg text-base text-slate-900
                                focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-                    placeholder="Any special instructions for this delivery…"
+                    placeholder={orderType === 'pickup' ? 'Any special instructions for this pickup…' : 'Any special instructions for this delivery…'}
                   />
                 </FormField>
               </div>
