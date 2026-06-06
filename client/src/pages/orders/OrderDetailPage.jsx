@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -32,8 +32,6 @@ export default function OrderDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addToast } = useToast();
-  const printRef = useRef(null);
-
   const [order, setOrder]           = useState(null);
   const [loading, setLoading]       = useState(true);
   const [notFound, setNotFound]     = useState(false);
@@ -110,27 +108,118 @@ export default function OrderDetailPage() {
   };
 
   const handlePrint = () => {
-    if (!printRef.current) return;
-    const content = printRef.current.innerHTML;
-    const win = window.open('', '_blank', 'width=420,height=700');
+    const docDate = new Date(order.created_at);
+    const dateStr = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
+    const receiptNo = String(order.id).padStart(5, '0');
+    const isPickupOrder = order.order_type === 'pickup';
+
+    const itemRows = order.items.map((item) => {
+      const qty = Number(item.quantity);
+      const dep = Number(item.unit_deposit_fee);
+      const depLine = dep > 0
+        ? `<div style="display:flex;justify-content:space-between;font-size:8px;color:#444;margin-top:1px">
+             <span>&nbsp;&nbsp;+ deposit/case: ${PHP(dep)}</span>
+             <span>${PHP(dep * qty)}</span>
+           </div>`
+        : '';
+      return `
+        <div style="margin-bottom:5px">
+          <div style="font-weight:bold">${item.product_name}</div>
+          <div style="display:flex;justify-content:space-between">
+            <span style="color:#333">&nbsp;&nbsp;${qty} ${item.unit || 'cs'} &times; ${PHP(item.unit_price)}</span>
+            <span>${PHP(item.line_total)}</span>
+          </div>
+          ${depLine}
+        </div>`;
+    }).join('');
+
+    const adjRows = hasAdj ? `
+      <div class="row-between" style="margin-top:3px">
+        <span>Items Total</span><span>${PHP(order.total_amount)}</span>
+      </div>
+      <div class="row-between">
+        <span>Adjustment${order.adjustment_reason ? ` (${order.adjustment_reason})` : ''}</span>
+        <span>${Number(order.adjustment) > 0 ? '+' : ''}${PHP(order.adjustment)}</span>
+      </div>` : '';
+
+    const personnelLine = order.personnel?.length > 0
+      ? `<div style="margin-top:2px">Driver/Helper: ${order.personnel.map((p) => `${p.full_name} (${p.role})`).join(', ')}</div>`
+      : '';
+
+    const notesLine = order.notes
+      ? `<div style="margin-top:2px;font-style:italic">Note: ${order.notes}</div>`
+      : '';
+
+    const win = window.open('', '_blank', 'width=300,height=700');
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Receipt — Order #${order.id}</title>
+<title>Receipt #${order.id}</title>
 <style>
+  @page { size: 58mm auto; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Courier New', monospace; font-size: 12px; width: 80mm; padding: 6mm; }
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 9.5px;
+    width: 52mm;
+    margin: 0 auto;
+    padding: 4mm 0 6mm 0;
+    color: #000;
+  }
   .center { text-align: center; }
-  .bold { font-weight: bold; }
-  .line { border-top: 1px dashed #000; margin: 4px 0; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 2px 0; vertical-align: top; }
-  td:last-child { text-align: right; }
-  .total-row td { font-weight: bold; font-size: 14px; padding-top: 4px; }
+  .hr { border: none; border-top: 1px dashed #000; margin: 5px 0; }
+  .row-between { display: flex; justify-content: space-between; }
+  .biz-name { font-size: 12px; font-weight: bold; text-align: center; line-height: 1.3; }
+  .total-row { display: flex; justify-content: space-between; font-weight: bold; font-size: 11px; margin-top: 3px; }
 </style>
 </head>
-<body>${content}</body>
+<body>
+  <div class="biz-name">LEYBLE GENERAL<br>MERCHANDISE</div>
+  <div class="center" style="font-size:8px;margin-top:2px">
+    7968-4943 / 0919-004-4652<br>0917-860-5512
+  </div>
+
+  <div class="hr"></div>
+
+  <div style="font-weight:bold;font-size:10.5px">${isPickupOrder ? 'PICKUP RECEIPT' : 'DELIVERY RECEIPT'}</div>
+  <div class="row-between" style="margin-top:2px">
+    <span>No: ${receiptNo}</span>
+    <span>${dateStr}</span>
+  </div>
+
+  <div class="hr"></div>
+
+  <div><strong>${isPickupOrder ? 'Received by' : 'Delivered to'}:</strong> ${order.customer_name}</div>
+  ${order.customer_address ? `<div><strong>Address:</strong> ${order.customer_address}</div>` : ''}
+  ${personnelLine}
+  ${notesLine}
+
+  <div class="hr"></div>
+
+  ${itemRows}
+
+  <div class="hr"></div>
+
+  ${adjRows}
+  <div class="total-row">
+    <span>${hasAdj ? 'FINAL TOTAL' : 'TOTAL'}</span>
+    <span>${PHP(finalTotal)}</span>
+  </div>
+
+  <div class="hr"></div>
+
+  <div style="font-size:7.5px;line-height:1.45;margin-top:2px">
+    <strong>TERMS:</strong> 18% interest per annum will be charged to vendee on all overdue
+    accounts plus 25% of the amount due as attorney&#39;s fee in case of legal action that may arise
+    out of the transaction and the venue shall be in Antipolo City
+  </div>
+
+  <div class="center" style="font-size:8px;margin-top:10px">
+    Received the above merchandise<br>in good order and condition
+  </div>
+  <div style="border-top:1px solid #000;margin-top:20px;padding-top:2px;font-size:8px">By:</div>
+</body>
 </html>`);
     win.document.close();
     win.focus();
@@ -485,76 +574,6 @@ export default function OrderDetailPage() {
             )}
           </div>
         )}
-      </div>
-
-      {/* Hidden receipt for print */}
-      <div ref={printRef} style={{ display: 'none' }}>
-        <div className="center bold" style={{ fontSize: '14px', marginBottom: '4px' }}>LEYBLE HUB</div>
-        <div className="center" style={{ marginBottom: '8px' }}>Beverage Distributor — Antipolo</div>
-        <div className="line" />
-        <table style={{ marginBottom: '4px' }}>
-          <tbody>
-            <tr><td>Order #:</td><td>{order.id}</td></tr>
-            <tr><td>Type:</td><td>{isPickup ? 'Pickup' : 'Delivery'}</td></tr>
-            <tr><td>Date:</td><td>{fmtDate(order.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}</td></tr>
-            <tr><td>Customer:</td><td>{order.customer_name}</td></tr>
-            {order.personnel?.length > 0 && (
-              <tr>
-                <td>Personnel:</td>
-                <td>{order.personnel.map((p) => `${p.full_name} (${p.role})`).join(', ')}</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        <div className="line" />
-        <table>
-          <thead>
-            <tr>
-              <td className="bold">Item</td>
-              <td className="bold" style={{ textAlign: 'center' }}>Qty</td>
-              <td className="bold" style={{ textAlign: 'right' }}>Price</td>
-            </tr>
-          </thead>
-          <tbody>
-            {order.items.map((item) => (
-              <tr key={item.id}>
-                <td style={{ paddingRight: '4px' }}>{item.product_name}</td>
-                <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>{item.quantity}x</td>
-                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {PHP(item.unit_price)}
-                  {Number(item.unit_deposit_fee) > 0 && (
-                    <span style={{ display: 'block', fontSize: '10px' }}>
-                      +{PHP(item.unit_deposit_fee)} dep.
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            {hasAdj && (
-              <>
-                <tr>
-                  <td colSpan={2}>Items Total</td>
-                  <td>{PHP(order.total_amount)}</td>
-                </tr>
-                <tr>
-                  <td colSpan={2}>
-                    Adjustment{order.adjustment_reason ? ` (${order.adjustment_reason})` : ''}
-                  </td>
-                  <td>{Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}</td>
-                </tr>
-              </>
-            )}
-            <tr className="total-row">
-              <td colSpan={2}>{hasAdj ? 'FINAL TOTAL' : 'TOTAL'}</td>
-              <td>{PHP(finalTotal)}</td>
-            </tr>
-          </tfoot>
-        </table>
-        <div className="line" />
-        {order.notes && <div style={{ marginTop: '4px', fontSize: '11px' }}>Note: {order.notes}</div>}
-        <div className="center" style={{ marginTop: '8px', fontSize: '11px' }}>Thank you!</div>
       </div>
 
       {/* Edit modal */}

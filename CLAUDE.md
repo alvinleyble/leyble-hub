@@ -79,10 +79,10 @@ const PHP = (n) =>
 | Module | Status | Notes |
 |---|---|---|
 | Inventory | ✅ Done | Category chips + stock filter |
-| Customers | ✅ Done | Suki pricing panel, order history |
+| Customers | ✅ Done | Suki pricing panel (separate delivery/pickup price tabs), order history |
 | Personnel | ✅ Done | ID image upload, order history |
-| Outgoing Orders | ✅ Done | Full lifecycle + receipt print |
-| Incoming Supplies | ✅ Done | Log deliveries, auto-restock |
+| Outgoing Orders | ✅ Done | Delivery + pickup types; editable at all statuses (inventory auto-reconciles); price adjustment field; 58mm thermal receipt |
+| Incoming Supplies | ✅ Done | Log deliveries, auto-restock; supports 0.5-case quantities |
 | Tickets | ✅ Done | Create, view, resolve |
 | Audit Log | ✅ Done | Read-only, filterable |
 
@@ -90,7 +90,7 @@ const PHP = (n) =>
 
 ## Schema — what diverges from SPECIFICATION.md
 
-`SPECIFICATION.md` predates migrations 012–017. Trust the actual migrations over the spec.
+`SPECIFICATION.md` predates migrations 012–022. Trust the actual migrations over the spec.
 
 | What the spec says | What the DB actually has |
 |---|---|
@@ -101,6 +101,11 @@ const PHP = (n) =>
 | `customers.customer_type IN ('retail','wholesale','suki')` | **`IN ('wholesale','suki')`** only (migration 015); default `'wholesale'` |
 | `orders.driver_id`, `orders.helper_id` FK columns | **Dropped** (migration 016); replaced by `order_personnel` join table |
 | `personnel.role_label VARCHAR(100)` | **Renamed to `remarks TEXT`** (migration 017) |
+| `orders` has no `order_type` | `order_type VARCHAR(20) IN ('delivery','pickup') DEFAULT 'delivery'` (migration 018) |
+| `orders` has no adjustment | `adjustment NUMERIC(10,2) DEFAULT 0`, `adjustment_reason TEXT` (migration 019) |
+| `customer_product_prices` has no `order_type` | `order_type VARCHAR(20) IN ('delivery','pickup') DEFAULT 'delivery'` (migration 020) — append-only, existing rows default to 'delivery' |
+| `products.current_stock INT` | **`NUMERIC(10,2)`** (migration 022) — supports 0.5-case stock levels |
+| `supplier_delivery_items.quantity_received INT` | **`NUMERIC(10,2)`** (migration 022) — supports 0.5-case deliveries |
 
 ### `order_personnel` join table (migration 016)
 ```sql
@@ -119,6 +124,36 @@ WHERE op.order_id = $1
 ```
 
 ---
+
+## Receipt printing
+
+- Printer: **58mm thermal**
+- Implementation: `handlePrint()` in [client/src/pages/orders/OrderDetailPage.jsx](client/src/pages/orders/OrderDetailPage.jsx)
+- Uses `@page { size: 58mm auto; margin: 0 }` — no external CSS needed
+- Item layout: product name on line 1, `qty unit × price → amount` on line 2
+- Shows **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on `order.order_type`
+- Footer: terms text (left) + "Received the above merchandise…" + `By:` signature line (right)
+- Business name on receipt: **LEYBLE GENERAL MERCHANDISE** (not "Leyble Hub")
+
+---
+
+## Deployment — parents' Windows computer
+
+- Location: `C:\leyble-hub\`
+- Process manager: PM2 (`pm2 start npm --name leyble-client --cwd C:\leyble-hub\client -- run dev`)
+- Update procedure: double-click `update.bat` in the repo root
+- App URL: `http://localhost:5173`
+- Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD` in `server/.env`)
+
+---
+
+## Git rules
+
+> **CRITICAL — read before every commit/push.**
+
+- **Never commit without Alvin's explicit go-ahead.** Do not auto-commit even when changes are complete and ready.
+- **Never push without Alvin's explicit go-ahead.** A completed implementation is not permission to push.
+- Always present changes and ask "ready to commit and push?" — wait for a direct "yes" or "okay, commit and push."
 
 ## Security rules
 - JWT in HTTP-only, SameSite=Strict cookies — never localStorage, never log the token
