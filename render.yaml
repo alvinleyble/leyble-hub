@@ -1,0 +1,51 @@
+databases:
+  - name: leyble-hub-db
+    databaseName: leyble_hub
+    user: leyble_hub
+    plan: free
+
+services:
+  # ── Backend API ────────────────────────────────────────────────
+  - type: web
+    name: leyble-hub-api
+    env: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install && node db/migrate.js
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: leyble-hub-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: CLIENT_ORIGIN
+        fromService:
+          name: leyble-hub-client
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+  # ── Frontend Static Site ───────────────────────────────────────
+  - type: web
+    name: leyble-hub-client
+    env: static
+    plan: free
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: leyble-hub-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
