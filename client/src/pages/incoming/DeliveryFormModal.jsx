@@ -243,7 +243,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                       <div className="grid grid-cols-2 gap-2">
                         <FormField label="Qty Received (cases)">
                           <input
-                            type="number" min="1" step="1"
+                            type="number" min="0.5" step="0.5"
                             value={item.quantity_received}
                             onChange={(e) => updateItem(item._key, 'quantity_received', e.target.value)}
                             className={INPUT_SM}
