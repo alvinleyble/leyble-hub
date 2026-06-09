@@ -243,4 +243,66 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+// DELETE /api/v1/products/:id — smart delete: permanently remove only if the product has
+// no order, supplier-delivery, or stock-audit history; otherwise deactivate. Those FKs are
+// RESTRICT (and inventory_audit_logs is append-only), so a referenced product cannot be
+// hard-deleted. NB: customer_product_prices cascades on product_id and does NOT block.
+router.delete('/:id', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [existing] } = await client.query(
+      'SELECT * FROM products WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const { rows: [{ count }] } = await client.query(
+      `SELECT
+         (SELECT COUNT(*) FROM order_items            WHERE product_id = $1) +
+         (SELECT COUNT(*) FROM supplier_delivery_items WHERE product_id = $1) +
+         (SELECT COUNT(*) FROM inventory_audit_logs    WHERE product_id = $1) AS count`,
+      [req.params.id]
+    );
+    const usageCount = Number(count);
+
+    if (usageCount > 0) {
+      await client.query(
+        'UPDATE products SET is_active = FALSE, updated_at = NOW() WHERE id = $1',
+        [req.params.id]
+      );
+      await logActivity(client, {
+        entityType: 'product',
+        entityId:   existing.id,
+        action:     'deactivated',
+        summary:    `Product '${existing.name}' deactivated (has order/delivery/stock history; cannot be permanently deleted)`,
+        performedBy: req.user.id,
+      });
+      await client.query('COMMIT');
+      return res.json({ outcome: 'deactivated', usageCount });
+    }
+
+    // No history — safe to hard delete (customer_product_prices cascades on product_id).
+    await client.query('DELETE FROM products WHERE id = $1', [req.params.id]);
+    await logActivity(client, {
+      entityType: 'product',
+      entityId:   existing.id,
+      action:     'deleted',
+      summary:    `Product '${existing.name}' permanently deleted`,
+      performedBy: req.user.id,
+    });
+    await client.query('COMMIT');
+    res.json({ outcome: 'deleted' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;

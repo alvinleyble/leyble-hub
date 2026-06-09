@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -287,6 +288,13 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
                 </ol>
               )}
             </div>
+
+            {/* ── Danger Zone ───────────────────────────────────── */}
+            <DangerZoneDelete
+              endpoint={`/personnel/${personnelId}`}
+              entityLabel="personnel"
+              onDeleted={() => { onSaved(); onClose(); }}
+            />
 
           </div>
         )}

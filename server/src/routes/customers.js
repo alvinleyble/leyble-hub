@@ -147,6 +147,64 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+// DELETE /api/v1/customers/:id — smart delete: permanently remove if the customer has
+// never been used on an order, otherwise deactivate (orders.customer_id is RESTRICT, so a
+// hard delete of a referenced customer would fail and corrupt order history / receipts).
+router.delete('/:id', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [existing] } = await client.query(
+      'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    const { rows: [{ count }] } = await client.query(
+      'SELECT COUNT(*) FROM orders WHERE customer_id = $1',
+      [req.params.id]
+    );
+    const orderCount = Number(count);
+
+    if (orderCount > 0) {
+      await client.query(
+        'UPDATE customers SET is_active = FALSE, updated_at = NOW() WHERE id = $1',
+        [req.params.id]
+      );
+      await logActivity(client, {
+        entityType: 'customer',
+        entityId:   existing.id,
+        action:     'deactivated',
+        summary:    `Customer '${existing.name}' deactivated (has ${orderCount} order${orderCount !== 1 ? 's' : ''}; cannot be permanently deleted)`,
+        performedBy: req.user.id,
+      });
+      await client.query('COMMIT');
+      return res.json({ outcome: 'deactivated', usageCount: orderCount });
+    }
+
+    // No orders — safe to hard delete (customer_product_prices cascades on customer_id).
+    await client.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
+    await logActivity(client, {
+      entityType: 'customer',
+      entityId:   existing.id,
+      action:     'deleted',
+      summary:    `Customer '${existing.name}' permanently deleted`,
+      performedBy: req.user.id,
+    });
+    await client.query('COMMIT');
+    res.json({ outcome: 'deleted' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/v1/customers/:id/prices — most recent custom price per product, filtered by order_type
 router.get('/:id/prices', async (req, res, next) => {
   try {

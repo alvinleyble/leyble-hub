@@ -152,4 +152,62 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
+// DELETE /api/v1/personnel/:id — smart delete: permanently remove if the person has never
+// been assigned to an order, otherwise deactivate (order_personnel.personnel_id is RESTRICT,
+// so a hard delete of a referenced person would fail and corrupt order history).
+router.delete('/:id', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [existing] } = await client.query(
+      'SELECT * FROM personnel WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Personnel not found' });
+    }
+
+    const { rows: [{ count }] } = await client.query(
+      'SELECT COUNT(*) FROM order_personnel WHERE personnel_id = $1',
+      [req.params.id]
+    );
+    const usageCount = Number(count);
+
+    if (usageCount > 0) {
+      await client.query(
+        'UPDATE personnel SET is_active = FALSE, updated_at = NOW() WHERE id = $1',
+        [req.params.id]
+      );
+      await logActivity(client, {
+        entityType: 'personnel',
+        entityId:   existing.id,
+        action:     'deactivated',
+        summary:    `Personnel '${existing.full_name}' deactivated (assigned to ${usageCount} order${usageCount !== 1 ? 's' : ''}; cannot be permanently deleted)`,
+        performedBy: req.user.id,
+      });
+      await client.query('COMMIT');
+      return res.json({ outcome: 'deactivated', usageCount });
+    }
+
+    // Never assigned to an order — safe to hard delete.
+    await client.query('DELETE FROM personnel WHERE id = $1', [req.params.id]);
+    await logActivity(client, {
+      entityType: 'personnel',
+      entityId:   existing.id,
+      action:     'deleted',
+      summary:    `Personnel '${existing.full_name}' permanently deleted`,
+      performedBy: req.user.id,
+    });
+    await client.query('COMMIT');
+    res.json({ outcome: 'deleted' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 module.exports = router;
