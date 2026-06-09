@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { logActivity, diffFields } = require('../lib/activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -42,6 +43,15 @@ router.post('/', async (req, res, next) => {
       [full_name, remarks || null, phone || null,
        license_number || null, id_image_base64 || null, id_image_mime_type || null]
     );
+
+    await logActivity(db, {
+      entityType: 'personnel',
+      entityId:   person.id,
+      action:     'created',
+      summary:    `Personnel '${person.full_name}' added`,
+      performedBy: req.user.id,
+    });
+
     res.status(201).json(person);
   } catch (err) {
     next(err);
@@ -91,6 +101,17 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'ID image must be under 2 MB' });
     }
 
+    const changes = diffFields(existing, req.body, [
+      ['full_name', 'Name'],
+      ['remarks', 'Remarks'],
+      ['phone', 'Phone'],
+      ['license_number', 'License number'],
+      ['is_active', 'Active status'],
+    ]);
+    if (id_image_base64 !== undefined && id_image_base64 !== existing.id_image_base64) {
+      changes.push('ID image updated');
+    }
+
     const { rows: [person] } = await db.query(
       `UPDATE personnel SET
          full_name          = $1,
@@ -114,6 +135,17 @@ router.patch('/:id', async (req, res, next) => {
         req.params.id,
       ]
     );
+
+    if (changes.length) {
+      await logActivity(db, {
+        entityType: 'personnel',
+        entityId:   person.id,
+        action:     'edited',
+        summary:    `Personnel '${person.full_name}': ${changes.join('; ')}`,
+        performedBy: req.user.id,
+      });
+    }
+
     res.json(person);
   } catch (err) {
     next(err);

@@ -1,16 +1,26 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { logActivity } = require('../lib/activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
 
 // Allowed status transitions depend on order_type for pickup orders
 function getAllowedTransitions(status, orderType) {
+  if (orderType === 'pickup') {
+    const map = {
+      pending:   ['completed', 'cancelled'],
+      completed: ['pending', 'done', 'cancelled'],
+      done:      ['completed'],
+    };
+    return map[status] || [];
+  }
   const map = {
-    pending:    orderType === 'pickup' ? ['completed', 'cancelled'] : ['in_transit', 'cancelled'],
-    in_transit: ['completed', 'cancelled'],
-    completed:  ['done', 'cancelled'],
+    pending:    ['in_transit', 'cancelled'],
+    in_transit: ['pending', 'completed', 'cancelled'],
+    completed:  ['in_transit', 'done', 'cancelled'],
+    done:       ['completed'],
   };
   return map[status] || [];
 }
@@ -18,8 +28,11 @@ function getAllowedTransitions(status, orderType) {
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 async function recomputeTotal(client, orderId) {
+  const { rows: [ord] } = await client.query('SELECT status FROM orders WHERE id = $1', [orderId]);
   const { rows: [{ total }] } = await client.query(
-    'SELECT COALESCE(SUM(line_total), 0) AS total FROM order_items WHERE order_id = $1',
+    ord.status === 'done'
+      ? 'SELECT COALESCE(SUM(line_total), 0) AS total FROM order_items WHERE order_id = $1'
+      : 'SELECT COALESCE(SUM(quantity * unit_price), 0) AS total FROM order_items WHERE order_id = $1',
     [orderId]
   );
   await client.query(
@@ -31,7 +44,11 @@ async function recomputeTotal(client, orderId) {
 
 async function insertItems(client, orderId, customerId, orderType, items, userId) {
   for (const item of items) {
-    const { product_id, quantity, unit_price, unit_deposit_fee = 0, is_price_overridden = false } = item;
+    const {
+      product_id, quantity, unit_price,
+      unit_deposit_fee = 0, is_price_overridden = false,
+      units_per_case = 1,
+    } = item;
 
     if (!product_id || !quantity || unit_price === undefined) {
       const err = new Error('Each item requires product_id, quantity, and unit_price');
@@ -41,17 +58,18 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
 
     await client.query(
       `INSERT INTO order_items
-         (order_id, product_id, quantity, unit_price, unit_deposit_fee, is_price_overridden)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [orderId, product_id, quantity, unit_price, unit_deposit_fee, is_price_overridden]
+         (order_id, product_id, quantity, unit_price, unit_deposit_fee,
+          is_price_overridden, units_per_case, bottles_returned)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
+      [orderId, product_id, quantity, unit_price, unit_deposit_fee, is_price_overridden, units_per_case]
     );
 
     if (is_price_overridden) {
       await client.query(
         `INSERT INTO customer_product_prices
-           (customer_id, product_id, custom_unit_price, custom_deposit_fee, set_by_user_id, notes, order_type)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [customerId, product_id, unit_price, unit_deposit_fee, userId,
+           (customer_id, product_id, custom_unit_price, set_by_user_id, notes, order_type)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [customerId, product_id, unit_price, userId,
          `Set on order #${orderId}`, orderType || 'delivery']
       );
     }
@@ -83,7 +101,7 @@ async function getFullOrder(orderId) {
   if (!order) return null;
 
   const { rows: items } = await db.query(
-    `SELECT oi.*, p.name AS product_name, p.unit, p.category
+    `SELECT oi.*, p.name AS product_name, p.unit, p.category, p.requires_bottle_return
      FROM order_items oi
      JOIN products p ON p.id = oi.product_id
      WHERE oi.order_id = $1
@@ -103,7 +121,8 @@ async function getFullOrder(orderId) {
   return { ...order, items, personnel };
 }
 
-// Deduct stock for a set of order items. Throws 422 if insufficient.
+// Deduct stock for a set of order items. Allows current_stock to go negative —
+// orders are never blocked by low inventory.
 async function deductStock(client, items, orderId, userId, reason) {
   const needed = {};
   for (const item of items) {
@@ -117,23 +136,6 @@ async function deductStock(client, items, orderId, userId, reason) {
       [productId]
     );
     productMap[productId] = p;
-  }
-
-  const shortfalls = Object.entries(needed)
-    .filter(([pid, qty]) => Number(productMap[pid].current_stock) < qty)
-    .map(([pid, qty]) => ({
-      product_id:   Number(pid),
-      product_name: productMap[pid].name,
-      available:    productMap[pid].current_stock,
-      required:     qty,
-      shortfall:    qty - Number(productMap[pid].current_stock),
-    }));
-
-  if (shortfalls.length > 0) {
-    const err = new Error('Insufficient stock');
-    err.status = 422;
-    err.shortfalls = shortfalls;
-    throw err;
   }
 
   for (const [productId, qty] of Object.entries(needed)) {
@@ -278,7 +280,7 @@ router.post('/', async (req, res, next) => {
     if (!items?.length) return res.status(400).json({ error: 'At least one item is required' });
 
     const { rows: [customer] } = await client.query(
-      'SELECT id FROM customers WHERE id = $1 AND is_active = TRUE',
+      'SELECT id, name FROM customers WHERE id = $1 AND is_active = TRUE',
       [customer_id]
     );
     if (!customer) {
@@ -296,6 +298,14 @@ router.post('/', async (req, res, next) => {
     await insertItems(client, order.id, customer_id, order_type, items, req.user.id);
     await recomputeTotal(client, order.id);
     await syncPersonnel(client, order.id, personnel);
+
+    await logActivity(client, {
+      entityType: 'order',
+      entityId:   order.id,
+      action:     'created',
+      summary:    `Order #${order.id} created for ${customer.name} (${order_type})`,
+      performedBy: req.user.id,
+    });
 
     await client.query('COMMIT');
     res.status(201).json(await getFullOrder(order.id));
@@ -336,6 +346,10 @@ router.patch('/:id', async (req, res, next) => {
     const { notes, items, personnel } = req.body;
     const DISPATCHED_STATUSES = ['in_transit', 'completed', 'done'];
 
+    const changeNotes = [];
+
+    if (notes !== undefined && notes !== order.notes) changeNotes.push('Notes updated');
+
     await client.query(
       `UPDATE orders SET notes = $1, updated_at = NOW() WHERE id = $2`,
       [notes !== undefined ? notes : order.notes, order.id]
@@ -352,6 +366,8 @@ router.patch('/:id', async (req, res, next) => {
       await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id);
       await recomputeTotal(client, order.id);
 
+      changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
+
       if (DISPATCHED_STATUSES.includes(order.status)) {
         await reconcileStock(client, oldItems, items, order.id, req.user.id);
       }
@@ -359,6 +375,17 @@ router.patch('/:id', async (req, res, next) => {
 
     if (personnel !== undefined) {
       await syncPersonnel(client, order.id, personnel);
+      changeNotes.push('Personnel updated');
+    }
+
+    if (changeNotes.length) {
+      await logActivity(client, {
+        entityType: 'order',
+        entityId:   order.id,
+        action:     'edited',
+        summary:    `Order #${order.id}: ${changeNotes.join('; ')}`,
+        performedBy: req.user.id,
+      });
     }
 
     await client.query('COMMIT');
@@ -391,6 +418,16 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       `UPDATE orders SET adjustment = $1, adjustment_reason = $2, updated_at = NOW() WHERE id = $3`,
       [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, req.params.id]
     );
+
+    await logActivity(db, {
+      entityType: 'order',
+      entityId:   order.id,
+      action:     'adjusted',
+      summary:    adjNum !== 0
+        ? `Order #${order.id} adjustment set to ₱${adjNum.toFixed(2)} (reason: ${adjustment_reason.trim()})`
+        : `Order #${order.id} adjustment cleared`,
+      performedBy: req.user.id,
+    });
 
     res.json(await getFullOrder(req.params.id));
   } catch (err) {
@@ -435,35 +472,102 @@ router.post('/:id/status', async (req, res, next) => {
       (order.order_type === 'pickup'   && newStatus === 'completed' && order.status === 'pending');
 
     if (isDeductTransition) {
-      try {
-        await deductStock(client, items, order.id, req.user.id, `Order #${order.id} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
-      } catch (err) {
-        await client.query('ROLLBACK');
-        if (err.status === 422) {
-          return res.status(422).json({ error: err.message, shortfalls: err.shortfalls });
-        }
-        throw err;
-      }
+      await deductStock(client, items, order.id, req.user.id, `Order #${order.id} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
     }
 
-    // Stock restoration on cancellation (only if stock was previously deducted)
-    const stockWasDeducted =
-      order.status === 'in_transit' ||
-      order.status === 'completed' ||
-      (order.order_type === 'pickup' && order.status === 'completed');
-    if (newStatus === 'cancelled' && ['in_transit', 'completed'].includes(order.status)) {
-      await restoreStock(client, items, order.id, req.user.id, `Order #${order.id} cancelled`);
+    // Stock restoration on cancellation, or on stepping back across the deduction boundary
+    if ((newStatus === 'cancelled' || newStatus === 'pending') &&
+        ['in_transit', 'completed'].includes(order.status)) {
+      await restoreStock(client, items, order.id, req.user.id,
+        newStatus === 'cancelled'
+          ? `Order #${order.id} cancelled`
+          : `Order #${order.id} status reverted to pending`);
     }
+
+    const STEP_BACK = new Set([
+      'in_transit→pending',
+      'completed→in_transit',
+      'completed→pending',
+      'done→completed',
+    ]);
+    const isStepBack = STEP_BACK.has(`${order.status}→${newStatus}`);
 
     const setClauses = ['status = $1', 'updated_at = NOW()'];
     if (newStatus === 'in_transit') setClauses.push('dispatched_at = NOW()');
     if (newStatus === 'completed')  setClauses.push('delivered_at = NOW()');
     if (['done', 'cancelled'].includes(newStatus)) setClauses.push('closed_at = NOW()');
+    if (isStepBack) {
+      if (order.status === 'in_transit') setClauses.push('dispatched_at = NULL');
+      if (order.status === 'completed')  setClauses.push('delivered_at = NULL');
+      if (order.status === 'done')       setClauses.push('closed_at = NULL');
+    }
 
     await client.query(
       `UPDATE orders SET ${setClauses.join(', ')} WHERE id = $2`,
       [newStatus, order.id]
     );
+
+    await logActivity(client, {
+      entityType: 'order',
+      entityId:   order.id,
+      action:     'status_changed',
+      summary:    `Order #${order.id} status changed from '${order.status}' to '${newStatus}'`,
+      performedBy: req.user.id,
+    });
+
+    await client.query('COMMIT');
+    res.json(await getFullOrder(order.id));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/v1/orders/:id/close — record bottle returns then transition completed → done
+router.post('/:id/close', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [order] } = await client.query(
+      'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    if (order.status !== 'completed') {
+      await client.query('ROLLBACK');
+      return res.status(422).json({ error: 'Only completed orders can be closed' });
+    }
+
+    const { items = [] } = req.body;
+    for (const { id, bottles_returned } of items) {
+      await client.query(
+        `UPDATE order_items
+            SET bottles_returned = $1, updated_at = NOW()
+          WHERE id = $2 AND order_id = $3`,
+        [Number(bottles_returned) || 0, id, order.id]
+      );
+    }
+
+    await client.query(
+      `UPDATE orders SET status = 'done', closed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [order.id]
+    );
+
+    await recomputeTotal(client, order.id);
+
+    await logActivity(client, {
+      entityType: 'order',
+      entityId:   order.id,
+      action:     'closed',
+      summary:    `Order #${order.id} closed; bottle returns recorded for ${items.length} item${items.length === 1 ? '' : 's'}`,
+      performedBy: req.user.id,
+    });
 
     await client.query('COMMIT');
     res.json(await getFullOrder(order.id));

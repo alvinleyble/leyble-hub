@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { logActivity, diffFields } = require('../lib/activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -36,7 +37,7 @@ router.get('/', async (req, res, next) => {
 // POST /api/v1/customers
 router.post('/', async (req, res, next) => {
   try {
-    const { name, customer_type = 'wholesale', address, phone, notes } = req.body;
+    const { name, customer_type = 'regular', address, phone, notes } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     const { rows: [customer] } = await db.query(
@@ -45,6 +46,15 @@ router.post('/', async (req, res, next) => {
        RETURNING *`,
       [name, customer_type, address || null, phone || null, notes || null]
     );
+
+    await logActivity(db, {
+      entityType: 'customer',
+      entityId:   customer.id,
+      action:     'created',
+      summary:    `Customer '${customer.name}' created (${customer.customer_type})`,
+      performedBy: req.user.id,
+    });
+
     res.status(201).json(customer);
   } catch (err) {
     next(err);
@@ -90,6 +100,15 @@ router.patch('/:id', async (req, res, next) => {
 
     const { name, customer_type, address, phone, notes, is_active } = req.body;
 
+    const changes = diffFields(existing, req.body, [
+      ['name', 'Name'],
+      ['customer_type', 'Type'],
+      ['address', 'Address'],
+      ['phone', 'Phone'],
+      ['notes', 'Notes'],
+      ['is_active', 'Active status'],
+    ]);
+
     const { rows: [customer] } = await db.query(
       `UPDATE customers SET
          name          = $1,
@@ -111,6 +130,17 @@ router.patch('/:id', async (req, res, next) => {
         req.params.id,
       ]
     );
+
+    if (changes.length) {
+      await logActivity(db, {
+        entityType: 'customer',
+        entityId:   customer.id,
+        action:     'edited',
+        summary:    `Customer '${customer.name}': ${changes.join('; ')}`,
+        performedBy: req.user.id,
+      });
+    }
+
     res.json(customer);
   } catch (err) {
     next(err);
@@ -125,7 +155,7 @@ router.get('/:id/prices', async (req, res, next) => {
       `SELECT DISTINCT ON (cpp.product_id)
          cpp.id, cpp.product_id, cpp.customer_id, cpp.order_type,
          p.name AS product_name, p.unit,
-         cpp.custom_unit_price, cpp.custom_deposit_fee,
+         cpp.custom_unit_price,
          cpp.notes, cpp.created_at,
          u.full_name AS set_by_name
        FROM customer_product_prices cpp
@@ -150,17 +180,17 @@ router.post('/:id/prices', async (req, res, next) => {
     );
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    const { product_id, custom_unit_price, custom_deposit_fee = 0, notes, order_type = 'delivery' } = req.body;
+    const { product_id, custom_unit_price, notes, order_type = 'delivery' } = req.body;
     if (!product_id || custom_unit_price === undefined) {
       return res.status(400).json({ error: 'product_id and custom_unit_price are required' });
     }
 
     const { rows: [entry] } = await db.query(
       `INSERT INTO customer_product_prices
-         (customer_id, product_id, custom_unit_price, custom_deposit_fee, notes, set_by_user_id, order_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (customer_id, product_id, custom_unit_price, notes, set_by_user_id, order_type)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [req.params.id, product_id, custom_unit_price, custom_deposit_fee,
+      [req.params.id, product_id, custom_unit_price,
        notes || null, req.user.id, order_type]
     );
 
@@ -172,6 +202,15 @@ router.post('/:id/prices', async (req, res, next) => {
        WHERE cpp.id = $1`,
       [entry.id]
     );
+
+    await logActivity(db, {
+      entityType: 'customer',
+      entityId:   Number(req.params.id),
+      action:     'price_set',
+      summary:    `Custom ${order_type} price set for ${enriched.product_name}: ₱${Number(custom_unit_price).toFixed(2)}`,
+      performedBy: req.user.id,
+    });
+
     res.status(201).json(enriched);
   } catch (err) {
     next(err);

@@ -7,8 +7,8 @@ import CustomerFormModal from './CustomerFormModal';
 import CustomerDetailPanel from './CustomerDetailPanel';
 
 const TYPE_BADGE = {
-  wholesale: 'bg-slate-100 text-slate-600 border-slate-200',
-  suki:      'bg-amber-100 text-amber-800 border-amber-300',
+  regular:    'bg-slate-100 text-slate-600 border-slate-200',
+  wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
 };
 
 export default function CustomersPage() {
@@ -105,7 +105,7 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-5 py-4 hidden sm:table-cell">
                     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${TYPE_BADGE[c.customer_type]}`}>
-                      {c.customer_type === 'suki' ? 'Suki' : 'Wholesale'}
+                      {c.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-slate-500 hidden md:table-cell">

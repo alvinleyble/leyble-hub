@@ -2,7 +2,7 @@
 
 **Version:** 1.2.0-spec  
 **Status:** Active — Phase 3 In Progress  
-**Schema note:** Migrations 012–017 have been applied. Where this document conflicts with `CLAUDE.md`'s schema drift table, the migration files are authoritative.  
+**Schema note:** This document predates migrations 012–026 (per-bottle deposit, `activity_logs`, customer-type rename, dropped `custom_deposit_fee`, decimal stock, and more). Where it conflicts with `CLAUDE.md`'s schema drift table, the migration files are authoritative — see that table for the current schema.  
 **Currency:** Philippine Peso (₱)  
 **Target Users:** Business owners (late 50s) — accessibility is a first-class requirement.
 
@@ -188,8 +188,8 @@ CREATE TABLE products (
 CREATE TABLE customers (
   id              SERIAL PRIMARY KEY,
   name            VARCHAR(255)  NOT NULL,
-  customer_type   VARCHAR(50)   NOT NULL DEFAULT 'wholesale'
-                    CHECK (customer_type IN ('wholesale', 'suki')),  -- 'retail' removed in migration 015
+  customer_type   VARCHAR(50)   NOT NULL DEFAULT 'regular'
+                    CHECK (customer_type IN ('regular', 'wholesaler')),  -- 'retail' removed (015); renamed wholesale→regular, suki→wholesaler (025)
   address         TEXT,
   phone           VARCHAR(50),
   notes           TEXT,
@@ -200,8 +200,8 @@ CREATE TABLE customers (
 ```
 
 **Notes:**
-- `suki` type signals that custom pricing may apply (see §5.4).
-- All customers are wholesale; 'retail' type was removed in migration 015 (wholesale-only business model).
+- `wholesaler` type (formerly `suki`) signals that custom pricing may apply (see §5.4); `regular` (formerly `wholesale`) uses base pricing.
+- All customers are wholesale-business; the 'retail' type was removed in migration 015 (wholesale-only business model). Types were renamed in migration 025.
 
 ---
 

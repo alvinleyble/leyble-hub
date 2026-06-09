@@ -8,7 +8,7 @@ const FIELD = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base tex
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
 const DEFAULT = {
-  name: '', customer_type: 'wholesale', phone: '', address: '', notes: '',
+  name: '', customer_type: 'regular', phone: '', address: '', notes: '',
 };
 
 export default function CustomerFormModal({ onClose, onSaved }) {
@@ -70,8 +70,8 @@ export default function CustomerFormModal({ onClose, onSaved }) {
 
           <FormField label="Customer Type" required className="sm:col-span-2">
             <select value={form.customer_type} onChange={set('customer_type')} className={FIELD}>
-              <option value="wholesale">Wholesale — standard pricing</option>
-              <option value="suki">Suki — custom pricing</option>
+              <option value="regular">Regular Customer — Without Custom Prices</option>
+              <option value="wholesaler">Wholesalers — With Custom Prices</option>
             </select>
           </FormField>
 

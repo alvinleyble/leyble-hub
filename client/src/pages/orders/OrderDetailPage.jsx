@@ -5,6 +5,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import OrderCreateModal from './OrderCreateModal';
+import OrderCloseForm from './OrderCloseForm';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -38,12 +39,17 @@ export default function OrderDetailPage() {
   const [transitioning, setTransitioning] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [editing, setEditing]       = useState(false);
+  const [closing, setClosing]       = useState(false);
 
   // Adjustment form state
   const [adjExpanded, setAdjExpanded] = useState(false);
   const [adjValue, setAdjValue]       = useState('0');
   const [adjReason, setAdjReason]     = useState('');
   const [savingAdj, setSavingAdj]     = useState(false);
+
+  // Live, in-progress bottle-return entries — lifted up from OrderCloseForm so its
+  // breakdown math can read them. Keyed by order_items.id.
+  const [returnCounts, setReturnCounts] = useState({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -63,6 +69,25 @@ export default function OrderDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const bottleItems = order
+    ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
+    : [];
+  const bottleItemIds = bottleItems.map((i) => i.id).join(',');
+
+  // Reset the in-progress bottle-return entries whenever the set of returnable items
+  // changes (initial load, or items added/removed via editing) — otherwise stale
+  // item ids could linger in returnCounts.
+  useEffect(() => {
+    if (!order || order.status !== 'completed' || bottleItems.length === 0) return;
+    const counts = {};
+    bottleItems.forEach((i) => {
+      const stored = Number(i.bottles_returned);
+      const total  = Number(i.quantity) * (Number(i.units_per_case) || 1);
+      counts[i.id] = String(stored > 0 ? stored : total);
+    });
+    setReturnCounts(counts);
+  }, [bottleItemIds, order?.status]);
+
   const transition = async () => {
     if (!confirmAction) return;
     setTransitioning(true);
@@ -72,14 +97,7 @@ export default function OrderDetailPage() {
       setConfirmAction(null);
       addToast(`Order ${confirmAction.label.toLowerCase()}.`, 'success');
     } catch (err) {
-      if (err.data?.shortfalls) {
-        const names = err.data.shortfalls
-          .map((s) => `${s.product_name}: need ${s.required}, have ${s.available}`)
-          .join('; ');
-        addToast(`Insufficient stock — ${names}`, 'error');
-      } else {
-        addToast(err.message || 'Transition failed.', 'error');
-      }
+      addToast(err.message || 'Transition failed.', 'error');
       setConfirmAction(null);
     } finally {
       setTransitioning(false);
@@ -107,40 +125,114 @@ export default function OrderDetailPage() {
     }
   };
 
+  const handleCloseOrder = async () => {
+    setClosing(true);
+    try {
+      let updated;
+      if (bottleItems.length > 0) {
+        const items = Object.entries(returnCounts).map(([itemId, returned]) => ({
+          id: Number(itemId),
+          bottles_returned: Number(returned) || 0,
+        }));
+        updated = await api.post(`/orders/${id}/close`, { items });
+      } else {
+        updated = await api.post(`/orders/${id}/status`, { status: 'done' });
+      }
+      setOrder(updated);
+      setAdjValue(String(updated.adjustment || '0'));
+      setAdjReason(updated.adjustment_reason || '');
+      addToast('Order closed.', 'success');
+    } catch (err) {
+      addToast(err.message || 'Failed to close order.', 'error');
+    } finally {
+      setClosing(false);
+    }
+  };
+
   const handlePrint = () => {
     const docDate = new Date(order.created_at);
     const dateStr = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
     const receiptNo = String(order.id).padStart(5, '0');
     const isPickupOrder = order.order_type === 'pickup';
+    // Deposit only appears on the closing receipt (status = completed/delivered).
+    // Pending receipts assume full bottle return — no deposit charged.
+    const showDeposit = order.status === 'completed' || order.status === 'done';
+
+    const itemDepForPrint = (item) => {
+      if (!showDeposit) return 0;
+      const dep = Number(item.unit_deposit_fee);
+      if (!dep) return 0;
+      const totalBtl = Number(item.quantity) * (Number(item.units_per_case) || 1);
+      const isLive = item.requires_bottle_return
+        && returnCounts[item.id] !== undefined
+        && returnCounts[item.id] !== '';
+      const returned = isLive
+        ? Math.max(Number(returnCounts[item.id]) || 0, 0)
+        : Math.max(Number(item.bottles_returned) || 0, 0);
+      return (totalBtl - returned) * dep;
+    };
+
+    const printItemsTotal   = order.items.reduce(
+      (s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
+    const printDepositTotal = order.items.reduce((s, i) => s + itemDepForPrint(i), 0);
+    const printAdj          = Number(order.adjustment || 0);
+    const printTotal        = printItemsTotal + printDepositTotal + printAdj;
+    const printHasSubtotals = (showDeposit && printDepositTotal > 0) || printAdj !== 0;
 
     const itemRows = order.items.map((item) => {
-      const qty = Number(item.quantity);
-      const dep = Number(item.unit_deposit_fee);
-      const depLine = dep > 0
-        ? `<div style="display:flex;justify-content:space-between;font-size:8px;color:#444;margin-top:1px">
-             <span>&nbsp;&nbsp;+ deposit/case: ${PHP(dep)}</span>
-             <span>${PHP(dep * qty)}</span>
-           </div>`
-        : '';
+      const qty      = Number(item.quantity);
+      const dep      = Number(item.unit_deposit_fee);
+      const upc      = Number(item.units_per_case) || 1;
+      const totalBtl = qty * upc;
+      const itemDep  = itemDepForPrint(item);
+      const displayTotal = qty * Number(item.unit_price) + itemDep;
+
+      let depLine = '';
+      if (showDeposit && dep > 0) {
+        const isLive = item.requires_bottle_return
+          && returnCounts[item.id] !== undefined
+          && returnCounts[item.id] !== '';
+        const returned = isLive
+          ? Math.max(Number(returnCounts[item.id]) || 0, 0)
+          : Math.max(Number(item.bottles_returned) || 0, 0);
+        const netBtl = totalBtl - returned;
+        depLine = `<div style="display:flex;justify-content:space-between;font-size:8px;color:#444;margin-top:1px">
+             <span>&nbsp;&nbsp;Deposit: ${totalBtl} btls &times; ${PHP(dep)}</span>
+             <span>${PHP(totalBtl * dep)}</span>
+           </div>`;
+        if (returned > 0) {
+          depLine += `<div style="display:flex;justify-content:space-between;font-size:8px;color:#444">
+             <span>&nbsp;&nbsp;Returned: ${returned} btls &times; ${PHP(dep)}</span>
+             <span>-${PHP(returned * dep)}</span>
+           </div>
+           <div style="display:flex;justify-content:space-between;font-size:8px;color:#444">
+             <span>&nbsp;&nbsp;Net deposit</span>
+             <span>${PHP(netBtl * dep)}</span>
+           </div>`;
+        }
+      }
       return `
         <div style="margin-bottom:5px">
           <div style="font-weight:bold">${item.product_name}</div>
           <div style="display:flex;justify-content:space-between">
             <span style="color:#333">&nbsp;&nbsp;${qty} ${item.unit || 'cs'} &times; ${PHP(item.unit_price)}</span>
-            <span>${PHP(item.line_total)}</span>
+            <span>${PHP(displayTotal)}</span>
           </div>
           ${depLine}
         </div>`;
     }).join('');
 
-    const adjRows = hasAdj ? `
+    const subtotalRows = printHasSubtotals ? `
       <div class="row-between" style="margin-top:3px">
-        <span>Items Total</span><span>${PHP(order.total_amount)}</span>
-      </div>
+        <span>Items</span><span>${PHP(printItemsTotal)}</span>
+      </div>${showDeposit && printDepositTotal > 0 ? `
+      <div class="row-between">
+        <span>Deposit fee</span><span>+${PHP(printDepositTotal)}</span>
+      </div>` : ''}${printAdj !== 0 ? `
       <div class="row-between">
         <span>Adjustment${order.adjustment_reason ? ` (${order.adjustment_reason})` : ''}</span>
-        <span>${Number(order.adjustment) > 0 ? '+' : ''}${PHP(order.adjustment)}</span>
-      </div>` : '';
+        <span>${printAdj > 0 ? '+' : ''}${PHP(printAdj)}</span>
+      </div>` : ''}` : '';
 
     const personnelLine = order.personnel?.length > 0
       ? `<div style="margin-top:2px">Driver/Helper: ${order.personnel.map((p) => `${p.full_name} (${p.role})`).join(', ')}</div>`
@@ -201,10 +293,10 @@ export default function OrderDetailPage() {
 
   <div class="hr"></div>
 
-  ${adjRows}
+  ${subtotalRows}
   <div class="total-row">
-    <span>${hasAdj ? 'FINAL TOTAL' : 'TOTAL'}</span>
-    <span>${PHP(finalTotal)}</span>
+    <span>${printHasSubtotals ? 'FINAL TOTAL' : 'TOTAL'}</span>
+    <span>${PHP(printTotal)}</span>
   </div>
 
   <div class="hr"></div>
@@ -248,9 +340,31 @@ export default function OrderDetailPage() {
   if (!order) return null;
 
   const st = STATUS[order.status] ?? { label: order.status, color: 'bg-slate-100 text-slate-500 border-slate-200' };
-  const isPickup   = order.order_type === 'pickup';
+  const isPickup      = order.order_type === 'pickup';
+  const isDepositable = order.status === 'done' || order.status === 'completed';
   const finalTotal = Number(order.total_amount) + Number(order.adjustment || 0);
   const hasAdj     = Number(order.adjustment) !== 0;
+
+  const itemsSubtotal = order.items.reduce(
+    (sum, i) => sum + Number(i.quantity) * Number(i.unit_price), 0);
+
+  const itemNetDeposit = (item) => {
+    if (!isDepositable) return 0;
+    const dep = Number(item.unit_deposit_fee);
+    if (!dep) return 0;
+    const totalBottles = Number(item.quantity) * (Number(item.units_per_case) || 1);
+    const isLive = item.requires_bottle_return && order.status === 'completed'
+                   && returnCounts[item.id] !== undefined && returnCounts[item.id] !== '';
+    const returned = isLive
+      ? Math.max(Number(returnCounts[item.id]) || 0, 0)
+      : Math.max(Number(item.bottles_returned) || 0, 0);
+    return (totalBottles - returned) * dep;
+  };
+
+  const depositTotal = order.items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
+
+  const liveTotal   = itemsSubtotal + depositTotal + Number(order.adjustment || 0);
+  const hasDeposits = order.items.some(i => Number(i.unit_deposit_fee) > 0);
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -263,7 +377,7 @@ export default function OrderDetailPage() {
         >
           ← Orders
         </button>
-        {order.status !== 'cancelled' && (
+        {!['in_transit'].includes(order.status) && (
           <Button variant="secondary" size="sm" onClick={handlePrint}>
             Print Receipt
           </Button>
@@ -368,48 +482,84 @@ export default function OrderDetailPage() {
                   {PHP(item.unit_price)}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-500 hidden sm:table-cell">
-                  {Number(item.unit_deposit_fee) > 0 ? PHP(item.unit_deposit_fee) : '—'}
+                  {Number(item.unit_deposit_fee) > 0 && isDepositable ? (
+                    <div>
+                      <div>{PHP(item.unit_deposit_fee)}/bottle</div>
+                      {Number(item.bottles_returned) > 0 && (
+                        <div className="text-xs text-green-700 mt-0.5">
+                          −{item.bottles_returned} returned
+                        </div>
+                      )}
+                    </div>
+                  ) : '—'}
                 </td>
                 <td className="px-5 py-3 text-right tabular-nums font-semibold text-slate-800">
-                  {PHP(item.line_total)}
+                  <div>{PHP(Number(item.quantity) * Number(item.unit_price))}</div>
+                  {Number(item.unit_deposit_fee) > 0 && isDepositable && (
+                    <div className={`text-xs font-normal mt-0.5 ${itemNetDeposit(item) < 0 ? 'text-green-700' : 'text-slate-500'}`}>
+                      {itemNetDeposit(item) < 0
+                        ? `− ${PHP(Math.abs(itemNetDeposit(item)))} credit`
+                        : `+ ${PHP(itemNetDeposit(item))} dep.`}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            {hasAdj && (
+            {hasDeposits && isDepositable && (
               <>
                 <tr className="border-t border-slate-200 bg-slate-50">
-                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Items Total</td>
+                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Items</td>
                   <td className="px-5 py-3 text-right tabular-nums text-slate-700">
-                    {PHP(order.total_amount)}
+                    {PHP(itemsSubtotal)}
                   </td>
                 </tr>
                 <tr className="border-t border-slate-100 bg-slate-50">
-                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">
-                    Adjustment
-                    {order.adjustment_reason && (
-                      <span className="ml-2 text-xs text-slate-400 italic">({order.adjustment_reason})</span>
-                    )}
-                  </td>
-                  <td className={`px-5 py-3 text-right tabular-nums font-medium
-                    ${Number(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
-                    {Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Deposit fee</td>
+                  <td className={`px-5 py-3 text-right tabular-nums ${depositTotal < 0 ? 'text-green-700' : 'text-slate-700'}`}>
+                    {depositTotal < 0
+                      ? `− ${PHP(Math.abs(depositTotal))}`
+                      : `+ ${PHP(depositTotal)}`}
                   </td>
                 </tr>
               </>
             )}
+            {hasAdj && (
+              <tr className="border-t border-slate-100 bg-slate-50">
+                <td colSpan={4} className="px-5 py-3 text-right text-slate-500">
+                  Adjustment
+                  {order.adjustment_reason && (
+                    <span className="ml-2 text-xs text-slate-400 italic">({order.adjustment_reason})</span>
+                  )}
+                </td>
+                <td className={`px-5 py-3 text-right tabular-nums font-medium
+                  ${Number(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                  {Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                </td>
+              </tr>
+            )}
             <tr className="border-t-2 border-slate-200 bg-slate-50">
               <td colSpan={4} className="px-5 py-4 text-right font-bold text-slate-700">
-                {hasAdj ? 'Final Total' : 'Order Total'}
+                Order Total
               </td>
               <td className="px-5 py-4 text-right font-bold text-xl tabular-nums text-slate-900">
-                {PHP(finalTotal)}
+                {PHP(liveTotal)}
               </td>
             </tr>
           </tfoot>
         </table>
       </div>
+
+      {/* Bottle returns — review inline before closing */}
+      {order.status === 'completed' && bottleItems.length > 0 && (
+        <OrderCloseForm
+          order={order}
+          returnCounts={returnCounts}
+          onChangeReturnCounts={setReturnCounts}
+          hideCloseButton
+        />
+      )}
 
       {/* Adjustment */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
@@ -472,6 +622,14 @@ export default function OrderDetailPage() {
         )}
       </div>
 
+      {order.status === 'completed' && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+          <Button className="w-full" onClick={handleCloseOrder} loading={closing}>
+            Close Order
+          </Button>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Actions</p>
@@ -533,6 +691,19 @@ export default function OrderDetailPage() {
 
             {order.status === 'in_transit' && (
               <Button
+                variant="secondary"
+                onClick={() => setConfirmAction({
+                  newStatus: 'pending',
+                  label: 'Back to Pending',
+                  message: 'Stock will be restored to inventory.',
+                })}
+              >
+                ← Back to Pending
+              </Button>
+            )}
+
+            {order.status === 'in_transit' && (
+              <Button
                 variant="warning"
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
@@ -544,16 +715,42 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'completed' && (
+            {order.status === 'completed' && !isPickup && (
               <Button
                 variant="secondary"
                 onClick={() => setConfirmAction({
-                  newStatus: 'done',
-                  label: 'Close Order',
-                  message: 'Close and archive this order.',
+                  newStatus: 'in_transit',
+                  label: 'Back to In Transit',
+                  message: 'Confirm this order has not yet been delivered.',
                 })}
               >
-                Close Order
+                ← Back to In Transit
+              </Button>
+            )}
+
+            {order.status === 'completed' && isPickup && (
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmAction({
+                  newStatus: 'pending',
+                  label: 'Back to Pending',
+                  message: 'Stock will be restored to inventory.',
+                })}
+              >
+                ← Back to Pending
+              </Button>
+            )}
+
+            {order.status === 'done' && (
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmAction({
+                  newStatus: 'completed',
+                  label: 'Reopen Order',
+                  message: 'Reopen this order for further changes.',
+                })}
+              >
+                ← Reopen Order
               </Button>
             )}
 
@@ -584,6 +781,7 @@ export default function OrderDetailPage() {
           onSaved={() => { setEditing(false); load(); }}
         />
       )}
+
     </div>
   );
 }

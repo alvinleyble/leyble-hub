@@ -15,16 +15,16 @@ const INPUT_SM = `w-full h-10 px-3 border border-slate-300 rounded-lg text-sm te
                   focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
 const newItem = () => ({
-  _key:              Math.random(),
-  _productSearch:    '',
-  _depositOverride:  false,
-  _defaultDeposit:   '0',
-  product_id:        '',
-  product_name:      '',
-  unit:              '',
-  quantity:          '1',
-  unit_price:        '',
-  unit_deposit_fee:  '0',
+  _key:                   Math.random(),
+  _productSearch:         '',
+  requires_bottle_return: false,
+  product_id:             '',
+  product_name:           '',
+  unit:                   '',
+  quantity:               '1',
+  unit_price:             '',
+  unit_deposit_fee:       '0',
+  units_per_case:         1,
 });
 
 export default function OrderCreateModal({ onClose, onSaved, editOrder = null }) {
@@ -40,19 +40,19 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const [orderType, setOrderType]         = useState(editOrder?.order_type ?? 'delivery');
   const [customerId, setCustomerId]       = useState(editOrder?.customer_id ?? '');
   const [customerSearch, setCustomerSearch] = useState('');
-  const [sukiPrices, setSukiPrices]       = useState({});
+  const [customPrices, setCustomPrices]   = useState({});
   const [items, setItems]                 = useState(
     editOrder?.items?.map((i) => ({
-      _key:             Math.random(),
-      _productSearch:   i.product_name,
-      _depositOverride: Number(i.unit_deposit_fee) !== 0,
-      _defaultDeposit:  String(i.unit_deposit_fee),
-      product_id:       String(i.product_id),
-      product_name:     i.product_name,
-      unit:             i.unit,
-      quantity:         String(i.quantity),
-      unit_price:       String(i.unit_price),
-      unit_deposit_fee: String(i.unit_deposit_fee),
+      _key:                   Math.random(),
+      _productSearch:         i.product_name,
+      requires_bottle_return: i.requires_bottle_return ?? false,
+      product_id:             String(i.product_id),
+      product_name:           i.product_name,
+      unit:                   i.unit,
+      quantity:               String(i.quantity),
+      unit_price:             String(i.unit_price),
+      unit_deposit_fee:       String(i.unit_deposit_fee),
+      units_per_case:         i.units_per_case ?? 1,
     })) ?? [newItem()]
   );
   const [openDropdownKey, setOpenDropdownKey] = useState(null);
@@ -83,17 +83,17 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId));
 
-  // Load suki prices when customer or order_type changes
+  // Load wholesaler custom prices when customer or order_type changes
   useEffect(() => {
-    if (!customerId || selectedCustomer?.customer_type !== 'suki') {
-      setSukiPrices({});
+    if (!customerId || selectedCustomer?.customer_type !== 'wholesaler') {
+      setCustomPrices({});
       return;
     }
     api.get(`/customers/${customerId}/prices?order_type=${orderType}`)
       .then((prices) => {
         const map = {};
         prices.forEach((p) => { map[p.product_id] = p; });
-        setSukiPrices(map);
+        setCustomPrices(map);
       })
       .catch(() => {});
   }, [customerId, selectedCustomer?.customer_type, orderType]);
@@ -125,31 +125,27 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       updateItem(key, 'product_id', '');
       return;
     }
-    const sukiEntry = sukiPrices[product.id];
+    const customEntry = customPrices[product.id];
     const displayName = product.name + (product.category ? ` (${product.category})` : '');
-    const defaultDeposit = sukiEntry
-      ? String(sukiEntry.custom_deposit_fee)
-      : String(product.deposit_fee);
     setItems((prev) => prev.map((i) => i._key === key ? {
       ...i,
-      _productSearch:   displayName,
-      _depositOverride: false,
-      _defaultDeposit:  defaultDeposit,
-      product_id:       productId,
-      product_name:     product.name,
-      unit:             product.unit,
-      unit_price:       sukiEntry
-        ? String(sukiEntry.custom_unit_price)
+      _productSearch:         displayName,
+      requires_bottle_return: product.requires_bottle_return || false,
+      product_id:             productId,
+      product_name:           product.name,
+      unit:                   product.unit,
+      units_per_case:         product.units_per_case || 1,
+      unit_price:             customEntry
+        ? String(customEntry.custom_unit_price)
         : String(product.base_wholesale_price),
-      unit_deposit_fee: defaultDeposit,
+      unit_deposit_fee:       String(product.deposit_fee),
     } : i));
   };
 
   const lineTotal = (item) => {
-    const qty = Number(item.quantity) || 0;
+    const qty   = Number(item.quantity) || 0;
     const price = Number(item.unit_price) || 0;
-    const dep = Number(item.unit_deposit_fee) || 0;
-    return qty * (price + dep);
+    return qty * price;
   };
 
   const grandTotal = items.reduce((sum, i) => sum + lineTotal(i), 0);
@@ -199,6 +195,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
           quantity:         Number(i.quantity),
           unit_price:       Number(i.unit_price),
           unit_deposit_fee: Number(i.unit_deposit_fee),
+          units_per_case:   Number(i.units_per_case) || 1,
           is_price_overridden: false,
         })),
         personnel: assignedPersonnel,
@@ -305,9 +302,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                             className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
                           >
                             <span className="font-medium text-slate-800">{c.name}</span>
-                            {c.customer_type === 'suki' && (
+                            {c.customer_type === 'wholesaler' && (
                               <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
-                                Suki
+                                Wholesaler
                               </span>
                             )}
                           </button>
@@ -320,10 +317,10 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                   <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border
-                        ${selectedCustomer.customer_type === 'suki'
+                        ${selectedCustomer.customer_type === 'wholesaler'
                           ? 'bg-amber-100 text-amber-800 border-amber-300'
                           : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                        {selectedCustomer.customer_type === 'suki' ? 'Suki — custom pricing applied' : 'Wholesale'}
+                        {selectedCustomer.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : 'Regular Customer'}
                       </span>
                     </div>
                     {selectedCustomer.phone && (
@@ -442,46 +439,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                             onChange={(e) => updateItem(item._key, 'unit_price', e.target.value)}
                             className={INPUT_SM} />
                         </FormField>
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-sm font-semibold text-slate-700">Line Total</span>
-                          <div className="h-10 flex items-center px-3 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-900 tabular-nums">
-                            {PHP(lineTotal(item))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Deposit — hidden by default, revealed via checkbox */}
-                      <div className="mt-2 flex items-center gap-3">
-                        <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-500">
-                          <input
-                            type="checkbox"
-                            checked={item._depositOverride}
-                            onChange={(e) => {
-                              const on = e.target.checked;
-                              setItems((prev) => prev.map((i) => i._key === item._key
-                                ? { ...i, _depositOverride: on, unit_deposit_fee: on ? i._defaultDeposit : '0' }
-                                : i
-                              ));
-                            }}
-                            className="w-4 h-4 accent-blue-700"
-                          />
-                          Deposit / case
-                        </label>
-                        {item._depositOverride && (
-                          <input
-                            type="number" min="0" step="0.01"
+                        <FormField label="Deposit / bottle (₱)">
+                          <input type="number" min="0" step="0.01"
                             value={item.unit_deposit_fee}
+                            disabled={!item.requires_bottle_return}
                             onChange={(e) => updateItem(item._key, 'unit_deposit_fee', e.target.value)}
-                            className="w-32 h-9 px-3 border border-slate-300 rounded-lg text-sm text-slate-900
-                                       focus:outline-none focus:ring-2 focus:ring-blue-600"
-                            placeholder="0.00"
-                          />
-                        )}
-                        {item._depositOverride && (
-                          <span className="text-xs text-slate-400 tabular-nums">
-                            = {PHP(Number(item.unit_deposit_fee) * (Number(item.quantity) || 0))} total
-                          </span>
-                        )}
+                            className={INPUT_SM + ' disabled:bg-slate-100 disabled:text-slate-400'} />
+                        </FormField>
                       </div>
                     </div>
                   ))}

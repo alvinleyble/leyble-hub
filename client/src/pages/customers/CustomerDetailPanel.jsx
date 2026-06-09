@@ -20,12 +20,12 @@ const ORDER_STATUS = {
 };
 
 const TYPE_BADGE = {
-  wholesale: 'bg-slate-100 text-slate-600 border-slate-200',
-  suki:      'bg-amber-100 text-amber-800 border-amber-300',
+  regular:    'bg-slate-100 text-slate-600 border-slate-200',
+  wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
 };
 
 const DEFAULT_PRICE_FORM = {
-  product_id: '', custom_unit_price: '', custom_deposit_fee: '0', notes: '',
+  product_id: '', custom_unit_price: '', notes: '',
 };
 
 export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
@@ -38,8 +38,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving]         = useState(false);
 
-  const [sukiPrices, setSukiPrices]         = useState([]);
-  const [sukiTab, setSukiTab]               = useState('delivery');
+  const [customPrices, setCustomPrices]     = useState([]);
+  const [priceTab, setPriceTab]             = useState('delivery');
   const [products, setProducts]             = useState([]);
   const [pricingOpen, setPricingOpen]       = useState(false);
   const [priceForm, setPriceForm]           = useState(DEFAULT_PRICE_FORM);
@@ -48,10 +48,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [productSearch, setProductSearch]   = useState('');
   const [productDropOpen, setProductDropOpen] = useState(false);
 
-  const loadSukiPrices = useCallback(async (orderType = sukiTab) => {
+  const loadCustomPrices = useCallback(async (orderType = priceTab) => {
     const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`).catch(() => []);
-    setSukiPrices(prices);
-  }, [customerId, sukiTab]);
+    setCustomPrices(prices);
+  }, [customerId, priceTab]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -67,16 +67,16 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (data.customer_type === 'suki') {
-          const prices = await api.get(`/customers/${customerId}/prices?order_type=${sukiTab}`).catch(() => []);
-          setSukiPrices(prices);
+        if (data.customer_type === 'wholesaler') {
+          const prices = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`).catch(() => []);
+          setCustomPrices(prices);
         } else {
-          setSukiPrices([]);
+          setCustomPrices([]);
         }
       })
       .catch(() => addToast('Failed to load customer.', 'error'))
       .finally(() => setLoading(false));
-  }, [customerId, addToast, sukiTab]);
+  }, [customerId, addToast, priceTab]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -131,7 +131,6 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       ...f,
       product_id:         String(product.id),
       custom_unit_price:  String(product.base_wholesale_price),
-      custom_deposit_fee: String(product.deposit_fee),
     }));
   };
 
@@ -146,19 +145,18 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
     setPriceSaving(true);
     try {
       await api.post(`/customers/${customerId}/prices`, {
-        product_id:         Number(priceForm.product_id),
-        custom_unit_price:  Number(priceForm.custom_unit_price),
-        custom_deposit_fee: Number(priceForm.custom_deposit_fee),
-        notes:              priceForm.notes.trim() || null,
-        order_type:         sukiTab,
+        product_id:        Number(priceForm.product_id),
+        custom_unit_price: Number(priceForm.custom_unit_price),
+        notes:             priceForm.notes.trim() || null,
+        order_type:        priceTab,
       });
       addToast('Custom price set.', 'success');
       setPricingOpen(false);
       setPriceForm(DEFAULT_PRICE_FORM);
       setPriceErrors({});
       setProductSearch('');
-      const updated = await api.get(`/customers/${customerId}/prices?order_type=${sukiTab}`);
-      setSukiPrices(updated);
+      const updated = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`);
+      setCustomPrices(updated);
     } catch (err) {
       addToast(err.message || 'Failed to set price.', 'error');
     } finally {
@@ -197,7 +195,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             {/* ── Summary bar ──────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[customer.customer_type]}`}>
-                {customer.customer_type === 'suki' ? 'Suki (VIP)' : 'Wholesale'}
+                {customer.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
               </span>
               {!customer.is_active && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-300">
@@ -221,8 +219,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
                   <FormField label="Customer Type" required className="sm:col-span-2">
                     <select value={form.customer_type} onChange={set('customer_type')} className={INPUT}>
-                      <option value="wholesale">Wholesale — standard pricing</option>
-                      <option value="suki">Suki — custom pricing</option>
+                      <option value="regular">Regular Customer — Without Custom Prices</option>
+                      <option value="wholesaler">Wholesalers — With Custom Prices</option>
                     </select>
                   </FormField>
 
@@ -256,11 +254,11 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               </div>
             </form>
 
-            {/* ── Suki Pricing ──────────────────────────────────── */}
-            {customer.customer_type === 'suki' && (
+            {/* ── Wholesaler Custom Pricing ────────────────────── */}
+            {customer.customer_type === 'wholesaler' && (
               <div className="px-6 py-5 border-b border-slate-200">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Suki Custom Prices</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Wholesaler Custom Prices</p>
                   {!pricingOpen && (
                     <Button size="sm" variant="secondary" onClick={openPricingForm}>
                       + Set Price
@@ -275,14 +273,14 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                       key={type}
                       type="button"
                       onClick={() => {
-                        setSukiTab(type);
+                        setPriceTab(type);
                         setPricingOpen(false);
                         api.get(`/customers/${customerId}/prices?order_type=${type}`)
-                          .then(setSukiPrices)
+                          .then(setCustomPrices)
                           .catch(() => {});
                       }}
                       className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
-                        ${sukiTab === type
+                        ${priceTab === type
                           ? type === 'delivery'
                             ? 'bg-slate-800 text-white border-slate-800'
                             : 'bg-blue-700 text-white border-blue-700'
@@ -296,7 +294,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                 {pricingOpen && (
                   <div className="mb-5 p-4 bg-amber-50 rounded-lg border border-amber-200">
                     <p className="text-sm font-bold text-amber-900 mb-3">
-                      Set {sukiTab === 'pickup' ? 'Pickup' : 'Delivery'} Price
+                      Set {priceTab === 'pickup' ? 'Pickup' : 'Delivery'} Price
                     </p>
                     <div className="grid grid-cols-1 gap-3">
                       <FormField label="Product" required error={priceErrors.product_id}>
@@ -349,18 +347,11 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                         </div>
                       </FormField>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <FormField label="Custom Price (₱/case)" required error={priceErrors.custom_unit_price}>
-                          <input type="number" min="0" step="0.01"
-                            value={priceForm.custom_unit_price} onChange={setP('custom_unit_price')}
-                            className={INPUT} placeholder="0.00" />
-                        </FormField>
-                        <FormField label="Custom Deposit (₱/case)">
-                          <input type="number" min="0" step="0.01"
-                            value={priceForm.custom_deposit_fee} onChange={setP('custom_deposit_fee')}
-                            className={INPUT} placeholder="0.00" />
-                        </FormField>
-                      </div>
+                      <FormField label="Custom Price (₱/case)" required error={priceErrors.custom_unit_price}>
+                        <input type="number" min="0" step="0.01"
+                          value={priceForm.custom_unit_price} onChange={setP('custom_unit_price')}
+                          className={INPUT} placeholder="0.00" />
+                      </FormField>
 
                       <FormField label="Notes" hint="Optional">
                         <input type="text" value={priceForm.notes} onChange={setP('notes')}
@@ -385,7 +376,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                   </div>
                 )}
 
-                {sukiPrices.length === 0 ? (
+                {customPrices.length === 0 ? (
                   <p className="text-sm text-slate-400">No custom prices set yet.</p>
                 ) : (
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -394,12 +385,11 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                         <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-200">
                           <th className="text-left px-4 py-2 font-semibold">Product</th>
                           <th className="text-right px-4 py-2 font-semibold">Price / Case</th>
-                          <th className="text-right px-4 py-2 font-semibold hidden sm:table-cell">Deposit</th>
                           <th className="text-right px-4 py-2 font-semibold hidden sm:table-cell">Set</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {sukiPrices.map((sp) => (
+                        {customPrices.map((sp) => (
                           <tr key={sp.id} className="border-t border-slate-100">
                             <td className="px-4 py-3 font-medium text-slate-800">
                               {sp.product_name}
@@ -409,9 +399,6 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                             </td>
                             <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">
                               {PHP(sp.custom_unit_price)}
-                            </td>
-                            <td className="px-4 py-3 text-right text-slate-500 tabular-nums hidden sm:table-cell">
-                              {Number(sp.custom_deposit_fee) > 0 ? PHP(sp.custom_deposit_fee) : '—'}
                             </td>
                             <td className="px-4 py-3 text-right text-slate-400 text-xs hidden sm:table-cell">
                               {new Date(sp.created_at).toLocaleDateString('en-PH', {

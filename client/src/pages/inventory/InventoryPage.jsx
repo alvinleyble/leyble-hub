@@ -42,7 +42,7 @@ export default function InventoryPage() {
       categoryFilter === 'all' || (p.category ?? 'Uncategorised') === categoryFilter;
     const matchStock =
       stockFilter === 'all' ||
-      (stockFilter === 'out'  && p.current_stock === 0) ||
+      (stockFilter === 'out'  && p.current_stock <= 0) ||
       (stockFilter === 'low'  && p.current_stock > 0 && p.current_stock <= 10);
     return matchSearch && matchCategory && matchStock;
   });
@@ -148,7 +148,7 @@ export default function InventoryPage() {
                 <th className="text-left px-5 py-3 font-semibold">Product</th>
                 <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">SKU</th>
                 <th className="text-right px-5 py-3 font-semibold">Price / Case</th>
-                <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Deposit / Case</th>
+                <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Deposit / Bottle</th>
                 <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Btl / Case</th>
                 <th className="text-right px-5 py-3 font-semibold">Stock</th>
                 <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Status</th>
@@ -192,7 +192,7 @@ export default function InventoryPage() {
                       </td>
                       <td className="px-5 py-4 text-right tabular-nums">
                         <span className={`font-bold text-base ${
-                          p.current_stock === 0  ? 'text-red-600'   :
+                          p.current_stock <= 0   ? 'text-red-600'   :
                           p.current_stock <= 10  ? 'text-amber-600' :
                                                    'text-slate-900'
                         }`}>

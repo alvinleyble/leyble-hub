@@ -11,6 +11,7 @@ const DEFAULT_FORM = {
   name: '', category: '', unit: 'case', sku: '',
   base_wholesale_price: '', deposit_fee: '0',
   current_stock: '0', units_per_case: '1',
+  requires_bottle_return: false,
 };
 
 export default function ProductFormModal({ onClose, onSaved }) {
@@ -44,9 +45,10 @@ export default function ProductFormModal({ onClose, onSaved }) {
         unit:                 form.unit.trim(),
         sku:                  form.sku.trim() || null,
         base_wholesale_price: Number(form.base_wholesale_price),
-        deposit_fee:          Number(form.deposit_fee),
+        deposit_fee:          form.requires_bottle_return ? Number(form.deposit_fee) : 0,
         current_stock:        Number(form.current_stock),
         units_per_case:       Number(form.units_per_case),
+        requires_bottle_return: form.requires_bottle_return,
       });
       addToast(`${form.name} added to inventory.`, 'success');
       onSaved();
@@ -119,11 +121,33 @@ export default function ProductFormModal({ onClose, onSaved }) {
                   <input type="number" min="0" step="0.01" value={form.base_wholesale_price}
                     onChange={set('base_wholesale_price')} className={FIELD_CLASS} placeholder="0.00" />
                 </FormField>
-                <FormField label="Deposit Fee (₱ / case)" hint="0 if no returnable bottles">
+                <FormField label="Deposit Fee (₱ / bottle)" hint="Only for returnable-bottle products">
                   <input type="number" min="0" step="0.01" value={form.deposit_fee}
-                    onChange={set('deposit_fee')} className={FIELD_CLASS} placeholder="0.00" />
+                    disabled={!form.requires_bottle_return}
+                    onChange={set('deposit_fee')}
+                    className={FIELD_CLASS + ' disabled:bg-slate-100 disabled:text-slate-400'} placeholder="0.00" />
                 </FormField>
               </div>
+            </div>
+
+            <div className="sm:col-span-2 border-t border-slate-100 pt-4">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
+              <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={form.requires_bottle_return}
+                  onChange={(e) => setForm((f) => ({
+                    ...f,
+                    requires_bottle_return: e.target.checked,
+                    deposit_fee: e.target.checked ? f.deposit_fee : '0',
+                  }))}
+                  className="w-5 h-5 accent-blue-700"
+                />
+                <span className="text-base text-slate-700">
+                  Requires bottle return
+                  <span className="block text-sm text-slate-400">Off for plastic / non-returnable products</span>
+                </span>
+              </label>
             </div>
 
           </div>

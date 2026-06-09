@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { logActivity, diffFields } = require('../lib/activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -58,6 +59,15 @@ router.post('/', async (req, res, next) => {
       [title, description, related_order_id || null, related_personnel_id || null,
        amount !== undefined ? amount : null, req.user.id]
     );
+
+    await logActivity(db, {
+      entityType: 'ticket',
+      entityId:   ticket.id,
+      action:     'created',
+      summary:    `Ticket '${ticket.title}' created`,
+      performedBy: req.user.id,
+    });
+
     res.status(201).json(ticket);
   } catch (err) {
     next(err);
@@ -99,6 +109,13 @@ router.patch('/:id', async (req, res, next) => {
 
     const isResolving = status === 'resolved';
 
+    const changes = diffFields(existing, req.body, [
+      ['title',            'Title'],
+      ['description',      'Description'],
+      ['amount',           'Amount'],
+      ['resolution_notes', 'Resolution notes'],
+    ]);
+
     const { rows: [ticket] } = await db.query(
       `UPDATE tickets SET
          title            = $1,
@@ -122,6 +139,27 @@ router.patch('/:id', async (req, res, next) => {
         req.params.id,
       ]
     );
+
+    if (changes.length && !isResolving) {
+      await logActivity(db, {
+        entityType: 'ticket',
+        entityId:   ticket.id,
+        action:     'edited',
+        summary:    `Ticket #${ticket.id}: ${changes.join('; ')}`,
+        performedBy: req.user.id,
+      });
+    }
+
+    if (isResolving) {
+      await logActivity(db, {
+        entityType: 'ticket',
+        entityId:   ticket.id,
+        action:     'resolved',
+        summary:    `Ticket #${ticket.id} '${ticket.title}' resolved`,
+        performedBy: req.user.id,
+      });
+    }
+
     res.json(ticket);
   } catch (err) {
     next(err);

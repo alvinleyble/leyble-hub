@@ -54,6 +54,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
           units_per_case:       String(data.units_per_case ?? 1),
           current_stock:        String(data.current_stock),
           is_active:            data.is_active,
+          requires_bottle_return: data.requires_bottle_return ?? false,
         });
       })
       .catch(() => addToast('Failed to load product.', 'error'))
@@ -85,10 +86,11 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
         unit:                 form.unit.trim(),
         sku:                  form.sku.trim() || null,
         base_wholesale_price: Number(form.base_wholesale_price),
-        deposit_fee:          Number(form.deposit_fee),
+        deposit_fee:          form.requires_bottle_return ? Number(form.deposit_fee) : 0,
         units_per_case:       Number(form.units_per_case),
         current_stock:        Number(form.current_stock),
         is_active:            form.is_active,
+        requires_bottle_return: form.requires_bottle_return,
       });
       addToast('Product updated.', 'success');
       onSaved();
@@ -167,7 +169,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                 <div>
                   <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Current Stock</p>
                   <p className={`text-5xl font-bold tabular-nums mt-1 ${
-                    Number(product.current_stock) === 0 ? 'text-red-600' :
+                    Number(product.current_stock) <= 0 ? 'text-red-600' :
                     Number(product.current_stock) <= 10 ? 'text-amber-600' : 'text-slate-900'
                   }`}>
                     {product.current_stock}
@@ -322,11 +324,32 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                     <input type="number" min="0" step="0.01" value={form.base_wholesale_price}
                       onChange={set('base_wholesale_price')} className={INPUT} />
                   </FormField>
-                  <FormField label="Deposit Fee (₱)" hint="Per case, 0 if none">
+                  <FormField label="Deposit Fee (₱ / bottle)" hint="Only for returnable-bottle products">
                     <input type="number" min="0" step="0.01" value={form.deposit_fee}
-                      onChange={set('deposit_fee')} className={INPUT} />
+                      disabled={!form.requires_bottle_return}
+                      onChange={set('deposit_fee')}
+                      className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
                   </FormField>
                 </div>
+              </div>
+
+              <div className="px-6 py-5 border-b border-slate-200">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
+                <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+                  <input
+                    type="checkbox" id="requires_bottle_return" checked={form.requires_bottle_return}
+                    onChange={(e) => setForm((f) => ({
+                      ...f,
+                      requires_bottle_return: e.target.checked,
+                      deposit_fee: e.target.checked ? f.deposit_fee : '0',
+                    }))}
+                    className="w-5 h-5 accent-blue-700"
+                  />
+                  <span className="text-base text-slate-700">
+                    Requires bottle return
+                    <span className="block text-sm text-slate-400">Off for plastic / non-returnable products</span>
+                  </span>
+                </label>
               </div>
 
               <div className="px-6 py-4 flex justify-end border-b border-slate-200">
