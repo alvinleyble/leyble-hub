@@ -1,0 +1,8 @@
+{
+  "appId": "com.leyble.hub",
+  "appName": "Leyble Hub",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

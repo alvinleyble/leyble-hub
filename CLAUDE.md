@@ -153,13 +153,18 @@ WHERE op.order_id = $1
 
 ---
 
-## Deployment — parents' Windows computer
+## Deployment — cloud + Android app
 
-- Location: `C:\leyble-hub\`
-- Process manager: PM2 (`pm2 start npm --name leyble-client --cwd C:\leyble-hub\client -- run dev`)
-- Update procedure: double-click `update.bat` in the repo root
-- App URL: `http://localhost:5173`
-- Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD` in `server/.env`)
+There is no on-prem/Windows computer. The product ships as an **Android APK** (Capacitor wrap
+of the existing React app) talking to a **cloud-hosted** backend + DB:
+- **Backend:** Express on **Render** (root dir `server/`, `node src/index.js`).
+- **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
+- **Frontend:** built into the APK; not publicly hosted. `npm run dev` is dev-only.
+- Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD`, set as a host env var).
+- Full build/deploy/sideload steps: **[ANDROID.md](ANDROID.md)**.
+
+> The old Windows/PM2 `.bat` scripts (`start/stop/restart/update.bat`) are **dev-only legacy**
+> — they assumed an on-prem PC that no longer exists.
 
 ---
 
@@ -172,7 +177,11 @@ WHERE op.order_id = $1
 - Always present changes and ask "ready to commit and push?" — wait for a direct "yes" or "okay, commit and push."
 
 ## Security rules
-- JWT in HTTP-only, SameSite=Strict cookies — never localStorage, never log the token
+- JWT in HTTP-only, SameSite=Strict cookies (web) — never localStorage, never log the token.
+  **Native Android exception:** the Capacitor app can't use SameSite=strict cookies
+  cross-origin, so it stores the JWT in `@capacitor/preferences` (native, app-sandboxed — *not*
+  browser localStorage) and sends it as `Authorization: Bearer`. `requireAuth` accepts both
+  cookie and Bearer; see [ANDROID.md](ANDROID.md).
 - `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - All API routes require `requireAuth` middleware except `POST /api/v1/auth/login`
 - Parameterized queries only — no string interpolation into SQL

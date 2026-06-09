@@ -35,7 +35,9 @@ router.post('/login', async (req, res, next) => {
       expiresIn: process.env.JWT_EXPIRES_IN || '8h',
     });
 
-    res.cookie('jwt', token, COOKIE_OPTS).json(payload);
+    // Cookie for the web (dev) client; `token` in the body for the native
+    // Android app, which stores it and sends it as an Authorization header.
+    res.cookie('jwt', token, COOKIE_OPTS).json({ ...payload, token });
   } catch (err) {
     next(err);
   }

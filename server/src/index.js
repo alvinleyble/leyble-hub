@@ -16,9 +16,22 @@ const dashboardRoutes = require('./routes/dashboard');
 
 const app = express();
 
+// Allowed browser origins. Local dev uses the Vite server; the native Android
+// app (Capacitor) serves from https://localhost. CLIENT_ORIGIN may add more
+// (comma-separated) in production.
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://localhost',
+  'capacitor://localhost',
+  ...(process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(',').map((o) => o.trim()) : []),
+];
 app.use(
   cors({
-    origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+    origin(origin, cb) {
+      // No origin = same-origin / non-browser clients (e.g. native fetch); allow.
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      cb(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
     credentials: true,
   })
 );
