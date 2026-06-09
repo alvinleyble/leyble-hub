@@ -35,12 +35,32 @@ async function reset() {
   const client = await pool.connect();
   try {
     console.log('Resetting business data...');
+
+    // Only truncate tables that actually exist, so a DB that is behind on
+    // migrations doesn't abort the whole reset with "relation ... does not exist".
+    const { rows } = await client.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = ANY($1)`,
+      [TABLES]
+    );
+    const present = new Set(rows.map((r) => r.table_name));
+    const toClear = TABLES.filter((t) => present.has(t));
+    const missing = TABLES.filter((t) => !present.has(t));
+
+    if (toClear.length === 0) {
+      console.error('None of the expected tables exist. Run `npm run migrate` first.');
+      process.exit(1);
+    }
+
     await client.query('BEGIN');
     await client.query(
-      `TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`
+      `TRUNCATE ${toClear.join(', ')} RESTART IDENTITY CASCADE`
     );
     await client.query('COMMIT');
-    console.log(`  ✓ Cleared: ${TABLES.join(', ')}`);
+    console.log(`  ✓ Cleared: ${toClear.join(', ')}`);
+    if (missing.length > 0) {
+      console.log(`  ↳ skipped (not in DB — run \`npm run migrate\`): ${missing.join(', ')}`);
+    }
     console.log('  ↳ users table preserved — your login still works.');
     console.log('Done.');
   } catch (err) {
