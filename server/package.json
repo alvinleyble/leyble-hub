@@ -7,7 +7,9 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "migrate": "node db/migrate.js",
-    "seed": "node db/seed.js"
+    "seed": "node db/seed.js",
+    "reset-data": "node db/reset-data.js",
+    "create-user": "node db/create-user.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
