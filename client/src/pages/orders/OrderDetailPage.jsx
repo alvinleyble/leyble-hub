@@ -188,7 +188,7 @@ export default function OrderDetailPage() {
       const displayTotal = qty * Number(item.unit_price) + itemDep;
 
       let depLine = '';
-      if (showDeposit && dep > 0) {
+      if (showDeposit && dep > 0 && itemDep > 0) {
         const isLive = item.requires_bottle_return
           && returnCounts[item.id] !== undefined
           && returnCounts[item.id] !== '';
@@ -213,7 +213,7 @@ export default function OrderDetailPage() {
       }
       return `
         <div style="margin-bottom:5px">
-          <div style="font-weight:bold">${item.product_name}</div>
+          <div style="font-weight:bold">${item.sku || ''}</div>
           <div style="display:flex;justify-content:space-between">
             <span style="color:#333">&nbsp;&nbsp;${qty} ${item.unit || 'cs'} &times; ${PHP(item.unit_price)}</span>
             <span>${PHP(displayTotal)}</span>

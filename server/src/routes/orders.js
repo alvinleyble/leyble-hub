@@ -101,7 +101,7 @@ async function getFullOrder(orderId) {
   if (!order) return null;
 
   const { rows: items } = await db.query(
-    `SELECT oi.*, p.name AS product_name, p.unit, p.category, p.requires_bottle_return
+    `SELECT oi.*, p.name AS product_name, p.sku, p.unit, p.category, p.requires_bottle_return
      FROM order_items oi
      JOIN products p ON p.id = oi.product_id
      WHERE oi.order_id = $1
