@@ -103,7 +103,7 @@ export default function IncomingPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
                 <th className="text-left px-5 py-3 font-semibold">Date Received</th>
                 <th className="text-left px-5 py-3 font-semibold">Supplier</th>
                 <th className="text-right px-5 py-3 font-semibold hidden sm:table-cell"># Items</th>

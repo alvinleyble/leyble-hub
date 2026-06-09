@@ -13,26 +13,44 @@ const NAV_ITEMS = [
   { path: '/audit',     label: 'Audit Log' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ onClose }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
+    if (onClose) onClose();
     await logout();
     navigate('/login', { replace: true });
   };
 
   return (
     <aside
-      className="w-56 flex flex-col shrink-0 bg-slate-900 text-slate-100"
+      className="w-56 h-full flex flex-col shrink-0 bg-slate-900 text-slate-100"
       aria-label="Main navigation"
     >
       {/* Brand header */}
-      <div className="px-5 py-5 border-b border-slate-700">
-        <p className="text-lg font-bold tracking-tight select-none">Leyble Hub</p>
-        <p className="text-xs text-slate-400 mt-0.5 truncate" title={user?.full_name}>
-          {user?.full_name}
-        </p>
+      <div className="flex items-start justify-between px-5 py-5 border-b border-slate-700">
+        <div className="min-w-0">
+          <p className="text-lg font-bold tracking-tight select-none">Leyble Hub</p>
+          <p className="text-xs text-slate-400 mt-0.5 truncate" title={user?.full_name}>
+            {user?.full_name}
+          </p>
+        </div>
+        {/* Close button — only rendered in drawer (narrow-screen) mode */}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            className="flex items-center justify-center w-12 h-12 -mr-3 -mt-2 rounded-lg shrink-0
+                       text-slate-300 hover:bg-slate-800 hover:text-white
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          >
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Navigation links — each row is at least 48px tall */}
@@ -41,6 +59,7 @@ export default function Sidebar() {
           <NavLink
             key={path}
             to={path}
+            onClick={onClose}
             className={({ isActive }) =>
               `flex items-center min-h-[48px] px-5 text-base font-medium transition-colors duration-100
                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400

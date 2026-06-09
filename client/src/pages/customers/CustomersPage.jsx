@@ -66,7 +66,7 @@ export default function CustomersPage() {
           <input
             type="checkbox" checked={showInactive}
             onChange={(e) => setShowInactive(e.target.checked)}
-            className="w-5 h-5 accent-blue-700"
+            className="w-6 h-6 accent-blue-700"
           />
           <span className="text-base text-slate-700 font-medium whitespace-nowrap">Show inactive</span>
         </label>
@@ -83,7 +83,7 @@ export default function CustomersPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
                 <th className="text-left px-5 py-3 font-semibold">Name</th>
                 <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">Type</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Phone</th>
@@ -104,7 +104,7 @@ export default function CustomersPage() {
                     </p>
                   </td>
                   <td className="px-5 py-4 hidden sm:table-cell">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${TYPE_BADGE[c.customer_type]}`}>
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[c.customer_type]}`}>
                       {c.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
                     </span>
                   </td>
@@ -116,11 +116,11 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-5 py-4">
                     {c.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-300">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
                         Active
                       </span>
                     ) : (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500 border border-slate-200">
                         Inactive
                       </span>
                     )}

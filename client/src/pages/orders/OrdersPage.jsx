@@ -276,7 +276,7 @@ export default function OrdersPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
                 {showCheckboxes && (
                   <th className="px-5 py-3 w-12">
                     <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
@@ -284,7 +284,7 @@ export default function OrdersPage() {
                         type="checkbox"
                         checked={allSelected}
                         onChange={toggleSelectAll}
-                        className="w-5 h-5 rounded border-slate-300 text-blue-700
+                        className="w-6 h-6 rounded border-slate-300 text-blue-700
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                         aria-label="Select all orders"
                       />
@@ -313,7 +313,7 @@ export default function OrdersPage() {
                           type="checkbox"
                           checked={selectedIds.has(o.id)}
                           onChange={() => toggleSelected(o.id)}
-                          className="w-5 h-5 rounded border-slate-300 text-blue-700
+                          className="w-6 h-6 rounded border-slate-300 text-blue-700
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                           aria-label={`Select order #${o.id}`}
                         />
@@ -337,11 +337,11 @@ export default function OrdersPage() {
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex flex-wrap gap-1.5 items-center">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                         {STATUS_LABEL[o.status] ?? o.status}
                       </span>
                       {o.order_type === 'pickup' && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
                           Pickup
                         </span>
                       )}

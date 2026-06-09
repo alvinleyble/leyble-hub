@@ -180,7 +180,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
@@ -242,7 +242,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
                   <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
                     <input type="checkbox" id="cust_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-5 h-5 accent-blue-700" />
+                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700" />
                     <label htmlFor="cust_active" className="text-base font-medium text-slate-700 cursor-pointer">
                       Active
                     </label>
@@ -327,10 +327,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                     <button
                                       type="button"
                                       onMouseDown={() => selectPriceProduct(p)}
-                                      className="w-full text-left px-4 py-2.5 text-sm hover:bg-amber-50 flex items-center justify-between gap-2"
+                                      className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-amber-50 flex items-center justify-between gap-2"
                                     >
                                       <span className="font-medium text-slate-800">{p.name}</span>
-                                      <span className="text-xs text-slate-400 shrink-0 tabular-nums">
+                                      <span className="text-sm text-slate-400 shrink-0 tabular-nums">
                                         std {PHP(p.base_wholesale_price)}
                                       </span>
                                     </button>

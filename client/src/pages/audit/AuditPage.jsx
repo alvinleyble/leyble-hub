@@ -281,7 +281,7 @@ export default function AuditPage() {
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
                       <th className="text-left px-5 py-3 font-semibold">Product</th>
                       <th className="text-left px-5 py-3 font-semibold">Action</th>
@@ -301,7 +301,7 @@ export default function AuditPage() {
                           {e.product_name}
                         </td>
                         <td className="px-5 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border whitespace-nowrap
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
                             ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                             {ACTION_LABELS[e.action_type] ?? e.action_type}
                           </span>
@@ -416,7 +416,7 @@ export default function AuditPage() {
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
                       <th className="text-left px-5 py-3 font-semibold">Entity</th>
                       <th className="text-left px-5 py-3 font-semibold">Action</th>
@@ -434,7 +434,7 @@ export default function AuditPage() {
                           <EntityRef entry={e} />
                         </td>
                         <td className="px-5 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border whitespace-nowrap
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
                             ${ACTIVITY_ACTION_COLORS[e.action] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                             {ACTIVITY_ACTION_LABELS[e.action] ?? e.action}
                           </span>

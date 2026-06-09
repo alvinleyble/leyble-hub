@@ -72,7 +72,7 @@ export default function ProductFormModal({ onClose, onSaved }) {
           <button
             onClick={onClose}
             aria-label="Close"
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700
                        hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
             ✕
@@ -141,7 +141,7 @@ export default function ProductFormModal({ onClose, onSaved }) {
                     requires_bottle_return: e.target.checked,
                     deposit_fee: e.target.checked ? f.deposit_fee : '0',
                   }))}
-                  className="w-5 h-5 accent-blue-700"
+                  className="w-6 h-6 accent-blue-700"
                 />
                 <span className="text-base text-slate-700">
                   Requires bottle return

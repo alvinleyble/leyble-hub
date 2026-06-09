@@ -107,7 +107,7 @@ export default function DashboardPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-base">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                  <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">
                     <th className="text-left px-5 py-3 font-semibold">Order #</th>
                     <th className="text-left px-5 py-3 font-semibold">Customer</th>
                     <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Personnel</th>

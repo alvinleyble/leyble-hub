@@ -54,7 +54,7 @@ export default function CustomerFormModal({ onClose, onSaved }) {
           <h2 id="create-customer-title" className="text-xl font-bold text-slate-900">Add Customer</h2>
           <button
             onClick={onClose} aria-label="Close"
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >

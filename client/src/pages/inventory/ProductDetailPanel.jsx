@@ -151,7 +151,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
           <button
             onClick={onClose}
             aria-label="Close panel"
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
@@ -309,7 +309,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                   <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
                     <input
                       type="checkbox" id="is_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-5 h-5 accent-blue-700"
+                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700"
                     />
                     <label htmlFor="is_active" className="text-base font-medium text-slate-700 cursor-pointer">
                       Active (visible when creating orders)
@@ -344,7 +344,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                       requires_bottle_return: e.target.checked,
                       deposit_fee: e.target.checked ? f.deposit_fee : '0',
                     }))}
-                    className="w-5 h-5 accent-blue-700"
+                    className="w-6 h-6 accent-blue-700"
                   />
                   <span className="text-base text-slate-700">
                     Requires bottle return

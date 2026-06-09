@@ -82,7 +82,7 @@ export default function TicketsPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
                 <th className="text-left px-5 py-3 font-semibold">#</th>
                 <th className="text-left px-5 py-3 font-semibold">Title</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Related</th>
@@ -124,7 +124,7 @@ export default function TicketsPage() {
                     )}
                   </td>
                   <td className="px-5 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
                       ${t.status === 'resolved'
                         ? 'bg-green-100 text-green-800 border-green-300'
                         : 'bg-amber-100 text-amber-800 border-amber-300'}`}>

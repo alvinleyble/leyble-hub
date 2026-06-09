@@ -80,7 +80,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved }) {
           <button
             onClick={onClose}
             aria-label="Close panel"
-            className="shrink-0 w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+            className="shrink-0 w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >

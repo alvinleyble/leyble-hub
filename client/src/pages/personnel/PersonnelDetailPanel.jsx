@@ -138,7 +138,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
@@ -190,7 +190,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
 
                   <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
                     <input type="checkbox" id="pers_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-5 h-5 accent-blue-700" />
+                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700" />
                     <label htmlFor="pers_active" className="text-base font-medium text-slate-700 cursor-pointer">
                       Active (can be assigned to orders)
                     </label>

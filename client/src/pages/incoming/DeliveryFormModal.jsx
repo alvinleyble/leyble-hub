@@ -111,7 +111,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
           <button
             onClick={onClose}
             aria-label="Close"
-            className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
@@ -209,11 +209,11 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                                     <button
                                       type="button"
                                       onMouseDown={() => selectProduct(item._key, p)}
-                                      className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
+                                      className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
                                     >
                                       <span className="font-medium text-slate-800">{p.name}</span>
                                       {p.category && (
-                                        <span className="text-xs text-slate-400 shrink-0">{p.category}</span>
+                                        <span className="text-sm text-slate-400 shrink-0">{p.category}</span>
                                       )}
                                     </button>
                                   </li>
@@ -232,7 +232,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                           onClick={() => removeItem(item._key)}
                           disabled={items.length === 1}
                           aria-label="Remove item"
-                          className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+                          className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                                      hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           ✕
