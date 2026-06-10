@@ -126,7 +126,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   };
 
   const selectPriceProduct = (product) => {
-    setProductSearch(product.name + (product.category ? ` (${product.category})` : ''));
+    setProductSearch(product.sku || product.name);
     setProductDropOpen(false);
     setPriceForm((f) => ({
       ...f,
@@ -319,7 +319,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                               {products
                                 .filter((p) =>
                                   p.is_active &&
-                                  (p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+                                  ((p.sku ?? '').toLowerCase().includes(productSearch.toLowerCase()) ||
+                                   p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
                                    (p.category ?? '').toLowerCase().includes(productSearch.toLowerCase()))
                                 )
                                 .map((p) => (
@@ -329,7 +330,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                       onMouseDown={() => selectPriceProduct(p)}
                                       className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-amber-50 flex items-center justify-between gap-2"
                                     >
-                                      <span className="font-medium text-slate-800">{p.name}</span>
+                                      <span className="font-medium text-slate-800">{p.sku || p.name}</span>
                                       <span className="text-sm text-slate-400 shrink-0 tabular-nums">
                                         std {PHP(p.base_wholesale_price)}
                                       </span>
@@ -338,7 +339,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                 ))}
                               {products.filter((p) =>
                                 p.is_active &&
-                                (p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+                                ((p.sku ?? '').toLowerCase().includes(productSearch.toLowerCase()) ||
+                                 p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
                                  (p.category ?? '').toLowerCase().includes(productSearch.toLowerCase()))
                               ).length === 0 && (
                                 <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
@@ -393,7 +395,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                         {customPrices.map((sp) => (
                           <tr key={sp.id} className="border-t border-slate-100">
                             <td className="px-4 py-3 font-medium text-slate-800">
-                              {sp.product_name}
+                              {sp.sku || sp.product_name}
                               {sp.notes && (
                                 <span className="block text-xs text-slate-400 italic">{sp.notes}</span>
                               )}

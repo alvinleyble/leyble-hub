@@ -217,7 +217,7 @@ export default function AuditPage() {
               <option value="">All Products</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}{!p.is_active ? ' (inactive)' : ''}
+                  {p.sku || p.name}{!p.is_active ? ' (inactive)' : ''}
                 </option>
               ))}
             </select>
@@ -298,7 +298,7 @@ export default function AuditPage() {
                           {formatDateTime(e.created_at)}
                         </td>
                         <td className="px-5 py-3 font-medium text-slate-900">
-                          {e.product_name}
+                          {e.sku || e.product_name}
                         </td>
                         <td className="px-5 py-3">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap

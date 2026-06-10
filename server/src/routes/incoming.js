@@ -105,7 +105,7 @@ router.post('/', async (req, res, next) => {
       [delivery.id]
     );
     const { rows: deliveryItems } = await db.query(
-      `SELECT sdi.*, p.name AS product_name, p.unit
+      `SELECT sdi.*, p.name AS product_name, p.sku, p.unit
        FROM supplier_delivery_items sdi JOIN products p ON p.id = sdi.product_id
        WHERE sdi.delivery_id = $1 ORDER BY sdi.id`,
       [delivery.id]
@@ -133,7 +133,7 @@ router.get('/:id', async (req, res, next) => {
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
 
     const { rows: items } = await db.query(
-      `SELECT sdi.*, p.name AS product_name, p.unit
+      `SELECT sdi.*, p.name AS product_name, p.sku, p.unit
        FROM supplier_delivery_items sdi
        JOIN products p ON p.id = sdi.product_id
        WHERE sdi.delivery_id = $1

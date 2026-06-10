@@ -212,7 +212,7 @@ router.get('/:id/prices', async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT DISTINCT ON (cpp.product_id)
          cpp.id, cpp.product_id, cpp.customer_id, cpp.order_type,
-         p.name AS product_name, p.unit,
+         p.name AS product_name, p.sku, p.unit,
          cpp.custom_unit_price,
          cpp.notes, cpp.created_at,
          u.full_name AS set_by_name
@@ -253,7 +253,7 @@ router.post('/:id/prices', async (req, res, next) => {
     );
 
     const { rows: [enriched] } = await db.query(
-      `SELECT cpp.*, p.name AS product_name, p.unit, u.full_name AS set_by_name
+      `SELECT cpp.*, p.name AS product_name, p.sku, p.unit, u.full_name AS set_by_name
        FROM customer_product_prices cpp
        JOIN products p ON p.id = cpp.product_id
        LEFT JOIN users u ON u.id = cpp.set_by_user_id

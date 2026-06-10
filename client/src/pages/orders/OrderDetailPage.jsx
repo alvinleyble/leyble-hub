@@ -1,11 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
+
+// Native Android print bridge (implemented in android/.../PrinterPlugin.java).
+// On web this proxy is unused — the Print button that calls it only renders
+// inside the native-only receipt overlay.
+const Printer = registerPlugin('Printer');
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -50,6 +56,17 @@ export default function OrderDetailPage() {
   // Live, in-progress bottle-return entries — lifted up from OrderCloseForm so its
   // breakdown math can read them. Keyed by order_items.id.
   const [returnCounts, setReturnCounts] = useState({});
+  const [nativePrintDoc, setNativePrintDoc] = useState(null);
+
+  // Android WebView ignores window.print(), so hand the receipt HTML to the
+  // native PrinterPlugin which drives Android's system PrintManager.
+  const handleNativePrint = async () => {
+    try {
+      await Printer.printHtml({ html: nativePrintDoc });
+    } catch (e) {
+      addToast('Printing is not available on this device.', 'error');
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -242,8 +259,7 @@ export default function OrderDetailPage() {
       ? `<div style="margin-top:2px;font-style:italic">Note: ${order.notes}</div>`
       : '';
 
-    const win = window.open('', '_blank', 'width=300,height=700');
-    win.document.write(`<!DOCTYPE html>
+    const htmlString = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -312,7 +328,15 @@ export default function OrderDetailPage() {
   </div>
   <div style="border-top:1px solid #000;margin-top:20px;padding-top:2px;font-size:8px">By:</div>
 </body>
-</html>`);
+</html>`;
+
+    if (Capacitor.isNativePlatform()) {
+      setNativePrintDoc(htmlString);
+      return;
+    }
+
+    const win = window.open('', '_blank', 'width=300,height=700');
+    win.document.write(htmlString);
     win.document.close();
     win.focus();
     win.print();
@@ -472,8 +496,7 @@ export default function OrderDetailPage() {
             {order.items.map((item) => (
               <tr key={item.id} className="border-t border-slate-100">
                 <td className="px-5 py-3">
-                  <p className="font-medium text-slate-800">{item.product_name}</p>
-                  <p className="text-xs text-slate-400">{item.category}</p>
+                  <p className="font-medium text-slate-800">{item.sku || item.product_name}</p>
                 </td>
                 <td className="px-5 py-3 text-right tabular-nums text-slate-700">
                   {item.quantity} {item.unit}
@@ -780,6 +803,31 @@ export default function OrderDetailPage() {
           onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); load(); }}
         />
+      )}
+
+      {/* Native print preview overlay (Android only) */}
+      {nativePrintDoc && (
+        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+          <div className="flex gap-3 p-3 border-b border-slate-200 shrink-0">
+            <button
+              onClick={handleNativePrint}
+              className="flex-1 h-12 rounded-lg bg-blue-600 text-white font-semibold text-base"
+            >
+              Print
+            </button>
+            <button
+              onClick={() => setNativePrintDoc(null)}
+              className="flex-1 h-12 rounded-lg bg-slate-100 text-slate-700 font-semibold text-base"
+            >
+              Close
+            </button>
+          </div>
+          <iframe
+            srcDoc={nativePrintDoc}
+            className="flex-1 w-full border-none"
+            title="Receipt preview"
+          />
+        </div>
       )}
 
     </div>

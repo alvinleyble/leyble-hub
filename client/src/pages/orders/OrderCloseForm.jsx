@@ -77,7 +77,7 @@ export default function OrderCloseForm({ order, returnCounts, onChangeReturnCoun
           const b = breakdownForItem(item, returnCounts);
           return (
             <div key={item.id}>
-              <p className="text-sm font-semibold text-slate-800">{item.product_name}</p>
+              <p className="text-sm font-semibold text-slate-800">{item.sku || item.product_name}</p>
               <p className="text-xs text-slate-500 mb-2">
                 {b.totalBottles} total bottles ({item.quantity} cases × {item.units_per_case || 1})
               </p>

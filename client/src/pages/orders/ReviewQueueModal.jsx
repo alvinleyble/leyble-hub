@@ -186,7 +186,7 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                       return (
                         <li key={item.id}>
                           <div className="flex justify-between text-sm">
-                            <span className="text-slate-700">{item.product_name} — {item.quantity} {item.unit}</span>
+                            <span className="text-slate-700">{item.sku || item.product_name} — {item.quantity} {item.unit}</span>
                             <span className="font-medium text-slate-900 tabular-nums">{PHP(b.lineTotal)}</span>
                           </div>
                           {b.hasDeposit && (

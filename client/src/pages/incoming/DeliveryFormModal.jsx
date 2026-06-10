@@ -51,7 +51,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
     setItems((prev) => prev.map((i) => i._key === key ? { ...i, [field]: value } : i));
 
   const selectProduct = (key, product) => {
-    const display = product.name + (product.category ? ` (${product.category})` : '');
+    const display = product.sku || product.name;
     setItems((prev) => prev.map((i) => i._key === key
       ? { ...i, _productSearch: display, product_id: String(product.id) }
       : i
@@ -201,6 +201,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                             <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
                               {products
                                 .filter((p) =>
+                                  (p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
                                   p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
                                   (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase())
                                 )
@@ -211,14 +212,12 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                                       onMouseDown={() => selectProduct(item._key, p)}
                                       className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
                                     >
-                                      <span className="font-medium text-slate-800">{p.name}</span>
-                                      {p.category && (
-                                        <span className="text-sm text-slate-400 shrink-0">{p.category}</span>
-                                      )}
+                                      <span className="font-medium text-slate-800">{p.sku || p.name}</span>
                                     </button>
                                   </li>
                                 ))}
                               {products.filter((p) =>
+                                (p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
                                 p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
                                 (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase())
                               ).length === 0 && (

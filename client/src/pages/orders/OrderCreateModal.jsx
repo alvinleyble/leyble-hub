@@ -44,7 +44,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const [items, setItems]                 = useState(
     editOrder?.items?.map((i) => ({
       _key:                   Math.random(),
-      _productSearch:         i.product_name,
+      _productSearch:         i.sku || i.product_name,
       requires_bottle_return: i.requires_bottle_return ?? false,
       product_id:             String(i.product_id),
       product_name:           i.product_name,
@@ -126,7 +126,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       return;
     }
     const customEntry = customPrices[product.id];
-    const displayName = product.name + (product.category ? ` (${product.category})` : '');
+    const displayName = product.sku || product.name;
     setItems((prev) => prev.map((i) => i._key === key ? {
       ...i,
       _productSearch:         displayName,
@@ -384,7 +384,8 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                               {products
                                 .filter((p) =>
                                   p.is_active &&
-                                  (p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
+                                  ((p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
+                                   p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
                                    (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()))
                                 )
                                 .map((p) => (
@@ -397,16 +398,14 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                                       }}
                                       className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
                                     >
-                                      <span className="font-medium text-slate-800">{p.name}</span>
-                                      {p.category && (
-                                        <span className="text-sm text-slate-400 shrink-0">{p.category}</span>
-                                      )}
+                                      <span className="font-medium text-slate-800">{p.sku || p.name}</span>
                                     </button>
                                   </li>
                                 ))}
                               {products.filter((p) =>
                                 p.is_active &&
-                                (p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
+                                ((p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
+                                 p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
                                  (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()))
                               ).length === 0 && (
                                 <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>

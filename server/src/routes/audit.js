@@ -39,6 +39,7 @@ router.get('/', async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT ial.*,
               p.name       AS product_name,
+              p.sku        AS sku,
               u.full_name  AS performed_by_name
        FROM inventory_audit_logs ial
        JOIN  products p ON p.id = ial.product_id
