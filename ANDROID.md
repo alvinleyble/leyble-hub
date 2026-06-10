@@ -12,10 +12,15 @@ no separate mobile codebase. The browser version still works for local developme
 
 ```
 Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render)  ──►  Postgres (Supabase)
-        client/dist (React build)
+                                                     │
+Browser / iPad Safari (PWA)      ──HTTPS──►  also serves client/dist (same origin)
 ```
 
 - The DB and backend are **cloud-hosted** (no on-prem computer). See "Cloud setup" below.
+- The Render service serves both the API (`/api/v1/*`) and the built `client/dist` (with an
+  SPA fallback to `index.html`), so the same URL works as a website — open it in a browser,
+  log in, and "Add to Home Screen" for an app-like icon. Browser/PWA login uses a same-origin
+  `SameSite=Strict` cookie, which only works because frontend and API share one origin.
 - Auth: web uses an HTTP-only cookie; the **Android app uses a Bearer token** stored in
   `@capacitor/preferences` (native, app-sandboxed storage — *not* browser localStorage).
   Both are handled centrally in [client/src/api/client.js](client/src/api/client.js) and
@@ -46,13 +51,18 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render) 
    ```
    Note: free Supabase projects pause after ~7 days of no activity (un-pause in the dashboard).
 
-### Backend — Render
-1. Create a **Web Service** at https://render.com from this GitHub repo, root dir `server/`,
-   start command `node src/index.js`.
+### Backend + Frontend — Render (single service)
+1. Create a **Web Service** at https://render.com from this GitHub repo. **Root Directory:
+   leave blank** (repo root) — the build needs both `server/` and `client/`.
+   - Build command: `npm --prefix server install && npm --prefix client install && npm --prefix client run build && node server/db/migrate.js`
+   - Start command: `node server/src/index.js`
+   - Health check path: `/health`
 2. Set env vars (never commit these): `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`,
    `SEED_ADMIN_PASSWORD`, `NODE_ENV=production`, and optionally `CLIENT_ORIGIN`
-   (comma-separated extra browser origins).
-3. Note the public URL, e.g. `https://leyble-hub.onrender.com`.
+   (comma-separated extra browser origins — not needed for the deployed site itself, since
+   it's same-origin).
+3. Note the public URL, e.g. `https://leyble-hub.onrender.com`. This URL serves **both** the
+   API and the website (open it in a browser to use Leyble Hub directly).
    - Free tier sleeps after ~15 min idle (first request ~30–60s). Upgrade to Starter (~$7/mo)
      for always-on. **Do not use Render's free Postgres** — it is deleted ~30 days after
      creation; the DB lives on Supabase.

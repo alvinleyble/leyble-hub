@@ -3,14 +3,22 @@
 # after creation. DATABASE_URL is set manually in the dashboard to the Supabase pooled URL.
 
 services:
-  # ── Backend API ────────────────────────────────────────────────
+  # ── Backend API + built frontend (single service) ───────────────
+  # No rootDir: the build needs both server/ and client/, and Render's
+  # rootDir excludes everything outside it. The server serves
+  # client/dist at the same origin so the SameSite=Strict login cookie
+  # works for browser/PWA clients (a separate static-site origin would
+  # be cross-site under the onrender.com Public Suffix List entry).
   - type: web
     name: leyble-hub-api
     env: node
     plan: free
-    rootDir: server
-    buildCommand: npm install && node db/migrate.js
-    startCommand: node src/index.js
+    buildCommand: >
+      npm --prefix server install &&
+      npm --prefix client install &&
+      npm --prefix client run build &&
+      node server/db/migrate.js
+    startCommand: node server/src/index.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -24,27 +32,7 @@ services:
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 8h
+      # Optional: extra browser origins (comma-separated), e.g. for the
+      # Vite dev server during local testing against this deployment.
       - key: CLIENT_ORIGIN
-        fromService:
-          name: leyble-hub-client
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
-
-  # ── Frontend Static Site ───────────────────────────────────────
-  - type: web
-    name: leyble-hub-client
-    env: static
-    plan: free
-    rootDir: client
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    envVars:
-      - key: VITE_API_URL
-        fromService:
-          name: leyble-hub-api
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+        sync: false

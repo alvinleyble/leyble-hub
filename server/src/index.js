@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -51,6 +52,14 @@ app.use('/api/v1/incoming', incomingRoutes);
 app.use('/api/v1/tickets', ticketRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
+
+// Serve the built React app (client/dist) at the same origin as the API,
+// so the SameSite=Strict login cookie works for browser/PWA clients.
+const clientDist = path.join(__dirname, '../../client/dist');
+app.use(express.static(clientDist));
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 app.use(errorHandler);
 

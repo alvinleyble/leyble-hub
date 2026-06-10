@@ -156,10 +156,15 @@ WHERE op.order_id = $1
 ## Deployment — cloud + Android app
 
 There is no on-prem/Windows computer. The product ships as an **Android APK** (Capacitor wrap
-of the existing React app) talking to a **cloud-hosted** backend + DB:
-- **Backend:** Express on **Render** (root dir `server/`, `node src/index.js`).
+of the existing React app) talking to a **cloud-hosted** backend + DB. The same backend also
+serves the built frontend, so the app is also reachable as a normal website (e.g. for use on
+iPad/desktop browsers — Add to Home Screen for an app-like icon):
+- **Backend + Frontend:** single Express service on **Render** (repo root, `node server/src/index.js`).
+  Express serves the built `client/dist` and falls back to `index.html` for non-`/api` routes,
+  so the browser/PWA login cookie (`SameSite=Strict`) works same-origin — see
+  [server/src/index.js](server/src/index.js).
 - **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
-- **Frontend:** built into the APK; not publicly hosted. `npm run dev` is dev-only.
+- `npm run dev` (separate Vite + Express servers) is dev-only.
 - Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD`, set as a host env var).
 - Full build/deploy/sideload steps: **[ANDROID.md](ANDROID.md)**.
 
