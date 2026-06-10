@@ -92,9 +92,13 @@ async function getFullOrder(orderId) {
   const { rows: [order] } = await db.query(
     `SELECT o.*,
             c.name  AS customer_name, c.customer_type,
-            c.address AS customer_address, c.phone AS customer_phone
+            c.address AS customer_address, c.phone AS customer_phone,
+            up.full_name AS pending_receipt_printed_by_name,
+            ud.full_name AS delivered_receipt_printed_by_name
      FROM orders o
      JOIN customers c ON c.id = o.customer_id
+     LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
+     LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
      WHERE o.id = $1`,
     [orderId]
   );
@@ -435,6 +439,38 @@ router.patch('/:id/adjustment', async (req, res, next) => {
   }
 });
 
+// POST /api/v1/orders/:id/receipt-printed — tag that a receipt was printed and
+// confirmed by the user, for either the 'pending' or 'delivered' phase
+router.post('/:id/receipt-printed', async (req, res, next) => {
+  try {
+    const { phase } = req.body;
+    if (!['pending', 'delivered'].includes(phase)) {
+      return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
+    }
+
+    const { rows: [order] } = await db.query('SELECT id FROM orders WHERE id = $1', [req.params.id]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const column = phase === 'pending' ? 'pending_receipt_printed' : 'delivered_receipt_printed';
+    await db.query(
+      `UPDATE orders SET ${column}_at = NOW(), ${column}_by = $1, updated_at = NOW() WHERE id = $2`,
+      [req.user.id, order.id]
+    );
+
+    await logActivity(db, {
+      entityType: 'order',
+      entityId:   order.id,
+      action:     'receipt_printed',
+      summary:    `Order #${order.id} receipt printed (${phase} phase)`,
+      performedBy: req.user.id,
+    });
+
+    res.json(await getFullOrder(order.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/orders/:id/status — state machine transition
 router.post('/:id/status', async (req, res, next) => {
   const client = await db.connect();
@@ -498,7 +534,9 @@ router.post('/:id/status', async (req, res, next) => {
     if (['done', 'cancelled'].includes(newStatus)) setClauses.push('closed_at = NOW()');
     if (isStepBack) {
       if (order.status === 'in_transit') setClauses.push('dispatched_at = NULL');
-      if (order.status === 'completed')  setClauses.push('delivered_at = NULL');
+      if (order.status === 'completed') {
+        setClauses.push('delivered_at = NULL', 'delivered_receipt_printed_at = NULL', 'delivered_receipt_printed_by = NULL');
+      }
       if (order.status === 'done')       setClauses.push('closed_at = NULL');
     }
 

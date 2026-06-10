@@ -51,7 +51,8 @@ export default function OrdersPage() {
   const [bulkConfirm, setBulkConfirm]     = useState(null);
   const [bulkRunning, setBulkRunning]     = useState(false);
   const [reviewPrompt, setReviewPrompt]   = useState(null);
-  const [reviewQueueIds, setReviewQueueIds] = useState(null);
+  // { ids: number[], mode: 'pending' | 'in_transit' | 'delivered' } | null
+  const [reviewQueue, setReviewQueue]     = useState(null);
 
   const showCheckboxes = ['pending', 'in_transit', 'completed'].includes(statusTab);
 
@@ -244,18 +245,31 @@ export default function OrdersPage() {
                     Mark Picked Up ✓
                   </Button>
                 )}
-                {statusTab === 'pending' && selectionIsMixed && (
-                  <p className="text-sm text-amber-700 font-medium">
-                    Mix of delivery and pickup orders selected — deselect one type to continue.
-                  </p>
+                {statusTab === 'pending' && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setReviewQueue({ ids: Array.from(selectedIds), mode: 'pending' })}
+                  >
+                    Review Selected
+                  </Button>
                 )}
                 {statusTab === 'in_transit' && (
                   <Button size="sm" variant="warning" onClick={confirmBulkDeliver}>
                     Mark Delivered ✓
                   </Button>
                 )}
+                {statusTab === 'in_transit' && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setReviewQueue({ ids: Array.from(selectedIds), mode: 'in_transit' })}
+                  >
+                    Review Selected
+                  </Button>
+                )}
                 {statusTab === 'completed' && (
-                  <Button size="sm" onClick={() => setReviewQueueIds(Array.from(selectedIds))}>
+                  <Button size="sm" onClick={() => setReviewQueue({ ids: Array.from(selectedIds), mode: 'delivered' })}>
                     Review Selected
                   </Button>
                 )}
@@ -345,6 +359,12 @@ export default function OrdersPage() {
                           Pickup
                         </span>
                       )}
+                      {((o.status === 'pending' && o.pending_receipt_printed_at)
+                        || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                          🖶 Printed
+                        </span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -373,7 +393,7 @@ export default function OrdersPage() {
               <Button variant="secondary" onClick={() => setReviewPrompt(null)}>
                 Not now
               </Button>
-              <Button onClick={() => { setReviewQueueIds(reviewPrompt.ids); setReviewPrompt(null); }}>
+              <Button onClick={() => { setReviewQueue({ ids: reviewPrompt.ids, mode: 'delivered' }); setReviewPrompt(null); }}>
                 Review now →
               </Button>
             </div>
@@ -381,10 +401,11 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {reviewQueueIds && (
+      {reviewQueue && (
         <ReviewQueueModal
-          orderIds={reviewQueueIds}
-          onClose={() => { setReviewQueueIds(null); load(); }}
+          orderIds={reviewQueue.ids}
+          mode={reviewQueue.mode}
+          onClose={() => { setReviewQueue(null); load(); }}
         />
       )}
     </div>

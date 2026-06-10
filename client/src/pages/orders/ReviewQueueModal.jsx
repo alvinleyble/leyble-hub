@@ -3,7 +3,9 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import Modal from '../../components/ui/Modal';
 import OrderCloseForm, { breakdownForItem } from './OrderCloseForm';
+import { usePrintReceipt } from './usePrintReceipt';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -11,9 +13,47 @@ const PHP = (n) =>
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
 
-// Guided step-through for closing a batch of delivered (`completed`) orders —
-// reuses OrderCloseForm so the bottle-return math/live preview stays in one place.
-export default function ReviewQueueModal({ orderIds, onClose }) {
+// Per-mode configuration for the guided step-through. Each mode controls which
+// controls appear (print / deposit math / adjustment), when an order counts as
+// "processed" (greyed + ✓ in the tab strip and skipped by advance-to-next), and
+// the per-order action. `delivered` has no `actionFor` — it uses the close flow.
+const MODES = {
+  pending: {
+    title: 'Review Pending Orders',
+    subtitle: 'Step through each order, print the receipt, and send it out.',
+    showPrint: true, showDeposit: false, showAdjustment: true,
+    printedLabel: 'Printed (pending)',
+    printedAtField: 'pending_receipt_printed_at',
+    printedByField: 'pending_receipt_printed_by_name',
+    isProcessed: (o) => o.status !== 'pending',
+    actionFor: (o) => o.order_type === 'pickup'
+      ? { label: 'Mark Picked Up ✓', status: 'completed',  done: 'Picked up' }
+      : { label: 'Dispatch →',       status: 'in_transit', done: 'Dispatched' },
+  },
+  in_transit: {
+    title: 'Review In-Transit Orders',
+    subtitle: 'Step through each order on the way and mark it delivered.',
+    showPrint: false, showDeposit: false, showAdjustment: false,
+    isProcessed: (o) => o.status !== 'in_transit',
+    actionFor: () => ({ label: 'Mark Delivered ✓', status: 'completed', done: 'Delivered' }),
+  },
+  delivered: {
+    title: 'Review Deliveries',
+    subtitle: 'Step through each order, count returned bottles, and close it.',
+    showPrint: true, showDeposit: true, showAdjustment: true,
+    printedLabel: 'Printed (delivered)',
+    printedAtField: 'delivered_receipt_printed_at',
+    printedByField: 'delivered_receipt_printed_by_name',
+    isProcessed: (o) => o.status === 'done',
+  },
+};
+
+// Guided step-through for a batch of orders. `mode` selects the operational moment:
+// 'pending' (before dispatch), 'in_transit' (consistency-only), or 'delivered'
+// (count returned bottles + close). Reuses OrderCloseForm so the bottle-return
+// math/live preview stays in one place.
+export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered' }) {
+  const cfg = MODES[mode] ?? MODES.delivered;
   const { addToast } = useToast();
   const [orders, setOrders]   = useState({});
   const [loading, setLoading] = useState(true);
@@ -46,29 +86,46 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
     ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
     : [];
 
-  // Reset the bottle-return entries and adjustment fields whenever the active (non-closed)
-  // order changes — otherwise stale values from the previous order would linger.
+  // While the active order is still being reviewed, its adjustment lives only in the
+  // form (saved on close). Thread it into the receipt so the print matches the on-screen
+  // total. Once processed, the saved order.adjustment is authoritative — pass undefined.
+  const liveAdjustment = (cfg.showAdjustment && order && !cfg.isProcessed(order))
+    ? { adjustment: Number(adjValue) || 0, adjustment_reason: adjReason.trim() }
+    : undefined;
+
+  const {
+    handlePrint, nativePrintDoc, handleNativePrint, closeNativePreview,
+    printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
+  } = usePrintReceipt(order, returnCounts, (updated) =>
+    setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment);
+
+  // Reset the bottle-return entries and adjustment fields whenever the active
+  // (unprocessed) order changes — otherwise stale values from the previous order
+  // would linger. Bottle counts only matter in the deposit (delivered) mode.
   useEffect(() => {
-    if (!order || order.status === 'done') return;
+    if (!order || cfg.isProcessed(order)) return;
     const counts = {};
-    order.items
-      .filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
-      .forEach((i) => { counts[i.id] = String(Number(i.quantity) * (Number(i.units_per_case) || 1)); });
+    if (cfg.showDeposit) {
+      order.items
+        .filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
+        .forEach((i) => { counts[i.id] = String(Number(i.quantity) * (Number(i.units_per_case) || 1)); });
+    }
     setReturnCounts(counts);
     setAdjValue(String(order.adjustment || '0'));
     setAdjReason(order.adjustment_reason || '');
   }, [activeId, order?.id]);
 
-  const advanceToNextUnclosed = (closedId) => {
-    const idx = orderIds.indexOf(closedId);
-    const next = orderIds.slice(idx + 1).find((orderId) => orders[orderId]?.status !== 'done')
-      ?? orderIds.find((orderId) => orderId !== closedId && orders[orderId]?.status !== 'done');
+  const advanceToNextUnprocessed = (processedId) => {
+    const idx = orderIds.indexOf(processedId);
+    const notDone = (orderId) => orders[orderId] && !cfg.isProcessed(orders[orderId]);
+    const next = orderIds.slice(idx + 1).find(notDone)
+      ?? orderIds.find((orderId) => orderId !== processedId && notDone(orderId));
     if (next !== undefined) setActiveId(next);
   };
 
   const handleClosed = (updated) => {
     setOrders((prev) => ({ ...prev, [updated.id]: updated }));
-    advanceToNextUnclosed(updated.id);
+    advanceToNextUnprocessed(updated.id);
   };
 
   const saveAdjustmentIfChanged = async (orderId) => {
@@ -105,19 +162,36 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
     }
   };
 
-  const allDone = orderIds.every((orderId) => orders[orderId]?.status === 'done');
+  // Pending / in-transit modes: advance the order by a simple status transition
+  // (dispatch, mark picked up, or mark delivered) rather than the close flow.
+  const handleAdvanceAction = async () => {
+    setClosing(true);
+    try {
+      if (cfg.showAdjustment) await saveAdjustmentIfChanged(order.id);
+      const { status } = cfg.actionFor(order);
+      const updated = await api.post(`/orders/${order.id}/status`, { status });
+      addToast('Order updated.', 'success');
+      handleClosed(updated);
+    } catch (err) {
+      addToast(err.message || 'Failed to update order.', 'error');
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const allProcessed = orderIds.every((orderId) => orders[orderId] && cfg.isProcessed(orders[orderId]));
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white" role="dialog" aria-modal="true" aria-label="Review deliveries">
+    <div className="fixed inset-0 z-50 flex flex-col bg-white" role="dialog" aria-modal="true" aria-label={cfg.title}>
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 shrink-0">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">Review Deliveries</h2>
+          <h2 className="text-lg font-bold text-slate-900">{cfg.title}</h2>
           <p className="text-sm text-slate-500 mt-0.5">
-            Step through each order, count returned bottles, and close it.
+            {cfg.subtitle}
           </p>
         </div>
         <Button variant="secondary" onClick={onClose}>
-          {allDone ? 'Done' : 'Close'}
+          {allProcessed ? 'Done' : 'Close'}
         </Button>
       </div>
 
@@ -128,7 +202,7 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
           <div className="flex gap-2 px-6 py-3 border-b border-slate-200 overflow-x-auto shrink-0">
             {orderIds.map((orderId) => {
               const o = orders[orderId];
-              const isDone   = o?.status === 'done';
+              const isDone   = o ? cfg.isProcessed(o) : false;
               const isActive = orderId === activeId;
               return (
                 <button
@@ -160,16 +234,29 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                       <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
                       {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
                     </div>
-                    <a
-                      href={`/orders/${order.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-medium text-blue-700 hover:text-blue-900 focus-visible:outline-none
-                                 focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
-                    >
-                      View full order →
-                    </a>
+                    <div className="flex items-center gap-3">
+                      {cfg.showPrint && (
+                        <Button variant="secondary" size="sm" onClick={handlePrint}>
+                          Print Receipt
+                        </Button>
+                      )}
+                      <a
+                        href={`/orders/${order.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-sm font-medium text-blue-700 hover:text-blue-900 focus-visible:outline-none
+                                   focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+                      >
+                        View full order →
+                      </a>
+                    </div>
                   </div>
+
+                  {cfg.showPrint && order[cfg.printedAtField] && (
+                    <p className="text-sm text-slate-500 mt-2">
+                      {cfg.printedLabel} {fmtDate(order[cfg.printedAtField])} by {order[cfg.printedByField]}
+                    </p>
+                  )}
 
                   {order.personnel?.length > 0 && (
                     <p className="text-sm text-slate-500 mt-3">
@@ -187,9 +274,11 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                         <li key={item.id}>
                           <div className="flex justify-between text-sm">
                             <span className="text-slate-700">{item.sku || item.product_name} — {item.quantity} {item.unit}</span>
-                            <span className="font-medium text-slate-900 tabular-nums">{PHP(b.lineTotal)}</span>
+                            <span className="font-medium text-slate-900 tabular-nums">
+                              {PHP(cfg.showDeposit ? b.lineTotal : b.basePrice)}
+                            </span>
                           </div>
-                          {b.hasDeposit && (
+                          {cfg.showDeposit && b.hasDeposit && (
                             <p className="text-xs text-slate-500 tabular-nums">
                               {b.unreturned > 0
                                 ? <>{PHP(b.basePrice)} + {PHP(b.depositOwed)} deposit ({b.unreturned} unreturned)</>
@@ -204,14 +293,17 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                   {(() => {
                     const breakdowns = order.items.map((item) => breakdownForItem(item, returnCounts));
                     const itemsSubtotal   = breakdowns.reduce((sum, b) => sum + b.basePrice, 0);
-                    const depositSubtotal = breakdowns.reduce((sum, b) => sum + b.depositOwed, 0);
+                    const depositSubtotal = cfg.showDeposit
+                      ? breakdowns.reduce((sum, b) => sum + b.depositOwed, 0)
+                      : 0;
                     const liveAdj = Number(adjValue) || 0;
                     const orderTotal = itemsSubtotal + depositSubtotal + liveAdj;
-                    const showBreakdown = bottleItems.length > 0 || liveAdj !== 0;
+                    const showDepositRows = cfg.showDeposit && bottleItems.length > 0;
+                    const showBreakdown = showDepositRows || liveAdj !== 0;
                     if (!showBreakdown) return null;
                     return (
                       <dl className="mt-4 pt-4 border-t border-slate-200 space-y-1.5 text-sm">
-                        {bottleItems.length > 0 && (
+                        {showDepositRows && (
                           <>
                             <div className="flex justify-between">
                               <dt className="text-slate-500">Items subtotal</dt>
@@ -242,7 +334,7 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                   })()}
                 </div>
 
-                {order.status !== 'done' && bottleItems.length > 0 && (
+                {cfg.showDeposit && !cfg.isProcessed(order) && bottleItems.length > 0 && (
                   <OrderCloseForm
                     order={order}
                     returnCounts={returnCounts}
@@ -252,7 +344,7 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                   />
                 )}
 
-                {order.status !== 'done' && (
+                {cfg.showAdjustment && !cfg.isProcessed(order) && (
                   <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Adjustment</p>
                     <div className="space-y-3">
@@ -287,19 +379,23 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
                   </div>
                 )}
 
-                {order.status === 'done' ? (
+                {cfg.isProcessed(order) ? (
                   <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-                    <p className="text-sm font-semibold text-green-800">✓ Closed — {fmtDate(order.closed_at)}</p>
+                    <p className="text-sm font-semibold text-green-800">
+                      {cfg.actionFor
+                        ? `✓ ${cfg.actionFor(order).done}`
+                        : `✓ Closed — ${fmtDate(order.closed_at)}`}
+                    </p>
                   </div>
                 ) : (
                   <div className="bg-white rounded-xl border border-slate-200 p-5">
                     <Button
                       className="w-full"
-                      onClick={handleCloseOrder}
+                      onClick={cfg.actionFor ? handleAdvanceAction : handleCloseOrder}
                       loading={closing}
-                      disabled={bottleItems.length > 0 && Object.values(returnCounts).some((v) => v === '')}
+                      disabled={cfg.showDeposit && bottleItems.length > 0 && Object.values(returnCounts).some((v) => v === '')}
                     >
-                      Close Order
+                      {cfg.actionFor ? cfg.actionFor(order).label : 'Close Order'}
                     </Button>
                   </div>
                 )}
@@ -307,6 +403,45 @@ export default function ReviewQueueModal({ orderIds, onClose }) {
             )}
           </div>
         </>
+      )}
+
+      {/* Native print preview overlay (Android only) */}
+      {nativePrintDoc && (
+        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+          <div className="flex gap-3 p-3 border-b border-slate-200 shrink-0">
+            <button
+              onClick={handleNativePrint}
+              className="flex-1 h-12 rounded-lg bg-blue-600 text-white font-semibold text-base"
+            >
+              Print
+            </button>
+            <button
+              onClick={closeNativePreview}
+              className="flex-1 h-12 rounded-lg bg-slate-100 text-slate-700 font-semibold text-base"
+            >
+              Close
+            </button>
+          </div>
+          <iframe
+            srcDoc={nativePrintDoc}
+            className="flex-1 w-full border-none"
+            title="Receipt preview"
+          />
+        </div>
+      )}
+
+      {/* Confirm tagging this order as printed, after returning from the print dialog */}
+      {printPrompt && (
+        <Modal
+          title="Tag receipt as printed?"
+          onClose={cancelPrintTag}
+          onConfirm={confirmPrintTag}
+          confirmLabel="Yes, tag as printed"
+          loading={taggingPrint}
+        >
+          Do you want to tag Order #{printPrompt.orderId} as printed
+          ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
+        </Modal>
       )}
     </div>
   );
