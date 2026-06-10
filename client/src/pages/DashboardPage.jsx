@@ -132,7 +132,15 @@ export default function DashboardPage() {
                         <span className="block truncate">{order.personnel_summary ?? '—'}</span>
                       </td>
                       <td className="px-5 py-4">
-                        <StatusBadge status={order.status} />
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          <StatusBadge status={order.status} />
+                          {((order.status === 'pending' && order.pending_receipt_printed_at)
+                            || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)) && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                              🖶 Printed
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-4 text-right font-semibold text-slate-900 tabular-nums">
                         {PHP(order.total_amount)}

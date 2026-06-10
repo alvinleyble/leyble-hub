@@ -1,8 +1,6 @@
-databases:
-  - name: leyble-hub-db
-    databaseName: leyble_hub
-    user: leyble_hub
-    plan: free
+# NB: the database lives on Supabase (see ANDROID.md), NOT on Render. Do not add a
+# Render-managed `databases:` block here — Render's free Postgres is deleted ~30 days
+# after creation. DATABASE_URL is set manually in the dashboard to the Supabase pooled URL.
 
 services:
   # ── Backend API ────────────────────────────────────────────────
@@ -17,10 +15,11 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Set in the Render dashboard to the Supabase POOLED connection string.
+      # The buildCommand above runs `node db/migrate.js` against this on every deploy,
+      # so the schema can never fall behind the deployed code again.
       - key: DATABASE_URL
-        fromDatabase:
-          name: leyble-hub-db
-          property: connectionString
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
