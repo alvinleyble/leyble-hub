@@ -24,6 +24,9 @@ const allowedOrigins = [
   'http://localhost:5173',
   'https://localhost',
   'capacitor://localhost',
+  // Render sets this to the service's own public URL — the deployed site
+  // calling its own API (same-origin fetch still sends an Origin header).
+  ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL] : []),
   ...(process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(',').map((o) => o.trim()) : []),
 ];
 app.use(
