@@ -13,9 +13,12 @@ services:
     name: leyble-hub-api
     env: node
     plan: free
+    # `--include=dev` for the client install: NODE_ENV=production (set below for the
+    # running server) makes npm skip devDependencies by default, but vite and the
+    # Tailwind/PostCSS toolchain (needed to build client/dist) live there.
     buildCommand: >
       npm --prefix server install &&
-      npm --prefix client install &&
+      npm --prefix client install --include=dev &&
       npm --prefix client run build &&
       node server/db/migrate.js
     startCommand: node server/src/index.js
