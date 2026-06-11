@@ -28,7 +28,7 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
       return;
     }
 
-    const win = window.open('', '_blank', 'width=300,height=700');
+    const win = window.open('', '_blank', 'width=360,height=700');
     win.document.write(htmlString);
     win.document.close();
     win.focus();

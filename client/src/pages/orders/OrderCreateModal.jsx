@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -112,7 +113,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   // ── Line item helpers ──────────────────────────────────────────────────────
 
-  const addItem = () => setItems((prev) => [...prev, newItem()]);
+  // New rows go on TOP so the next product is always right under the Add button
+  // — no scrolling back down on long orders. The fresh row auto-focuses.
+  const addItem = () => setItems((prev) => [{ ...newItem(), _autoFocus: true }, ...prev]);
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
@@ -159,13 +162,21 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       if (prev.some((p) => p.id === person.id)) {
         return prev.filter((p) => p.id !== person.id);
       }
-      return [...prev, { id: person.id, role: 'Driver' }];
+      // Only one Driver per order — first assignee takes the spot, the rest start as Helpers.
+      const hasDriver = prev.some((p) => p.role === 'Driver');
+      return [...prev, { id: person.id, role: hasDriver ? 'Helper' : 'Driver' }];
     });
   };
 
+  // Making someone the Driver demotes the previous Driver to Helper (radio-button
+  // behaviour) so an order never has more than one Driver.
   const setPersonnelRole = (personId, role) =>
     setAssignedPersonnel((prev) =>
-      prev.map((p) => p.id === personId ? { ...p, role } : p)
+      prev.map((p) => {
+        if (p.id === personId) return { ...p, role };
+        if (role === 'Driver' && p.role === 'Driver') return { ...p, role: 'Helper' };
+        return p;
+      })
     );
 
   // ── Submit ─────────────────────────────────────────────────────────────────
@@ -347,9 +358,15 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
               {/* ── Line Items ──────────────────────────────────────── */}
               <div className="px-6 py-5 border-b border-slate-200">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products</p>
-                  <Button size="sm" variant="secondary" onClick={addItem}>+ Add Product</Button>
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm text-slate-500">
+                      Total{' '}
+                      <span className="text-base font-bold text-slate-900 tabular-nums">{PHP(grandTotal)}</span>
+                    </p>
+                    <Button size="sm" variant="secondary" onClick={addItem}>+ Add Product</Button>
+                  </div>
                 </div>
 
                 {errors.items && (
@@ -378,17 +395,14 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                             placeholder="Search product…"
                             aria-label={`Product ${idx + 1}`}
                             autoComplete="off"
+                            autoFocus={item._autoFocus}
                           />
-                          {openDropdownKey === item._key && (
-                            <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-                              {products
-                                .filter((p) =>
-                                  p.is_active &&
-                                  ((p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                   p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                   (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()))
-                                )
-                                .map((p) => (
+                          {openDropdownKey === item._key && (() => {
+                            const matches = products.filter((p) =>
+                              p.is_active && productMatches(p, item._productSearch));
+                            return (
+                              <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                                {matches.map((p) => (
                                   <li key={p.id}>
                                     <button
                                       type="button"
@@ -398,20 +412,17 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                                       }}
                                       className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
                                     >
-                                      <span className="font-medium text-slate-800">{p.sku || p.name}</span>
+                                      <span className="font-medium text-slate-800 shrink-0">{p.sku || p.name}</span>
+                                      {p.sku && <span className="text-xs text-slate-500 truncate">{p.name}</span>}
                                     </button>
                                   </li>
                                 ))}
-                              {products.filter((p) =>
-                                p.is_active &&
-                                ((p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                 p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                 (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()))
-                              ).length === 0 && (
-                                <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
-                              )}
-                            </ul>
-                          )}
+                                {matches.length === 0 && (
+                                  <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
+                                )}
+                              </ul>
+                            );
+                          })()}
                         </div>
                         <button
                           type="button"

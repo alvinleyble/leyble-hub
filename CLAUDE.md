@@ -48,11 +48,16 @@ DB: `DATABASE_URL=postgresql://localhost/leyble_hub`
 - `inventory_audit_logs`, `customer_product_prices`, and `activity_logs` are **append-only** — never `UPDATE` or `DELETE` these tables.
 - `order_items.line_total` is a PostgreSQL `GENERATED` column — never write to it directly. Since migration 023 the formula is `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee` (deposit charged on un-returned bottles).
 - Multiple personnel per order via `order_personnel` join table (not FK columns on `orders`).
+- **At most one Driver per order** — auto-switch UX in the order modal (picking a new Driver
+  demotes the previous one to Helper) + validated in `syncPersonnel` in
+  [server/src/routes/orders.js](server/src/routes/orders.js) (400 on >1 Driver).
 
 ### Frontend patterns (follow these exactly — consistency matters)
 
 **Searchable combobox** (product pickers everywhere):
-- Text input + dropdown, filter by name/category on keystroke
+- Text input + dropdown, filter on keystroke via `productMatches()` from
+  `client/src/utils/productSearch.js` — punctuation-insensitive ("c8" matches SKU "C-8")
+  and also matches name/category, so every product search bar must use it
 - `onFocus`/`onBlur` + `setTimeout(150)` before closing so `onMouseDown` fires before blur
 - Reference: `client/src/pages/orders/OrderCreateModal.jsx`
 
@@ -74,6 +79,11 @@ const PHP = (n) =>
 
 **Toasts**: `const { addToast } = useToast()` → `addToast(msg, 'success' | 'error')`.
 
+**Responsive layout**: the permanent sidebar only renders on the custom `desktop:` screen
+(`min-width: 1024px` **and** `pointer: fine`, see `client/tailwind.config.js`); phones/tablets
+get the hamburger drawer in both portrait and landscape. Width-based `sm:`/`md:`/`lg:` are
+still used for everything else (table columns etc.).
+
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
 - 16px+ fonts
@@ -90,7 +100,7 @@ const PHP = (n) =>
 | Inventory | ✅ Done | Category chips + stock filter |
 | Customers | ✅ Done | Wholesaler custom pricing panel (separate delivery/pickup price tabs), order history |
 | Personnel | ✅ Done | ID image upload, order history |
-| Outgoing Orders | ✅ Done | Delivery + pickup types; editable at all statuses (inventory auto-reconciles); price adjustment field; per-bottle deposit + bottle-return close flow (Review Deliveries queue); 58mm thermal receipt |
+| Outgoing Orders | ✅ Done | Delivery + pickup types; editable at all statuses (inventory auto-reconciles, incl. Edit/Cancel inside the batch-review queues); price adjustment field; per-bottle deposit + bottle-return close flow (Review Deliveries queue); 80mm thermal receipt |
 | Incoming Supplies | ✅ Done | Log deliveries, auto-restock; supports 0.5-case quantities |
 | Tickets | ✅ Done | Create, view, resolve |
 | Audit Log | ✅ Done | Read-only, filterable. Two append-only sources: `inventory_audit_logs` (stock deltas, `GET /api/v1/audit`) and `activity_logs` (cross-entity change log for orders/customers/products/personnel/tickets, `GET /api/v1/audit/activity`) |
@@ -143,9 +153,10 @@ WHERE op.order_id = $1
 
 ## Receipt printing
 
-- Printer: **58mm thermal**
-- Implementation: `handlePrint()` in [client/src/pages/orders/OrderDetailPage.jsx](client/src/pages/orders/OrderDetailPage.jsx)
-- Uses `@page { size: 58mm auto; margin: 0 }` — no external CSS needed
+- Printer: **80mm thermal** (was 58mm until June 2026 — keep all sizing 80mm from now on)
+- Implementation: receipt HTML built in [client/src/pages/orders/receiptTemplate.js](client/src/pages/orders/receiptTemplate.js),
+  printed via `usePrintReceipt()` (used by OrderDetailPage and ReviewQueueModal)
+- Uses `@page { size: 80mm auto; margin: 0 }`, body width 72mm — no external CSS needed
 - Item layout: product name on line 1, `qty unit × price → amount` on line 2
 - Shows **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on `order.order_type`
 - Footer: terms text (left) + "Received the above merchandise…" + `By:` signature line (right)
@@ -159,7 +170,7 @@ There is no on-prem/Windows computer. The product ships as an **Android APK** (C
 of the existing React app) talking to a **cloud-hosted** backend + DB. The same backend also
 serves the built frontend, so the app is also reachable as a normal website (e.g. for use on
 iPad/desktop browsers — Add to Home Screen for an app-like icon):
-- **Backend + Frontend:** single Express service on **Render** (repo root, `node server/src/index.js`).
+- **Backend + Frontend:** Express services on **Render** (repo root, `node server/src/index.js`).
   Express serves the built `client/dist` and falls back to `index.html` for non-`/api` routes,
   so the browser/PWA login cookie (`SameSite=Strict`) works same-origin — see
   [server/src/index.js](server/src/index.js).
@@ -167,6 +178,20 @@ iPad/desktop browsers — Add to Home Screen for an app-like icon):
 - `npm run dev` (separate Vite + Express servers) is dev-only.
 - Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD`, set as a host env var).
 - Full build/deploy/sideload steps: **[ANDROID.md](ANDROID.md)**.
+
+### Production + Staging environments
+
+A **staging** environment exists (separate Render service + separate Supabase project) where
+family members can test and practice without touching production data. Both environments are
+defined in [render.yaml](render.yaml) under a `projects:`/`environments:` structure:
+
+- **Production** (`main` branch): `leyble-hub-api` service, prod Supabase DB
+- **Staging** (`staging` branch): `leyble-hub-api-staging` service, staging Supabase DB (cloned
+  from prod, then independent)
+
+**Workflow:** changes flow `android-app` (dev) → `staging` (test live) → `main` (prod). Small
+hotfixes can skip staging (merge `android-app` → `main` directly). See **[STAGING.md](STAGING.md)**
+for the full setup, one-time Supabase clone, and deployment workflow.
 
 > The old Windows/PM2 `.bat` scripts (`start/stop/restart/update.bat`) are **dev-only legacy**
 > — they assumed an on-prem PC that no longer exists.

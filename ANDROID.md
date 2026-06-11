@@ -108,7 +108,7 @@ Rebuild with the same keystore (steps above), bump `versionCode`/`versionName` i
 
 - **Camera** for personnel ID photos: works today via the existing `<input type=file>` (the
   WebView offers camera/gallery). `@capacitor/camera` is optional polish.
-- **Bluetooth thermal printing (58mm):** NOT done yet. `window.print()` (in
+- **Bluetooth thermal printing (80mm):** NOT done yet. `window.print()` (in
   [OrderDetailPage.jsx](client/src/pages/orders/OrderDetailPage.jsx)) can't drive a Bluetooth
   ESC/POS printer. This needs a Bluetooth plugin + an ESC/POS generator — planned as a
   separate phase, and the exact printer model must be confirmed first.

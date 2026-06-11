@@ -9,7 +9,7 @@ export function printPhaseForStatus(status) {
   return null;
 }
 
-// Builds the full 58mm thermal receipt HTML for an order. `overrides` lets the caller
+// Builds the full 80mm thermal receipt HTML for an order. `overrides` lets the caller
 // pass live (unsaved) values so the printed receipt matches the on-screen review summary
 // — currently `adjustment` / `adjustment_reason` from the in-progress close/dispatch form.
 export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
@@ -67,7 +67,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
         ? Math.max(Number(returnCounts[item.id]) || 0, 0)
         : Math.max(Number(item.bottles_returned) || 0, 0);
       const netBtl = totalBtl - returned;
-      depLine = `<div style="display:flex;justify-content:space-between;font-size:8px;color:#444;margin-top:1px">
+      depLine = `<div style="display:flex;justify-content:space-between;font-size:10px;color:#444;margin-top:1px">
            <span>&nbsp;&nbsp;Deposit: ${totalBtl} btls &times; ${PHP(dep)}</span>
            <span>${PHP(totalBtl * dep)}</span>
          </div>`;
@@ -76,11 +76,11 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
         const netVal   = netBtl < 0
           ? `-${PHP(Math.abs(netBtl) * dep)}`
           : PHP(netBtl * dep);
-        depLine += `<div style="display:flex;justify-content:space-between;font-size:8px;color:#444">
+        depLine += `<div style="display:flex;justify-content:space-between;font-size:10px;color:#444">
            <span>&nbsp;&nbsp;Returned: ${returned} btls &times; ${PHP(dep)}</span>
            <span>-${PHP(returned * dep)}</span>
          </div>
-         <div style="display:flex;justify-content:space-between;font-size:8px;color:#444">
+         <div style="display:flex;justify-content:space-between;font-size:10px;color:#444">
            <span>&nbsp;&nbsp;${netLabel}</span>
            <span>${netVal}</span>
          </div>`;
@@ -123,32 +123,32 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 <meta charset="utf-8">
 <title>Receipt #${order.id}</title>
 <style>
-  @page { size: 58mm auto; margin: 0; }
+  @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: 'Courier New', Courier, monospace;
-    font-size: 9.5px;
-    width: 52mm;
+    font-size: 12px;
+    width: 72mm;
     margin: 0 auto;
     padding: 4mm 0 6mm 0;
     color: #000;
   }
   .center { text-align: center; }
-  .hr { border: none; border-top: 1px dashed #000; margin: 5px 0; }
+  .hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
   .row-between { display: flex; justify-content: space-between; }
-  .biz-name { font-size: 12px; font-weight: bold; text-align: center; line-height: 1.3; }
-  .total-row { display: flex; justify-content: space-between; font-weight: bold; font-size: 11px; margin-top: 3px; }
+  .biz-name { font-size: 15px; font-weight: bold; text-align: center; line-height: 1.3; }
+  .total-row { display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; margin-top: 3px; }
 </style>
 </head>
 <body>
-  <div class="biz-name">LEYBLE GENERAL<br>MERCHANDISE</div>
-  <div class="center" style="font-size:8px;margin-top:2px">
-    7968-4943 / 0919-004-4652<br>0917-860-5512
+  <div class="biz-name">LEYBLE GENERAL MERCHANDISE</div>
+  <div class="center" style="font-size:10px;margin-top:2px">
+    7968-4943 / 0919-004-4652 / 0917-860-5512
   </div>
 
   <div class="hr"></div>
 
-  <div style="font-weight:bold;font-size:10.5px">${isPickupOrder ? 'PICKUP RECEIPT' : 'DELIVERY RECEIPT'}</div>
+  <div style="font-weight:bold;font-size:13px">${isPickupOrder ? 'PICKUP RECEIPT' : 'DELIVERY RECEIPT'}</div>
   <div class="row-between" style="margin-top:2px">
     <span>No: ${receiptNo}</span>
     <span>${dateStr}</span>
@@ -175,16 +175,16 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 
   <div class="hr"></div>
 
-  <div style="font-size:7.5px;line-height:1.45;margin-top:2px">
+  <div style="font-size:9.5px;line-height:1.45;margin-top:2px">
     <strong>TERMS:</strong> 18% interest per annum will be charged to vendee on all overdue
     accounts plus 25% of the amount due as attorney&#39;s fee in case of legal action that may arise
     out of the transaction and the venue shall be in Antipolo City
   </div>
 
-  <div class="center" style="font-size:8px;margin-top:10px">
+  <div class="center" style="font-size:10px;margin-top:10px">
     Received the above merchandise<br>in good order and condition
   </div>
-  <div style="border-top:1px solid #000;margin-top:20px;padding-top:2px;font-size:8px">By:</div>
+  <div style="border-top:1px solid #000;margin-top:24px;padding-top:2px;font-size:10px">By:</div>
 </body>
 </html>`;
 }

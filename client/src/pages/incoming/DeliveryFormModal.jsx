@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import { productMatches } from '../../utils/productSearch';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -197,34 +198,28 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                             aria-label={`Product ${idx + 1}`}
                             autoComplete="off"
                           />
-                          {openDropKey === item._key && (
-                            <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-                              {products
-                                .filter((p) =>
-                                  (p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                  p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                  (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase())
-                                )
-                                .map((p) => (
+                          {openDropKey === item._key && (() => {
+                            const matches = products.filter((p) => productMatches(p, item._productSearch));
+                            return (
+                              <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                                {matches.map((p) => (
                                   <li key={p.id}>
                                     <button
                                       type="button"
                                       onMouseDown={() => selectProduct(item._key, p)}
                                       className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
                                     >
-                                      <span className="font-medium text-slate-800">{p.sku || p.name}</span>
+                                      <span className="font-medium text-slate-800 shrink-0">{p.sku || p.name}</span>
+                                      {p.sku && <span className="text-xs text-slate-500 truncate">{p.name}</span>}
                                     </button>
                                   </li>
                                 ))}
-                              {products.filter((p) =>
-                                (p.sku ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                p.name.toLowerCase().includes((item._productSearch || '').toLowerCase()) ||
-                                (p.category ?? '').toLowerCase().includes((item._productSearch || '').toLowerCase())
-                              ).length === 0 && (
-                                <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
-                              )}
-                            </ul>
-                          )}
+                                {matches.length === 0 && (
+                                  <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
+                                )}
+                              </ul>
+                            );
+                          })()}
                         </div>
                         <button
                           type="button"

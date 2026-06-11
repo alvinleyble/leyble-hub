@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import Modal from '../../components/ui/Modal';
 import OrderCloseForm, { breakdownForItem } from './OrderCloseForm';
+import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 
 const PHP = (n) =>
@@ -44,7 +45,7 @@ const MODES = {
     printedLabel: 'Printed (delivered)',
     printedAtField: 'delivered_receipt_printed_at',
     printedByField: 'delivered_receipt_printed_by_name',
-    isProcessed: (o) => o.status === 'done',
+    isProcessed: (o) => o.status === 'done' || o.status === 'cancelled',
   },
 };
 
@@ -66,6 +67,10 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   // Adjustment fields for the active order — reset on order change, saved before close.
   const [adjValue, setAdjValue] = useState('0');
   const [adjReason, setAdjReason] = useState('');
+  // Edit / cancel for the active order, without leaving the review flow.
+  const [editing, setEditing] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const loadAll = useCallback(() => {
     setLoading(true);
@@ -102,6 +107,12 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   // Reset the bottle-return entries and adjustment fields whenever the active
   // (unprocessed) order changes — otherwise stale values from the previous order
   // would linger. Bottle counts only matter in the deposit (delivered) mode.
+  // The items signature makes this re-run after an in-review edit changes the
+  // lines (the server re-creates order_items on edit, so ids always change) —
+  // without it a newly added bottle-return product would never get an entry.
+  const itemsSig = order
+    ? order.items.map((i) => `${i.id}:${i.quantity}:${i.units_per_case}:${i.unit_deposit_fee}`).join('|')
+    : '';
   useEffect(() => {
     if (!order || cfg.isProcessed(order)) return;
     const counts = {};
@@ -113,7 +124,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     setReturnCounts(counts);
     setAdjValue(String(order.adjustment || '0'));
     setAdjReason(order.adjustment_reason || '');
-  }, [activeId, order?.id]);
+  }, [activeId, order?.id, itemsSig]);
 
   const advanceToNextUnprocessed = (processedId) => {
     const idx = orderIds.indexOf(processedId);
@@ -179,13 +190,46 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     }
   };
 
+  // Reload the active order after an in-review edit so items/totals (and the
+  // bottle-return entries via the itemsSig effect above) refresh.
+  const handleEditSaved = async () => {
+    setEditing(false);
+    try {
+      const updated = await api.get(`/orders/${activeId}`);
+      setOrders((prev) => ({ ...prev, [updated.id]: updated }));
+    } catch {
+      addToast('Failed to reload the edited order.', 'error');
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    setCancelling(true);
+    try {
+      const updated = await api.post(`/orders/${order.id}/status`, { status: 'cancelled' });
+      addToast(`Order #${order.id} cancelled.`, 'success');
+      setConfirmingCancel(false);
+      handleClosed(updated);
+    } catch (err) {
+      addToast(err.message || 'Failed to cancel order.', 'error');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const allProcessed = orderIds.every((orderId) => orders[orderId] && cfg.isProcessed(orders[orderId]));
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white" role="dialog" aria-modal="true" aria-label={cfg.title}>
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 shrink-0">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">{cfg.title}</h2>
+      <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-200 shrink-0">
+        <div className="min-w-0">
+          <button
+            onClick={onClose}
+            className="text-sm font-medium text-blue-700 hover:text-blue-900 flex items-center gap-1
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+          >
+            ← Orders
+          </button>
+          <h2 className="text-lg font-bold text-slate-900 mt-1">{cfg.title}</h2>
           <p className="text-sm text-slate-500 mt-0.5">
             {cfg.subtitle}
           </p>
@@ -234,10 +278,18 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                       <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
                       {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+                        Edit Order
+                      </Button>
                       {cfg.showPrint && (
                         <Button variant="secondary" size="sm" onClick={handlePrint}>
                           Print Receipt
+                        </Button>
+                      )}
+                      {!['done', 'cancelled'].includes(order.status) && (
+                        <Button variant="danger" size="sm" onClick={() => setConfirmingCancel(true)}>
+                          Cancel Order
                         </Button>
                       )}
                       <a
@@ -380,13 +432,19 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                 )}
 
                 {cfg.isProcessed(order) ? (
-                  <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-                    <p className="text-sm font-semibold text-green-800">
-                      {cfg.actionFor
-                        ? `✓ ${cfg.actionFor(order).done}`
-                        : `✓ Closed — ${fmtDate(order.closed_at)}`}
-                    </p>
-                  </div>
+                  order.status === 'cancelled' ? (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+                      <p className="text-sm font-semibold text-red-700">✕ Cancelled</p>
+                    </div>
+                  ) : (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-5">
+                      <p className="text-sm font-semibold text-green-800">
+                        {cfg.actionFor
+                          ? `✓ ${cfg.actionFor(order).done}`
+                          : `✓ Closed — ${fmtDate(order.closed_at)}`}
+                      </p>
+                    </div>
+                  )
                 ) : (
                   <div className="bg-white rounded-xl border border-slate-200 p-5">
                     <Button
@@ -441,6 +499,31 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
         >
           Do you want to tag Order #{printPrompt.orderId} as printed
           ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
+        </Modal>
+      )}
+
+      {/* Edit the active order without leaving the review flow */}
+      {editing && order && (
+        <OrderCreateModal
+          editOrder={order}
+          onClose={() => setEditing(false)}
+          onSaved={handleEditSaved}
+        />
+      )}
+
+      {/* Confirm cancelling the active order */}
+      {confirmingCancel && order && (
+        <Modal
+          title={`Cancel Order #${order.id}?`}
+          onClose={() => setConfirmingCancel(false)}
+          onConfirm={handleCancelOrder}
+          confirmLabel="Yes, cancel order"
+          confirmVariant="danger"
+          loading={cancelling}
+        >
+          {order.status === 'pending'
+            ? 'The order will be cancelled. No stock was deducted so none will be restored.'
+            : 'The order will be cancelled and all stock will be restored to inventory.'}
         </Modal>
       )}
     </div>

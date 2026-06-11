@@ -77,6 +77,15 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
 }
 
 async function syncPersonnel(client, orderId, personnelList) {
+  // Business rule: at most one Driver per order (role defaults to 'Driver' below,
+  // so the default must be applied when counting).
+  const driverCount = personnelList.filter((p) => (p.role || 'Driver') === 'Driver').length;
+  if (driverCount > 1) {
+    const err = new Error('Only one personnel can be assigned as Driver per order.');
+    err.status = 400;
+    throw err;
+  }
+
   await client.query('DELETE FROM order_personnel WHERE order_id = $1', [orderId]);
   for (const p of personnelList) {
     await client.query(

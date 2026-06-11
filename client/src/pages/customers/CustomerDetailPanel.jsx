@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
+import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -314,16 +315,12 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                             placeholder="Search product…"
                             autoComplete="off"
                           />
-                          {productDropOpen && (
-                            <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-                              {products
-                                .filter((p) =>
-                                  p.is_active &&
-                                  ((p.sku ?? '').toLowerCase().includes(productSearch.toLowerCase()) ||
-                                   p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-                                   (p.category ?? '').toLowerCase().includes(productSearch.toLowerCase()))
-                                )
-                                .map((p) => (
+                          {productDropOpen && (() => {
+                            const matches = products.filter((p) =>
+                              p.is_active && productMatches(p, productSearch));
+                            return (
+                              <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                                {matches.map((p) => (
                                   <li key={p.id}>
                                     <button
                                       type="button"
@@ -337,16 +334,12 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                     </button>
                                   </li>
                                 ))}
-                              {products.filter((p) =>
-                                p.is_active &&
-                                ((p.sku ?? '').toLowerCase().includes(productSearch.toLowerCase()) ||
-                                 p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-                                 (p.category ?? '').toLowerCase().includes(productSearch.toLowerCase()))
-                              ).length === 0 && (
-                                <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
-                              )}
-                            </ul>
-                          )}
+                                {matches.length === 0 && (
+                                  <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
+                                )}
+                              </ul>
+                            );
+                          })()}
                         </div>
                       </FormField>
 

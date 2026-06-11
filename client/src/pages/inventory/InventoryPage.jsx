@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import ProductFormModal from './ProductFormModal';
 import ProductDetailPanel from './ProductDetailPanel';
+import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -34,10 +35,7 @@ export default function InventoryPage() {
   const allCategories = [...new Set(products.map((p) => p.category ?? 'Uncategorised'))].sort();
 
   const filtered = products.filter((p) => {
-    const matchSearch =
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.category ?? '').toLowerCase().includes(search.toLowerCase()) ||
-      (p.sku ?? '').toLowerCase().includes(search.toLowerCase());
+    const matchSearch = productMatches(p, search);
     const matchCategory =
       categoryFilter === 'all' || (p.category ?? 'Uncategorised') === categoryFilter;
     const matchStock =
