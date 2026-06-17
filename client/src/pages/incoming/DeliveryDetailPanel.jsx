@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
+import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function DeliveryDetailPanel({ deliveryId, onClose }) {
+export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDeleted }) {
   const { addToast } = useToast();
-  const [delivery, setDelivery] = useState(null);
-  const [loading, setLoading]   = useState(true);
+  const [delivery, setDelivery]     = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [confirming, setConfirming] = useState(false);
+  const [voiding, setVoiding]       = useState(false);
 
   useEffect(() => {
     api.get(`/incoming/${deliveryId}`)
@@ -17,6 +20,19 @@ export default function DeliveryDetailPanel({ deliveryId, onClose }) {
       .catch(() => addToast('Failed to load delivery.', 'error'))
       .finally(() => setLoading(false));
   }, [deliveryId]); // eslint-disable-line
+
+  const handleVoid = async () => {
+    setVoiding(true);
+    try {
+      await api.del(`/incoming/${deliveryId}`);
+      addToast('Delivery deleted; stock reversed.', 'success');
+      onDeleted();
+    } catch (err) {
+      addToast(err.message || 'Failed to delete delivery.', 'error');
+      setVoiding(false);
+      setConfirming(false);
+    }
+  };
 
   return (
     <>
@@ -130,6 +146,42 @@ export default function DeliveryDetailPanel({ deliveryId, onClose }) {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── Actions ───────────────────────────────────────────── */}
+            <div className="px-6 py-5 border-t border-slate-200">
+              <Button variant="secondary" onClick={() => onEdit(delivery)}>
+                Edit Delivery
+              </Button>
+            </div>
+
+            {/* ── Danger Zone (delete = void + reverse stock) ───────── */}
+            <div className="px-6 py-5 border-t border-slate-200">
+              <p className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</p>
+
+              {!confirming ? (
+                <Button variant="danger" onClick={() => setConfirming(true)}>
+                  Delete delivery
+                </Button>
+              ) : (
+                <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                  <p className="text-base font-semibold text-red-900 mb-1">
+                    Delete this delivery?
+                  </p>
+                  <p className="text-sm text-red-800 mb-4">
+                    The stock this delivery added will be subtracted back out of inventory.
+                    The record stays in the audit log but is removed from this list. This can't be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" disabled={voiding} onClick={() => setConfirming(false)}>
+                      Cancel
+                    </Button>
+                    <Button variant="danger" loading={voiding} onClick={handleVoid}>
+                      Yes, delete
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>

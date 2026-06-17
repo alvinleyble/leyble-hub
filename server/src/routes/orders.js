@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
+const { applyDeltaMap } = require('../lib/inventory');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -145,99 +146,39 @@ async function getFullOrder(orderId) {
 // Deduct stock for a set of order items. Allows current_stock to go negative —
 // orders are never blocked by low inventory.
 async function deductStock(client, items, orderId, userId, reason) {
-  const needed = {};
+  const deltas = {};
   for (const item of items) {
-    needed[item.product_id] = (needed[item.product_id] || 0) + Number(item.quantity);
+    deltas[item.product_id] = (deltas[item.product_id] || 0) - Number(item.quantity);
   }
-
-  const productMap = {};
-  for (const productId of Object.keys(needed)) {
-    const { rows: [p] } = await client.query(
-      'SELECT * FROM products WHERE id = $1 FOR UPDATE',
-      [productId]
-    );
-    productMap[productId] = p;
-  }
-
-  for (const [productId, qty] of Object.entries(needed)) {
-    const product  = productMap[productId];
-    const newStock = Number(product.current_stock) - qty;
-    await client.query(
-      'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
-      [newStock, productId]
-    );
-    await client.query(
-      `INSERT INTO inventory_audit_logs
-         (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
-       VALUES ($1, 'order_fulfillment', 'current_stock', $2, $3, $4, $5, $6, $7)`,
-      [productId, String(product.current_stock), String(newStock), -qty, reason, userId, orderId]
-    );
-  }
+  await applyDeltaMap(client, deltas, { actionType: 'order_fulfillment', reason, userId, orderId });
 }
 
-// Restore stock for a set of order items (cancellation).
+// Restore stock for a set of order items (cancellation / revert).
 async function restoreStock(client, items, orderId, userId, reason) {
-  const needed = {};
+  const deltas = {};
   for (const item of items) {
-    needed[item.product_id] = (needed[item.product_id] || 0) + Number(item.quantity);
+    deltas[item.product_id] = (deltas[item.product_id] || 0) + Number(item.quantity);
   }
-
-  for (const [productId, qty] of Object.entries(needed)) {
-    const { rows: [product] } = await client.query(
-      'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
-      [productId]
-    );
-    const newStock = Number(product.current_stock) + qty;
-    await client.query(
-      'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
-      [newStock, productId]
-    );
-    await client.query(
-      `INSERT INTO inventory_audit_logs
-         (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
-       VALUES ($1, 'order_cancel', 'current_stock', $2, $3, $4, $5, $6, $7)`,
-      [productId, String(product.current_stock), String(newStock), qty, reason, userId, orderId]
-    );
-  }
+  await applyDeltaMap(client, deltas, { actionType: 'order_cancel', reason, userId, orderId });
 }
 
 // Reconcile stock after editing a dispatched order (in_transit/completed/done).
 // oldItems: DB rows before replacement. newItems: req.body items array.
+// Per-product delta = oldQty − newQty (positive = restore, negative = deduct more).
 async function reconcileStock(client, oldItems, newItems, orderId, userId) {
-  const oldMap = {};
+  const deltas = {};
   for (const item of oldItems) {
-    oldMap[item.product_id] = (oldMap[item.product_id] || 0) + Number(item.quantity);
+    deltas[item.product_id] = (deltas[item.product_id] || 0) + Number(item.quantity);
   }
-  const newMap = {};
   for (const item of newItems) {
-    newMap[item.product_id] = (newMap[item.product_id] || 0) + Number(item.quantity);
+    deltas[item.product_id] = (deltas[item.product_id] || 0) - Number(item.quantity);
   }
-
-  const allIds = [...new Set([...Object.keys(oldMap), ...Object.keys(newMap).map(String)])];
-
-  for (const productId of allIds) {
-    const oldQty = oldMap[productId] || 0;
-    const newQty = newMap[productId] || 0;
-    const delta  = oldQty - newQty; // positive = restore, negative = deduct more
-    if (delta === 0) continue;
-
-    const { rows: [product] } = await client.query(
-      'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
-      [productId]
-    );
-    const newStock = Number(product.current_stock) + delta;
-    await client.query(
-      'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
-      [newStock, productId]
-    );
-    await client.query(
-      `INSERT INTO inventory_audit_logs
-         (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
-       VALUES ($1, 'manual_adjustment', 'current_stock', $2, $3, $4, $5, $6, $7)`,
-      [productId, String(product.current_stock), String(newStock), delta,
-       `Order #${orderId} edited after dispatch`, userId, orderId]
-    );
-  }
+  await applyDeltaMap(client, deltas, {
+    actionType: 'manual_adjustment',
+    reason: `Order #${orderId} edited after dispatch`,
+    userId,
+    orderId,
+  });
 }
 
 // ─── routes ─────────────────────────────────────────────────────────────────
@@ -295,16 +236,18 @@ router.get('/', async (req, res, next) => {
 
 // POST /api/v1/orders — creates a Pending order; no stock check
 router.post('/', async (req, res, next) => {
+  const { customer_id, notes, items = [], personnel = [], order_type = 'delivery', status } = req.body;
+  const isDraft = status === 'draft';
+
+  // Validate input before opening a connection/transaction — an early return after
+  // BEGIN would release the client mid-transaction (pg won't auto-rollback).
+  if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
+  // A finalized order needs at least one item; a draft may be parked while still empty.
+  if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-
-    const { customer_id, notes, items = [], personnel = [], order_type = 'delivery', status } = req.body;
-    const isDraft = status === 'draft';
-
-    if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
-    // A finalized order needs at least one item; a draft may be parked while still empty.
-    if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
 
     const { rows: [customer] } = await client.query(
       'SELECT id, name FROM customers WHERE id = $1 AND is_active = TRUE',
@@ -399,14 +342,40 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     if (items !== undefined) {
-      // Snapshot old items before deletion for stock reconciliation
+      // Snapshot old items before deletion: quantity for stock reconciliation,
+      // bottles_returned to preserve returns recorded when a done order was closed.
       const { rows: oldItems } = await client.query(
-        'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
+        'SELECT product_id, quantity, bottles_returned FROM order_items WHERE order_id = $1',
         [order.id]
       );
 
       await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
       await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id, isDraft);
+
+      // insertItems resets bottles_returned to 0. For a closed (done) order, carry
+      // the previously recorded returns back per product so editing a line (e.g.
+      // fixing a price) doesn't wipe returns and re-inflate the closed total. Must
+      // run before recomputeTotal, which for a done order folds the deposit on
+      // un-returned bottles into the total.
+      if (order.status === 'done') {
+        const returnsByProduct = {};
+        for (const it of oldItems) {
+          returnsByProduct[it.product_id] =
+            (returnsByProduct[it.product_id] || 0) + Number(it.bottles_returned);
+        }
+        for (const [productId, returned] of Object.entries(returnsByProduct)) {
+          if (returned > 0) {
+            await client.query(
+              `UPDATE order_items
+                  SET bottles_returned = LEAST($1, FLOOR(quantity * units_per_case)),
+                      updated_at = NOW()
+                WHERE order_id = $2 AND product_id = $3`,
+              [returned, order.id, productId]
+            );
+          }
+        }
+      }
+
       await recomputeTotal(client, order.id);
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);

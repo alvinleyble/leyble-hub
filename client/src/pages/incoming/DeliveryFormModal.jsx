@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
+import Modal from '../../components/ui/Modal';
 import { productMatches } from '../../utils/productSearch';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
@@ -24,18 +25,35 @@ const newItem = () => ({
   notes:             '',
 });
 
-export default function DeliveryFormModal({ onClose, onSaved }) {
+// Local YYYY-MM-DD (matches the date the detail panel displays, regardless of tz).
+const toDateInput = (iso) => new Date(iso).toLocaleDateString('en-CA');
+
+// Map a saved delivery item (from the API) back into editable form state.
+const itemFromRow = (row) => ({
+  _key:              row.id ?? Math.random(),
+  _productSearch:    row.sku || row.product_name || '',
+  product_id:        String(row.product_id),
+  quantity_received: String(Number(row.quantity_received)),
+  unit_cost:         row.unit_cost != null ? String(Number(row.unit_cost)) : '',
+  notes:             row.notes || '',
+});
+
+export default function DeliveryFormModal({ onClose, onSaved, delivery = null }) {
   const { addToast } = useToast();
+  const isEdit = !!delivery;
 
   const [products, setProducts]     = useState([]);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
 
-  const [supplierName, setSupplierName] = useState('');
-  const [receivedAt, setReceivedAt]     = useState(today());
-  const [notes, setNotes]               = useState('');
-  const [items, setItems]               = useState([newItem()]);
+  const [supplierName, setSupplierName] = useState(delivery?.supplier_name ?? '');
+  const [receivedAt, setReceivedAt]     = useState(delivery ? toDateInput(delivery.received_at) : today());
+  const [notes, setNotes]               = useState(delivery?.notes ?? '');
+  const [items, setItems]               = useState(
+    delivery?.items?.length ? delivery.items.map(itemFromRow) : [newItem()]
+  );
   const [openDropKey, setOpenDropKey]   = useState(null);
+  const [dupConfirm, setDupConfirm]     = useState(null);
   const [errors, setErrors]             = useState({});
 
   useEffect(() => {
@@ -45,20 +63,27 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line
 
-  const addItem = () => setItems((prev) => [...prev, newItem()]);
+  const addItem = () => setItems((prev) => [{ ...newItem(), _autoFocus: true }, ...prev]);
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
   const updateItem = (key, field, value) =>
     setItems((prev) => prev.map((i) => i._key === key ? { ...i, [field]: value } : i));
 
-  const selectProduct = (key, product) => {
+  const applyProduct = (key, product) => {
     const display = product.sku || product.name;
     setItems((prev) => prev.map((i) => i._key === key
       ? { ...i, _productSearch: display, product_id: String(product.id) }
       : i
     ));
     setOpenDropKey(null);
+  };
+
+  // Warn before adding a product that's already on another line of this delivery.
+  const selectProduct = (key, product) => {
+    const isDup = items.some((i) => i._key !== key && i.product_id === String(product.id));
+    if (isDup) { setDupConfirm({ key, product }); setOpenDropKey(null); return; }
+    applyProduct(key, product);
   };
 
   const validate = () => {
@@ -76,22 +101,28 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
     setSaving(true);
+    const payload = {
+      supplier_name: supplierName.trim(),
+      notes:         notes.trim() || null,
+      received_at:   receivedAt,
+      items: items.map((i) => ({
+        product_id:        Number(i.product_id),
+        quantity_received: Number(i.quantity_received),
+        unit_cost:         i.unit_cost !== '' ? Number(i.unit_cost) : null,
+        notes:             i.notes.trim() || null,
+      })),
+    };
     try {
-      await api.post('/incoming', {
-        supplier_name: supplierName.trim(),
-        notes:         notes.trim() || null,
-        received_at:   receivedAt,
-        items: items.map((i) => ({
-          product_id:        Number(i.product_id),
-          quantity_received: Number(i.quantity_received),
-          unit_cost:         i.unit_cost !== '' ? Number(i.unit_cost) : null,
-          notes:             i.notes.trim() || null,
-        })),
-      });
-      addToast('Delivery logged.', 'success');
+      if (isEdit) {
+        await api.patch(`/incoming/${delivery.id}`, payload);
+        addToast('Delivery updated.', 'success');
+      } else {
+        await api.post('/incoming', payload);
+        addToast('Delivery logged.', 'success');
+      }
       onSaved();
     } catch (err) {
-      addToast(err.message || 'Failed to log delivery.', 'error');
+      addToast(err.message || `Failed to ${isEdit ? 'update' : 'log'} delivery.`, 'error');
     } finally {
       setSaving(false);
     }
@@ -108,7 +139,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
           <h2 id="delivery-modal-title" className="text-xl font-bold text-slate-900">
-            Log Delivery
+            {isEdit ? 'Edit Delivery' : 'Log Delivery'}
           </h2>
           <button
             onClick={onClose}
@@ -198,6 +229,7 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                             placeholder="Search product…"
                             aria-label={`Product ${idx + 1}`}
                             autoComplete="off"
+                            autoFocus={item._autoFocus}
                           />
                           {openDropKey === item._key && (() => {
                             const matches = products.filter((p) => productMatches(p, item._productSearch));
@@ -276,11 +308,23 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
             {/* Footer */}
             <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0 bg-white">
               <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button onClick={handleSubmit} loading={saving}>Log Delivery</Button>
+              <Button onClick={handleSubmit} loading={saving}>{isEdit ? 'Save Changes' : 'Log Delivery'}</Button>
             </div>
           </>
         )}
       </div>
+
+      {dupConfirm && (
+        <Modal
+          title="Product already added"
+          onClose={() => setDupConfirm(null)}
+          onConfirm={() => { applyProduct(dupConfirm.key, dupConfirm.product); setDupConfirm(null); }}
+          confirmLabel="Yes, add it again"
+        >
+          There's already an existing <strong>{dupConfirm.product.sku || dupConfirm.product.name}</strong> on
+          this delivery. Add it again as a separate line?
+        </Modal>
+      )}
     </div>
   );
 }

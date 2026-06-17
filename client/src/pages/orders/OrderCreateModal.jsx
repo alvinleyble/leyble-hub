@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
+import Modal from '../../components/ui/Modal';
 import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
@@ -64,6 +65,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     })) ?? [newItem()]
   );
   const [openDropdownKey, setOpenDropdownKey] = useState(null);
+  const [dupConfirm, setDupConfirm] = useState(null);
   const [assignedPersonnel, setAssignedPersonnel] = useState(
     editOrder?.personnel?.map((p) => ({ id: p.personnel_id, role: p.role })) ?? []
   );
@@ -135,7 +137,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const updateItem = (key, field, value) =>
     setItems((prev) => prev.map((i) => i._key === key ? { ...i, [field]: value } : i));
 
-  const selectProduct = (key, productId) => {
+  const applyProduct = (key, productId) => {
     const product = products.find((p) => String(p.id) === productId);
     if (!product) {
       updateItem(key, 'product_id', '');
@@ -156,6 +158,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         : String(product.base_wholesale_price),
       unit_deposit_fee:       String(product.deposit_fee),
     } : i));
+  };
+
+  // Warn before adding a product that's already on another line of this order.
+  const selectProduct = (key, productId) => {
+    const isDup = items.some((i) => i._key !== key && i.product_id === productId);
+    if (isDup) { setDupConfirm({ key, productId }); return; }
+    applyProduct(key, productId);
   };
 
   const lineTotal = (item) => {
@@ -670,6 +679,22 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
           </>
         )}
       </div>
+
+      {dupConfirm && (() => {
+        const p = products.find((x) => String(x.id) === dupConfirm.productId);
+        const name = p ? (p.sku || p.name) : 'this product';
+        return (
+          <Modal
+            title="Product already added"
+            onClose={() => setDupConfirm(null)}
+            onConfirm={() => { applyProduct(dupConfirm.key, dupConfirm.productId); setDupConfirm(null); }}
+            confirmLabel="Yes, add it again"
+          >
+            There's already an existing <strong>{name}</strong> on this order. Add it again as a
+            separate line?
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

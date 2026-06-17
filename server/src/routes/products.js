@@ -22,20 +22,22 @@ router.get('/', async (req, res, next) => {
 
 // POST /api/v1/products
 router.post('/', async (req, res, next) => {
+  const {
+    name, category, unit, sku,
+    base_wholesale_price = 0,
+    deposit_fee = 0, current_stock = 0, units_per_case = 1,
+    requires_bottle_return = false,
+  } = req.body;
+
+  // Validate input before opening a connection/transaction — an early return after
+  // BEGIN would release the client mid-transaction (pg won't auto-rollback).
+  if (!name || !unit) {
+    return res.status(400).json({ error: 'name and unit are required' });
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-
-    const {
-      name, category, unit, sku,
-      base_wholesale_price = 0,
-      deposit_fee = 0, current_stock = 0, units_per_case = 1,
-      requires_bottle_return = false,
-    } = req.body;
-
-    if (!name || !unit) {
-      return res.status(400).json({ error: 'name and unit are required' });
-    }
 
     // Invariant: only returnable-bottle products carry a deposit fee.
     const depositFee = requires_bottle_return ? deposit_fee : 0;

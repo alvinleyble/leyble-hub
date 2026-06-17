@@ -1,15 +1,54 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { applyStockDelta, applyDeltaMap } = require('../lib/inventory');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+async function getFullDelivery(deliveryId) {
+  const { rows: [delivery] } = await db.query(
+    `SELECT sd.*, u.full_name AS created_by_name
+     FROM supplier_deliveries sd
+     LEFT JOIN users u ON u.id = sd.created_by
+     WHERE sd.id = $1`,
+    [deliveryId]
+  );
+  if (!delivery) return null;
+
+  const { rows: items } = await db.query(
+    `SELECT sdi.*, p.name AS product_name, p.sku, p.unit
+     FROM supplier_delivery_items sdi
+     JOIN products p ON p.id = sdi.product_id
+     WHERE sdi.delivery_id = $1
+     ORDER BY sdi.id`,
+    [deliveryId]
+  );
+  return { ...delivery, items };
+}
+
+// Reconcile stock after editing/voiding a delivery. Deliveries ADD stock, so the
+// per-product change is (newQty − oldQty); pass newItems = [] to fully reverse.
+async function reconcileDeliveryStock(client, oldItems, newItems, deliveryId, userId, reason) {
+  const deltas = {};
+  for (const it of oldItems) {
+    deltas[it.product_id] = (deltas[it.product_id] || 0) - Number(it.quantity_received);
+  }
+  for (const it of newItems) {
+    deltas[it.product_id] = (deltas[it.product_id] || 0) + Number(it.quantity_received);
+  }
+  await applyDeltaMap(client, deltas, { actionType: 'manual_adjustment', reason, userId, deliveryId });
+}
+
+// ─── routes ─────────────────────────────────────────────────────────────────
 
 // GET /api/v1/incoming
 router.get('/', async (req, res, next) => {
   try {
     const { supplier_name, from_date, to_date } = req.query;
-    const conditions = [];
+    const conditions = ['sd.voided_at IS NULL']; // voided deliveries never appear
     const params = [];
     let idx = 1;
 
@@ -22,11 +61,12 @@ router.get('/', async (req, res, next) => {
       params.push(from_date);
     }
     if (to_date) {
-      conditions.push(`sd.received_at <= $${idx++}`);
+      // Inclusive of the whole "to" day (received_at is a TIMESTAMPTZ).
+      conditions.push(`sd.received_at < ($${idx++}::date + INTERVAL '1 day')`);
       params.push(to_date);
     }
 
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const { rows } = await db.query(
       `SELECT sd.*, u.full_name AS created_by_name,
@@ -47,14 +87,19 @@ router.get('/', async (req, res, next) => {
 
 // POST /api/v1/incoming — log delivery and restock products
 router.post('/', async (req, res, next) => {
+  const { supplier_name, notes, received_at, items } = req.body;
+
+  // Validate input before opening a connection/transaction — an early return after
+  // BEGIN would release the client mid-transaction (pg won't auto-rollback).
+  if (!supplier_name) return res.status(400).json({ error: 'supplier_name is required' });
+  if (!items?.length) return res.status(400).json({ error: 'At least one item is required' });
+  if (items.some((it) => !it.product_id || !it.quantity_received)) {
+    return res.status(400).json({ error: 'Each item requires product_id and quantity_received' });
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-
-    const { supplier_name, notes, received_at, items } = req.body;
-
-    if (!supplier_name) return res.status(400).json({ error: 'supplier_name is required' });
-    if (!items?.length) return res.status(400).json({ error: 'At least one item is required' });
 
     const { rows: [delivery] } = await client.query(
       `INSERT INTO supplier_deliveries (supplier_name, notes, received_at, created_by)
@@ -66,52 +111,24 @@ router.post('/', async (req, res, next) => {
     for (const item of items) {
       const { product_id, quantity_received, unit_cost, notes: itemNotes } = item;
 
-      if (!product_id || !quantity_received) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Each item requires product_id and quantity_received' });
-      }
-
       await client.query(
         `INSERT INTO supplier_delivery_items (delivery_id, product_id, quantity_received, unit_cost, notes)
          VALUES ($1, $2, $3, $4, $5)`,
         [delivery.id, product_id, quantity_received, unit_cost || null, itemNotes || null]
       );
 
-      const { rows: [product] } = await client.query(
-        'SELECT current_stock FROM products WHERE id = $1 FOR UPDATE',
-        [product_id]
-      );
-      const newStock = product.current_stock + quantity_received;
-
-      await client.query(
-        'UPDATE products SET current_stock = $1, updated_at = NOW() WHERE id = $2',
-        [newStock, product_id]
-      );
-      await client.query(
-        `INSERT INTO inventory_audit_logs
-           (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_delivery_id)
-         VALUES ($1, 'restock', 'current_stock', $2, $3, $4, $5, $6, $7)`,
-        [product_id, String(product.current_stock), String(newStock), quantity_received,
-         `Supplier delivery: ${supplier_name}`, req.user.id, delivery.id]
-      );
+      await applyStockDelta(client, {
+        productId:  product_id,
+        delta:      Number(quantity_received),
+        actionType: 'restock',
+        reason:     `Supplier delivery: ${supplier_name}`,
+        userId:     req.user.id,
+        deliveryId: delivery.id,
+      });
     }
 
     await client.query('COMMIT');
-
-    const { rows: [fullDelivery] } = await db.query(
-      `SELECT sd.*, u.full_name AS created_by_name
-       FROM supplier_deliveries sd LEFT JOIN users u ON u.id = sd.created_by
-       WHERE sd.id = $1`,
-      [delivery.id]
-    );
-    const { rows: deliveryItems } = await db.query(
-      `SELECT sdi.*, p.name AS product_name, p.sku, p.unit
-       FROM supplier_delivery_items sdi JOIN products p ON p.id = sdi.product_id
-       WHERE sdi.delivery_id = $1 ORDER BY sdi.id`,
-      [delivery.id]
-    );
-
-    res.status(201).json({ ...fullDelivery, items: deliveryItems });
+    res.status(201).json(await getFullDelivery(delivery.id));
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -123,27 +140,134 @@ router.post('/', async (req, res, next) => {
 // GET /api/v1/incoming/:id
 router.get('/:id', async (req, res, next) => {
   try {
-    const { rows: [delivery] } = await db.query(
-      `SELECT sd.*, u.full_name AS created_by_name
-       FROM supplier_deliveries sd
-       LEFT JOIN users u ON u.id = sd.created_by
-       WHERE sd.id = $1`,
-      [req.params.id]
-    );
+    const delivery = await getFullDelivery(req.params.id);
     if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-
-    const { rows: items } = await db.query(
-      `SELECT sdi.*, p.name AS product_name, p.sku, p.unit
-       FROM supplier_delivery_items sdi
-       JOIN products p ON p.id = sdi.product_id
-       WHERE sdi.delivery_id = $1
-       ORDER BY sdi.id`,
-      [req.params.id]
-    );
-
-    res.json({ ...delivery, items });
+    res.json(delivery);
   } catch (err) {
     next(err);
+  }
+});
+
+// PATCH /api/v1/incoming/:id — edit a logged delivery (header + items), reconciling stock
+router.patch('/:id', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [delivery] } = await client.query(
+      'SELECT * FROM supplier_deliveries WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!delivery) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Delivery not found' });
+    }
+    if (delivery.voided_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cannot edit a voided delivery' });
+    }
+
+    const { supplier_name, notes, received_at, items } = req.body;
+
+    if (supplier_name !== undefined && !supplier_name.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'supplier_name cannot be empty' });
+    }
+    if (items !== undefined) {
+      if (!items.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'At least one item is required' });
+      }
+      for (const it of items) {
+        if (!it.product_id || !(Number(it.quantity_received) > 0)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Each item requires a product and a quantity greater than 0' });
+        }
+      }
+    }
+
+    await client.query(
+      `UPDATE supplier_deliveries
+          SET supplier_name = COALESCE($1, supplier_name),
+              notes         = $2,
+              received_at   = COALESCE($3, received_at)
+        WHERE id = $4`,
+      [supplier_name !== undefined ? supplier_name.trim() : null,
+       notes !== undefined ? (notes || null) : delivery.notes,
+       received_at ?? null,
+       delivery.id]
+    );
+
+    if (items !== undefined) {
+      const { rows: oldItems } = await client.query(
+        'SELECT product_id, quantity_received FROM supplier_delivery_items WHERE delivery_id = $1',
+        [delivery.id]
+      );
+
+      await client.query('DELETE FROM supplier_delivery_items WHERE delivery_id = $1', [delivery.id]);
+      for (const it of items) {
+        await client.query(
+          `INSERT INTO supplier_delivery_items (delivery_id, product_id, quantity_received, unit_cost, notes)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [delivery.id, it.product_id, Number(it.quantity_received),
+           it.unit_cost != null && it.unit_cost !== '' ? Number(it.unit_cost) : null,
+           it.notes?.trim() || null]
+        );
+      }
+
+      await reconcileDeliveryStock(client, oldItems, items, delivery.id, req.user.id,
+        `Delivery #${delivery.id} edited`);
+    }
+
+    await client.query('COMMIT');
+    res.json(await getFullDelivery(delivery.id));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/v1/incoming/:id — void a delivery: reverse its restock, keep the audit trail
+router.delete('/:id', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [delivery] } = await client.query(
+      'SELECT * FROM supplier_deliveries WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!delivery) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Delivery not found' });
+    }
+    if (delivery.voided_at) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Delivery is already voided' });
+    }
+
+    const { rows: items } = await client.query(
+      'SELECT product_id, quantity_received FROM supplier_delivery_items WHERE delivery_id = $1',
+      [delivery.id]
+    );
+
+    await reconcileDeliveryStock(client, items, [], delivery.id, req.user.id,
+      `Delivery #${delivery.id} voided`);
+
+    await client.query(
+      'UPDATE supplier_deliveries SET voided_at = NOW(), voided_by = $1 WHERE id = $2',
+      [req.user.id, delivery.id]
+    );
+
+    await client.query('COMMIT');
+    res.status(204).end();
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
   }
 });
 

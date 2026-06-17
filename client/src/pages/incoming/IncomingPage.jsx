@@ -12,6 +12,7 @@ export default function IncomingPage() {
   const [deliveries, setDeliveries]   = useState([]);
   const [loading, setLoading]         = useState(true);
   const [creating, setCreating]       = useState(false);
+  const [editing, setEditing]         = useState(null);
   const [selectedId, setSelectedId]   = useState(null);
 
   const [supplierFilter, setSupplierFilter] = useState('');
@@ -149,10 +150,20 @@ export default function IncomingPage() {
         />
       )}
 
+      {editing && (
+        <DeliveryFormModal
+          delivery={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
+
       {selectedId !== null && (
         <DeliveryDetailPanel
           deliveryId={selectedId}
           onClose={() => setSelectedId(null)}
+          onEdit={(d) => { setSelectedId(null); setEditing(d); }}
+          onDeleted={() => { setSelectedId(null); load(); }}
         />
       )}
     </div>
