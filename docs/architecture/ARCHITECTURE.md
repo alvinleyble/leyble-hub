@@ -1,0 +1,95 @@
+# Technical Architecture
+
+Leyble Hub is a single-page React app talking to an Express/PostgreSQL backend. The same backend
+also serves the built frontend, so one deployment is reachable both as a website/PWA and (wrapped
+in Capacitor) as an Android APK.
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, Vite, Tailwind CSS v3 |
+| Backend | Node.js + Express, raw `pg` (no ORM) |
+| Auth | JWT — HTTP-only `SameSite=Strict` cookie (web) **or** `Authorization: Bearer` (native) |
+| Database | PostgreSQL 15+ (`NUMERIC(10,2)` money, `TIMESTAMPTZ` timestamps) |
+| Mobile | Capacitor wrap of the same `client/` build |
+| Hosting | Express on **Render**, Postgres on **Supabase** |
+
+## Topology
+
+```
+Android APK (Capacitor WebView)  ──HTTPS──►  Express on Render  ──►  Postgres on Supabase
+Browser / iPad Safari (PWA)      ──HTTPS──►  (same service also serves client/dist, SPA fallback)
+```
+
+A single Render web service runs `node server/src/index.js`. It mounts the API under
+`/api/v1/*` and serves the built `client/dist` for everything else, falling back to `index.html`
+for non-`/api` routes (see [`server/src/index.js`](../../server/src/index.js)). Because frontend
+and API share one origin, the browser's `SameSite=Strict` login cookie works.
+
+## Backend layout (`server/`)
+
+```
+server/src/
+├── index.js              # Express app: CORS, JSON (10mb for ID images), routes, static, SPA fallback
+├── db.js                 # pg Pool (DATABASE_URL)
+├── middleware/
+│   ├── auth.js           # requireAuth — accepts cookie OR Bearer token
+│   └── errorHandler.js   # central error → JSON
+├── lib/
+│   ├── inventory.js      # applyStockDelta / applyDeltaMap — the ONLY place stock changes
+│   └── activityLog.js    # logActivity + diffFields (writes activity_logs)
+└── routes/               # one file per resource (auth, products, customers, personnel,
+                          # orders, incoming, tickets, audit, dashboard)
+server/db/
+├── migrations/NNN_*.sql  # schema; tracked in _migrations table
+├── migrate.js            # runs pending migrations
+└── seed.js               # creates the first admin user
+```
+
+Every route file does `router.use(requireAuth)` except `auth.js` (only `/me` is guarded there),
+so **all `/api/v1/*` endpoints require auth except `POST /api/v1/auth/login`**.
+
+## Frontend layout (`client/src/`)
+
+```
+api/client.js            # api.get/post/patch/del wrapper — credentials:'include',
+                         #   injects Bearer token on native, redirects to /login on 401
+context/AuthContext.jsx  # logged-in user state
+components/{layout,ui}   # shared layout + UI primitives
+pages/<module>/          # one folder per module (orders, customers, inventory, incoming,
+                         #   personnel, tickets, audit, + DashboardPage, LoginPage)
+utils/productSearch.js   # productMatches() — punctuation-insensitive product search
+```
+
+**Conventions to follow** (also in [CLAUDE.md](../../CLAUDE.md)): searchable combobox for every
+product picker (`productMatches`), side-panel for detail views, modal for create/edit forms,
+a locally-defined `PHP()` formatter per file, toasts via `useToast()`. The permanent sidebar
+renders only on the custom `desktop:` breakpoint (`min-width:1024px` **and** `pointer:fine`);
+phones/tablets get a hamburger drawer.
+
+## Authentication flow
+
+1. `POST /api/v1/auth/login` verifies credentials and issues a JWT.
+2. **Web/PWA:** the JWT is set as an HTTP-only `SameSite=Strict` cookie (works because the API and
+   site are same-origin).
+3. **Native Android:** Capacitor can't use cross-origin strict cookies, so the client stores the
+   JWT in `@capacitor/preferences` (app-sandboxed native storage — *not* browser localStorage)
+   and sends it as `Authorization: Bearer <token>`.
+4. [`requireAuth`](../../server/src/middleware/auth.js) accepts **either** the cookie or the
+   Bearer header. On any `401` the client clears the token and redirects to `/login`.
+
+CORS (`index.js`) allows `localhost:5173` (Vite dev), `https://localhost` +
+`capacitor://localhost` (native), the Render service's own URL, and any extra origins in
+`CLIENT_ORIGIN`.
+
+## Environments
+
+- **Production** — `main` branch → `leyble-hub-api` Render service → prod Supabase DB.
+- **Staging** — `staging` branch → `leyble-hub-api-staging` service → staging Supabase DB.
+- Both defined in [`render.yaml`](../../render.yaml). Workflow: dev branch → `staging` (test live)
+  → `main` (prod). See [operations/staging.md](../operations/staging.md) and
+  [operations/android.md](../operations/android.md).
+
+See also: [Database Reference](DATABASE.md) · [API Reference](API.md) ·
+[Order Lifecycle](order-lifecycle.md).
