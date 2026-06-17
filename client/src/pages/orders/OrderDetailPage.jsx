@@ -5,9 +5,13 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import Modal from '../../components/ui/Modal';
+import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
+import BluetoothPrinterPicker from './BluetoothPrinterPicker';
+
+const IS_NATIVE = Capacitor.isNativePlatform();
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -54,7 +58,9 @@ export default function OrderDetailPage() {
   const [returnCounts, setReturnCounts] = useState({});
 
   const {
-    handlePrint, nativePrintDoc, handleNativePrint, closeNativePreview,
+    handlePrint, printing,
+    pickerVisible, pickerDevices, pickerLoading,
+    handlePrinterSelected, closePickerAndCancel, handleChangePrinter,
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, setOrder);
 
@@ -216,9 +222,20 @@ export default function OrderDetailPage() {
           ← Orders
         </button>
         {!['in_transit'].includes(order.status) && (
-          <Button variant="secondary" size="sm" onClick={handlePrint}>
-            Print Receipt
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button variant="secondary" size="sm" onClick={handlePrint} loading={printing}>
+              Print Receipt
+            </Button>
+            {IS_NATIVE && (
+              <button
+                onClick={handleChangePrinter}
+                className="text-xs text-slate-400 hover:text-slate-600 underline
+                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+              >
+                Change printer
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -634,32 +651,17 @@ export default function OrderDetailPage() {
         />
       )}
 
-      {/* Native print preview overlay (Android only) */}
-      {nativePrintDoc && (
-        <div className="fixed inset-0 z-50 bg-white flex flex-col">
-          <div className="flex gap-3 p-3 border-b border-slate-200 shrink-0">
-            <button
-              onClick={handleNativePrint}
-              className="flex-1 h-12 rounded-lg bg-blue-600 text-white font-semibold text-base"
-            >
-              Print
-            </button>
-            <button
-              onClick={closeNativePreview}
-              className="flex-1 h-12 rounded-lg bg-slate-100 text-slate-700 font-semibold text-base"
-            >
-              Close
-            </button>
-          </div>
-          <iframe
-            srcDoc={nativePrintDoc}
-            className="flex-1 w-full border-none"
-            title="Receipt preview"
-          />
-        </div>
+      {/* Bluetooth printer picker (Android only — shown on first print or "Change printer") */}
+      {pickerVisible && (
+        <BluetoothPrinterPicker
+          devices={pickerDevices}
+          loading={pickerLoading}
+          onSelect={handlePrinterSelected}
+          onClose={closePickerAndCancel}
+        />
       )}
 
-      {/* Confirm tagging this order as printed, after returning from the print dialog */}
+      {/* Confirm tagging this order as printed */}
       {printPrompt && (
         <Modal
           title="Tag receipt as printed?"

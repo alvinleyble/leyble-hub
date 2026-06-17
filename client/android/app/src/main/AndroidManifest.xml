@@ -36,6 +36,11 @@
     </application>
 
     <!-- Permissions -->
-
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Bluetooth for direct ESC/POS printing (pre-Android 12) -->
+    <uses-permission android:name="android.permission.BLUETOOTH"       android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- Bluetooth for direct ESC/POS printing (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 </manifest>
