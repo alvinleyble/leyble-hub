@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import Stepper from '../../components/ui/Stepper';
 import { productMatches } from '../../utils/productSearch';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
@@ -236,12 +237,12 @@ export default function DeliveryFormModal({ onClose, onSaved }) {
                       {/* Qty + Unit Cost */}
                       <div className="grid grid-cols-2 gap-2">
                         <FormField label="Qty Received (cases)">
-                          <input
-                            type="number" min="0.5" step="0.5"
+                          <Stepper
                             value={item.quantity_received}
-                            onChange={(e) => updateItem(item._key, 'quantity_received', e.target.value)}
-                            className={INPUT_SM}
-                            placeholder="0"
+                            onChange={(v) => updateItem(item._key, 'quantity_received', v)}
+                            step={0.5}
+                            min={0.5}
+                            label="Quantity received in cases"
                           />
                         </FormField>
                         <FormField label="Unit Cost / case (₱)" hint="Optional">

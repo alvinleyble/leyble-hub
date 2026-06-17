@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import Stepper from '../../components/ui/Stepper';
 import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
@@ -31,6 +32,12 @@ const newItem = () => ({
 export default function OrderCreateModal({ onClose, onSaved, editOrder = null }) {
   const { addToast } = useToast();
   const isEdit = Boolean(editOrder);
+
+  // Draft modes: a brand-new order and a resumed draft both auto-save as a 'draft' order.
+  // A "real edit" (editing a live pending/in_transit/… order) keeps the single-submit flow.
+  const isDraftResume = editOrder?.status === 'draft';
+  const isRealEdit    = isEdit && !isDraftResume;
+  const isDraftMode   = !isRealEdit;
 
   const [customers, setCustomers]         = useState([]);
   const [products, setProducts]           = useState([]);
@@ -62,6 +69,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   );
   const [notes, setNotes] = useState(editOrder?.notes ?? '');
   const [errors, setErrors] = useState({});
+
+  // ── Draft auto-save state ────────────────────────────────────────────────────
+  const [draftId, setDraftId]           = useState(isDraftResume ? editOrder.id : null);
+  const [draftStatus, setDraftStatus]   = useState('idle'); // 'idle' | 'saving' | 'saved'
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const creatingDraftRef = useRef(false);
 
   useEffect(() => {
     Promise.all([
@@ -179,6 +192,53 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       })
     );
 
+  // ── Draft auto-save ──────────────────────────────────────────────────────────
+
+  // Body for draft create/update. Only rows with a product chosen are sent; blank
+  // quantity/price are tolerated server-side (a draft can be incomplete). customer_id
+  // is omitted while the search box is mid-edit (transiently empty) so it's not wiped.
+  const draftBody = () => {
+    const body = {
+      order_type: orderType,
+      notes:      notes.trim() || null,
+      items: items
+        .filter((i) => i.product_id)
+        .map((i) => ({
+          product_id:          Number(i.product_id),
+          quantity:            Number(i.quantity) || 0,
+          unit_price:          i.unit_price === '' ? 0 : Number(i.unit_price),
+          unit_deposit_fee:    Number(i.unit_deposit_fee) || 0,
+          units_per_case:      Number(i.units_per_case) || 1,
+          is_price_overridden: false,
+        })),
+      personnel: assignedPersonnel,
+    };
+    if (customerId) body.customer_id = Number(customerId);
+    return body;
+  };
+
+  // Create the draft the moment a customer is chosen (the "draft started" trigger).
+  useEffect(() => {
+    if (!isDraftMode || !customerId || draftId || creatingDraftRef.current) return;
+    creatingDraftRef.current = true;
+    setDraftStatus('saving');
+    api.post('/orders', { ...draftBody(), status: 'draft' })
+      .then((created) => { setDraftId(created.id); setDraftStatus('saved'); })
+      .catch(() => { creatingDraftRef.current = false; setDraftStatus('idle'); });
+  }, [isDraftMode, customerId, draftId]); // eslint-disable-line
+
+  // Debounced auto-save on any change once the draft exists. Paused while finalizing/discarding.
+  useEffect(() => {
+    if (!isDraftMode || !draftId || saving) return;
+    setDraftStatus('saving');
+    const t = setTimeout(() => {
+      api.patch(`/orders/${draftId}`, draftBody())
+        .then(() => setDraftStatus('saved'))
+        .catch(() => setDraftStatus('idle'));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel]); // eslint-disable-line
+
   // ── Submit ─────────────────────────────────────────────────────────────────
 
   const validate = () => {
@@ -212,10 +272,16 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         personnel: assignedPersonnel,
       };
 
-      if (isEdit) {
+      if (isRealEdit) {
         await api.patch(`/orders/${editOrder.id}`, payload);
         addToast('Order updated.', 'success');
+      } else if (draftId) {
+        // Draft → save the validated final state, then promote it to a Pending order.
+        await api.patch(`/orders/${draftId}`, payload);
+        await api.post(`/orders/${draftId}/finalize`, {});
+        addToast('Order created.', 'success');
       } else {
+        // No draft was created yet (e.g. created instantly) — fall back to a direct create.
         await api.post('/orders', payload);
         addToast('Order created.', 'success');
       }
@@ -223,6 +289,19 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     } catch (err) {
       addToast(err.message || 'Failed to save order.', 'error');
     } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDiscard = async () => {
+    if (!draftId) { onClose(); return; }
+    setSaving(true);
+    try {
+      await api.del(`/orders/${draftId}`);
+      addToast('Draft discarded.', 'success');
+      onSaved();
+    } catch (err) {
+      addToast(err.message || 'Failed to discard draft.', 'error');
       setSaving(false);
     }
   };
@@ -237,9 +316,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
-          <h2 id="order-modal-title" className="text-xl font-bold text-slate-900">
-            {isEdit ? `Edit Order #${editOrder.id}` : 'New Order'}
-          </h2>
+          <div className="min-w-0">
+            <h2 id="order-modal-title" className="text-xl font-bold text-slate-900">
+              {isRealEdit ? `Edit Order #${editOrder.id}` : isDraftResume ? `Draft #${editOrder.id}` : 'New Order'}
+            </h2>
+            {isDraftMode && draftId && (
+              <p className="text-xs font-medium mt-0.5 text-slate-400">
+                {draftStatus === 'saving'
+                  ? '● Saving draft…'
+                  : '✓ Draft saved automatically'}
+              </p>
+            )}
+          </div>
           <button onClick={onClose} aria-label="Close"
             className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
                        hover:text-slate-700 hover:bg-slate-100
@@ -438,10 +526,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <FormField label="Qty (cases)">
-                          <input type="number" min="0.5" step="0.5"
+                          <Stepper
                             value={item.quantity}
-                            onChange={(e) => updateItem(item._key, 'quantity', e.target.value)}
-                            className={INPUT_SM} />
+                            onChange={(v) => updateItem(item._key, 'quantity', v)}
+                            step={0.5}
+                            min={0.5}
+                            label="Quantity in cases"
+                          />
                         </FormField>
                         <FormField label="Price / case (₱)">
                           <input type="number" min="0" step="0.01"
@@ -541,11 +632,40 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
             </div>
 
             {/* Footer */}
-            <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0 bg-white">
-              <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
-              <Button onClick={handleSubmit} loading={saving}>
-                {isEdit ? 'Save Changes' : 'Create Order'}
-              </Button>
+            <div className="flex gap-3 items-center px-6 py-4 border-t border-slate-200 shrink-0 bg-white">
+              {confirmingDiscard ? (
+                <>
+                  <span className="text-sm text-slate-600 mr-auto">Discard this draft? It can't be undone.</span>
+                  <Button variant="secondary" onClick={() => setConfirmingDiscard(false)} disabled={saving}>Keep</Button>
+                  <Button variant="danger" onClick={handleDiscard} loading={saving}>Discard</Button>
+                </>
+              ) : (
+                <>
+                  {isDraftMode && draftId && (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDiscard(true)}
+                      disabled={saving}
+                      className="text-sm font-semibold text-red-600 hover:text-red-700 hover:underline mr-auto
+                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded px-1
+                                 disabled:opacity-50 disabled:no-underline"
+                    >
+                      Discard draft
+                    </button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    onClick={onClose}
+                    disabled={saving}
+                    className={isDraftMode && draftId ? '' : 'ml-auto'}
+                  >
+                    {isDraftMode && draftId ? 'Close' : 'Cancel'}
+                  </Button>
+                  <Button onClick={handleSubmit} loading={saving}>
+                    {isRealEdit ? 'Save Changes' : 'Create Order'}
+                  </Button>
+                </>
+              )}
             </div>
           </>
         )}

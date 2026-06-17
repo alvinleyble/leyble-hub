@@ -5,6 +5,10 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import ProductFormModal from './ProductFormModal';
 import ProductDetailPanel from './ProductDetailPanel';
+import BluetoothPrinterPicker from '../orders/BluetoothPrinterPicker';
+import { usePrintList } from '../shared/usePrintList';
+import { productListHtml } from '../shared/listPrintTemplate';
+import { productListEscPos } from '../shared/listEscPos';
 import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
@@ -31,6 +35,14 @@ export default function InventoryPage() {
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const {
+    printList, printing,
+    pickerVisible, pickerDevices, pickerLoading, handlePrinterSelected, closePicker,
+  } = usePrintList();
+
+  // Prints the full active product list (ignores on-screen search/filters) — Dad wants them all.
+  const handlePrintList = () => printList(productListHtml(products), productListEscPos(products));
 
   const allCategories = [...new Set(products.map((p) => p.category ?? 'Uncategorised'))].sort();
 
@@ -59,7 +71,12 @@ export default function InventoryPage() {
       {/* ── Header ───────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
-        <Button onClick={() => setCreating(true)}>+ Add Product</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={products.length === 0}>
+            🖶 Print List
+          </Button>
+          <Button onClick={() => setCreating(true)}>+ Add Product</Button>
+        </div>
       </div>
 
       {/* ── Filters ──────────────────────────────────────────────── */}
@@ -231,6 +248,15 @@ export default function InventoryPage() {
           productId={selectedId}
           onClose={() => setSelectedId(null)}
           onSaved={load}
+        />
+      )}
+
+      {pickerVisible && (
+        <BluetoothPrinterPicker
+          devices={pickerDevices}
+          loading={pickerLoading}
+          onSelect={handlePrinterSelected}
+          onClose={closePicker}
         />
       )}
     </div>

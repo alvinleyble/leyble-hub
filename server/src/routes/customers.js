@@ -78,7 +78,7 @@ router.get('/:id', async (req, res, next) => {
           FROM order_personnel op JOIN personnel per ON per.id = op.personnel_id
           WHERE op.order_id = o.id) AS personnel_summary
        FROM orders o
-       WHERE o.customer_id = $1
+       WHERE o.customer_id = $1 AND o.status <> 'draft'
        ORDER BY o.created_at DESC`,
       [req.params.id]
     );

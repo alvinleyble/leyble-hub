@@ -42,7 +42,7 @@ async function recomputeTotal(client, orderId) {
   return total;
 }
 
-async function insertItems(client, orderId, customerId, orderType, items, userId) {
+async function insertItems(client, orderId, customerId, orderType, items, userId, draft = false) {
   for (const item of items) {
     const {
       product_id, quantity, unit_price,
@@ -50,18 +50,26 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
       units_per_case = 1,
     } = item;
 
-    if (!product_id || !quantity || unit_price === undefined) {
+    if (draft) {
+      // Drafts can be incomplete: skip placeholder rows with no product selected yet.
+      if (!product_id) continue;
+    } else if (!product_id || !quantity || unit_price === undefined) {
       const err = new Error('Each item requires product_id, quantity, and unit_price');
       err.status = 400;
       throw err;
     }
+
+    // Drafts tolerate a blank quantity/price (e.g. mid-entry). quantity has a
+    // CHECK (> 0), so fall back to 1; unit_price may be 0.
+    const qty   = draft ? (Number(quantity) > 0 ? Number(quantity) : 1) : quantity;
+    const price = draft ? (Number(unit_price) || 0) : unit_price;
 
     await client.query(
       `INSERT INTO order_items
          (order_id, product_id, quantity, unit_price, unit_deposit_fee,
           is_price_overridden, units_per_case, bottles_returned)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
-      [orderId, product_id, quantity, unit_price, unit_deposit_fee, is_price_overridden, units_per_case]
+      [orderId, product_id, qty, price, unit_deposit_fee, is_price_overridden, units_per_case]
     );
 
     if (is_price_overridden) {
@@ -245,6 +253,10 @@ router.get('/', async (req, res, next) => {
     if (status && status !== 'all') {
       conditions.push(`o.status = $${idx++}`);
       params.push(status);
+    } else {
+      // Drafts only appear under the dedicated Drafts tab (status=draft), never in
+      // the All view or any other tab.
+      conditions.push(`o.status <> 'draft'`);
     }
     if (customer_id) {
       conditions.push(`o.customer_id = $${idx++}`);
@@ -287,10 +299,12 @@ router.post('/', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
-    const { customer_id, notes, items, personnel = [], order_type = 'delivery' } = req.body;
+    const { customer_id, notes, items = [], personnel = [], order_type = 'delivery', status } = req.body;
+    const isDraft = status === 'draft';
 
     if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
-    if (!items?.length) return res.status(400).json({ error: 'At least one item is required' });
+    // A finalized order needs at least one item; a draft may be parked while still empty.
+    if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
 
     const { rows: [customer] } = await client.query(
       'SELECT id, name FROM customers WHERE id = $1 AND is_active = TRUE',
@@ -302,23 +316,26 @@ router.post('/', async (req, res, next) => {
     }
 
     const { rows: [order] } = await client.query(
-      `INSERT INTO orders (customer_id, notes, total_amount, order_type)
-       VALUES ($1, $2, 0, $3)
+      `INSERT INTO orders (customer_id, notes, total_amount, order_type, status)
+       VALUES ($1, $2, 0, $3, $4)
        RETURNING *`,
-      [customer_id, notes || null, order_type]
+      [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending']
     );
 
-    await insertItems(client, order.id, customer_id, order_type, items, req.user.id);
+    await insertItems(client, order.id, customer_id, order_type, items, req.user.id, isDraft);
     await recomputeTotal(client, order.id);
     await syncPersonnel(client, order.id, personnel);
 
-    await logActivity(client, {
-      entityType: 'order',
-      entityId:   order.id,
-      action:     'created',
-      summary:    `Order #${order.id} created for ${customer.name} (${order_type})`,
-      performedBy: req.user.id,
-    });
+    // Drafts are ephemeral — the activity log entry is written when the draft is finalized.
+    if (!isDraft) {
+      await logActivity(client, {
+        entityType: 'order',
+        entityId:   order.id,
+        action:     'created',
+        summary:    `Order #${order.id} created for ${customer.name} (${order_type})`,
+        performedBy: req.user.id,
+      });
+    }
 
     await client.query('COMMIT');
     res.status(201).json(await getFullOrder(order.id));
@@ -356,8 +373,9 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const { notes, items, personnel } = req.body;
+    const { notes, items, personnel, customer_id, order_type } = req.body;
     const DISPATCHED_STATUSES = ['in_transit', 'completed', 'done'];
+    const isDraft = order.status === 'draft';
 
     const changeNotes = [];
 
@@ -368,6 +386,18 @@ router.patch('/:id', async (req, res, next) => {
       [notes !== undefined ? notes : order.notes, order.id]
     );
 
+    // A parked draft may still change its customer / order type (COALESCE keeps the
+    // current value when a field is omitted). Live orders never change these here.
+    if (isDraft && (customer_id !== undefined || order_type !== undefined)) {
+      await client.query(
+        `UPDATE orders SET customer_id = COALESCE($1, customer_id),
+                           order_type  = COALESCE($2, order_type),
+                           updated_at  = NOW()
+         WHERE id = $3`,
+        [customer_id ?? null, order_type ?? null, order.id]
+      );
+    }
+
     if (items !== undefined) {
       // Snapshot old items before deletion for stock reconciliation
       const { rows: oldItems } = await client.query(
@@ -376,7 +406,7 @@ router.patch('/:id', async (req, res, next) => {
       );
 
       await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
-      await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id);
+      await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id, isDraft);
       await recomputeTotal(client, order.id);
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
@@ -391,7 +421,8 @@ router.patch('/:id', async (req, res, next) => {
       changeNotes.push('Personnel updated');
     }
 
-    if (changeNotes.length) {
+    // Draft auto-saves are silent; the activity log records the order at finalize time.
+    if (changeNotes.length && !isDraft) {
       await logActivity(client, {
         entityType: 'order',
         entityId:   order.id,
@@ -403,6 +434,96 @@ router.patch('/:id', async (req, res, next) => {
 
     await client.query('COMMIT');
     res.json(await getFullOrder(order.id));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/v1/orders/:id/finalize — turn a draft into a real Pending order
+router.post('/:id/finalize', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [order] } = await client.query(
+      'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    if (order.status !== 'draft') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only draft orders can be finalized' });
+    }
+
+    const { rows: [{ count }] } = await client.query(
+      'SELECT COUNT(*)::INT AS count FROM order_items WHERE order_id = $1',
+      [order.id]
+    );
+    if (count === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Add at least one product before creating the order' });
+    }
+
+    const { rows: [customer] } = await client.query(
+      'SELECT name FROM customers WHERE id = $1',
+      [order.customer_id]
+    );
+
+    await client.query(
+      `UPDATE orders SET status = 'pending', updated_at = NOW() WHERE id = $1`,
+      [order.id]
+    );
+    await recomputeTotal(client, order.id);
+
+    await logActivity(client, {
+      entityType: 'order',
+      entityId:   order.id,
+      action:     'created',
+      summary:    `Order #${order.id} created for ${customer?.name || 'customer'} (${order.order_type})`,
+      performedBy: req.user.id,
+    });
+
+    await client.query('COMMIT');
+    res.json(await getFullOrder(order.id));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/v1/orders/:id — only drafts may be deleted (real orders are cancelled, not removed)
+router.delete('/:id', async (req, res, next) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [order] } = await client.query(
+      'SELECT id, status FROM orders WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    if (order.status !== 'draft') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only draft orders can be deleted' });
+    }
+
+    await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
+    await client.query('DELETE FROM order_personnel WHERE order_id = $1', [order.id]);
+    await client.query('DELETE FROM orders WHERE id = $1', [order.id]);
+
+    await client.query('COMMIT');
+    res.status(204).end();
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);

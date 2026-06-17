@@ -75,7 +75,7 @@ router.get('/:id', async (req, res, next) => {
        FROM order_personnel op
        JOIN orders o ON o.id = op.order_id
        JOIN customers c ON c.id = o.customer_id
-       WHERE op.personnel_id = $1
+       WHERE op.personnel_id = $1 AND o.status <> 'draft'
        ORDER BY o.created_at DESC`,
       [req.params.id]
     );

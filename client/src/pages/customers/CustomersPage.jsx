@@ -5,6 +5,10 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import CustomerFormModal from './CustomerFormModal';
 import CustomerDetailPanel from './CustomerDetailPanel';
+import BluetoothPrinterPicker from '../orders/BluetoothPrinterPicker';
+import { usePrintList } from '../shared/usePrintList';
+import { customerListHtml } from '../shared/listPrintTemplate';
+import { customerListEscPos } from '../shared/listEscPos';
 
 const TYPE_BADGE = {
   regular:    'bg-slate-100 text-slate-600 border-slate-200',
@@ -42,12 +46,24 @@ export default function CustomersPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const {
+    printList, printing,
+    pickerVisible, pickerDevices, pickerLoading, handlePrinterSelected, closePicker,
+  } = usePrintList();
+
+  const handlePrintList = () => printList(customerListHtml(customers), customerListEscPos(customers));
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
-        <Button onClick={() => setCreating(true)}>+ Add Customer</Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={customers.length === 0}>
+            🖶 Print List
+          </Button>
+          <Button onClick={() => setCreating(true)}>+ Add Customer</Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -144,6 +160,15 @@ export default function CustomersPage() {
           customerId={selectedId}
           onClose={() => setSelectedId(null)}
           onSaved={load}
+        />
+      )}
+
+      {pickerVisible && (
+        <BluetoothPrinterPicker
+          devices={pickerDevices}
+          loading={pickerLoading}
+          onSelect={handlePrinterSelected}
+          onClose={closePicker}
         />
       )}
     </div>

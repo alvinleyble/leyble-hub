@@ -1,12 +1,28 @@
 import React from 'react';
 
-// Large +/- flanking a number input — designed for easy finger/thumb use.
-export default function Stepper({ value, onChange, min = 0, max = 9999, label }) {
-  const decrement = () => onChange(Math.max(min, Number(value) - 1));
-  const increment = () => onChange(Math.min(max, Number(value) + 1));
+// Large +/- flanking a number input — designed for easy finger/thumb use on tablets.
+// `step` controls the increment (e.g. 0.5 for half-cases, 1 for whole bottles).
+// `onChange` receives the raw string value so callers keep their string-based form
+// state and the field stays freely typeable; the +/- buttons round/clamp to step.
+// `id` + aria-* (injected by FormField) are forwarded to the inner <input>.
+export default function Stepper({
+  value,
+  onChange,
+  step = 1,
+  min = 0,
+  max = 9999,
+  label,
+  ...rest
+}) {
+  const num = parseFloat(value);
+  const current = Number.isFinite(num) ? num : 0;
+
+  const round = (n) => Number(n.toFixed(2));            // kill float noise (e.g. 0.30000004)
+  const clamp = (n) => Math.min(max, Math.max(min, n));
+  const setVal = (n) => onChange(String(clamp(round(n))));
 
   const btnBase = `
-    flex items-center justify-center w-12 h-12 bg-white
+    flex items-center justify-center w-12 h-12 shrink-0 bg-white
     text-slate-700 text-2xl font-bold select-none
     border border-slate-300
     hover:bg-slate-100 active:bg-slate-200
@@ -16,12 +32,12 @@ export default function Stepper({ value, onChange, min = 0, max = 9999, label })
   `;
 
   return (
-    <div className="inline-flex items-center" role="group" aria-label={label}>
+    <div className="flex w-full items-stretch" role="group" aria-label={label}>
       <button
         type="button"
-        onClick={decrement}
-        disabled={Number(value) <= min}
-        aria-label={`Decrease ${label}`}
+        onClick={() => setVal(current - step)}
+        disabled={current <= min}
+        aria-label={`Decrease ${label || 'value'}`}
         className={`${btnBase} rounded-l-lg border-r-0`}
       >
         −
@@ -29,13 +45,15 @@ export default function Stepper({ value, onChange, min = 0, max = 9999, label })
 
       <input
         type="number"
-        inputMode="numeric"
+        inputMode="decimal"
         value={value}
         min={min}
         max={max}
-        onChange={(e) => onChange(Number(e.target.value))}
+        step={step}
+        onChange={(e) => onChange(e.target.value)}
         aria-label={label}
-        className="w-16 h-12 text-center text-base font-semibold text-slate-900
+        {...rest}
+        className="flex-1 min-w-0 h-12 text-center text-base font-semibold text-slate-900
                    border border-slate-300
                    focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-inset
                    [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -43,9 +61,9 @@ export default function Stepper({ value, onChange, min = 0, max = 9999, label })
 
       <button
         type="button"
-        onClick={increment}
-        disabled={Number(value) >= max}
-        aria-label={`Increase ${label}`}
+        onClick={() => setVal(current + step)}
+        disabled={current >= max}
+        aria-label={`Increase ${label || 'value'}`}
         className={`${btnBase} rounded-r-lg border-l-0`}
       >
         +

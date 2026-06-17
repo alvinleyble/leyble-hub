@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
+import Stepper from '../../components/ui/Stepper';
 
 const FIELD_CLASS = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                      focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -110,8 +111,13 @@ export default function ProductFormModal({ onClose, onSaved }) {
             </FormField>
 
             <FormField label="Initial Stock" error={errors.current_stock}>
-              <input type="number" min="0" step="0.5" value={form.current_stock}
-                onChange={set('current_stock')} className={FIELD_CLASS} />
+              <Stepper
+                value={form.current_stock}
+                onChange={(v) => setForm((f) => ({ ...f, current_stock: v }))}
+                step={0.5}
+                min={0}
+                label="Initial stock in cases"
+              />
             </FormField>
 
             <div className="sm:col-span-2 border-t border-slate-100 pt-4">

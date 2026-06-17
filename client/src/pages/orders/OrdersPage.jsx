@@ -12,6 +12,7 @@ const PHP = (n) =>
 
 const STATUS_TABS = [
   { value: 'all',        label: 'All' },
+  { value: 'draft',      label: 'Drafts' },
   { value: 'pending',    label: 'Pending' },
   { value: 'in_transit', label: 'In Transit' },
   { value: 'completed',  label: 'Delivered' },
@@ -20,6 +21,7 @@ const STATUS_TABS = [
 ];
 
 const STATUS_BADGE = {
+  draft:      'bg-violet-100 text-violet-800 border-violet-300',
   pending:    'bg-blue-100 text-blue-800 border-blue-300',
   in_transit: 'bg-amber-100 text-amber-800 border-amber-300',
   completed:  'bg-green-100 text-green-800 border-green-300',
@@ -28,6 +30,7 @@ const STATUS_BADGE = {
 };
 
 const STATUS_LABEL = {
+  draft:      'Draft',
   pending:    'Pending',
   in_transit: 'In Transit',
   completed:  'Delivered',
@@ -45,6 +48,12 @@ export default function OrdersPage() {
   const [fromDate, setFromDate]   = useState('');
   const [toDate, setToDate]       = useState('');
   const [creating, setCreating]   = useState(false);
+
+  // Drafts: separate banner feed (shown on any tab) + resume/discard state
+  const [drafts, setDrafts]               = useState([]);
+  const [resumeDraft, setResumeDraft]     = useState(null);
+  const [discardConfirm, setDiscardConfirm] = useState(null);
+  const [discarding, setDiscarding]       = useState(false);
 
   // Bulk selection + actions (only meaningful on pending/in_transit/completed tabs)
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
@@ -71,7 +80,38 @@ export default function OrdersPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const loadDrafts = useCallback(() => {
+    api.get('/orders?status=draft').then(setDrafts).catch(() => {});
+  }, []);
+
+  useEffect(() => { loadDrafts(); }, [loadDrafts]);
+
   useEffect(() => { setSelectedIds(new Set()); setBulkConfirm(null); }, [statusTab]);
+
+  const openDraft = async (o) => {
+    try {
+      const full = await api.get(`/orders/${o.id}`);
+      setResumeDraft(full);
+    } catch (err) {
+      addToast(err.message || 'Failed to open draft.', 'error');
+    }
+  };
+
+  const confirmDiscardDraft = async () => {
+    if (!discardConfirm) return;
+    setDiscarding(true);
+    try {
+      await api.del(`/orders/${discardConfirm.id}`);
+      addToast('Draft discarded.', 'success');
+      setDiscardConfirm(null);
+      load();
+      loadDrafts();
+    } catch (err) {
+      addToast(err.message || 'Failed to discard draft.', 'error');
+    } finally {
+      setDiscarding(false);
+    }
+  };
 
   const toggleSelected = (id) => {
     setSelectedIds((prev) => {
@@ -153,6 +193,24 @@ export default function OrdersPage() {
         <h1 className="text-2xl font-bold text-slate-900">Outgoing Orders</h1>
         <Button onClick={() => setCreating(true)}>+ New Order</Button>
       </div>
+
+      {/* Parked-drafts banner — visible from any tab so an in-progress order is never lost */}
+      {drafts.length > 0 && statusTab !== 'draft' && (
+        <div className="mb-4 rounded-xl border border-violet-300 bg-violet-50 px-5 py-3
+                        flex items-center justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-violet-900">
+              📝 {drafts.length} parked draft{drafts.length === 1 ? '' : 's'}
+            </p>
+            <p className="text-sm text-violet-700 truncate">
+              For: {drafts.map((d) => d.customer_name).join(', ')}
+            </p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => setStatusTab('draft')} className="shrink-0">
+            View drafts →
+          </Button>
+        </div>
+      )}
 
       {/* Status tabs */}
       <div className="flex flex-wrap gap-1.5 mb-4">
@@ -311,13 +369,14 @@ export default function OrdersPage() {
                 <th className="text-right px-5 py-3 font-semibold">Total</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Date</th>
                 <th className="text-left px-5 py-3 font-semibold">Status</th>
+                {statusTab === 'draft' && <th className="px-5 py-3 w-28" />}
               </tr>
             </thead>
             <tbody>
               {orders.map((o) => (
                 <tr
                   key={o.id}
-                  onClick={() => navigate(`/orders/${o.id}`)}
+                  onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id}`)}
                   className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   {showCheckboxes && (
@@ -367,6 +426,13 @@ export default function OrdersPage() {
                       )}
                     </div>
                   </td>
+                  {statusTab === 'draft' && (
+                    <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(o)}>
+                        Discard
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -376,9 +442,37 @@ export default function OrdersPage() {
 
       {creating && (
         <OrderCreateModal
-          onClose={() => setCreating(false)}
-          onSaved={() => { setCreating(false); load(); }}
+          onClose={() => { setCreating(false); load(); loadDrafts(); }}
+          onSaved={() => { setCreating(false); load(); loadDrafts(); }}
         />
+      )}
+
+      {resumeDraft && (
+        <OrderCreateModal
+          editOrder={resumeDraft}
+          onClose={() => { setResumeDraft(null); load(); loadDrafts(); }}
+          onSaved={() => { setResumeDraft(null); load(); loadDrafts(); }}
+        />
+      )}
+
+      {discardConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+          <div className="bg-white rounded-xl max-w-sm w-full mx-4 shadow-2xl p-6">
+            <h2 className="text-lg font-bold text-slate-900 mb-2">Discard draft?</h2>
+            <p className="text-sm text-slate-600 mb-5">
+              The draft order for <span className="font-semibold">{discardConfirm.customer_name}</span> will be
+              permanently removed. This can't be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button variant="secondary" onClick={() => setDiscardConfirm(null)} disabled={discarding}>
+                Keep
+              </Button>
+              <Button variant="danger" onClick={confirmDiscardDraft} loading={discarding}>
+                Discard
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {reviewPrompt && (

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import Stepper from '../../components/ui/Stepper';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -84,17 +85,12 @@ export default function OrderCloseForm({ order, returnCounts, onChangeReturnCoun
               <label className="block text-sm font-medium text-slate-700 mb-1">
                 Bottles returned
               </label>
-              <input
-                type="number"
-                min="0"
-                step="1"
+              <Stepper
                 value={returnCounts[item.id] ?? ''}
-                onChange={(e) =>
-                  onChangeReturnCounts({ ...returnCounts, [item.id]: e.target.value })
-                }
-                className="w-full h-12 px-4 border border-slate-300 rounded-lg text-base
-                           focus:outline-none focus:ring-2 focus:ring-blue-600"
-                placeholder="0"
+                onChange={(v) => onChangeReturnCounts({ ...returnCounts, [item.id]: v })}
+                step={1}
+                min={0}
+                label={`Bottles returned for ${item.sku || item.product_name}`}
               />
               {returnCounts[item.id] !== '' && (
                 <p className={`text-xs mt-1 tabular-nums ${b.depositOwed < 0 ? 'text-green-700' : 'text-slate-500'}`}>

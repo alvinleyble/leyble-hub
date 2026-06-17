@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import Stepper from '../../components/ui/Stepper';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
 
 const PHP = (n) =>
@@ -221,10 +222,12 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                       label={adjMode === 'set' ? 'New stock count' : 'Cases'}
                       error={adjErrors.adjQty}
                     >
-                      <input
-                        type="number" min="0.5" step="0.5" value={adjQty}
-                        onChange={(e) => setAdjQty(e.target.value)}
-                        className={INPUT} placeholder="0"
+                      <Stepper
+                        value={adjQty}
+                        onChange={setAdjQty}
+                        step={0.5}
+                        min={0.5}
+                        label={adjMode === 'set' ? 'New stock count' : 'Cases'}
                       />
                     </FormField>
 
