@@ -13,7 +13,7 @@ services) where family members can test and practice without touching real produ
 - **Staging Supabase project:** separate instance with a one-time copy of prod data
 - **Staging URL:** available in the Render dashboard once deployed (e.g.,
   `https://leyble-hub-api-staging.onrender.com`)
-- **Staging branch:** `staging` (third branch in the repo alongside `main` and `android-app`)
+- **Staging branch:** `staging` (third branch in the repo alongside `main` and `dev`)
 
 ---
 
@@ -76,15 +76,15 @@ This copies:
 
 ---
 
-## Development workflow: android-app → staging → main
+## Development workflow: dev → staging → main
 
 Once staging is live, use this workflow for safer deployments:
 
 ### Normal feature or fix (low-risk, test on staging first):
 
-1. **Make changes on `android-app`** (your active dev branch):
+1. **Make changes on `dev`** (your active dev branch):
    ```bash
-   git checkout android-app
+   git checkout dev
    # ... edit files, test locally ...
    git commit -m "Add feature X"
    ```
@@ -92,7 +92,7 @@ Once staging is live, use this workflow for safer deployments:
 2. **Merge into `staging` and push**:
    ```bash
    git checkout staging
-   git merge android-app
+   git merge dev
    git push origin staging
    ```
    Render's `staging` environment auto-deploys. Wait 1–3 minutes for the build to finish.
@@ -110,16 +110,16 @@ Once staging is live, use this workflow for safer deployments:
    ```
    Render's `production` environment auto-deploys. Production is now updated.
 
-5. **If it doesn't work**, fix the issue on `android-app`, re-merge, and push to `staging` again.
+5. **If it doesn't work**, fix the issue on `dev`, re-merge, and push to `staging` again.
    Staging redeploys until the fix is verified. Then merge into `main`.
 
 ### Emergency hotfix (skip staging, go straight to prod):
 
 For critical bugs or urgent fixes that need immediate production deployment:
 
-1. **Fix on `android-app`**:
+1. **Fix on `dev`**:
    ```bash
-   git checkout android-app
+   git checkout dev
    # ... fix, test locally ...
    git commit -m "Fix critical bug Y"
    ```
@@ -127,7 +127,7 @@ For critical bugs or urgent fixes that need immediate production deployment:
 2. **Merge directly into `main`** (skip staging):
    ```bash
    git checkout main
-   git merge android-app
+   git merge dev
    git push origin main
    ```
    Production redeploys immediately. Staging stays on its previous commit (unaffected).
@@ -146,7 +146,7 @@ For critical bugs or urgent fixes that need immediate production deployment:
 
 | Branch | Purpose | Deploys to | Auto-deploys on push |
 |--------|---------|------------|----------------------|
-| `android-app` | Your active dev branch | (none — local only) | (no) |
+| `dev` | Your active dev branch | (none — local only) | (no) |
 | `staging` | Staging environment | Render staging service | Yes, `staging` environment |
 | `main` | Production environment | Render prod service | Yes, `production` environment |
 

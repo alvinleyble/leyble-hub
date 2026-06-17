@@ -189,8 +189,8 @@ defined in [render.yaml](render.yaml) under a `projects:`/`environments:` struct
 - **Staging** (`staging` branch): `leyble-hub-api-staging` service, staging Supabase DB (cloned
   from prod, then independent)
 
-**Workflow:** changes flow `android-app` (dev) → `staging` (test live) → `main` (prod). Small
-hotfixes can skip staging (merge `android-app` → `main` directly). See **[docs/operations/staging.md](docs/operations/staging.md)**
+**Workflow:** changes flow `dev` → `staging` (test live) → `main` (prod). Small
+hotfixes can skip staging (merge `dev` → `main` directly). See **[docs/operations/staging.md](docs/operations/staging.md)**
 for the full setup, one-time Supabase clone, and deployment workflow.
 
 > The old Windows/PM2 `.bat` scripts (`start/stop/restart/update.bat`) are **dev-only legacy**
