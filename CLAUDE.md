@@ -109,9 +109,9 @@ still used for everything else (table columns etc.).
 
 ---
 
-## Schema — what diverges from SPECIFICATION.md
+## Schema — what diverges from the archived spec
 
-`SPECIFICATION.md` predates migrations 012–026 (the divergences are listed below). Trust the actual migrations over the spec.
+The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) predates migrations 012–026 (the divergences are listed below). Trust the actual migrations over the spec. For the current schema written up from the migrations, see [docs/architecture/DATABASE.md](docs/architecture/DATABASE.md).
 
 | What the spec says | What the DB actually has |
 |---|---|
@@ -177,7 +177,7 @@ iPad/desktop browsers — Add to Home Screen for an app-like icon):
 - **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
 - `npm run dev` (separate Vite + Express servers) is dev-only.
 - Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD`, set as a host env var).
-- Full build/deploy/sideload steps: **[ANDROID.md](ANDROID.md)**.
+- Full build/deploy/sideload steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
 ### Production + Staging environments
 
@@ -190,7 +190,7 @@ defined in [render.yaml](render.yaml) under a `projects:`/`environments:` struct
   from prod, then independent)
 
 **Workflow:** changes flow `android-app` (dev) → `staging` (test live) → `main` (prod). Small
-hotfixes can skip staging (merge `android-app` → `main` directly). See **[STAGING.md](STAGING.md)**
+hotfixes can skip staging (merge `android-app` → `main` directly). See **[docs/operations/staging.md](docs/operations/staging.md)**
 for the full setup, one-time Supabase clone, and deployment workflow.
 
 > The old Windows/PM2 `.bat` scripts (`start/stop/restart/update.bat`) are **dev-only legacy**
@@ -211,7 +211,7 @@ for the full setup, one-time Supabase clone, and deployment workflow.
   **Native Android exception:** the Capacitor app can't use SameSite=strict cookies
   cross-origin, so it stores the JWT in `@capacitor/preferences` (native, app-sandboxed — *not*
   browser localStorage) and sends it as `Authorization: Bearer`. `requireAuth` accepts both
-  cookie and Bearer; see [ANDROID.md](ANDROID.md).
+  cookie and Bearer; see [docs/operations/android.md](docs/operations/android.md).
 - `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - All API routes require `requireAuth` middleware except `POST /api/v1/auth/login`
 - Parameterized queries only — no string interpolation into SQL

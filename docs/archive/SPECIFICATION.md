@@ -1,3 +1,12 @@
+> ⚠️ **ARCHIVED — SUPERSEDED, HISTORICAL ONLY.** This original specification predates
+> migrations 012–029 and is no longer maintained. Do **not** trust its schema, API, or business
+> rules. The live documentation lives in [`docs/`](../README.md):
+> [PRD](../product/PRD.md) · [Architecture](../architecture/ARCHITECTURE.md) ·
+> [Database Reference](../architecture/DATABASE.md) · [API Reference](../architecture/API.md).
+> Kept only as a record of the original design intent.
+
+---
+
 # Leyble Hub — System Specification
 
 **Version:** 1.2.0-spec  

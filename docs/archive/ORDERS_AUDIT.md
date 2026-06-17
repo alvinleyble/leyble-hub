@@ -1,3 +1,10 @@
+> 🗄️ **ARCHIVED — HISTORICAL SNAPSHOT.** This is a one-off bug/audit sweep of the Orders module
+> taken in June 2026. It is not living documentation and was not kept up to date — some findings
+> may already be fixed. For the current behaviour of orders see
+> [Order Lifecycle](../architecture/order-lifecycle.md). Kept for historical reference.
+
+---
+
 # Orders Module — Audit Sweep Report
 
 **Scope:** `client/src/pages/orders/` (all 5 files) + `server/src/routes/orders.js` + cross-cutting patterns vs. `customers.js`, `products.js`, `audit.js`.

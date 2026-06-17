@@ -1,4 +1,4 @@
-# ANDROID.md — Leyble Hub as an Android app
+# Android — Leyble Hub as an Android app
 
 Leyble Hub ships to Android by **wrapping the existing React/Vite web app with
 [Capacitor](https://capacitorjs.com/)**. The same `client/` code becomes the APK — there is
@@ -23,8 +23,8 @@ Browser / iPad Safari (PWA)      ──HTTPS──►  also serves client/dist (
   `SameSite=Strict` cookie, which only works because frontend and API share one origin.
 - Auth: web uses an HTTP-only cookie; the **Android app uses a Bearer token** stored in
   `@capacitor/preferences` (native, app-sandboxed storage — *not* browser localStorage).
-  Both are handled centrally in [client/src/api/client.js](client/src/api/client.js) and
-  [server/src/middleware/auth.js](server/src/middleware/auth.js).
+  Both are handled centrally in [client/src/api/client.js](../../client/src/api/client.js) and
+  [server/src/middleware/auth.js](../../server/src/middleware/auth.js).
 
 ---
 
@@ -109,7 +109,7 @@ Rebuild with the same keystore (steps above), bump `versionCode`/`versionName` i
 - **Camera** for personnel ID photos: works today via the existing `<input type=file>` (the
   WebView offers camera/gallery). `@capacitor/camera` is optional polish.
 - **Bluetooth thermal printing (80mm):** NOT done yet. `window.print()` (in
-  [OrderDetailPage.jsx](client/src/pages/orders/OrderDetailPage.jsx)) can't drive a Bluetooth
+  [OrderDetailPage.jsx](../../client/src/pages/orders/OrderDetailPage.jsx)) can't drive a Bluetooth
   ESC/POS printer. This needs a Bluetooth plugin + an ESC/POS generator — planned as a
   separate phase, and the exact printer model must be confirmed first.
 - **Push / offline:** out of scope for v1.

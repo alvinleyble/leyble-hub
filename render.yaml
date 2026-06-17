@@ -1,4 +1,4 @@
-# NB: the database lives on Supabase (see ANDROID.md and STAGING.md), NOT on Render.
+# NB: the database lives on Supabase (see docs/operations/android.md and docs/operations/staging.md), NOT on Render.
 # Do not add a Render-managed `databases:` block here — Render's free Postgres is deleted
 # ~30 days after creation. DATABASE_URL is set manually in the dashboard per environment
 # to the Supabase pooled URL.
