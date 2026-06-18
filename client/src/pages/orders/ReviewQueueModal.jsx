@@ -8,7 +8,7 @@ import OrderCloseForm, { breakdownForItem } from './OrderCloseForm';
 import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
-import BluetoothPrinterPicker from './BluetoothPrinterPicker';
+import PrinterPicker from './PrinterPicker';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -104,8 +104,8 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
   const {
     handlePrint, printing,
-    pickerVisible, pickerDevices, pickerLoading,
-    handlePrinterSelected, closePickerAndCancel, handleChangePrinter,
+    pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
+    savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, (updated) =>
     setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment);
@@ -478,12 +478,16 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
         </>
       )}
 
-      {/* Bluetooth printer picker (Android only) */}
+      {/* Printer picker (Android only) */}
       {pickerVisible && (
-        <BluetoothPrinterPicker
+        <PrinterPicker
           devices={pickerDevices}
           loading={pickerLoading}
-          onSelect={handlePrinterSelected}
+          current={pickerCurrent}
+          printPending={printPending}
+          onSave={savePrinter}
+          onScanWifi={scanWifi}
+          onTestPrint={testPrint}
           onClose={closePickerAndCancel}
         />
       )}

@@ -108,8 +108,35 @@ Rebuild with the same keystore (steps above), bump `versionCode`/`versionName` i
 
 - **Camera** for personnel ID photos: works today via the existing `<input type=file>` (the
   WebView offers camera/gallery). `@capacitor/camera` is optional polish.
-- **Bluetooth thermal printing (80mm):** NOT done yet. `window.print()` (in
-  [OrderDetailPage.jsx](../../client/src/pages/orders/OrderDetailPage.jsx)) can't drive a Bluetooth
-  ESC/POS printer. This needs a Bluetooth plugin + an ESC/POS generator — planned as a
-  separate phase, and the exact printer model must be confirmed first.
+- **Thermal receipt printing (80mm) — Bluetooth + WiFi:** ✅ done. A custom Capacitor plugin
+  ([PrinterPlugin.java](../../client/android/app/src/main/java/com/leyble/hub/PrinterPlugin.java))
+  sends ESC/POS bytes straight to the **VOZY G80** — no Android print dialog. Transport is chosen
+  in [PrinterPicker.jsx](../../client/src/pages/orders/PrinterPicker.jsx) (a two-tab sheet) and
+  the choice is remembered:
+  - **Bluetooth:** RFCOMM socket to a paired MAC (pair the printer in Android Settings → Bluetooth
+    first). One tablet at a time.
+  - **WiFi:** raw TCP to the printer's `IP:9100`. The WiFi tab can **Scan network** (a parallel
+    port-9100 TCP sweep of the device's /24 — these cheap printers don't advertise over mDNS) or
+    take a manual **IP / Port / Name**, with a **Test print** button. WiFi lets **multiple tablets
+    share one printer**, which Bluetooth can't.
+  - The saved printer (`type`/`address`/`port`/`name`) lives in the plugin's SharedPreferences;
+    [usePrintReceipt.js](../../client/src/pages/orders/usePrintReceipt.js) (receipts) and
+    [usePrintList.js](../../client/src/pages/shared/usePrintList.js) (product/customer lists) both
+    route every print through it. Web (Render) stays on `window.print()` — browsers can't open raw
+    sockets.
+  - **WiFi preflight:** printer on the **same 2.4GHz SSID** as the tablet, raw port **9100** open,
+    and router **AP/client isolation disabled** (otherwise device-to-device traffic is blocked and
+    both scan + print fail). Set a **DHCP reservation** so the printer's IP doesn't drift.
+
+### WiFi printer quirk — `+EVENT=SOCKA_ON` / `SOCKA_OFF` printed on receipts
+The VOZY G80's WiFi card is a **Hi-Flying HF-LPT270** module. Out of the box it prints
+connection-status notices — `+EVENT=SOCKA_ON` when a TCP client connects, `+EVENT=SOCKA_OFF` when
+it disconnects — so they show up **above the header and below the footer on every WiFi print**
+(Bluetooth is unaffected; it's not in our ESC/POS payload). The fix is the module command
+**`AT+EVENT=off`** (default is `on`; the setting persists across reboots). The printer's web config
+page (`http://<printer-ip>`, e.g. `192.168.1.39`) has no field to send AT commands, so the app
+does it: **Wi-Fi tab → "Disable notices & reboot printer."** That runs the Hi-Flying handshake over
+the module's UDP config channel (**port 48899**): `HF-A11ASSISTHREAD` discovery → `+ok` (enter
+command mode) → `AT+EVENT=off` → `AT+Z` (reboot). One-time. Implemented as
+`disableWifiEventNotice()` in PrinterPlugin.java; the button only needs the printer's IP filled in.
 - **Push / offline:** out of scope for v1.

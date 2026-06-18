@@ -15,6 +15,7 @@ export function usePrintList() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerDevices, setPickerDevices] = useState([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerCurrent, setPickerCurrent] = useState(null); // currently-saved printer (pre-fill)
   const [pendingData,   setPendingData]   = useState(null); // base64 ESC/POS awaiting a printer pick
 
   const sendToPrinter = useCallback(async (data) => {
@@ -34,17 +35,17 @@ export function usePrintList() {
     setPendingData(data);
     setPickerLoading(true);
     setPickerVisible(true);
+    try { setPickerCurrent(await Printer.getSelectedPrinter()); } catch (_) { setPickerCurrent(null); }
+    // Don't abort the picker if the Bluetooth list fails — the Wi-Fi tab must still work.
     try {
       const result = await Printer.listPairedDevices();
       setPickerDevices(result.devices || []);
     } catch (e) {
-      addToast('Could not list Bluetooth devices. Is Bluetooth on?', 'error');
-      setPickerVisible(false);
-      setPendingData(null);
+      setPickerDevices([]);
     } finally {
       setPickerLoading(false);
     }
-  }, [addToast]);
+  }, []);
 
   // html: string for web; escPosBytes: Uint8Array for native.
   const printList = useCallback(async (html, escPosBytes) => {
@@ -71,13 +72,41 @@ export function usePrintList() {
     else await openPicker(data);
   }, [printing, addToast, sendToPrinter, openPicker]);
 
-  const handlePrinterSelected = useCallback(async (device) => {
+  // Unified save for both transports: {type, address, port?, name}
+  const savePrinter = useCallback(async ({ type, address, port = 9100, name }) => {
     setPickerVisible(false);
     try {
-      await Printer.saveSelectedPrinter({ address: device.address, name: device.name });
+      await Printer.saveSelectedPrinter({ type, address, port, name });
     } catch (_) {}
     if (pendingData) await sendToPrinter(pendingData);
-  }, [pendingData, sendToPrinter]);
+    else addToast(`Printer set to ${name}.`, 'success');
+  }, [pendingData, sendToPrinter, addToast]);
+
+  // Wi-Fi: parallel TCP sweep of the local subnet on port 9100.
+  const scanWifi = useCallback(async () => {
+    try {
+      const result = await Printer.discoverWifiPrinters();
+      return result.devices || [];
+    } catch (e) {
+      addToast(e.message || 'Wi-Fi scan failed.', 'error');
+      return [];
+    }
+  }, [addToast]);
+
+  // Fire a tiny slip to an explicit target so the user can verify before committing.
+  const testPrint = useCallback(async ({ type, address, port = 9100 }) => {
+    const slip = [0x1b, 0x40]
+      .concat(Array.from(new TextEncoder().encode('Leyble Hub test print\n\n\n')))
+      .concat([0x1d, 0x56, 0x00]);
+    let bin = '';
+    for (let i = 0; i < slip.length; i++) bin += String.fromCharCode(slip[i]);
+    try {
+      await Printer.printBytesTo({ type, address, port, data: btoa(bin) });
+      addToast('Test slip sent.', 'success');
+    } catch (e) {
+      addToast(`Test print failed: ${e.message || 'unknown error'}`, 'error');
+    }
+  }, [addToast]);
 
   const closePicker = useCallback(() => {
     setPickerVisible(false);
@@ -90,7 +119,11 @@ export function usePrintList() {
     pickerVisible,
     pickerDevices,
     pickerLoading,
-    handlePrinterSelected,
+    pickerCurrent,
+    printPending: !!pendingData,
+    savePrinter,
+    scanWifi,
+    testPrint,
     closePicker,
   };
 }

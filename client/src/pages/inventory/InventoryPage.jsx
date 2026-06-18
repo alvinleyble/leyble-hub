@@ -5,7 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import ProductFormModal from './ProductFormModal';
 import ProductDetailPanel from './ProductDetailPanel';
-import BluetoothPrinterPicker from '../orders/BluetoothPrinterPicker';
+import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintList } from '../shared/usePrintList';
 import { productListHtml } from '../shared/listPrintTemplate';
 import { productListEscPos } from '../shared/listEscPos';
@@ -38,7 +38,8 @@ export default function InventoryPage() {
 
   const {
     printList, printing,
-    pickerVisible, pickerDevices, pickerLoading, handlePrinterSelected, closePicker,
+    pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
+    savePrinter, scanWifi, testPrint, closePicker,
   } = usePrintList();
 
   // Prints the full active product list (ignores on-screen search/filters) — Dad wants them all.
@@ -252,10 +253,14 @@ export default function InventoryPage() {
       )}
 
       {pickerVisible && (
-        <BluetoothPrinterPicker
+        <PrinterPicker
           devices={pickerDevices}
           loading={pickerLoading}
-          onSelect={handlePrinterSelected}
+          current={pickerCurrent}
+          printPending={printPending}
+          onSave={savePrinter}
+          onScanWifi={scanWifi}
+          onTestPrint={testPrint}
           onClose={closePicker}
         />
       )}

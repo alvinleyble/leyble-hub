@@ -9,7 +9,7 @@ import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
-import BluetoothPrinterPicker from './BluetoothPrinterPicker';
+import PrinterPicker from './PrinterPicker';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -59,8 +59,8 @@ export default function OrderDetailPage() {
 
   const {
     handlePrint, printing,
-    pickerVisible, pickerDevices, pickerLoading,
-    handlePrinterSelected, closePickerAndCancel, handleChangePrinter,
+    pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
+    savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, setOrder);
 
@@ -651,12 +651,16 @@ export default function OrderDetailPage() {
         />
       )}
 
-      {/* Bluetooth printer picker (Android only — shown on first print or "Change printer") */}
+      {/* Printer picker (Android only — shown on first print or "Change printer") */}
       {pickerVisible && (
-        <BluetoothPrinterPicker
+        <PrinterPicker
           devices={pickerDevices}
           loading={pickerLoading}
-          onSelect={handlePrinterSelected}
+          current={pickerCurrent}
+          printPending={printPending}
+          onSave={savePrinter}
+          onScanWifi={scanWifi}
+          onTestPrint={testPrint}
           onClose={closePickerAndCancel}
         />
       )}

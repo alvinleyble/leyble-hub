@@ -18,10 +18,11 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
   const [printPrompt,   setPrintPrompt]   = useState(null);
   const [taggingPrint,  setTaggingPrint]  = useState(false);
 
-  // Bluetooth printer picker state
+  // Printer picker state
   const [pickerVisible,  setPickerVisible]  = useState(false);
   const [pickerDevices,  setPickerDevices]  = useState([]);
   const [pickerLoading,  setPickerLoading]  = useState(false);
+  const [pickerCurrent,  setPickerCurrent]  = useState(null); // currently-saved printer (pre-fill)
   // ESC/POS bytes + phase queued while the user picks a printer
   const [pendingPrint,   setPendingPrint]   = useState(null); // {data: base64, phase} | null
 
@@ -47,17 +48,18 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
     setPendingPrint(pendingData); // null = change-only (no print after selection)
     setPickerLoading(true);
     setPickerVisible(true);
+    // Pre-fill from the currently-saved printer (for the Wi-Fi manual fields / initial tab).
+    try { setPickerCurrent(await Printer.getSelectedPrinter()); } catch (_) { setPickerCurrent(null); }
+    // Bluetooth list — don't abort the picker if it fails (Wi-Fi tab must still work with BT off).
     try {
       const result = await Printer.listPairedDevices();
       setPickerDevices(result.devices || []);
     } catch (e) {
-      addToast('Could not list Bluetooth devices. Is Bluetooth on?', 'error');
-      setPickerVisible(false);
-      setPendingPrint(null);
+      setPickerDevices([]);
     } finally {
       setPickerLoading(false);
     }
-  }, [addToast]);
+  }, []);
 
   // ── handlePrint (called by Print Receipt button) ────────────────────────────
 
@@ -108,17 +110,44 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
 
   // ── Picker callbacks ────────────────────────────────────────────────────────
 
-  const handlePrinterSelected = useCallback(async (device) => {
+  // Unified save for both transports: {type, address, port?, name}
+  const savePrinter = useCallback(async ({ type, address, port = 9100, name }) => {
     setPickerVisible(false);
     try {
-      await Printer.saveSelectedPrinter({ address: device.address, name: device.name });
+      await Printer.saveSelectedPrinter({ type, address, port, name });
     } catch (_) {}
     if (pendingPrint) {
       await sendToPrinter(pendingPrint.data, pendingPrint.phase);
     } else {
-      addToast(`Printer set to ${device.name}.`, 'success');
+      addToast(`Printer set to ${name}.`, 'success');
     }
   }, [pendingPrint, sendToPrinter, addToast]);
+
+  // Wi-Fi: parallel TCP sweep of the local subnet on port 9100.
+  const scanWifi = useCallback(async () => {
+    try {
+      const result = await Printer.discoverWifiPrinters();
+      return result.devices || [];
+    } catch (e) {
+      addToast(e.message || 'Wi-Fi scan failed.', 'error');
+      return [];
+    }
+  }, [addToast]);
+
+  // Fire a tiny slip to an explicit target so the user can verify before committing.
+  const testPrint = useCallback(async ({ type, address, port = 9100 }) => {
+    const slip = [0x1b, 0x40] // ESC @ (init)
+      .concat(Array.from(new TextEncoder().encode('Leyble Hub test print\n\n\n')))
+      .concat([0x1d, 0x56, 0x00]); // GS V 0 (full cut)
+    let bin = '';
+    for (let i = 0; i < slip.length; i++) bin += String.fromCharCode(slip[i]);
+    try {
+      await Printer.printBytesTo({ type, address, port, data: btoa(bin) });
+      addToast('Test slip sent.', 'success');
+    } catch (e) {
+      addToast(`Test print failed: ${e.message || 'unknown error'}`, 'error');
+    }
+  }, [addToast]);
 
   const closePickerAndCancel = useCallback(() => {
     setPickerVisible(false);
@@ -150,11 +179,15 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
     // Print trigger
     handlePrint,
     printing,
-    // Bluetooth picker
+    // Printer picker
     pickerVisible,
     pickerDevices,
     pickerLoading,
-    handlePrinterSelected,
+    pickerCurrent,
+    printPending: !!pendingPrint,
+    savePrinter,
+    scanWifi,
+    testPrint,
     closePickerAndCancel,
     handleChangePrinter,
     // Tag-as-printed

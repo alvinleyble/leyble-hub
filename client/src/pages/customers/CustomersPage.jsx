@@ -5,7 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import CustomerFormModal from './CustomerFormModal';
 import CustomerDetailPanel from './CustomerDetailPanel';
-import BluetoothPrinterPicker from '../orders/BluetoothPrinterPicker';
+import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
@@ -48,7 +48,8 @@ export default function CustomersPage() {
 
   const {
     printList, printing,
-    pickerVisible, pickerDevices, pickerLoading, handlePrinterSelected, closePicker,
+    pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
+    savePrinter, scanWifi, testPrint, closePicker,
   } = usePrintList();
 
   const handlePrintList = () => printList(customerListHtml(customers), customerListEscPos(customers));
@@ -164,10 +165,14 @@ export default function CustomersPage() {
       )}
 
       {pickerVisible && (
-        <BluetoothPrinterPicker
+        <PrinterPicker
           devices={pickerDevices}
           loading={pickerLoading}
-          onSelect={handlePrinterSelected}
+          current={pickerCurrent}
+          printPending={printPending}
+          onSave={savePrinter}
+          onScanWifi={scanWifi}
+          onTestPrint={testPrint}
           onClose={closePicker}
         />
       )}
