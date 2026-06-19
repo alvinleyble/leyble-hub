@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
+import Combobox from '../../components/ui/Combobox';
 import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
@@ -47,8 +48,6 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [priceForm, setPriceForm]           = useState(DEFAULT_PRICE_FORM);
   const [priceErrors, setPriceErrors]       = useState({});
   const [priceSaving, setPriceSaving]       = useState(false);
-  const [productSearch, setProductSearch]   = useState('');
-  const [productDropOpen, setProductDropOpen] = useState(false);
 
   const loadCustomPrices = useCallback(async (orderType = priceTab) => {
     const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`).catch(() => []);
@@ -127,8 +126,6 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   };
 
   const selectPriceProduct = (product) => {
-    setProductSearch(product.sku || product.name);
-    setProductDropOpen(false);
     setPriceForm((f) => ({
       ...f,
       product_id:         String(product.id),
@@ -156,7 +153,6 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       setPricingOpen(false);
       setPriceForm(DEFAULT_PRICE_FORM);
       setPriceErrors({});
-      setProductSearch('');
       const updated = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`);
       setCustomPrices(updated);
     } catch (err) {
@@ -300,47 +296,23 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                     </p>
                     <div className="grid grid-cols-1 gap-3">
                       <FormField label="Product" required error={priceErrors.product_id}>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={productSearch}
-                            onChange={(e) => {
-                              setProductSearch(e.target.value);
-                              setPriceForm((f) => ({ ...f, product_id: '' }));
-                              setProductDropOpen(true);
-                            }}
-                            onFocus={() => setProductDropOpen(true)}
-                            onBlur={() => setTimeout(() => setProductDropOpen(false), 150)}
-                            className={INPUT}
-                            placeholder="Search product…"
-                            autoComplete="off"
-                          />
-                          {productDropOpen && (() => {
-                            const matches = products.filter((p) =>
-                              p.is_active && productMatches(p, productSearch));
-                            return (
-                              <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-                                {matches.map((p) => (
-                                  <li key={p.id}>
-                                    <button
-                                      type="button"
-                                      onMouseDown={() => selectPriceProduct(p)}
-                                      className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-amber-50 flex items-center justify-between gap-2"
-                                    >
-                                      <span className="font-medium text-slate-800">{p.sku || p.name}</span>
-                                      <span className="text-sm text-slate-400 shrink-0 tabular-nums">
-                                        std {PHP(p.base_wholesale_price)}
-                                      </span>
-                                    </button>
-                                  </li>
-                                ))}
-                                {matches.length === 0 && (
-                                  <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
-                                )}
-                              </ul>
-                            );
-                          })()}
-                        </div>
+                        <Combobox
+                          items={products.filter((p) => p.is_active)}
+                          match={productMatches}
+                          onSelect={selectPriceProduct}
+                          onQueryChange={() => setPriceForm((f) => ({ ...f, product_id: '' }))}
+                          displayValue={(p) => p.sku || p.name}
+                          placeholder="Search product…"
+                          emptyText="No products match."
+                          renderRow={(p) => (
+                            <>
+                              <span className="font-medium text-slate-800">{p.sku || p.name}</span>
+                              <span className="text-sm text-slate-400 shrink-0 tabular-nums">
+                                std {PHP(p.base_wholesale_price)}
+                              </span>
+                            </>
+                          )}
+                        />
                       </FormField>
 
                       <FormField label="Custom Price (₱/case)" required error={priceErrors.custom_unit_price}>
@@ -360,7 +332,6 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                             setPricingOpen(false);
                             setPriceForm(DEFAULT_PRICE_FORM);
                             setPriceErrors({});
-                            setProductSearch('');
                           }}>
                           Cancel
                         </Button>

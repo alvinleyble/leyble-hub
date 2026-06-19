@@ -1,12 +1,12 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
-import Modal from '../../components/ui/Modal';
-import { productMatches } from '../../utils/productSearch';
+import Combobox from '../../components/ui/Combobox';
+import ProductSearchBar from '../../components/ui/ProductSearchBar';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -14,21 +14,11 @@ const PHP = (n) =>
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
-const INPUT_SM = `w-full h-10 px-3 border border-slate-300 rounded-lg text-sm text-slate-900
-                  focus:outline-none focus:ring-2 focus:ring-blue-600`;
-
-const newItem = () => ({
-  _key:                   Math.random(),
-  _productSearch:         '',
-  requires_bottle_return: false,
-  product_id:             '',
-  product_name:           '',
-  unit:                   '',
-  quantity:               '1',
-  unit_price:             '',
-  unit_deposit_fee:       '0',
-  units_per_case:         1,
-});
+// Customer matcher for the shared Combobox — empty query shows the full list.
+const customerMatches = (c, q) => {
+  const s = q.trim().toLowerCase();
+  return s === '' ? true : c.name.toLowerCase().includes(s);
+};
 
 export default function OrderCreateModal({ onClose, onSaved, editOrder = null }) {
   const { addToast } = useToast();
@@ -48,24 +38,25 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   const [orderType, setOrderType]         = useState(editOrder?.order_type ?? 'delivery');
   const [customerId, setCustomerId]       = useState(editOrder?.customer_id ?? '');
-  const [customerSearch, setCustomerSearch] = useState('');
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [customPrices, setCustomPrices]   = useState({});
   const [items, setItems]                 = useState(
     editOrder?.items?.map((i) => ({
       _key:                   Math.random(),
-      _productSearch:         i.sku || i.product_name,
       requires_bottle_return: i.requires_bottle_return ?? false,
       product_id:             String(i.product_id),
       product_name:           i.product_name,
+      sku:                    i.sku || '',
       unit:                   i.unit,
       quantity:               String(i.quantity),
       unit_price:             String(i.unit_price),
       unit_deposit_fee:       String(i.unit_deposit_fee),
       units_per_case:         i.units_per_case ?? 1,
-    })) ?? [newItem()]
+    })) ?? []
   );
-  const [openDropdownKey, setOpenDropdownKey] = useState(null);
-  const [dupConfirm, setDupConfirm] = useState(null);
+  // _key of a line to briefly highlight after it's added or its qty is bumped.
+  const [flashKey, setFlashKey] = useState(null);
+  const flashTimer = useRef(null);
   const [assignedPersonnel, setAssignedPersonnel] = useState(
     editOrder?.personnel?.map((p) => ({ id: p.personnel_id, role: p.role })) ?? []
   );
@@ -88,10 +79,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         setCustomers(custs);
         setProducts(prods);
         setActivePersonnel(pers);
-        if (editOrder?.customer_id) {
-          const c = custs.find((x) => x.id === editOrder.customer_id);
-          if (c) setCustomerSearch(c.name);
-        }
       })
       .catch(() => addToast('Failed to load form data.', 'error'))
       .finally(() => setLoading(false));
@@ -114,58 +101,76 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       .catch(() => {});
   }, [customerId, selectedCustomer?.customer_type, orderType]);
 
-  const filteredCustomers = customers.filter((c) =>
-    c.is_active && c.name.toLowerCase().includes(customerSearch.toLowerCase())
-  );
+  const activeCustomers = customers.filter((c) => c.is_active);
+  const activeProducts  = products.filter((p) => p.is_active);
 
-  const [showCustomerList, setShowCustomerList] = useState(false);
-
-  const selectCustomer = (c) => {
-    setCustomerId(String(c.id));
-    setCustomerSearch(c.name);
-    setShowCustomerList(false);
+  // Quick-add a customer straight from the order's customer picker — name only, defaults to a
+  // Regular Customer. Adds them to the list and selects them so the order can proceed without
+  // leaving the modal; phone/address/notes can be filled in later from the Customers page.
+  const handleCreateCustomer = async (name) => {
+    setCreatingCustomer(true);
+    try {
+      const created = await api.post('/customers', { name, customer_type: 'regular' });
+      setCustomers((prev) => [...prev, created]);
+      setCustomerId(String(created.id));
+      addToast(`${created.name} added as a Regular Customer.`, 'success');
+    } catch (err) {
+      addToast(err.message || 'Failed to create customer.', 'error');
+    } finally {
+      setCreatingCustomer(false);
+    }
   };
 
   // ── Line item helpers ──────────────────────────────────────────────────────
 
-  // New rows go on TOP so the next product is always right under the Add button
-  // — no scrolling back down on long orders. The fresh row auto-focuses.
-  const addItem = () => setItems((prev) => [{ ...newItem(), _autoFocus: true }, ...prev]);
+  // Briefly highlight a line (after add / qty bump) so it's obvious where it landed.
+  const flash = (key) => {
+    setFlashKey(key);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashKey(null), 1000);
+  };
+
+  // Resolve the price that applies to a product (wholesaler custom price → base price).
+  const priceFor = (product) => {
+    const customEntry = customPrices[product.id];
+    return customEntry ? Number(customEntry.custom_unit_price) : Number(product.base_wholesale_price);
+  };
+
+  // Tapping a product in the search bar prepends a fully-populated line — newest on top so
+  // it's right under the bar with no scrolling on long orders.
+  const addProduct = (product) => {
+    const item = {
+      _key:                   Math.random(),
+      requires_bottle_return: product.requires_bottle_return || false,
+      product_id:             String(product.id),
+      product_name:           product.name,
+      sku:                    product.sku || '',
+      unit:                   product.unit,
+      quantity:               '1',
+      unit_price:             String(priceFor(product)),
+      unit_deposit_fee:       String(product.deposit_fee),
+      units_per_case:         product.units_per_case || 1,
+    };
+    setItems((prev) => [item, ...prev]);
+    flash(item._key);
+  };
+
+  // Re-tapping a product already on the order bumps its quantity by one case instead of
+  // adding a duplicate line.
+  const bumpProduct = (product) => {
+    const existing = items.find((i) => i.product_id === String(product.id));
+    setItems((prev) => prev.map((i) =>
+      i.product_id === String(product.id)
+        ? { ...i, quantity: String((Number(i.quantity) || 0) + 1) }
+        : i
+    ));
+    if (existing) flash(existing._key);
+  };
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
   const updateItem = (key, field, value) =>
     setItems((prev) => prev.map((i) => i._key === key ? { ...i, [field]: value } : i));
-
-  const applyProduct = (key, productId) => {
-    const product = products.find((p) => String(p.id) === productId);
-    if (!product) {
-      updateItem(key, 'product_id', '');
-      return;
-    }
-    const customEntry = customPrices[product.id];
-    const displayName = product.sku || product.name;
-    setItems((prev) => prev.map((i) => i._key === key ? {
-      ...i,
-      _productSearch:         displayName,
-      requires_bottle_return: product.requires_bottle_return || false,
-      product_id:             productId,
-      product_name:           product.name,
-      unit:                   product.unit,
-      units_per_case:         product.units_per_case || 1,
-      unit_price:             customEntry
-        ? String(customEntry.custom_unit_price)
-        : String(product.base_wholesale_price),
-      unit_deposit_fee:       String(product.deposit_fee),
-    } : i));
-  };
-
-  // Warn before adding a product that's already on another line of this order.
-  const selectProduct = (key, productId) => {
-    const isDup = items.some((i) => i._key !== key && i.product_id === productId);
-    if (isDup) { setDupConfirm({ key, productId }); return; }
-    applyProduct(key, productId);
-  };
 
   const lineTotal = (item) => {
     const qty   = Number(item.quantity) || 0;
@@ -385,42 +390,35 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               {/* ── Customer ────────────────────────────────────────── */}
               <div className="px-6 py-5 border-b border-slate-200">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Customer</p>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={customerSearch}
-                    onChange={(e) => {
-                      setCustomerSearch(e.target.value);
-                      setCustomerId('');
-                      setShowCustomerList(true);
-                    }}
-                    onFocus={() => setShowCustomerList(true)}
-                    onBlur={() => setTimeout(() => setShowCustomerList(false), 150)}
-                    className={INPUT}
-                    placeholder="Search customer name…"
-                    aria-label="Customer search"
-                  />
-                  {showCustomerList && filteredCustomers.length > 0 && (
-                    <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                      {filteredCustomers.slice(0, 20).map((c) => (
-                        <li key={c.id}>
-                          <button
-                            type="button"
-                            onMouseDown={() => selectCustomer(c)}
-                            className="w-full text-left px-4 py-3 text-sm hover:bg-blue-50 flex items-center justify-between gap-2"
-                          >
-                            <span className="font-medium text-slate-800">{c.name}</span>
-                            {c.customer_type === 'wholesaler' && (
-                              <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
-                                Wholesaler
-                              </span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                <Combobox
+                  items={activeCustomers}
+                  match={customerMatches}
+                  value={selectedCustomer ?? null}
+                  displayValue={(c) => c.name}
+                  onSelect={(c) => setCustomerId(String(c.id))}
+                  onQueryChange={() => setCustomerId('')}
+                  onCreate={handleCreateCustomer}
+                  creating={creatingCustomer}
+                  renderCreate={(name) => (
+                    <>
+                      <span className="text-lg leading-none">＋</span>
+                      <span>Create <span className="font-bold">“{name}”</span> as a new Regular Customer</span>
+                    </>
                   )}
-                </div>
+                  placeholder="Search or type a new customer name…"
+                  emptyText="No customers match."
+                  aria-label="Customer"
+                  renderRow={(c) => (
+                    <>
+                      <span className="font-medium text-slate-800">{c.name}</span>
+                      {c.customer_type === 'wholesaler' && (
+                        <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
+                          Wholesaler
+                        </span>
+                      )}
+                    </>
+                  )}
+                />
                 {selectedCustomer && (
                   <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -457,109 +455,92 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               <div className="px-6 py-5 border-b border-slate-200">
                 <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products</p>
-                  <div className="flex items-center gap-3">
-                    <p className="text-sm text-slate-500">
-                      Total{' '}
-                      <span className="text-base font-bold text-slate-900 tabular-nums">{PHP(grandTotal)}</span>
-                    </p>
-                    <Button size="sm" variant="secondary" onClick={addItem}>+ Add Product</Button>
-                  </div>
+                  <p className="text-sm text-slate-500">
+                    Total{' '}
+                    <span className="text-base font-bold text-slate-900 tabular-nums">{PHP(grandTotal)}</span>
+                  </p>
                 </div>
+
+                <ProductSearchBar
+                  products={activeProducts}
+                  quantityFor={(p) => {
+                    const it = items.find((i) => i.product_id === String(p.id));
+                    return it ? Number(it.quantity) || 0 : 0;
+                  }}
+                  onAdd={addProduct}
+                  onBump={bumpProduct}
+                  renderMeta={(p) => PHP(priceFor(p))}
+                />
 
                 {errors.items && (
-                  <p className="text-sm text-red-600 mb-3">{errors.items}</p>
+                  <p className="text-sm text-red-600 mt-3">{errors.items}</p>
                 )}
 
-                <div className="space-y-3">
-                  {items.map((item, idx) => (
-                    <div key={item._key} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                      <div className="flex items-start gap-2 mb-2">
-                        <div className="relative flex-1">
-                          <input
-                            type="text"
-                            value={item._productSearch}
-                            onChange={(e) => {
-                              setItems((prev) => prev.map((i) =>
-                                i._key === item._key
-                                  ? { ...i, _productSearch: e.target.value, product_id: '', product_name: '' }
-                                  : i
-                              ));
-                              setOpenDropdownKey(item._key);
-                            }}
-                            onFocus={() => setOpenDropdownKey(item._key)}
-                            onBlur={() => setTimeout(() => setOpenDropdownKey(null), 150)}
-                            className={INPUT_SM + ' w-full'}
-                            placeholder="Search product…"
-                            aria-label={`Product ${idx + 1}`}
-                            autoComplete="off"
-                            autoFocus={item._autoFocus}
-                          />
-                          {openDropdownKey === item._key && (() => {
-                            const matches = products.filter((p) =>
-                              p.is_active && productMatches(p, item._productSearch));
-                            return (
-                              <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-                                {matches.map((p) => (
-                                  <li key={p.id}>
-                                    <button
-                                      type="button"
-                                      onMouseDown={() => {
-                                        selectProduct(item._key, String(p.id));
-                                        setOpenDropdownKey(null);
-                                      }}
-                                      className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
-                                    >
-                                      <span className="font-medium text-slate-800 shrink-0">{p.sku || p.name}</span>
-                                      {p.sku && <span className="text-xs text-slate-500 truncate">{p.name}</span>}
-                                    </button>
-                                  </li>
-                                ))}
-                                {matches.length === 0 && (
-                                  <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
-                                )}
-                              </ul>
-                            );
-                          })()}
+                {items.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-400 text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                    Search above and tap products to add them to this order.
+                  </p>
+                ) : (
+                  <div className="space-y-3 mt-4">
+                    {items.map((item) => (
+                      <div
+                        key={item._key}
+                        className={`p-3 rounded-lg border transition-colors
+                          ${flashKey === item._key ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200'}`}
+                      >
+                        {/* Line 1: product + line total + remove */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-slate-800 truncate" title={item.product_name}>
+                              {item.sku || item.product_name}
+                            </p>
+                            {item.sku && (
+                              <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
+                            )}
+                          </div>
+                          <p className="text-base font-bold text-slate-900 tabular-nums shrink-0">
+                            {PHP(lineTotal(item))}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => removeItem(item._key)}
+                            aria-label={`Remove ${item.sku || item.product_name}`}
+                            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+                                       hover:text-red-600 hover:bg-red-50 shrink-0"
+                          >
+                            ✕
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeItem(item._key)}
-                          disabled={items.length === 1}
-                          aria-label="Remove item"
-                          className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                                     hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          ✕
-                        </button>
-                      </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        <FormField label="Qty (cases)">
-                          <Stepper
-                            value={item.quantity}
-                            onChange={(v) => updateItem(item._key, 'quantity', v)}
-                            step={0.5}
-                            min={0.5}
-                            label="Quantity in cases"
-                          />
-                        </FormField>
-                        <FormField label="Price / case (₱)">
-                          <input type="number" min="0" step="0.01"
-                            value={item.unit_price}
-                            onChange={(e) => updateItem(item._key, 'unit_price', e.target.value)}
-                            className={INPUT_SM} />
-                        </FormField>
-                        <FormField label="Deposit / bottle (₱)">
-                          <input type="number" min="0" step="0.01"
-                            value={item.unit_deposit_fee}
-                            disabled={!item.requires_bottle_return}
-                            onChange={(e) => updateItem(item._key, 'unit_deposit_fee', e.target.value)}
-                            className={INPUT_SM + ' disabled:bg-slate-100 disabled:text-slate-400'} />
-                        </FormField>
+                        {/* Line 2: qty stepper + price + deposit */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          <FormField label="Qty (cases)">
+                            <Stepper
+                              value={item.quantity}
+                              onChange={(v) => updateItem(item._key, 'quantity', v)}
+                              step={0.5}
+                              min={0.5}
+                              label={`Quantity in cases for ${item.sku || item.product_name}`}
+                            />
+                          </FormField>
+                          <FormField label="Price / case (₱)">
+                            <input type="number" min="0" step="0.01"
+                              value={item.unit_price}
+                              onChange={(e) => updateItem(item._key, 'unit_price', e.target.value)}
+                              className={INPUT} />
+                          </FormField>
+                          <FormField label="Deposit / bottle (₱)">
+                            <input type="number" min="0" step="0.01"
+                              value={item.unit_deposit_fee}
+                              disabled={!item.requires_bottle_return}
+                              onChange={(e) => updateItem(item._key, 'unit_deposit_fee', e.target.value)}
+                              className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
+                          </FormField>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="mt-4 flex justify-end">
                   <div className="text-right">
@@ -680,21 +661,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         )}
       </div>
 
-      {dupConfirm && (() => {
-        const p = products.find((x) => String(x.id) === dupConfirm.productId);
-        const name = p ? (p.sku || p.name) : 'this product';
-        return (
-          <Modal
-            title="Product already added"
-            onClose={() => setDupConfirm(null)}
-            onConfirm={() => { applyProduct(dupConfirm.key, dupConfirm.productId); setDupConfirm(null); }}
-            confirmLabel="Yes, add it again"
-          >
-            There's already an existing <strong>{name}</strong> on this order. Add it again as a
-            separate line?
-          </Modal>
-        );
-      })()}
     </div>
   );
 }

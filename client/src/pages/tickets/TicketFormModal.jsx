@@ -4,14 +4,24 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
+import Combobox from '../../components/ui/Combobox';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
+
+// Match an order by its number (with or without the leading #) or customer name.
+const orderMatches = (o, q) => {
+  const s = q.trim().toLowerCase();
+  if (s === '') return true;
+  return String(o.id).includes(s.replace('#', '')) ||
+         (o.customer_name || '').toLowerCase().includes(s);
+};
 
 export default function TicketFormModal({ onClose, onSaved }) {
   const { addToast } = useToast();
 
   const [personnel, setPersonnel] = useState([]);
+  const [orders, setOrders]       = useState([]);
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);
 
@@ -23,9 +33,12 @@ export default function TicketFormModal({ onClose, onSaved }) {
   const [errors, setErrors]                   = useState({});
 
   useEffect(() => {
-    api.get('/personnel')
-      .then((p) => setPersonnel(p.filter((x) => x.is_active)))
-      .catch(() => addToast('Failed to load personnel.', 'error'))
+    Promise.all([api.get('/personnel'), api.get('/orders')])
+      .then(([p, o]) => {
+        setPersonnel(p.filter((x) => x.is_active));
+        setOrders(o);
+      })
+      .catch(() => addToast('Failed to load form data.', 'error'))
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line
 
@@ -125,17 +138,25 @@ export default function TicketFormModal({ onClose, onSaved }) {
 
               <div className="grid grid-cols-2 gap-4">
                 <FormField
-                  label="Related Order #"
+                  label="Related Order"
                   hint="Optional"
                   error={errors.relatedOrderId}
                 >
-                  <input
-                    type="number"
-                    min="1" step="1"
-                    value={relatedOrderId}
-                    onChange={(e) => setRelatedOrderId(e.target.value)}
-                    className={INPUT}
-                    placeholder="Order ID"
+                  <Combobox
+                    items={orders}
+                    match={orderMatches}
+                    value={orders.find((o) => String(o.id) === relatedOrderId) ?? null}
+                    displayValue={(o) => `#${o.id} — ${o.customer_name || 'Order'}`}
+                    onSelect={(o) => setRelatedOrderId(String(o.id))}
+                    onQueryChange={() => setRelatedOrderId('')}
+                    placeholder="Search by order # or customer…"
+                    emptyText="No orders match."
+                    renderRow={(o) => (
+                      <>
+                        <span className="font-medium text-slate-800 shrink-0">#{o.id}</span>
+                        <span className="text-sm text-slate-500 truncate ml-auto">{o.customer_name}</span>
+                      </>
+                    )}
                   />
                 </FormField>
 

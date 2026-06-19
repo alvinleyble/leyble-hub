@@ -1,29 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
-import Modal from '../../components/ui/Modal';
-import { productMatches } from '../../utils/productSearch';
+import ProductSearchBar from '../../components/ui/ProductSearchBar';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
-const INPUT_SM = `w-full h-10 px-3 border border-slate-300 rounded-lg text-sm text-slate-900
-                  focus:outline-none focus:ring-2 focus:ring-blue-600`;
-
 const today = () => new Date().toISOString().slice(0, 10);
-
-const newItem = () => ({
-  _key:              Math.random(),
-  _productSearch:    '',
-  product_id:        '',
-  quantity_received: '',
-  unit_cost:         '',
-  notes:             '',
-});
 
 // Local YYYY-MM-DD (matches the date the detail panel displays, regardless of tz).
 const toDateInput = (iso) => new Date(iso).toLocaleDateString('en-CA');
@@ -31,8 +18,9 @@ const toDateInput = (iso) => new Date(iso).toLocaleDateString('en-CA');
 // Map a saved delivery item (from the API) back into editable form state.
 const itemFromRow = (row) => ({
   _key:              row.id ?? Math.random(),
-  _productSearch:    row.sku || row.product_name || '',
   product_id:        String(row.product_id),
+  product_name:      row.product_name || '',
+  sku:               row.sku || '',
   quantity_received: String(Number(row.quantity_received)),
   unit_cost:         row.unit_cost != null ? String(Number(row.unit_cost)) : '',
   notes:             row.notes || '',
@@ -50,10 +38,11 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
   const [receivedAt, setReceivedAt]     = useState(delivery ? toDateInput(delivery.received_at) : today());
   const [notes, setNotes]               = useState(delivery?.notes ?? '');
   const [items, setItems]               = useState(
-    delivery?.items?.length ? delivery.items.map(itemFromRow) : [newItem()]
+    delivery?.items?.length ? delivery.items.map(itemFromRow) : []
   );
-  const [openDropKey, setOpenDropKey]   = useState(null);
-  const [dupConfirm, setDupConfirm]     = useState(null);
+  // _key of a line to briefly highlight after add / qty bump.
+  const [flashKey, setFlashKey]         = useState(null);
+  const flashTimer                      = useRef(null);
   const [errors, setErrors]             = useState({});
 
   useEffect(() => {
@@ -63,34 +52,47 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line
 
-  const addItem = () => setItems((prev) => [{ ...newItem(), _autoFocus: true }, ...prev]);
+  const flash = (key) => {
+    setFlashKey(key);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashKey(null), 1000);
+  };
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
   const updateItem = (key, field, value) =>
     setItems((prev) => prev.map((i) => i._key === key ? { ...i, [field]: value } : i));
 
-  const applyProduct = (key, product) => {
-    const display = product.sku || product.name;
-    setItems((prev) => prev.map((i) => i._key === key
-      ? { ...i, _productSearch: display, product_id: String(product.id) }
-      : i
-    ));
-    setOpenDropKey(null);
+  // Tap a product to prepend a line; re-tap bumps its quantity by one case.
+  const addProduct = (product) => {
+    const item = {
+      _key:              Math.random(),
+      product_id:        String(product.id),
+      product_name:      product.name,
+      sku:               product.sku || '',
+      quantity_received: '1',
+      unit_cost:         '',
+      notes:             '',
+    };
+    setItems((prev) => [item, ...prev]);
+    flash(item._key);
   };
 
-  // Warn before adding a product that's already on another line of this delivery.
-  const selectProduct = (key, product) => {
-    const isDup = items.some((i) => i._key !== key && i.product_id === String(product.id));
-    if (isDup) { setDupConfirm({ key, product }); setOpenDropKey(null); return; }
-    applyProduct(key, product);
+  const bumpProduct = (product) => {
+    const existing = items.find((i) => i.product_id === String(product.id));
+    setItems((prev) => prev.map((i) =>
+      i.product_id === String(product.id)
+        ? { ...i, quantity_received: String((Number(i.quantity_received) || 0) + 1) }
+        : i
+    ));
+    if (existing) flash(existing._key);
   };
 
   const validate = () => {
     const e = {};
     if (!supplierName.trim()) e.supplierName = 'Supplier name is required.';
     if (!receivedAt) e.receivedAt = 'Date received is required.';
-    if (items.some((i) => !i.product_id)) e.items = 'All items must have a product selected.';
+    if (items.length === 0) e.items = 'Add at least one product.';
     if (items.some((i) => !Number(i.quantity_received) || Number(i.quantity_received) <= 0))
       e.items = 'All quantities must be greater than 0.';
     return e;
@@ -198,110 +200,97 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
               <div className="px-6 py-5">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products Received</p>
-                  <Button size="sm" variant="secondary" onClick={addItem}>+ Add Product</Button>
+                  {items.length > 0 && (
+                    <p className="text-sm text-slate-500">
+                      {items.length} {items.length === 1 ? 'product' : 'products'}
+                    </p>
+                  )}
                 </div>
+
+                <ProductSearchBar
+                  products={products}
+                  quantityFor={(p) => {
+                    const it = items.find((i) => i.product_id === String(p.id));
+                    return it ? Number(it.quantity_received) || 0 : 0;
+                  }}
+                  onAdd={addProduct}
+                  onBump={bumpProduct}
+                />
 
                 {errors.items && (
-                  <p className="text-sm text-red-600 mb-3">{errors.items}</p>
+                  <p className="text-sm text-red-600 mt-3">{errors.items}</p>
                 )}
 
-                <div className="space-y-3">
-                  {items.map((item, idx) => (
-                    <div key={item._key} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                {items.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-400 text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                    Search above and tap products to add them to this delivery.
+                  </p>
+                ) : (
+                  <div className="space-y-3 mt-4">
+                    {items.map((item) => (
+                      <div
+                        key={item._key}
+                        className={`p-3 rounded-lg border transition-colors
+                          ${flashKey === item._key ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200'}`}
+                      >
+                        {/* Line 1: product + remove */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-slate-800 truncate" title={item.product_name}>
+                              {item.sku || item.product_name}
+                            </p>
+                            {item.sku && (
+                              <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeItem(item._key)}
+                            aria-label={`Remove ${item.sku || item.product_name}`}
+                            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+                                       hover:text-red-600 hover:bg-red-50 shrink-0"
+                          >
+                            ✕
+                          </button>
+                        </div>
 
-                      {/* Product combobox */}
-                      <div className="flex items-start gap-2 mb-2">
-                        <div className="relative flex-1">
+                        {/* Line 2: qty + unit cost */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <FormField label="Qty Received (cases)">
+                            <Stepper
+                              value={item.quantity_received}
+                              onChange={(v) => updateItem(item._key, 'quantity_received', v)}
+                              step={0.5}
+                              min={0.5}
+                              label={`Quantity received in cases for ${item.sku || item.product_name}`}
+                            />
+                          </FormField>
+                          <FormField label="Unit Cost / case (₱)" hint="Optional">
+                            <input
+                              type="number" min="0" step="0.01"
+                              value={item.unit_cost}
+                              onChange={(e) => updateItem(item._key, 'unit_cost', e.target.value)}
+                              className={INPUT}
+                              placeholder="optional"
+                            />
+                          </FormField>
+                        </div>
+
+                        {/* Line 3: item notes */}
+                        <div className="mt-2">
                           <input
                             type="text"
-                            value={item._productSearch}
-                            onChange={(e) => {
-                              setItems((prev) => prev.map((i) =>
-                                i._key === item._key
-                                  ? { ...i, _productSearch: e.target.value, product_id: '' }
-                                  : i
-                              ));
-                              setOpenDropKey(item._key);
-                            }}
-                            onFocus={() => setOpenDropKey(item._key)}
-                            onBlur={() => setTimeout(() => setOpenDropKey(null), 150)}
-                            className={INPUT_SM}
-                            placeholder="Search product…"
-                            aria-label={`Product ${idx + 1}`}
-                            autoComplete="off"
-                            autoFocus={item._autoFocus}
+                            value={item.notes}
+                            onChange={(e) => updateItem(item._key, 'notes', e.target.value)}
+                            className={INPUT}
+                            placeholder="Item notes (optional)…"
+                            aria-label={`Notes for ${item.sku || item.product_name}`}
                           />
-                          {openDropKey === item._key && (() => {
-                            const matches = products.filter((p) => productMatches(p, item._productSearch));
-                            return (
-                              <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
-                                {matches.map((p) => (
-                                  <li key={p.id}>
-                                    <button
-                                      type="button"
-                                      onMouseDown={() => selectProduct(item._key, p)}
-                                      className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50 flex items-center justify-between gap-2"
-                                    >
-                                      <span className="font-medium text-slate-800 shrink-0">{p.sku || p.name}</span>
-                                      {p.sku && <span className="text-xs text-slate-500 truncate">{p.name}</span>}
-                                    </button>
-                                  </li>
-                                ))}
-                                {matches.length === 0 && (
-                                  <li className="px-4 py-3 text-sm text-slate-400">No products match.</li>
-                                )}
-                              </ul>
-                            );
-                          })()}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeItem(item._key)}
-                          disabled={items.length === 1}
-                          aria-label="Remove item"
-                          className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                                     hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          ✕
-                        </button>
                       </div>
-
-                      {/* Qty + Unit Cost */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <FormField label="Qty Received (cases)">
-                          <Stepper
-                            value={item.quantity_received}
-                            onChange={(v) => updateItem(item._key, 'quantity_received', v)}
-                            step={0.5}
-                            min={0.5}
-                            label="Quantity received in cases"
-                          />
-                        </FormField>
-                        <FormField label="Unit Cost / case (₱)" hint="Optional">
-                          <input
-                            type="number" min="0" step="0.01"
-                            value={item.unit_cost}
-                            onChange={(e) => updateItem(item._key, 'unit_cost', e.target.value)}
-                            className={INPUT_SM}
-                            placeholder="optional"
-                          />
-                        </FormField>
-                      </div>
-
-                      {/* Item notes */}
-                      <div className="mt-2">
-                        <input
-                          type="text"
-                          value={item.notes}
-                          onChange={(e) => updateItem(item._key, 'notes', e.target.value)}
-                          className={INPUT_SM}
-                          placeholder="Item notes (optional)…"
-                          aria-label={`Item ${idx + 1} notes`}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -314,17 +303,6 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
         )}
       </div>
 
-      {dupConfirm && (
-        <Modal
-          title="Product already added"
-          onClose={() => setDupConfirm(null)}
-          onConfirm={() => { applyProduct(dupConfirm.key, dupConfirm.product); setDupConfirm(null); }}
-          confirmLabel="Yes, add it again"
-        >
-          There's already an existing <strong>{dupConfirm.product.sku || dupConfirm.product.name}</strong> on
-          this delivery. Add it again as a separate line?
-        </Modal>
-      )}
     </div>
   );
 }
