@@ -49,6 +49,7 @@ export default function Combobox({
   const inputRef = useRef(null);
   const blurTimer = useRef(null);
   const focusedRef = useRef(false);
+  const containerRef = useRef(null);
 
   // When a selected `value` arrives or changes from the parent (e.g. an order being edited
   // whose customer list loads async), reflect its display text — but never clobber what the
@@ -58,6 +59,22 @@ export default function Combobox({
       setQuery(displayValue(value));
     }
   }, [value]); // eslint-disable-line
+
+  // Multi-add: blur no longer closes the list (so the keyboard can be dismissed while browsing),
+  // so close it when the user taps outside the picker instead. Lets parents open the dropdown,
+  // drop the keyboard, scroll-and-tap, then tap away to finish.
+  useEffect(() => {
+    if (!open || !keepOpenOnSelect) return;
+    const onDocPointer = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocPointer);
+    document.addEventListener('touchstart', onDocPointer);
+    return () => {
+      document.removeEventListener('mousedown', onDocPointer);
+      document.removeEventListener('touchstart', onDocPointer);
+    };
+  }, [open, keepOpenOnSelect]);
 
   const matches = useMemo(() => {
     const list = items.filter((i) => match(i, query));
@@ -92,15 +109,10 @@ export default function Combobox({
       setQuery(clearQueryOnSelect ? '' : displayValue(item));
     }
     setActive(0);
-    if (keepOpenOnSelect) {
-      setOpen(true);
-      inputRef.current?.focus();
-      // Preserve mode keeps the typed text so the same row stays filtered and tappable for
-      // repeated bumps — select it so the next keystroke replaces it for a different product.
-      if (preserveQueryOnSelect) inputRef.current?.select();
-    } else {
-      setOpen(false);
-    }
+    // Multi-add: keep the list open but DON'T refocus the input — picking a product must never
+    // force the on-screen keyboard back up, so parents can browse/scroll the list keyboard-free.
+    // (onMouseDown+preventDefault on each row already leaves the input's focus state untouched.)
+    setOpen(keepOpenOnSelect);
   };
 
   const handleKeyDown = (e) => {
@@ -119,7 +131,7 @@ export default function Combobox({
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <input
         ref={inputRef}
         type="text"
@@ -130,10 +142,21 @@ export default function Combobox({
           setOpen(true);
           onQueryChange?.(e.target.value);
         }}
-        onFocus={() => { focusedRef.current = true; cancelClose(); setOpen(true); }}
+        onFocus={(e) => {
+          focusedRef.current = true;
+          cancelClose();
+          setOpen(true);
+          // When the user deliberately taps the field to search, select existing text so the
+          // next keystroke replaces it (multi-add product bar).
+          if (preserveQueryOnSelect) e.target.select();
+        }}
         onBlur={() => {
           focusedRef.current = false;
-          blurTimer.current = setTimeout(() => setOpen(false), 150);
+          // Multi-add keeps the list open when focus is lost (e.g. keyboard dismissed) so it can
+          // still be browsed; it closes on outside-tap/Escape instead (see effect above).
+          if (!keepOpenOnSelect) {
+            blurTimer.current = setTimeout(() => setOpen(false), 150);
+          }
         }}
         onKeyDown={handleKeyDown}
         className={inputClassName}

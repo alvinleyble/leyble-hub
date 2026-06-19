@@ -5,9 +5,11 @@ import { productMatches } from '../../utils/productSearch';
 
 // POS-style "search once, tap to add" bar — a product preset of Combobox in multi-add mode.
 // Tap a result to add it (or bump its qty if already on the order). The search text is KEPT after
-// each tap (and re-selected), so the same product stays filtered — tap it again and again to add
-// 2, 3, … — while typing replaces it to move to a different product. Rows already on the order
-// show a green pill with the running quantity (e.g. "✓ 3 added") so you can see what's on.
+// each tap, so the same product stays filtered — tap it again and again to add 2, 3, …. Tapping a
+// product does NOT refocus the field, so the on-screen keyboard isn't forced back up: you can
+// open the list, dismiss the keyboard, and just scroll-and-tap (tap the field to search, focusing
+// it selects the text so typing replaces it). Rows already on the order show a green "✓ N added"
+// pill so you can see what's on without scrolling.
 //
 // `quantityFor(product)` returns the qty already on the order/delivery for that product (0 if
 // none) — drives both the bump-vs-add decision and the pill count.
