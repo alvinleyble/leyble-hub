@@ -35,6 +35,7 @@ export default function Combobox({
   maxRows = 50,
   keepOpenOnSelect = false,
   clearQueryOnSelect = false,
+  preserveQueryOnSelect = false, // keep the typed text after a pick (tap same row again to bump)
   inlineDropdown = false, // render the list in-flow (push content down) instead of floating over it
   isAdded,
   onCreate,            // optional: (query) => void — shows a "+ Create …" row for the typed text
@@ -87,11 +88,16 @@ export default function Combobox({
 
   const select = (item) => {
     onSelect(item);
-    setQuery(clearQueryOnSelect ? '' : displayValue(item));
+    if (!preserveQueryOnSelect) {
+      setQuery(clearQueryOnSelect ? '' : displayValue(item));
+    }
     setActive(0);
     if (keepOpenOnSelect) {
       setOpen(true);
       inputRef.current?.focus();
+      // Preserve mode keeps the typed text so the same row stays filtered and tappable for
+      // repeated bumps — select it so the next keystroke replaces it for a different product.
+      if (preserveQueryOnSelect) inputRef.current?.select();
     } else {
       setOpen(false);
     }

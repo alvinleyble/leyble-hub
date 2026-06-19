@@ -4,9 +4,10 @@ import FormField from './FormField';
 import { productMatches } from '../../utils/productSearch';
 
 // POS-style "search once, tap to add" bar — a product preset of Combobox in multi-add mode.
-// Tap a result to add it (or bump its qty if already on the order); the bar clears and stays
-// open so the next product can be typed immediately. Rows already on the order show a green
-// pill with the running quantity (e.g. "✓ 3 added") so you can see what's on without scrolling.
+// Tap a result to add it (or bump its qty if already on the order). The search text is KEPT after
+// each tap (and re-selected), so the same product stays filtered — tap it again and again to add
+// 2, 3, … — while typing replaces it to move to a different product. Rows already on the order
+// show a green pill with the running quantity (e.g. "✓ 3 added") so you can see what's on.
 //
 // `quantityFor(product)` returns the qty already on the order/delivery for that product (0 if
 // none) — drives both the bump-vs-add decision and the pill count.
@@ -32,7 +33,7 @@ export default function ProductSearchBar({
         items={products}
         match={productMatches}
         keepOpenOnSelect
-        clearQueryOnSelect
+        preserveQueryOnSelect
         inlineDropdown
         isAdded={isAdded}
         emptyText="No products match."
