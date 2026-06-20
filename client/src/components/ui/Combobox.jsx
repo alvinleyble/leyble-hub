@@ -37,6 +37,7 @@ export default function Combobox({
   clearQueryOnSelect = false,
   preserveQueryOnSelect = false, // keep the typed text after a pick (tap same row again to bump)
   inlineDropdown = false, // render the list in-flow (push content down) instead of floating over it
+  rawRow = false, // let renderRow own the whole row (its own buttons) instead of one tap-to-select button
   isAdded,
   onCreate,            // optional: (query) => void — shows a "+ Create …" row for the typed text
   renderCreate,        // optional: (query) => node — custom label for the create row
@@ -68,11 +69,16 @@ export default function Combobox({
     const onDocPointer = (e) => {
       if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
     };
-    document.addEventListener('mousedown', onDocPointer);
-    document.addEventListener('touchstart', onDocPointer);
+    // CAPTURE phase, not bubble: a tap that adds a product makes its row replace itself
+    // (the qty-0 "tap to add" button becomes a − qty + stepper), so by the time a bubble-phase
+    // listener ran, e.target would already be detached from the DOM and contains() would wrongly
+    // report "outside" → the list would close on every pick. Capture fires before React commits
+    // that re-render, so e.target is still inside the picker and a real pick keeps the list open.
+    document.addEventListener('mousedown', onDocPointer, true);
+    document.addEventListener('touchstart', onDocPointer, true);
     return () => {
-      document.removeEventListener('mousedown', onDocPointer);
-      document.removeEventListener('touchstart', onDocPointer);
+      document.removeEventListener('mousedown', onDocPointer, true);
+      document.removeEventListener('touchstart', onDocPointer, true);
     };
   }, [open, keepOpenOnSelect]);
 
@@ -175,19 +181,37 @@ export default function Combobox({
           role="listbox"
         >
           {matches.map((item, idx) => (
-            <li key={getKey(item)} role="option" aria-selected={idx === active}>
-              <button
-                type="button"
-                // preventDefault keeps focus on the input — the tap can't blur-close the list,
-                // and in multi-add mode the bar stays ready for the next product.
-                onMouseDown={(e) => { e.preventDefault(); select(item); }}
+            rawRow ? (
+              // The row renders its own controls (e.g. a − qty + stepper); we pass `select`
+              // (the add/bump action) so it can wire its own tap-to-add area.
+              <li
+                key={getKey(item)}
+                role="option"
+                aria-selected={idx === active}
                 onMouseEnter={() => setActive(idx)}
-                className={`w-full text-left px-4 py-3 text-sm min-h-[48px] flex items-center
-                            justify-between gap-2 ${idx === active ? 'bg-blue-50' : 'hover:bg-blue-50'}`}
+                className={idx === active ? 'bg-blue-50/60' : ''}
               >
-                {renderRow(item, { active: idx === active, added: isAdded?.(item) ?? false })}
-              </button>
-            </li>
+                {renderRow(item, {
+                  active: idx === active,
+                  added: isAdded?.(item) ?? false,
+                  select: () => select(item),
+                })}
+              </li>
+            ) : (
+              <li key={getKey(item)} role="option" aria-selected={idx === active}>
+                <button
+                  type="button"
+                  // preventDefault keeps focus on the input — the tap can't blur-close the list,
+                  // and in multi-add mode the bar stays ready for the next product.
+                  onMouseDown={(e) => { e.preventDefault(); select(item); }}
+                  onMouseEnter={() => setActive(idx)}
+                  className={`w-full text-left px-4 py-3 text-sm min-h-[48px] flex items-center
+                              justify-between gap-2 ${idx === active ? 'bg-blue-50' : 'hover:bg-blue-50'}`}
+                >
+                  {renderRow(item, { active: idx === active, added: isAdded?.(item) ?? false })}
+                </button>
+              </li>
+            )
           ))}
           {matches.length === 0 && !canCreate && (
             <li className="px-4 py-3 text-sm text-slate-400">{emptyText}</li>

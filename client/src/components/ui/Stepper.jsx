@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import useHoldRepeat from './useHoldRepeat';
 
 // Large +/- flanking a number input — designed for easy finger/thumb use on tablets.
 // `step` controls the increment (e.g. 0.5 for half-cases, 1 for whole bottles).
 // `onChange` receives the raw string value so callers keep their string-based form
 // state and the field stays freely typeable; the +/- buttons round/clamp to step.
+// Press-and-hold a +/- button to ramp continuously (clamped to min/max).
 // `id` + aria-* (injected by FormField) are forwarded to the inner <input>.
 export default function Stepper({
   value,
@@ -21,6 +23,13 @@ export default function Stepper({
   const clamp = (n) => Math.min(max, Math.max(min, n));
   const setVal = (n) => onChange(String(clamp(round(n))));
 
+  // A ref to the latest value so the hold-repeat interval steps from the up-to-date number
+  // (its callback closure would otherwise capture a stale `current`).
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const decHold = useHoldRepeat(() => setVal(currentRef.current - step));
+  const incHold = useHoldRepeat(() => setVal(currentRef.current + step));
+
   const btnBase = `
     flex items-center justify-center w-12 h-12 shrink-0 bg-white
     text-slate-700 text-2xl font-bold select-none
@@ -35,7 +44,7 @@ export default function Stepper({
     <div className="flex w-full items-stretch" role="group" aria-label={label}>
       <button
         type="button"
-        onClick={() => setVal(current - step)}
+        {...decHold}
         disabled={current <= min}
         aria-label={`Decrease ${label || 'value'}`}
         className={`${btnBase} rounded-l-lg border-r-0`}
@@ -61,7 +70,7 @@ export default function Stepper({
 
       <button
         type="button"
-        onClick={() => setVal(current + step)}
+        {...incHold}
         disabled={current >= max}
         aria-label={`Increase ${label || 'value'}`}
         className={`${btnBase} rounded-r-lg border-l-0`}

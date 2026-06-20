@@ -155,16 +155,26 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     flash(item._key);
   };
 
-  // Re-tapping a product already on the order bumps its quantity by one case instead of
-  // adding a duplicate line.
+  // The + on the search-bar row (tap or hold) adds half a case. Functional update so press-and-
+  // hold repeats step correctly off the latest quantity.
   const bumpProduct = (product) => {
-    const existing = items.find((i) => i.product_id === String(product.id));
     setItems((prev) => prev.map((i) =>
       i.product_id === String(product.id)
-        ? { ...i, quantity: String((Number(i.quantity) || 0) + 1) }
+        ? { ...i, quantity: String(Math.round(((Number(i.quantity) || 0) + 0.5) * 10) / 10) }
         : i
     ));
-    if (existing) flash(existing._key);
+  };
+
+  // The − drops half a case; the line is removed once it reaches 0 (never negative).
+  const subProduct = (product) => {
+    setItems((prev) => {
+      const i = prev.find((x) => x.product_id === String(product.id));
+      if (!i) return prev;
+      const next = Math.round(((Number(i.quantity) || 0) - 0.5) * 10) / 10;
+      return next <= 0
+        ? prev.filter((x) => x._key !== i._key)
+        : prev.map((x) => (x._key === i._key ? { ...x, quantity: String(next) } : x));
+    });
   };
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
@@ -469,6 +479,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                   }}
                   onAdd={addProduct}
                   onBump={bumpProduct}
+                  onSub={subProduct}
                   renderMeta={(p) => PHP(priceFor(p))}
                 />
 
