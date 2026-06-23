@@ -1,5 +1,4 @@
 require('dotenv').config();
-const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -17,17 +16,14 @@ const dashboardRoutes = require('./routes/dashboard');
 
 const app = express();
 
-// Allowed browser origins. Local dev uses the Vite server; the native Android
-// app (Capacitor) serves from https://localhost. CLIENT_ORIGIN may add more
-// (comma-separated) in production.
+// Allowed origins. This is an API-only service for the Android APK; there is no
+// served web client. The native Capacitor WebView fetches cross-origin to the
+// Render API and sends Origin: https://localhost (androidScheme: https), so that
+// origin is required. http://localhost:5173 is for local browser dev only.
 const allowedOrigins = [
   'http://localhost:5173',
   'https://localhost',
   'capacitor://localhost',
-  // Render sets this to the service's own public URL — the deployed site
-  // calling its own API (same-origin fetch still sends an Origin header).
-  ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL] : []),
-  ...(process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(',').map((o) => o.trim()) : []),
 ];
 app.use(
   cors({
@@ -56,13 +52,8 @@ app.use('/api/v1/tickets', ticketRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 
-// Serve the built React app (client/dist) at the same origin as the API,
-// so the SameSite=Strict login cookie works for browser/PWA clients.
-const clientDist = path.join(__dirname, '../../client/dist');
-app.use(express.static(clientDist));
-app.get(/^(?!\/api\/).*/, (req, res) => {
-  res.sendFile(path.join(clientDist, 'index.html'));
-});
+// API-only service — the product ships as an Android APK. No web client is served.
+app.use((req, res) => res.status(404).json({ error: 'Not found — Leyble Hub is an Android app.' }));
 
 app.use(errorHandler);
 

@@ -24,7 +24,6 @@ Antipolo, Philippines. This folder is the single home for project documentation.
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally.
 - [operations/android.md](operations/android.md) — build & sideload the Android APK; cloud setup.
-- [operations/staging.md](operations/staging.md) — staging environment & deploy workflow.
 
 ### Archive (historical, not maintained)
 - [archive/SPECIFICATION.md](archive/SPECIFICATION.md) — original spec (superseded; predates migrations 012–029).

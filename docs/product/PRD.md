@@ -12,8 +12,8 @@ order-management tool for the business.
 - **Currency:** Philippine Peso (₱), `NUMERIC(10,2)` throughout.
 - **Business model:** wholesale-only. There is no retail price; products carry a single
   wholesale base price, with optional custom prices for `wholesaler`-type customers.
-- **Delivery surface:** Android APK (Capacitor) for the owners' phones, and the same app as a
-  website/PWA on tablets/desktops. Cloud-hosted (Render + Supabase) — there is no on-prem PC.
+- **Delivery surface:** Android APK (Capacitor) only — phones and Android tablets. There is no
+  web client. Cloud-hosted, API-only backend (Render + Supabase) — there is no on-prem PC.
 
 ## Goals
 

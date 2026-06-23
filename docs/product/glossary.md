@@ -28,6 +28,5 @@ they still appear in migrations and the archived spec.)
 | **Activity log** | Append-only `activity_logs` — cross-entity change log (orders/customers/products/personnel/tickets). API: `GET /api/v1/audit/activity`. |
 | **Void (delivery)** | Soft-delete of a supplier delivery (migration 029): reverses the restock and hides it, but keeps the row because audit logs reference it. |
 | **Receipt** | 80mm thermal printout; **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on order type. |
-| **PWA** | The website form of the app (Add to Home Screen) — same build as the Android APK. |
 
 See also: [PRD](PRD.md) · [Database Reference](../architecture/DATABASE.md).

@@ -4,7 +4,20 @@
 
 ## Pending (code — ready to start, preflight passed)
 
-<!-- nothing pending -->
+- [ ] **Offsite printing — print to the shop printer from anywhere** _(planned 2026-06-22)_ —
+  let parents working offsite send a receipt that prints back at the shop. **Not a VPN**
+  (Tenda F3 can't run one; Android can't reliably subnet-route). Instead: a **cloud print relay
+  + "Shop Printer Station"** mode on a spare old Android phone left plugged in at the shop.
+  - Offsite phone (Print destination = "Shop printer") uploads ESC/POS as a job to the backend
+    instead of printing directly; station phone polls, claims, and prints over the existing WiFi
+    transport (`Printer.printBytesTo`) — **no native printing changes**.
+  - Backend: migration `030_create_print_jobs.sql` + `server/src/routes/print.js`
+    (`POST /jobs`, `GET /jobs/next` atomic claim w/ stale re-queue, `POST /jobs/:id/done|failed`);
+    reuse/refactor the `receipt-printed` tagging so the station's "done" tags the order.
+  - Frontend: print-destination toggle (default stays **local** — fast, works offline on LAN),
+    relay branch in `usePrintReceipt.js`, new `PrinterStationPage.jsx` polling agent (+ keep-awake).
+  - **Requires a new APK** (parents' phones + the station phone). Backend via dev→main.
+  - Full plan: `~/.claude/plans/we-have-bluetooth-and-jaunty-brooks.md`
 
 ---
 

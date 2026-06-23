@@ -11,8 +11,8 @@ it*.
 Internal, **wholesale-only** admin app for a beverage distributor in Antipolo, Philippines
 ("Leyble General Merchandise"). Not customer-facing, no payments. Owners are in their late 50s →
 accessibility matters (big targets, big fonts, text+color status). Currency is the Philippine
-Peso (₱). Ships as an **Android APK** (Capacitor) and as a **website/PWA** from the same build,
-both hitting a cloud backend (**Express on Render + Postgres on Supabase**).
+Peso (₱). Ships **only** as an **Android APK** (Capacitor) hitting a cloud, API-only backend
+(**Express on Render + Postgres on Supabase**) — there is no web client.
 
 ## Mental model
 
@@ -31,7 +31,7 @@ Audit Log. Details in the [PRD](product/PRD.md).
 
 ```
 server/src/
-  index.js              Express app (routes under /api/v1, also serves client/dist + SPA fallback)
+  index.js              Express app (API-only — routes under /api/v1, 404 JSON for anything else)
   db.js                 pg Pool
   middleware/auth.js    requireAuth — accepts cookie OR Bearer
   lib/inventory.js      applyStockDelta/applyDeltaMap — the ONLY place stock changes
@@ -81,5 +81,5 @@ docs/                   ← you are here
 | Call/extend an endpoint | [architecture/API.md](architecture/API.md) |
 | Touch order status/stock/deposit logic | [architecture/order-lifecycle.md](architecture/order-lifecycle.md) |
 | Run it locally | [operations/local-development.md](operations/local-development.md) |
-| Build the APK / deploy / staging | [operations/android.md](operations/android.md) · [operations/staging.md](operations/staging.md) |
+| Build the APK / deploy | [operations/android.md](operations/android.md) |
 | Follow working rules & conventions | [CLAUDE.md](../CLAUDE.md) |

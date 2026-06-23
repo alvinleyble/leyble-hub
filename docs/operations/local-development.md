@@ -1,8 +1,8 @@
 # Local Development
 
 How to run Leyble Hub on your own machine. (Production/cloud deploy lives in
-[android.md](android.md) and [staging.md](staging.md). The old Windows/PM2 on-prem setup is
-retired — there is no on-prem PC anymore.)
+[android.md](android.md). The old Windows/PM2 on-prem setup is retired — there is no on-prem PC
+anymore.)
 
 ## Prerequisites
 
@@ -58,7 +58,6 @@ Login: `admin@leyblevhub.local` / *(your `SEED_ADMIN_PASSWORD`)*.
 | `JWT_SECRET` | Yes | Secret for signing auth tokens |
 | `JWT_EXPIRES_IN` | No | Token lifetime, default `8h` |
 | `PORT` | No | Backend port, default `3000` |
-| `CLIENT_ORIGIN` | No | Extra allowed CORS origins (comma-separated) |
 | `SEED_ADMIN_EMAIL` | No | Admin email for seed, default `admin@leyblevhub.local` |
 | `SEED_ADMIN_PASSWORD` | Yes | Admin password created by `node db/seed.js` |
 | `SEED_ADMIN_NAME` | No | Admin display name, default `Admin` |

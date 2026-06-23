@@ -164,34 +164,30 @@ WHERE op.order_id = $1
 
 ---
 
-## Deployment — cloud + Android app
+## Deployment — Android app + cloud API
 
-There is no on-prem/Windows computer. The product ships as an **Android APK** (Capacitor wrap
-of the existing React app) talking to a **cloud-hosted** backend + DB. The same backend also
-serves the built frontend, so the app is also reachable as a normal website (e.g. for use on
-iPad/desktop browsers — Add to Home Screen for an app-like icon):
-- **Backend + Frontend:** Express services on **Render** (repo root, `node server/src/index.js`).
-  Express serves the built `client/dist` and falls back to `index.html` for non-`/api` routes,
-  so the browser/PWA login cookie (`SameSite=Strict`) works same-origin — see
-  [server/src/index.js](server/src/index.js).
+There is no on-prem/Windows computer, and **no web client**. The product ships only as an
+**Android APK** (Capacitor wrap of the React app) talking to a **cloud-hosted** API + DB. The
+backend is **API-only** — it does not serve a website; opening the Render URL in a browser
+returns a 404 JSON. The Android APK is the only way in.
+- **API:** Express on **Render** (repo root, `node server/src/index.js`), API-only (no
+  `client/dist` served) — see [server/src/index.js](server/src/index.js).
 - **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
-- `npm run dev` (separate Vite + Express servers) is dev-only.
+- `npm run dev` (separate Vite + Express servers) is **dev-only** — local development still runs
+  in a browser, which is why the cookie auth path is kept (see Security rules).
 - Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD`, set as a host env var).
 - Full build/deploy/sideload steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
-### Production + Staging environments
+### Single production environment
 
-A **staging** environment exists (separate Render service + separate Supabase project) where
-family members can test and practice without touching production data. Both environments are
-defined in [render.yaml](render.yaml) under a `projects:`/`environments:` structure:
+There is **one** environment: production. It's defined in [render.yaml](render.yaml) as the
+`leyble-hub-api` service (deploys from `main`) against the prod Supabase DB.
 
-- **Production** (`main` branch): `leyble-hub-api` service, prod Supabase DB
-- **Staging** (`staging` branch): `leyble-hub-api-staging` service, staging Supabase DB (cloned
-  from prod, then independent)
+**Workflow:** changes flow `dev` → `main` (prod). Render production auto-deploys on push to
+`main`. (There is no staging environment — it was removed in June 2026.)
 
-**Workflow:** changes flow `dev` → `staging` (test live) → `main` (prod). Small
-hotfixes can skip staging (merge `dev` → `main` directly). See **[docs/operations/staging.md](docs/operations/staging.md)**
-for the full setup, one-time Supabase clone, and deployment workflow.
+> Because there is no web client, **every UI change requires rebuilding + reinstalling the APK**
+> on each device — there is no web fallback to push fixes instantly.
 
 > The old Windows/PM2 `.bat` scripts (`start/stop/restart/update.bat`) are **dev-only legacy**
 > — they assumed an on-prem PC that no longer exists.
@@ -207,11 +203,14 @@ for the full setup, one-time Supabase clone, and deployment workflow.
 - Always present changes and ask "ready to commit and push?" — wait for a direct "yes" or "okay, commit and push."
 
 ## Security rules
-- JWT in HTTP-only, SameSite=Strict cookies (web) — never localStorage, never log the token.
-  **Native Android exception:** the Capacitor app can't use SameSite=strict cookies
-  cross-origin, so it stores the JWT in `@capacitor/preferences` (native, app-sandboxed — *not*
-  browser localStorage) and sends it as `Authorization: Bearer`. `requireAuth` accepts both
-  cookie and Bearer; see [docs/operations/android.md](docs/operations/android.md).
+- **Native Android (production):** the Capacitor app stores the JWT in `@capacitor/preferences`
+  (native, app-sandboxed — *not* browser localStorage) and sends it as `Authorization: Bearer`.
+  This is how the live app authenticates; see [docs/operations/android.md](docs/operations/android.md).
+- **Local browser dev only:** `npm run dev` runs in a browser, where the JWT is set as an
+  HTTP-only, SameSite=Strict cookie (never localStorage, never log the token). This path exists
+  solely so login works during local dev — production serves no web client.
+- `requireAuth` accepts both cookie and Bearer.
+- `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - All API routes require `requireAuth` middleware except `POST /api/v1/auth/login`
 - Parameterized queries only — no string interpolation into SQL

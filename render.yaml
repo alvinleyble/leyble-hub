@@ -1,4 +1,4 @@
-# NB: the database lives on Supabase (see docs/operations/android.md and docs/operations/staging.md), NOT on Render.
+# NB: the database lives on Supabase (see docs/operations/android.md), NOT on Render.
 # Do not add a Render-managed `databases:` block here — Render's free Postgres is deleted
 # ~30 days after creation. DATABASE_URL is set manually in the dashboard per environment
 # to the Supabase pooled URL.
@@ -16,18 +16,11 @@ projects:
             env: node
             plan: free
             branch: main
-            # `--include=dev` for the client install: NODE_ENV=production (set below)
-            # makes npm skip devDependencies by default, but vite and the Tailwind/PostCSS
-            # toolchain (needed to build client/dist) live there.
-            # No rootDir: the build needs both server/ and client/, and Render's
-            # rootDir excludes everything outside it. The server serves client/dist at
-            # the same origin so the SameSite=Strict login cookie works for browser/PWA
-            # clients (a separate static-site origin would be cross-site under the
-            # onrender.com Public Suffix List entry).
+            # API-only service for the Android APK — the server no longer builds or
+            # serves the web client, so only the server package is installed. The APK's
+            # own web assets are built locally via `cap sync`, not here.
             buildCommand: >
               npm --prefix server install &&
-              npm --prefix client install --include=dev &&
-              npm --prefix client run build &&
               node server/db/migrate.js
             startCommand: node server/src/index.js
             healthCheckPath: /health
@@ -43,36 +36,3 @@ projects:
                 generateValue: true
               - key: JWT_EXPIRES_IN
                 value: 8h
-              # Optional: extra browser origins (comma-separated).
-              - key: CLIENT_ORIGIN
-                sync: false
-
-      # ──────────────────────────────────────────────────────────────
-      # STAGING: deploys from staging branch
-      # ──────────────────────────────────────────────────────────────
-      - name: staging
-        services:
-          - type: web
-            name: leyble-hub-api-staging
-            env: node
-            plan: free
-            branch: staging
-            buildCommand: >
-              npm --prefix server install &&
-              npm --prefix client install --include=dev &&
-              npm --prefix client run build:staging &&
-              node server/db/migrate.js
-            startCommand: node server/src/index.js
-            healthCheckPath: /health
-            envVars:
-              - key: NODE_ENV
-                value: production
-              # Set in the Render dashboard to the staging Supabase POOLED connection string.
-              - key: DATABASE_URL
-                sync: false
-              - key: JWT_SECRET
-                generateValue: true
-              - key: JWT_EXPIRES_IN
-                value: 8h
-              - key: CLIENT_ORIGIN
-                sync: false

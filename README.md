@@ -2,8 +2,8 @@
 
 Private, internal admin app for **Leyble General Merchandise** — a wholesale beverage distributor
 in Antipolo, Philippines. Manages outgoing orders, incoming supplies, inventory, customers, and
-personnel. Not customer-facing. Ships as an Android APK (Capacitor) and as a website/PWA from the
-same build, backed by a cloud Express + PostgreSQL service.
+personnel. Not customer-facing. Ships **only** as an Android APK (Capacitor), backed by a
+cloud Express + PostgreSQL API (no web client).
 
 ## Tech stack
 
@@ -11,7 +11,7 @@ same build, backed by a cloud Express + PostgreSQL service.
 |---|---|
 | Frontend | React 18, Vite, Tailwind CSS v3 |
 | Backend | Node.js + Express, raw `pg` (no ORM) |
-| Auth | JWT — HTTP-only SameSite=Strict cookie (web) / Bearer token (native) |
+| Auth | JWT — Bearer token (native app) / HTTP-only SameSite=Strict cookie (local browser dev only) |
 | Database | PostgreSQL 15+ |
 | Hosting | Express on Render, Postgres on Supabase |
 
@@ -41,6 +41,5 @@ All docs live in **[`docs/`](docs/README.md)**. Start with the
 | Order lifecycle | [docs/architecture/order-lifecycle.md](docs/architecture/order-lifecycle.md) |
 | Local dev | [docs/operations/local-development.md](docs/operations/local-development.md) |
 | Android build / deploy | [docs/operations/android.md](docs/operations/android.md) |
-| Staging | [docs/operations/staging.md](docs/operations/staging.md) |
 
 Agent/contributor working rules: **[CLAUDE.md](CLAUDE.md)**.
