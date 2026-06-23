@@ -189,9 +189,6 @@ There is **one** environment: production. It's defined in [render.yaml](render.y
 > Because there is no web client, **every UI change requires rebuilding + reinstalling the APK**
 > on each device — there is no web fallback to push fixes instantly.
 
-> The old Windows/PM2 `.bat` scripts (`start/stop/restart/update.bat`) are **dev-only legacy**
-> — they assumed an on-prem PC that no longer exists.
-
 ---
 
 ## Git rules
