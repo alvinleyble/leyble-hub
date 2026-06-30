@@ -78,8 +78,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   ln('MERCHANDISE');
   b(GS,  0x21, 0x00);   // normal size
   b(ESC, 0x45, 0x00);   // bold off
-  ln('7968-4943 / 0919-004-4652');
-  ln('0917-860-5512');
+  ln('0917-860-5512 / 0955-330-3407 / 0919-004-4652');
   ln();
   b(ESC, 0x61, 0x00);   // left
   hr();

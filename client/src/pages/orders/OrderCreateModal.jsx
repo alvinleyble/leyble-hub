@@ -63,6 +63,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const [notes, setNotes] = useState(editOrder?.notes ?? '');
   const [errors, setErrors] = useState({});
 
+  // ── Adjustment ────────────────────────────────────────────────────────────
+  // Saved separately via PATCH /orders/:id/adjustment after the order itself is
+  // created/edited (the create/edit payload doesn't carry adjustment fields).
+  const [adjExpanded, setAdjExpanded] = useState(isRealEdit && Number(editOrder?.adjustment) !== 0);
+  const [adjValue, setAdjValue]       = useState(isRealEdit && editOrder?.adjustment ? String(editOrder.adjustment) : '');
+  const [adjReason, setAdjReason]     = useState(isRealEdit ? (editOrder?.adjustment_reason ?? '') : '');
+
   // ── Draft auto-save state ────────────────────────────────────────────────────
   const [draftId, setDraftId]           = useState(isDraftResume ? editOrder.id : null);
   const [draftStatus, setDraftStatus]   = useState('idle'); // 'idle' | 'saving' | 'saved'
@@ -272,6 +279,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     if (items.some((i) => !Number(i.quantity))) e.items = 'All quantities must be greater than 0.';
     if (items.some((i) => i.unit_price === '')) e.items = 'All items must have a price.';
     if (items.length === 0) e.items = 'Add at least one product.';
+    if (Number(adjValue) !== 0 && !adjReason.trim()) e.adjustment = 'Adjustment reason is required.';
     return e;
   };
 
@@ -296,19 +304,34 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         personnel: assignedPersonnel,
       };
 
+      let orderId;
       if (isRealEdit) {
         await api.patch(`/orders/${editOrder.id}`, payload);
+        orderId = editOrder.id;
         addToast('Order updated.', 'success');
       } else if (draftId) {
         // Draft → save the validated final state, then promote it to a Pending order.
         await api.patch(`/orders/${draftId}`, payload);
         await api.post(`/orders/${draftId}/finalize`, {});
+        orderId = draftId;
         addToast('Order created.', 'success');
       } else {
         // No draft was created yet (e.g. created instantly) — fall back to a direct create.
-        await api.post('/orders', payload);
+        const created = await api.post('/orders', payload);
+        orderId = created.id;
         addToast('Order created.', 'success');
       }
+
+      const adjNum           = Number(adjValue) || 0;
+      const existingAdjNum   = isRealEdit ? (Number(editOrder.adjustment) || 0) : 0;
+      const existingAdjReason = isRealEdit ? (editOrder.adjustment_reason || '') : '';
+      if (adjNum !== existingAdjNum || adjReason.trim() !== existingAdjReason) {
+        await api.patch(`/orders/${orderId}/adjustment`, {
+          adjustment: adjNum,
+          adjustment_reason: adjReason.trim(),
+        });
+      }
+
       onSaved();
     } catch (err) {
       addToast(err.message || 'Failed to save order.', 'error');
@@ -612,6 +635,61 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                         </div>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Adjustment ──────────────────────────────────────── */}
+              <div className="px-6 py-5 border-b border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Adjustment</p>
+                    {!adjExpanded && (
+                      <p className="text-sm text-slate-500 mt-1">
+                        {Number(adjValue) !== 0
+                          ? <span className={Number(adjValue) > 0 ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}>
+                              {Number(adjValue) > 0 ? '+' : ''}{PHP(adjValue)}
+                              {adjReason && ` — ${adjReason}`}
+                            </span>
+                          : 'None'}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdjExpanded((v) => !v)}
+                    className="text-sm text-blue-700 hover:text-blue-900 font-medium
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+                  >
+                    {adjExpanded ? 'Cancel' : Number(adjValue) !== 0 ? 'Edit' : '+ Add Adjustment'}
+                  </button>
+                </div>
+
+                {adjExpanded && (
+                  <div className="mt-4 space-y-3">
+                    <FormField label="Amount (₱) — use negative for discount">
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={adjValue}
+                        onChange={(e) => setAdjValue(e.target.value)}
+                        className={INPUT}
+                        placeholder="e.g. -50 for discount, 200 for surcharge"
+                      />
+                    </FormField>
+                    <FormField label={`Reason${Number(adjValue) !== 0 ? ' *' : ''}`}>
+                      <textarea
+                        value={adjReason}
+                        onChange={(e) => setAdjReason(e.target.value)}
+                        rows={2}
+                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
+                                   focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
+                        placeholder="e.g. Customer rejected 2 cases, negotiated price"
+                      />
+                    </FormField>
+                    {errors.adjustment && (
+                      <p className="text-sm text-red-600">{errors.adjustment}</p>
+                    )}
                   </div>
                 )}
               </div>

@@ -143,7 +143,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 <body>
   <div class="biz-name">LEYBLE GENERAL MERCHANDISE</div>
   <div class="center" style="font-size:10px;margin-top:2px">
-    7968-4943 / 0919-004-4652 / 0917-860-5512
+    0917-860-5512 / 0955-330-3407 / 0919-004-4652
   </div>
 
   <div class="hr"></div>

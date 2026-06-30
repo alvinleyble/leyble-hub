@@ -69,7 +69,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   // Keyed by order_items.id; reset whenever the active order changes.
   const [returnCounts, setReturnCounts] = useState({});
   // Adjustment fields for the active order — reset on order change, saved before close.
-  const [adjValue, setAdjValue] = useState('0');
+  const [adjValue, setAdjValue] = useState('');
   const [adjReason, setAdjReason] = useState('');
   // Edit / cancel for the active order, without leaving the review flow.
   const [editing, setEditing] = useState(false);
@@ -106,6 +106,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     handlePrint, printing,
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
+    twicePrompt, confirmTwice,
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, (updated) =>
     setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment);
@@ -128,7 +129,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
         .forEach((i) => { counts[i.id] = String(Number(i.quantity) * (Number(i.units_per_case) || 1)); });
     }
     setReturnCounts(counts);
-    setAdjValue(String(order.adjustment || '0'));
+    setAdjValue(order.adjustment ? String(order.adjustment) : '');
     setAdjReason(order.adjustment_reason || '');
   }, [activeId, order?.id, itemsSig]);
 
@@ -490,6 +491,20 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
           onTestPrint={testPrint}
           onClose={closePickerAndCancel}
         />
+      )}
+
+      {/* Print twice for your copy? — pending orders only, asked before printing */}
+      {twicePrompt && (
+        <Modal
+          title="Print twice for your copy?"
+          onClose={() => confirmTwice(false)}
+          onConfirm={() => confirmTwice(true)}
+          cancelLabel="No"
+          confirmLabel="Yes"
+          loading={printing}
+        >
+          Print a second copy for your records?
+        </Modal>
       )}
 
       {/* Confirm tagging this order as printed, after returning from the print dialog */}

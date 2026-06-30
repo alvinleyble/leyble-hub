@@ -8,6 +8,7 @@ export default function Modal({
   onConfirm,
   confirmLabel = 'Confirm',
   confirmVariant = 'primary',
+  cancelLabel = 'Cancel',
   loading = false,
 }) {
   const panelRef = useRef(null);
@@ -48,7 +49,7 @@ export default function Modal({
 
         <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200">
           <Button variant="secondary" onClick={onClose} disabled={loading}>
-            Cancel
+            {cancelLabel}
           </Button>
           {onConfirm && (
             <Button variant={confirmVariant} onClick={onConfirm} loading={loading}>

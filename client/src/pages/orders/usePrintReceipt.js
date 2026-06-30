@@ -17,6 +17,9 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
   const [printing,      setPrinting]      = useState(false);
   const [printPrompt,   setPrintPrompt]   = useState(null);
   const [taggingPrint,  setTaggingPrint]  = useState(false);
+  // Pending orders only: "Print twice for your copy?" gate shown before the
+  // actual print fires (see handlePrint / confirmTwice below).
+  const [twicePrompt,   setTwicePrompt]   = useState(false);
 
   // Printer picker state
   const [pickerVisible,  setPickerVisible]  = useState(false);
@@ -28,11 +31,11 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
 
   // ── Core Bluetooth send ─────────────────────────────────────────────────────
 
-  const sendToPrinter = useCallback(async (data, phase) => {
+  const sendToPrinter = useCallback(async (data, phase, copies = 1) => {
     setPrinting(true);
     try {
-      await Printer.printBytes({ data });
-      addToast('Printed successfully.', 'success');
+      for (let i = 0; i < copies; i++) await Printer.printBytes({ data });
+      addToast(copies > 1 ? 'Printed successfully (2 copies).' : 'Printed successfully.', 'success');
       if (phase && order) setPrintPrompt({ orderId: order.id, phase });
     } catch (e) {
       addToast(`Print failed: ${e.message || 'unknown error'}`, 'error');
@@ -61,33 +64,42 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
     }
   }, []);
 
-  // ── handlePrint (called by Print Receipt button) ────────────────────────────
+  // ── executePrint (the actual print job, 1 or 2 copies) ──────────────────────
 
-  const handlePrint = useCallback(async () => {
-    if (!order || printing) return;
-    const phase = printPhaseForStatus(order.status);
-
-    if (!Capacitor.isNativePlatform()) {
-      // Web: open a popup and use window.print()
-      const html = generateReceiptHtml(order, returnCounts, liveAdjustment || {});
-      const win  = window.open('', '_blank', 'width=360,height=700');
+  // Web: print `copies` popups back-to-back — the next copy opens once the
+  // previous one's print dialog closes (afterprint, or the window itself closing).
+  const printWeb = useCallback((copies, phase) => {
+    const html = generateReceiptHtml(order, returnCounts, liveAdjustment || {});
+    let remaining = copies;
+    const printOne = () => {
+      const win = window.open('', '_blank', 'width=360,height=700');
       win.document.write(html);
       win.document.close();
       win.focus();
       win.print();
-      if (phase) {
-        let settled = false;
-        let poller;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          clearInterval(poller);
-          win.removeEventListener('afterprint', finish);
-          setPrintPrompt({ orderId: order.id, phase });
-        };
-        win.addEventListener('afterprint', finish);
-        poller = setInterval(() => { if (win.closed) finish(); }, 400);
-      }
+      let settled = false;
+      let poller;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearInterval(poller);
+        win.removeEventListener('afterprint', finish);
+        remaining -= 1;
+        if (remaining > 0) printOne();
+        else if (phase) setPrintPrompt({ orderId: order.id, phase });
+      };
+      win.addEventListener('afterprint', finish);
+      poller = setInterval(() => { if (win.closed) finish(); }, 400);
+    };
+    printOne();
+  }, [order, returnCounts, liveAdjustment]);
+
+  const executePrint = useCallback(async (copies) => {
+    if (!order || printing) return;
+    const phase = printPhaseForStatus(order.status);
+
+    if (!Capacitor.isNativePlatform()) {
+      printWeb(copies, phase);
       return;
     }
 
@@ -102,11 +114,29 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
     try { savedPrinter = await Printer.getSelectedPrinter(); } catch (_) {}
 
     if (savedPrinter?.address) {
-      await sendToPrinter(data, phase);
+      await sendToPrinter(data, phase, copies);
     } else {
-      await openPicker({ data, phase });
+      await openPicker({ data, phase, copies });
     }
-  }, [order, returnCounts, liveAdjustment, printing, sendToPrinter, openPicker]);
+  }, [order, returnCounts, liveAdjustment, printing, sendToPrinter, openPicker, printWeb]);
+
+  // ── handlePrint (called by Print Receipt button) ────────────────────────────
+  // Pending orders get a "Print twice for your copy?" gate first; every other
+  // status prints once immediately, same as before.
+
+  const handlePrint = useCallback(() => {
+    if (!order || printing) return;
+    if (order.status === 'pending') {
+      setTwicePrompt(true);
+    } else {
+      executePrint(1);
+    }
+  }, [order, printing, executePrint]);
+
+  const confirmTwice = useCallback((yes) => {
+    setTwicePrompt(false);
+    executePrint(yes ? 2 : 1);
+  }, [executePrint]);
 
   // ── Picker callbacks ────────────────────────────────────────────────────────
 
@@ -117,7 +147,7 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
       await Printer.saveSelectedPrinter({ type, address, port, name });
     } catch (_) {}
     if (pendingPrint) {
-      await sendToPrinter(pendingPrint.data, pendingPrint.phase);
+      await sendToPrinter(pendingPrint.data, pendingPrint.phase, pendingPrint.copies);
     } else {
       addToast(`Printer set to ${name}.`, 'success');
     }
@@ -190,6 +220,9 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
     testPrint,
     closePickerAndCancel,
     handleChangePrinter,
+    // Print-twice gate (pending orders only)
+    twicePrompt,
+    confirmTwice,
     // Tag-as-printed
     printPrompt,
     taggingPrint,

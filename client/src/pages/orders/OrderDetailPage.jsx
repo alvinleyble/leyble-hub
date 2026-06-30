@@ -49,7 +49,7 @@ export default function OrderDetailPage() {
 
   // Adjustment form state
   const [adjExpanded, setAdjExpanded] = useState(false);
-  const [adjValue, setAdjValue]       = useState('0');
+  const [adjValue, setAdjValue]       = useState('');
   const [adjReason, setAdjReason]     = useState('');
   const [savingAdj, setSavingAdj]     = useState(false);
 
@@ -61,6 +61,7 @@ export default function OrderDetailPage() {
     handlePrint, printing,
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
+    twicePrompt, confirmTwice,
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, setOrder);
 
@@ -69,7 +70,7 @@ export default function OrderDetailPage() {
     api.get(`/orders/${id}`)
       .then((o) => {
         setOrder(o);
-        setAdjValue(String(o.adjustment || '0'));
+        setAdjValue(o.adjustment ? String(o.adjustment) : '');
         setAdjReason(o.adjustment_reason || '');
         setAdjExpanded(Number(o.adjustment) !== 0);
       })
@@ -128,7 +129,7 @@ export default function OrderDetailPage() {
         adjustment_reason: adjReason.trim(),
       });
       setOrder(updated);
-      setAdjValue(String(updated.adjustment || '0'));
+      setAdjValue(updated.adjustment ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
       addToast('Adjustment saved.', 'success');
     } catch (err) {
@@ -152,7 +153,7 @@ export default function OrderDetailPage() {
         updated = await api.post(`/orders/${id}/status`, { status: 'done' });
       }
       setOrder(updated);
-      setAdjValue(String(updated.adjustment || '0'));
+      setAdjValue(updated.adjustment ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
       addToast('Order closed.', 'success');
     } catch (err) {
@@ -663,6 +664,20 @@ export default function OrderDetailPage() {
           onTestPrint={testPrint}
           onClose={closePickerAndCancel}
         />
+      )}
+
+      {/* Print twice for your copy? — pending orders only, asked before printing */}
+      {twicePrompt && (
+        <Modal
+          title="Print twice for your copy?"
+          onClose={() => confirmTwice(false)}
+          onConfirm={() => confirmTwice(true)}
+          cancelLabel="No"
+          confirmLabel="Yes"
+          loading={printing}
+        >
+          Print a second copy for your records?
+        </Modal>
       )}
 
       {/* Confirm tagging this order as printed */}
