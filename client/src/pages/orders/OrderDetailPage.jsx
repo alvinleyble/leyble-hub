@@ -70,7 +70,7 @@ export default function OrderDetailPage() {
     api.get(`/orders/${id}`)
       .then((o) => {
         setOrder(o);
-        setAdjValue(o.adjustment ? String(o.adjustment) : '');
+        setAdjValue(Number(o.adjustment) ? String(o.adjustment) : '');
         setAdjReason(o.adjustment_reason || '');
         setAdjExpanded(Number(o.adjustment) !== 0);
       })
@@ -129,7 +129,7 @@ export default function OrderDetailPage() {
         adjustment_reason: adjReason.trim(),
       });
       setOrder(updated);
-      setAdjValue(updated.adjustment ? String(updated.adjustment) : '');
+      setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
       addToast('Adjustment saved.', 'success');
     } catch (err) {
@@ -153,7 +153,7 @@ export default function OrderDetailPage() {
         updated = await api.post(`/orders/${id}/status`, { status: 'done' });
       }
       setOrder(updated);
-      setAdjValue(updated.adjustment ? String(updated.adjustment) : '');
+      setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
       addToast('Order closed.', 'success');
     } catch (err) {

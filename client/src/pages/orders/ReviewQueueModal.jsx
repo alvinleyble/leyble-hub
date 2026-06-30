@@ -129,7 +129,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
         .forEach((i) => { counts[i.id] = String(Number(i.quantity) * (Number(i.units_per_case) || 1)); });
     }
     setReturnCounts(counts);
-    setAdjValue(order.adjustment ? String(order.adjustment) : '');
+    setAdjValue(Number(order.adjustment) ? String(order.adjustment) : '');
     setAdjReason(order.adjustment_reason || '');
   }, [activeId, order?.id, itemsSig]);
 

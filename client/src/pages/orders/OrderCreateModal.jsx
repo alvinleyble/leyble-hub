@@ -67,7 +67,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   // Saved separately via PATCH /orders/:id/adjustment after the order itself is
   // created/edited (the create/edit payload doesn't carry adjustment fields).
   const [adjExpanded, setAdjExpanded] = useState(isRealEdit && Number(editOrder?.adjustment) !== 0);
-  const [adjValue, setAdjValue]       = useState(isRealEdit && editOrder?.adjustment ? String(editOrder.adjustment) : '');
+  const [adjValue, setAdjValue]       = useState(isRealEdit && Number(editOrder?.adjustment) ? String(editOrder.adjustment) : '');
   const [adjReason, setAdjReason]     = useState(isRealEdit ? (editOrder?.adjustment_reason ?? '') : '');
 
   // ── Draft auto-save state ────────────────────────────────────────────────────
