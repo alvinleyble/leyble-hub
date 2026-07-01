@@ -34,5 +34,5 @@ projects:
                 sync: false
               - key: JWT_SECRET
                 generateValue: true
-              - key: JWT_EXPIRES_IN
-                value: 8h
+              # Intentionally no JWT_EXPIRES_IN — sessions never expire (single shared
+              # login on a couple of Android devices; see server/src/routes/auth.js).

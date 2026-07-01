@@ -48,7 +48,7 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              placeholder="admin@leyblevhub.local"
+              placeholder="josie@leyblestore.com"
               className="w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                          focus:outline-none focus:ring-2 focus:ring-blue-600"
             />

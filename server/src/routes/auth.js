@@ -6,11 +6,14 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
+// No JWT_EXPIRES_IN in production — the session never expires, since the app only ships as
+// an APK on a couple of shared devices and re-entering credentials adds no real security
+// benefit there. Set JWT_EXPIRES_IN explicitly (e.g. '1y') if a bounded session is wanted.
 const COOKIE_OPTS = {
   httpOnly: true,
   sameSite: 'strict',
   secure: process.env.NODE_ENV === 'production',
-  maxAge: 8 * 60 * 60 * 1000, // 8 hours in ms
+  maxAge: 10 * 365 * 24 * 60 * 60 * 1000, // ~10 years, for the local-dev cookie path
 };
 
 // POST /api/v1/auth/login
@@ -31,9 +34,8 @@ router.post('/login', async (req, res, next) => {
     }
 
     const payload = { id: user.id, email: user.email, full_name: user.full_name, role: user.role };
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '8h',
-    });
+    const signOpts = process.env.JWT_EXPIRES_IN ? { expiresIn: process.env.JWT_EXPIRES_IN } : {};
+    const token = jwt.sign(payload, process.env.JWT_SECRET, signOpts);
 
     // Cookie for the web (dev) client; `token` in the body for the native
     // Android app, which stores it and sends it as an Authorization header.
@@ -51,6 +53,18 @@ router.post('/logout', (req, res) => {
 // GET /api/v1/auth/me
 router.get('/me', requireAuth, (req, res) => {
   res.json(req.user);
+});
+
+// GET /api/v1/auth/profiles — the Josie/Luis/Admin picker options (see migration 030).
+router.get('/profiles', requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT profile_key, full_name FROM users WHERE profile_key IS NOT NULL ORDER BY profile_key`
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

@@ -9,6 +9,7 @@ const BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1';
 // localStorage) and sends it as an Authorization: Bearer header instead.
 const isNative = Capacitor.isNativePlatform();
 const TOKEN_KEY = 'authToken';
+const PROFILE_KEY = 'activeProfile';
 
 async function getToken() {
   if (!isNative) return null;
@@ -22,10 +23,30 @@ async function setToken(token) {
   else await Preferences.remove({ key: TOKEN_KEY });
 }
 
+// Which of Josie / Luis / Admin is currently driving the app — see server/src/middleware/auth.js.
+// Native: @capacitor/preferences (app-sandboxed, survives restarts). Web dev: localStorage.
+async function getActiveProfile() {
+  if (!isNative) return localStorage.getItem(PROFILE_KEY);
+  const { value } = await Preferences.get({ key: PROFILE_KEY });
+  return value || null;
+}
+
+async function setActiveProfile(profileKey) {
+  if (!isNative) {
+    if (profileKey) localStorage.setItem(PROFILE_KEY, profileKey);
+    else localStorage.removeItem(PROFILE_KEY);
+    return;
+  }
+  if (profileKey) await Preferences.set({ key: PROFILE_KEY, value: profileKey });
+  else await Preferences.remove({ key: PROFILE_KEY });
+}
+
 async function request(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   const token = await getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+  const activeProfile = await getActiveProfile();
+  if (activeProfile) headers['X-Active-Profile'] = activeProfile;
 
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
@@ -35,6 +56,7 @@ async function request(path, options = {}) {
 
   if (res.status === 401) {
     await setToken(null);
+    await setActiveProfile(null);
     if (window.location.pathname !== '/login') {
       window.location.href = '/login';
     }
@@ -53,7 +75,10 @@ async function request(path, options = {}) {
 
   // Persist / clear the native token around auth transitions (no-op on web).
   if (path === '/auth/login' && data?.token) await setToken(data.token);
-  if (path === '/auth/logout') await setToken(null);
+  if (path === '/auth/logout') {
+    await setToken(null);
+    await setActiveProfile(null);
+  }
 
   return data;
 }
@@ -63,4 +88,6 @@ export const api = {
   post:  (path, body) => request(path, { method: 'POST',  body: JSON.stringify(body) }),
   patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) }),
   del:   (path)       => request(path, { method: 'DELETE' }),
+  getActiveProfile,
+  setActiveProfile,
 };

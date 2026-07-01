@@ -1,8 +1,10 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ProfileProvider, useProfile } from './context/ProfileContext';
 import { ToastProvider } from './components/ui/Toast';
 import AppLayout from './components/layout/AppLayout';
+import ProfilePickerModal from './components/profile/ProfilePickerModal';
 import Spinner from './components/ui/Spinner';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -29,7 +31,23 @@ function ProtectedLayout() {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  return <AppLayout />;
+  return (
+    <ProfileProvider>
+      <ProfileGate />
+    </ProfileProvider>
+  );
+}
+
+// Renders the app shell underneath, overlaying the "who's using this" picker on top when
+// no profile has been chosen yet — the app is never hidden behind a separate screen for it.
+function ProfileGate() {
+  const { needsPick, loading } = useProfile();
+  return (
+    <>
+      <AppLayout />
+      {!loading && needsPick && <ProfilePickerModal />}
+    </>
+  );
 }
 
 
