@@ -52,6 +52,8 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
 
   const docDate  = new Date(order.created_at);
   const dateStr  = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
+  const docHours = docDate.getHours();
+  const timeStr  = `${docHours % 12 || 12}:${String(docDate.getMinutes()).padStart(2, '0')} ${docHours < 12 ? 'AM' : 'PM'}`;
   const receiptNo = String(order.id).padStart(5, '0');
 
   const printAdj       = Number(overrides.adjustment !== undefined ? overrides.adjustment : (order.adjustment || 0)) || 0;
@@ -60,6 +62,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   const depTotal       = order.items.reduce((s, i) => s + itemDepositForPrint(i, returnCounts, showDeposit), 0);
   const printTotal     = itemsTotal + depTotal + printAdj;
   const hasSubtotals   = (showDeposit && depTotal > 0) || printAdj !== 0;
+  const totalCases     = order.items.reduce((s, i) => s + Number(i.quantity), 0);
 
   const buf = [];
   const b   = (...bytes) => { for (const v of bytes) buf.push(v); };
@@ -87,7 +90,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   b(ESC, 0x45, 0x01);
   ln(isPickup ? 'PICKUP RECEIPT' : 'DELIVERY RECEIPT');
   b(ESC, 0x45, 0x00);
-  ln(padLR(`No: ${receiptNo}`, dateStr));
+  ln(padLR(`No: ${receiptNo}`, `${dateStr} ${timeStr}`));
 
   // ── Customer / personnel ───────────────────────────────────────────────────
   hr();
@@ -141,6 +144,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
 
   // ── Totals ─────────────────────────────────────────────────────────────────
   hr();
+  ln(padLR('Total Cases', `${totalCases} pcs`));
   if (hasSubtotals) {
     ln(padLR('Items', fmtMoney(itemsTotal)));
     if (showDeposit && depTotal > 0) ln(padLR('Deposit fee', `+${fmtMoney(depTotal)}`));
