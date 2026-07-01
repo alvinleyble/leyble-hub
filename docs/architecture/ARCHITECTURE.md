@@ -77,6 +77,13 @@ phones/tablets get a hamburger drawer.
    for local development.
 4. [`requireAuth`](../../server/src/middleware/auth.js) accepts **either** the cookie or the
    Bearer header. On any `401` the client clears the token and redirects to `/login`.
+5. **Profile picker (migration 030):** login is now a single shared account
+   (`josie@leyblestore.com`); after logging in, the client must pick a profile (Josie / Luis /
+   Admin, from `GET /auth/profiles`) via `ProfileContext`/`ProfilePickerModal`, and sends it as an
+   `X-Active-Profile` header on every subsequent request. `requireAuth` swaps `req.user.id`/
+   `full_name` to that profile's `users` row (looked up by `profile_key`), so `activity_logs.performed_by`
+   and `GET /auth/me` reflect *who's driving the app*, not the shared login identity. See
+   `server/db/setup-profiles.js` for how `profile_key` is assigned.
 
 CORS (`index.js`) allows only `localhost:5173` (Vite dev), `https://localhost` +
 `capacitor://localhost` (the native Capacitor WebView's origin).

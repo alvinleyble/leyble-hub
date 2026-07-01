@@ -48,7 +48,9 @@ cd client && npm run dev
 ```
 
 Open **http://localhost:5173** (Vite dev-proxies `/api` → `http://localhost:3000`).
-Login: `admin@leyblevhub.local` / *(your `SEED_ADMIN_PASSWORD`)*.
+Login: single shared account `josie@leyblestore.com` / *(`JOSIE_PASSWORD`, default `leyble123`)* —
+run `node server/db/setup-profiles.js` once after seeding to set this password and wire up the
+Josie/Luis/Admin profile picker (see [ARCHITECTURE.md#authentication-flow](../architecture/ARCHITECTURE.md#authentication-flow)).
 
 ## Environment variables (backend)
 
@@ -61,6 +63,7 @@ Login: `admin@leyblevhub.local` / *(your `SEED_ADMIN_PASSWORD`)*.
 | `SEED_ADMIN_EMAIL` | No | Admin email for seed, default `admin@leyblevhub.local` |
 | `SEED_ADMIN_PASSWORD` | Yes | Admin password created by `node db/seed.js` |
 | `SEED_ADMIN_NAME` | No | Admin display name, default `Admin` |
+| `JOSIE_PASSWORD` | No | Login password for the shared account, used by `node db/setup-profiles.js`, default `leyble123` |
 
 ## Migrations
 

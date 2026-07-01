@@ -175,7 +175,12 @@ returns a 404 JSON. The Android APK is the only way in.
 - **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
 - `npm run dev` (separate Vite + Express servers) is **dev-only** — local development still runs
   in a browser, which is why the cookie auth path is kept (see Security rules).
-- Login: `admin@leyblevhub.local` / (value of `SEED_ADMIN_PASSWORD`, set as a host env var).
+- Login: single shared account `josie@leyblestore.com` / (value of `JOSIE_PASSWORD`, default
+  `leyble123` — set via the one-off `node server/db/setup-profiles.js` script, see migration 030).
+  After login, the app requires picking a profile (Josie / Luis / Admin); the client sends the
+  chosen profile as an `X-Active-Profile` header on every request, and `requireAuth` swaps the
+  request identity to that profile so `activity_logs.performed_by` reflects who's actually driving,
+  not the shared login.
 - Full build/deploy/sideload steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
 ### Single production environment

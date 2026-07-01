@@ -15,6 +15,8 @@ export function printPhaseForStatus(status) {
 export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   const docDate = new Date(order.created_at);
   const dateStr = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
+  const docHours = docDate.getHours();
+  const timeStr = `${docHours % 12 || 12}:${String(docDate.getMinutes()).padStart(2, '0')} ${docHours < 12 ? 'AM' : 'PM'}`;
   const receiptNo = String(order.id).padStart(5, '0');
   const isPickupOrder = order.order_type === 'pickup';
   // Deposit only appears on the closing receipt (status = completed/delivered).
@@ -46,6 +48,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
     : order.adjustment_reason;
   const printTotal        = printItemsTotal + printDepositTotal + printAdj;
   const printHasSubtotals = (showDeposit && printDepositTotal > 0) || printAdj !== 0;
+  const printTotalCases   = order.items.reduce((s, i) => s + Number(i.quantity), 0);
 
   const itemRows = order.items.map((item) => {
     const qty      = Number(item.quantity);
@@ -96,6 +99,11 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
         ${depLine}
       </div>`;
   }).join('');
+
+  const totalCasesRow = `
+    <div class="row-between" style="margin-top:3px">
+      <span>Total Cases</span><span>${printTotalCases} pcs</span>
+    </div>`;
 
   const subtotalRows = printHasSubtotals ? `
     <div class="row-between" style="margin-top:3px">
@@ -151,7 +159,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   <div style="font-weight:bold;font-size:13px">${isPickupOrder ? 'PICKUP RECEIPT' : 'DELIVERY RECEIPT'}</div>
   <div class="row-between" style="margin-top:2px">
     <span>No: ${receiptNo}</span>
-    <span>${dateStr}</span>
+    <span>${dateStr} ${timeStr}</span>
   </div>
 
   <div class="hr"></div>
@@ -167,6 +175,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 
   <div class="hr"></div>
 
+  ${totalCasesRow}
   ${subtotalRows}
   <div class="total-row">
     <span>${printHasSubtotals ? 'FINAL TOTAL' : 'TOTAL'}</span>

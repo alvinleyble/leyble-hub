@@ -1,6 +1,6 @@
 # Database Reference
 
-PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–029` have
+PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–030` have
 been applied — reconstructed from `server/db/migrations/` (not from the archived spec, which is
 stale). When in doubt, the migration files are the source of truth.
 
@@ -20,9 +20,15 @@ stale). When in doubt, the migration files are the source of truth.
 
 ## Tables
 
-### `users` (001)
+### `users` (001, altered by 030)
 App accounts. `role` ∈ `('admin','viewer')` default `admin`. `email` unique, `password_hash`
 (bcrypt), `is_active`. Seeded by `server/db/seed.js` using `SEED_ADMIN_*` env vars.
+`profile_key VARCHAR(20) UNIQUE` (030) tags the rows that back the Josie/Luis/Admin profile
+picker — login is now a single shared active account (`josie@leyblestore.com`); the other
+profile rows are `is_active = FALSE` and exist only so `requireAuth` can swap request identity
+to them via the `X-Active-Profile` header. Assigned by the one-off `server/db/setup-profiles.js`
+script (not run automatically by `migrate.js`/`seed.js`). See
+[ARCHITECTURE.md#authentication-flow](ARCHITECTURE.md#authentication-flow).
 
 ### `products` (002, altered by 012, 022, 023)
 | Column | Type | Notes |
