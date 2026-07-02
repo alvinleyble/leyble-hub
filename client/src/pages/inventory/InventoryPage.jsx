@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import ProductFormModal from './ProductFormModal';
 import ProductDetailPanel from './ProductDetailPanel';
+import BatchPriceEditModal from './BatchPriceEditModal';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintList } from '../shared/usePrintList';
 import { productListHtml } from '../shared/listPrintTemplate';
@@ -25,6 +26,11 @@ export default function InventoryPage() {
   const [stockFilter, setStockFilter]   = useState('all');
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+
+  // Batch price edit
+  const [batchMode, setBatchMode]         = useState(false);
+  const [selectedIds, setSelectedIds]     = useState(() => new Set());
+  const [batchEditOpen, setBatchEditOpen] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -67,6 +73,23 @@ export default function InventoryPage() {
 
   const categories = Object.keys(grouped).sort();
 
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected = filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id));
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((p) => p.id)));
+  };
+
+  const exitBatchMode = () => { setBatchMode(false); setSelectedIds(new Set()); };
+
+  const selectedProducts = products.filter((p) => selectedIds.has(p.id));
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* ── Header ───────────────────────────────────────────────── */}
@@ -76,6 +99,13 @@ export default function InventoryPage() {
           <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={products.length === 0}>
             🖶 Print List
           </Button>
+          {batchMode ? (
+            <Button variant="secondary" onClick={exitBatchMode}>Cancel Batch Edit</Button>
+          ) : (
+            <Button variant="secondary" onClick={() => setBatchMode(true)} disabled={products.length === 0}>
+              Batch Edit Prices
+            </Button>
+          )}
           <Button onClick={() => setCreating(true)}>+ Add Product</Button>
         </div>
       </div>
@@ -147,6 +177,24 @@ export default function InventoryPage() {
         </div>
       )}
 
+      {/* ── Bulk action bar ─────────────────────────────────────── */}
+      {batchMode && selectedIds.size > 0 && (
+        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-4
+                        flex items-center justify-between flex-wrap gap-3">
+          <p className="text-sm font-semibold text-blue-900">
+            {selectedIds.size} product{selectedIds.size === 1 ? '' : 's'} selected
+          </p>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="secondary" size="sm" onClick={() => setSelectedIds(new Set())}>
+              Clear
+            </Button>
+            <Button size="sm" onClick={() => setBatchEditOpen(true)}>
+              Edit Prices →
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Table ────────────────────────────────────────────────── */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
@@ -161,6 +209,20 @@ export default function InventoryPage() {
           <table className="w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
+                {batchMode && (
+                  <th className="px-5 py-3 w-12">
+                    <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleSelectAll}
+                        className="w-6 h-6 rounded border-slate-300 text-blue-700
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                        aria-label="Select all products"
+                      />
+                    </label>
+                  </th>
+                )}
                 <th className="text-left px-5 py-3 font-semibold">Product</th>
                 <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">SKU</th>
                 <th className="text-right px-5 py-3 font-semibold">Price / Case</th>
@@ -175,7 +237,7 @@ export default function InventoryPage() {
                 <React.Fragment key={cat}>
                   <tr className="bg-slate-50/70">
                     <td
-                      colSpan={7}
+                      colSpan={batchMode ? 8 : 7}
                       className="px-5 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest"
                     >
                       {cat}
@@ -188,6 +250,20 @@ export default function InventoryPage() {
                       onClick={() => setSelectedId(p.id)}
                       className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
                     >
+                      {batchMode && (
+                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                          <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(p.id)}
+                              onChange={() => toggleSelected(p.id)}
+                              className="w-6 h-6 rounded border-slate-300 text-blue-700
+                                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                              aria-label={`Select ${p.name}`}
+                            />
+                          </label>
+                        </td>
+                      )}
                       <td className="px-5 py-4">
                         <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
                           {p.name}
@@ -249,6 +325,14 @@ export default function InventoryPage() {
           productId={selectedId}
           onClose={() => setSelectedId(null)}
           onSaved={load}
+        />
+      )}
+
+      {batchEditOpen && (
+        <BatchPriceEditModal
+          products={selectedProducts}
+          onClose={() => setBatchEditOpen(false)}
+          onSaved={() => { setBatchEditOpen(false); exitBatchMode(); load(); }}
         />
       )}
 

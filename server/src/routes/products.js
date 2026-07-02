@@ -103,6 +103,75 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+// PATCH /api/v1/products/batch-price — bulk update base_wholesale_price for many
+// products in one atomic transaction. Must be declared before PATCH /:id, otherwise
+// Express matches /:id first with id = "batch-price".
+router.patch('/batch-price', async (req, res, next) => {
+  const { updates, reason } = req.body;
+
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return res.status(400).json({ error: 'updates array is required and cannot be empty' });
+  }
+  if (updates.length > 500) {
+    return res.status(400).json({ error: 'Cannot update more than 500 products at once' });
+  }
+
+  const invalid = updates.filter(
+    (u) => !Number.isInteger(u?.id) || typeof u.new_price !== 'number' || isNaN(u.new_price) || u.new_price < 0
+  );
+  if (invalid.length > 0) {
+    return res.status(400).json({ error: 'Invalid or negative price for one or more products', invalid });
+  }
+
+  const ids = updates.map((u) => u.id);
+  if (new Set(ids).size !== ids.length) {
+    return res.status(400).json({ error: 'Duplicate product ids in updates' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const updatedProducts = [];
+    for (const { id, new_price } of updates) {
+      const { rows: [existing] } = await client.query(
+        'SELECT * FROM products WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      if (!existing) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `Product ${id} not found` });
+      }
+
+      const { rows: [product] } = await client.query(
+        `UPDATE products SET base_wholesale_price = $1, updated_at = NOW()
+         WHERE id = $2 RETURNING *`,
+        [new_price, id]
+      );
+
+      if (Number(new_price) !== Number(existing.base_wholesale_price)) {
+        await client.query(
+          `INSERT INTO inventory_audit_logs
+             (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by)
+           VALUES ($1, 'price_change', 'base_wholesale_price', $2, $3, NULL, $4, $5)`,
+          [id, String(existing.base_wholesale_price), String(new_price),
+           reason ? `Batch update: ${reason}` : 'Batch update', req.user.id]
+        );
+      }
+
+      updatedProducts.push(product);
+    }
+
+    await client.query('COMMIT');
+    res.json({ updated: updatedProducts, count: updatedProducts.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 // PATCH /api/v1/products/:id
 router.patch('/:id', async (req, res, next) => {
   const client = await db.connect();

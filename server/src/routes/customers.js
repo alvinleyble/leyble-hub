@@ -98,7 +98,7 @@ router.patch('/:id', async (req, res, next) => {
     );
     if (!existing) return res.status(404).json({ error: 'Customer not found' });
 
-    const { name, customer_type, address, phone, notes, is_active } = req.body;
+    const { name, customer_type, address, phone, notes, is_active, conversion_note } = req.body;
 
     const changes = diffFields(existing, req.body, [
       ['name', 'Name'],
@@ -108,6 +108,16 @@ router.patch('/:id', async (req, res, next) => {
       ['notes', 'Notes'],
       ['is_active', 'Active status'],
     ]);
+
+    // The "save custom price" flow (ADR 0001) always converts regular → wholesaler in the
+    // same action as saving the customer's first custom price; carry that context into the
+    // audit line so a future reader sees *why* the type changed, not just that it did.
+    if (conversion_note && customer_type === 'wholesaler' && existing.customer_type !== 'wholesaler') {
+      const typeChangeIdx = changes.findIndex((c) => c.startsWith('Type changed'));
+      if (typeChangeIdx !== -1) {
+        changes[typeChangeIdx] = `${changes[typeChangeIdx]} (${conversion_note})`;
+      }
+    }
 
     const { rows: [customer] } = await db.query(
       `UPDATE customers SET

@@ -7,6 +7,7 @@ import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
 import Combobox from '../../components/ui/Combobox';
 import ProductSearchBar from '../../components/ui/ProductSearchBar';
+import Modal from '../../components/ui/Modal';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -62,6 +63,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   );
   const [notes, setNotes] = useState(editOrder?.notes ?? '');
   const [errors, setErrors] = useState({});
+
+  // ── Save-custom-price prompt ─────────────────────────────────────────────
+  // Fires after a successful submit (create, draft finalize, or real-edit) when any line's
+  // typed unit_price differs from priceFor() — see docs/product/proposals/save-custom-price-prompt.md.
+  // { step: 'first' | 'second', orderId, customer, orderType, dirty: [...], busy }
+  const [priceSavePrompt, setPriceSavePrompt] = useState(null);
 
   // ── Adjustment ────────────────────────────────────────────────────────────
   // Saved separately via PATCH /orders/:id/adjustment after the order itself is
@@ -287,6 +294,21 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
+    // Snapshot hand-edited ("dirty") lines against priceFor() before submitting — the
+    // comparison happens once, here, against whatever price the line would get by default.
+    const dirtyItems = items.reduce((acc, i) => {
+      const product = products.find((p) => String(p.id) === i.product_id);
+      if (product && Number(i.unit_price) !== priceFor(product)) {
+        acc.push({
+          product_id:   Number(i.product_id),
+          product_name: i.product_name,
+          sku:          i.sku,
+          unit_price:   Number(i.unit_price),
+        });
+      }
+      return acc;
+    }, []);
+
     setSaving(true);
     try {
       const payload = {
@@ -332,11 +354,64 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         });
       }
 
-      onSaved();
+      // The order is committed at this point — a "No" anywhere in the prompt below has
+      // nothing left to roll back, it just means the price isn't remembered for next time.
+      if (dirtyItems.length && selectedCustomer) {
+        setPriceSavePrompt({
+          step: 'first', orderId, customer: selectedCustomer, orderType,
+          dirty: dirtyItems, busy: false,
+        });
+      } else {
+        onSaved();
+      }
     } catch (err) {
       addToast(err.message || 'Failed to save order.', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Save-custom-price prompt handlers ────────────────────────────────────
+
+  // Declining (either step) or dismissing without an answer both just close the order flow —
+  // the order itself was already committed above, so there's nothing to undo.
+  const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(); };
+
+  const acceptFirstPrompt = () => {
+    if (priceSavePrompt.customer.customer_type === 'wholesaler') {
+      persistPriceSave(false);
+    } else {
+      setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
+    }
+  };
+
+  // Saving a custom price and becoming a wholesaler are inseparable for a regular customer
+  // (ADR 0001) — declining this second prompt discards the save entirely, same as declining
+  // the first. Convert *before* saving prices: if the price POSTs fail partway, the worst
+  // case is a wholesaler with fewer saved prices than intended, never a regular customer
+  // with orphaned customer_product_prices rows (the exact case ADR 0001 warns about).
+  const persistPriceSave = async (convertToWholesaler) => {
+    setPriceSavePrompt((p) => ({ ...p, busy: true }));
+    try {
+      if (convertToWholesaler) {
+        await api.patch(`/customers/${priceSavePrompt.customer.id}`, {
+          customer_type:   'wholesaler',
+          conversion_note: `custom price saved from order #${priceSavePrompt.orderId}`,
+        });
+      }
+      await Promise.all(priceSavePrompt.dirty.map((d) =>
+        api.post(`/customers/${priceSavePrompt.customer.id}/prices`, {
+          product_id:        d.product_id,
+          custom_unit_price: d.unit_price,
+          order_type:        priceSavePrompt.orderType,
+        })
+      ));
+      addToast('Custom price saved.', 'success');
+    } catch (err) {
+      addToast(err.message || 'Failed to save custom price.', 'error');
+    } finally {
+      setPriceSavePrompt(null);
+      onSaved();
     }
   };
 
@@ -354,6 +429,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50"
       role="dialog" aria-modal="true" aria-labelledby="order-modal-title"
@@ -751,5 +827,47 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       </div>
 
     </div>
+
+    {/* ── Save custom price? (step 1 — every customer type) ────────────── */}
+    {priceSavePrompt?.step === 'first' && (
+      <Modal
+        title="Save Custom Price?"
+        onClose={declinePriceSave}
+        onConfirm={acceptFirstPrompt}
+        confirmLabel="Yes, Save"
+        cancelLabel="No"
+        loading={priceSavePrompt.busy}
+      >
+        <p>
+          Save the custom price{priceSavePrompt.dirty.length > 1 ? 's' : ''} for{' '}
+          <strong>{priceSavePrompt.customer.name}</strong> on future{' '}
+          <strong>{priceSavePrompt.orderType}</strong> orders?
+        </p>
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {priceSavePrompt.dirty.map((d) => (
+            <li key={d.product_id} className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+              <span className="text-slate-700">{d.sku || d.product_name}</span>
+              <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
+            </li>
+          ))}
+        </ul>
+      </Modal>
+    )}
+
+    {/* ── Wholesaler-conversion warning (step 2 — regular customers only) ─ */}
+    {priceSavePrompt?.step === 'second' && (
+      <Modal
+        title="Convert to Wholesaler?"
+        onClose={declinePriceSave}
+        onConfirm={() => persistPriceSave(true)}
+        confirmLabel="Yes, Continue"
+        cancelLabel="No"
+        loading={priceSavePrompt.busy}
+      >
+        Saving this custom price for <strong>{priceSavePrompt.customer.name}</strong> will
+        make them a Wholesaler. Continue?
+      </Modal>
+    )}
+    </>
   );
 }
