@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -32,6 +33,7 @@ const DEFAULT_PRICE_FORM = {
 };
 
 export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
+  const navigate = useNavigate();
   const { addToast } = useToast();
 
   const [customer, setCustomer]     = useState(null);
@@ -397,7 +399,13 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                     };
                     return (
                       <li key={o.id}
-                        className="flex items-start justify-between gap-4 p-3 rounded-lg border border-slate-200 bg-white">
+                        onClick={() => navigate(`/orders/${o.id}`)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/orders/${o.id}`); }}
+                        role="button"
+                        tabIndex={0}
+                        className="flex items-start justify-between gap-4 p-3 rounded-lg border border-slate-200 bg-white
+                                   cursor-pointer hover:bg-slate-50 transition-colors
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
                         <div>
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${st.color}`}>
                             {st.label}

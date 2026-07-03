@@ -519,9 +519,14 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                   aria-label="Customer"
                   renderRow={(c) => (
                     <>
-                      <span className="font-medium text-slate-800">{c.name}</span>
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-slate-800">{c.name}</span>
+                        {c.address && (
+                          <span className="italic text-slate-400"> - {c.address}</span>
+                        )}
+                      </span>
                       {c.customer_type === 'wholesaler' && (
-                        <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
+                        <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 shrink-0">
                           Wholesaler
                         </span>
                       )}
