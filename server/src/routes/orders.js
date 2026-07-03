@@ -43,7 +43,37 @@ async function recomputeTotal(client, orderId) {
   return total;
 }
 
+// Orders are typically entered in whatever order the customer texted them in.
+// Packers work the warehouse by category, so re-sort items into category order
+// (matching the ORDER BY category NULLS LAST, name convention used for the
+// product list) before they're written — every downstream view (detail page,
+// receipt, review queues) reads order_items back in insertion (id) order.
+async function sortItemsByCategory(client, items) {
+  const productIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
+  if (!productIds.length) return items;
+
+  const { rows: products } = await client.query(
+    'SELECT id, category, name FROM products WHERE id = ANY($1::int[])',
+    [productIds]
+  );
+  const infoById = new Map(products.map((p) => [p.id, p]));
+
+  return [...items].sort((a, b) => {
+    const pa = infoById.get(a.product_id);
+    const pb = infoById.get(b.product_id);
+    if (!pa || !pb) return 0; // placeholder/unmatched rows (draft mid-entry): leave as-is
+
+    if (pa.category !== pb.category) {
+      if (!pa.category) return 1;
+      if (!pb.category) return -1;
+      return pa.category.localeCompare(pb.category);
+    }
+    return pa.name.localeCompare(pb.name);
+  });
+}
+
 async function insertItems(client, orderId, customerId, orderType, items, userId, draft = false) {
+  items = await sortItemsByCategory(client, items);
   for (const item of items) {
     const {
       product_id, quantity, unit_price,
