@@ -348,7 +348,7 @@ export default function OrdersPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 {showCheckboxes && (
                   <th className="px-5 py-3 w-12">
                     <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
@@ -377,7 +377,7 @@ export default function OrdersPage() {
                 <tr
                   key={o.id}
                   onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id}`)}
-                  className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                  className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   {showCheckboxes && (
                     <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
@@ -443,7 +443,10 @@ export default function OrdersPage() {
       {creating && (
         <OrderCreateModal
           onClose={() => { setCreating(false); load(); loadDrafts(); }}
-          onSaved={() => { setCreating(false); load(); loadDrafts(); }}
+          onSaved={(orderId) => {
+            setCreating(false); load(); loadDrafts();
+            if (orderId) navigate(`/orders/${orderId}`);
+          }}
         />
       )}
 
@@ -451,7 +454,10 @@ export default function OrdersPage() {
         <OrderCreateModal
           editOrder={resumeDraft}
           onClose={() => { setResumeDraft(null); load(); loadDrafts(); }}
-          onSaved={() => { setResumeDraft(null); load(); loadDrafts(); }}
+          onSaved={(orderId) => {
+            setResumeDraft(null); load(); loadDrafts();
+            if (orderId) navigate(`/orders/${orderId}`);
+          }}
         />
       )}
 

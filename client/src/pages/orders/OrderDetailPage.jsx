@@ -277,7 +277,7 @@ export default function OrderDetailPage() {
         </div>
 
         {/* Customer */}
-        <div className="mt-5 pt-5 border-t border-slate-100">
+        <div className="mt-5 pt-5 border-t border-slate-300">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Customer</p>
           <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
           {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
@@ -286,7 +286,7 @@ export default function OrderDetailPage() {
 
         {/* Personnel */}
         {order.personnel?.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-slate-100">
+          <div className="mt-4 pt-4 border-t border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Assigned Personnel</p>
             <div className="flex flex-wrap gap-2">
               {order.personnel.map((p) => (
@@ -303,7 +303,7 @@ export default function OrderDetailPage() {
         )}
 
         {/* Timestamps */}
-        <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="mt-4 pt-4 border-t border-slate-300 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: 'Created',                              val: order.created_at },
             { label: 'Dispatched',                           val: !isPickup ? order.dispatched_at : null },
@@ -320,7 +320,7 @@ export default function OrderDetailPage() {
         </div>
 
         {order.notes && (
-          <div className="mt-4 pt-4 border-t border-slate-100">
+          <div className="mt-4 pt-4 border-t border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Notes</p>
             <p className="text-sm text-slate-600 italic">"{order.notes}"</p>
           </div>
@@ -331,7 +331,7 @@ export default function OrderDetailPage() {
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-200">
+            <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
               <th className="text-left px-5 py-3 font-semibold">Product</th>
               <th className="text-right px-5 py-3 font-semibold">Qty</th>
               <th className="text-right px-4 py-3 font-semibold hidden sm:table-cell">Price/Case</th>
@@ -341,7 +341,7 @@ export default function OrderDetailPage() {
           </thead>
           <tbody>
             {order.items.map((item) => (
-              <tr key={item.id} className="border-t border-slate-100">
+              <tr key={item.id} className="border-t border-slate-300">
                 <td className="px-5 py-3">
                   <p className="font-medium text-slate-800">{item.sku || item.product_name}</p>
                 </td>
@@ -379,13 +379,13 @@ export default function OrderDetailPage() {
           <tfoot>
             {hasDeposits && isDepositable && (
               <>
-                <tr className="border-t border-slate-200 bg-slate-50">
+                <tr className="border-t border-slate-400 bg-slate-50">
                   <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Items</td>
                   <td className="px-5 py-3 text-right tabular-nums text-slate-700">
                     {PHP(itemsSubtotal)}
                   </td>
                 </tr>
-                <tr className="border-t border-slate-100 bg-slate-50">
+                <tr className="border-t border-slate-300 bg-slate-50">
                   <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Deposit fee</td>
                   <td className={`px-5 py-3 text-right tabular-nums ${depositTotal < 0 ? 'text-green-700' : 'text-slate-700'}`}>
                     {depositTotal < 0
@@ -396,7 +396,7 @@ export default function OrderDetailPage() {
               </>
             )}
             {hasAdj && (
-              <tr className="border-t border-slate-100 bg-slate-50">
+              <tr className="border-t border-slate-300 bg-slate-50">
                 <td colSpan={4} className="px-5 py-3 text-right text-slate-500">
                   Adjustment
                   {order.adjustment_reason && (
@@ -409,7 +409,7 @@ export default function OrderDetailPage() {
                 </td>
               </tr>
             )}
-            <tr className="border-t-2 border-slate-200 bg-slate-50">
+            <tr className="border-t-2 border-slate-400 bg-slate-50">
               <td colSpan={4} className="px-5 py-4 text-right font-bold text-slate-700">
                 Order Total
               </td>

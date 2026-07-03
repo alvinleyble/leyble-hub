@@ -362,7 +362,8 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
           dirty: dirtyItems, busy: false,
         });
       } else {
-        onSaved();
+        // orderId lets create-flow callers redirect to the new order; edit-flow callers ignore it.
+        onSaved(orderId);
       }
     } catch (err) {
       addToast(err.message || 'Failed to save order.', 'error');
@@ -375,7 +376,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   // Declining (either step) or dismissing without an answer both just close the order flow —
   // the order itself was already committed above, so there's nothing to undo.
-  const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(); };
+  const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(priceSavePrompt?.orderId); };
 
   const acceptFirstPrompt = () => {
     if (priceSavePrompt.customer.customer_type === 'wholesaler') {
@@ -411,7 +412,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       addToast(err.message || 'Failed to save custom price.', 'error');
     } finally {
       setPriceSavePrompt(null);
-      onSaved();
+      onSaved(priceSavePrompt?.orderId);
     }
   };
 
@@ -421,7 +422,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     try {
       await api.del(`/orders/${draftId}`);
       addToast('Draft discarded.', 'success');
-      onSaved();
+      onSaved(); // no orderId — the draft no longer exists, stay on the list
     } catch (err) {
       addToast(err.message || 'Failed to discard draft.', 'error');
       setSaving(false);
@@ -438,7 +439,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       <div className="bg-white w-full sm:rounded-xl sm:max-w-2xl h-[95vh] sm:h-auto sm:max-h-[95vh] flex flex-col shadow-2xl">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <div className="min-w-0">
             <h2 id="order-modal-title" className="text-xl font-bold text-slate-900">
               {isRealEdit ? `Edit Order #${editOrder.id}` : isDraftResume ? `Draft #${editOrder.id}` : 'New Order'}
@@ -474,7 +475,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
               {/* ── Order Type ──────────────────────────────────────── */}
               {!isEdit && (
-                <div className="px-6 py-5 border-b border-slate-200">
+                <div className="px-6 py-5 border-b border-slate-400">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Order Type</p>
                   <div className="flex gap-2">
                     {['delivery', 'pickup'].map((type) => (
@@ -497,7 +498,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               )}
 
               {/* ── Customer ────────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Customer</p>
                 <Combobox
                   items={activeCustomers}
@@ -566,7 +567,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               </div>
 
               {/* ── Line Items ──────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products</p>
                   <p className="text-sm text-slate-500">
@@ -666,7 +667,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               </div>
 
               {/* ── Personnel ───────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
                   Assigned Personnel <span className="text-slate-300 font-normal normal-case">(optional)</span>
                 </p>
@@ -721,7 +722,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               </div>
 
               {/* ── Adjustment ──────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Adjustment</p>
@@ -792,7 +793,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
             </div>
 
             {/* Footer */}
-            <div className="flex gap-3 items-center px-6 py-4 border-t border-slate-200 shrink-0 bg-white">
+            <div className="flex gap-3 items-center px-6 py-4 border-t border-slate-400 shrink-0 bg-white">
               {confirmingDiscard ? (
                 <>
                   <span className="text-sm text-slate-600 mr-auto">Discard this draft? It can't be undone.</span>
@@ -850,7 +851,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         </p>
         <ul className="mt-3 space-y-1.5 text-sm">
           {priceSavePrompt.dirty.map((d) => (
-            <li key={d.product_id} className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+            <li key={d.product_id} className="flex items-center justify-between border-b border-slate-300 pb-1.5">
               <span className="text-slate-700">{d.sku || d.product_name}</span>
               <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
             </li>

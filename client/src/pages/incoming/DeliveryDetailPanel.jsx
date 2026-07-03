@@ -52,7 +52,7 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
         aria-labelledby="delivery-panel-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="delivery-panel-title" className="text-xl font-bold text-slate-900">
             {delivery ? `Delivery #${delivery.id}` : 'Delivery'}
           </h2>
@@ -79,7 +79,7 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Meta ──────────────────────────────────────────────── */}
-            <div className="px-6 py-5 border-b border-slate-200 space-y-3">
+            <div className="px-6 py-5 border-b border-slate-400 space-y-3">
               <div>
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Supplier</p>
                 <p className="text-lg font-bold text-slate-900">{delivery.supplier_name}</p>
@@ -120,7 +120,7 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-400">
                         <th className="text-left px-4 py-3 font-semibold">Product</th>
                         <th className="text-right px-4 py-3 font-semibold">Qty</th>
                         <th className="text-right px-4 py-3 font-semibold hidden sm:table-cell">Unit Cost</th>
@@ -128,7 +128,7 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
                     </thead>
                     <tbody>
                       {delivery.items.map((item) => (
-                        <tr key={item.id} className="border-t border-slate-100">
+                        <tr key={item.id} className="border-t border-slate-300">
                           <td className="px-4 py-3">
                             <p className="font-semibold text-slate-900">{item.sku || item.product_name}</p>
                             {item.notes && (
@@ -151,14 +151,14 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
             </div>
 
             {/* ── Actions ───────────────────────────────────────────── */}
-            <div className="px-6 py-5 border-t border-slate-200">
+            <div className="px-6 py-5 border-t border-slate-400">
               <Button variant="secondary" onClick={() => onEdit(delivery)}>
                 Edit Delivery
               </Button>
             </div>
 
             {/* ── Danger Zone (delete = void + reverse stock) ───────── */}
-            <div className="px-6 py-5 border-t border-slate-200">
+            <div className="px-6 py-5 border-t border-slate-400">
               <p className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</p>
 
               {!confirming ? (

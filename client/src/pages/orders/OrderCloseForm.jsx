@@ -105,7 +105,7 @@ export default function OrderCloseForm({ order, returnCounts, onChangeReturnCoun
       </div>
 
       {!hideCloseButton && (
-        <div className="mt-5 pt-4 border-t border-slate-200 flex justify-end">
+        <div className="mt-5 pt-4 border-t border-slate-400 flex justify-end">
           <Button
             onClick={handleClose}
             loading={closing}

@@ -81,7 +81,7 @@ export default function TicketFormModal({ onClose, onSaved }) {
       <div className="bg-white w-full sm:rounded-xl sm:max-w-lg h-[95vh] sm:h-auto sm:max-h-[95vh] flex flex-col shadow-2xl">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="ticket-modal-title" className="text-xl font-bold text-slate-900">New Ticket</h2>
           <button
             onClick={onClose}
@@ -177,7 +177,7 @@ export default function TicketFormModal({ onClose, onSaved }) {
             </div>
 
             {/* Footer */}
-            <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0 bg-white">
+            <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-400 shrink-0 bg-white">
               <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
               <Button onClick={handleSubmit} loading={saving}>Create Ticket</Button>
             </div>

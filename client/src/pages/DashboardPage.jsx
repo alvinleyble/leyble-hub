@@ -88,7 +88,7 @@ export default function DashboardPage() {
 
         {/* ── Active orders table ────────────────────────────────── */}
         <section className="xl:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-400">
             <h2 className="text-lg font-bold text-slate-900">Active Orders</h2>
             <Link
               to="/orders"
@@ -115,7 +115,7 @@ export default function DashboardPage() {
                     <th className="text-right px-5 py-3 font-semibold">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-300">
                   {orders.map((order) => (
                     <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-5 py-4">
@@ -155,7 +155,7 @@ export default function DashboardPage() {
 
         {/* ── Low stock panel ────────────────────────────────────── */}
         <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200">
+          <div className="px-5 py-4 border-b border-slate-400">
             <h2 className="text-lg font-bold text-slate-900">Low Stock</h2>
             <p className="text-sm text-slate-400 mt-0.5">Products at or below 10 units</p>
           </div>
@@ -165,7 +165,7 @@ export default function DashboardPage() {
               All stock levels are healthy
             </p>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-slate-300">
               {low_stock.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-4 px-5 py-4 min-h-[48px]">
                   <div className="min-w-0">

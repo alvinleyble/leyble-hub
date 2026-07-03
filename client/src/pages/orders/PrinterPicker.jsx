@@ -112,7 +112,7 @@ export default function PrinterPicker({
         </div>
 
         {/* Tabs */}
-        <div className="flex px-5 mt-3 border-b border-slate-200">
+        <div className="flex px-5 mt-3 border-b border-slate-400">
           <button onClick={() => setTab('bluetooth')} className={tabClass(tab === 'bluetooth')}>
             Bluetooth
           </button>
@@ -248,7 +248,7 @@ export default function PrinterPicker({
               </div>
 
               {/* One-time maintenance: stop the printer printing "+EVENT" connection notices */}
-              <div className="mt-4 pt-4 border-t border-slate-200">
+              <div className="mt-4 pt-4 border-t border-slate-400">
                 <p className="text-sm font-semibold text-slate-700">
                   Printer prints “+EVENT” lines?
                 </p>
@@ -271,7 +271,7 @@ export default function PrinterPicker({
           )}
         </div>
 
-        <div className="p-4 border-t border-slate-200">
+        <div className="p-4 border-t border-slate-400">
           <button
             onClick={onClose}
             className="w-full h-12 rounded-xl bg-slate-100 text-slate-700 font-semibold text-base

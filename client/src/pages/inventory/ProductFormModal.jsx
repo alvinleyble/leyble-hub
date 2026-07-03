@@ -68,7 +68,7 @@ export default function ProductFormModal({ onClose, onSaved }) {
     >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="create-product-title" className="text-xl font-bold text-slate-900">Add Product</h2>
           <button
             onClick={onClose}
@@ -120,7 +120,7 @@ export default function ProductFormModal({ onClose, onSaved }) {
               />
             </FormField>
 
-            <div className="sm:col-span-2 border-t border-slate-100 pt-4">
+            <div className="sm:col-span-2 border-t border-slate-300 pt-4">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Pricing (per case)</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <FormField label="Wholesale Price (₱ / case)" required error={errors.base_wholesale_price}>
@@ -136,7 +136,7 @@ export default function ProductFormModal({ onClose, onSaved }) {
               </div>
             </div>
 
-            <div className="sm:col-span-2 border-t border-slate-100 pt-4">
+            <div className="sm:col-span-2 border-t border-slate-300 pt-4">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
               <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
                 <input
@@ -160,7 +160,7 @@ export default function ProductFormModal({ onClose, onSaved }) {
         </form>
 
         {/* Footer */}
-        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0">
+        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-400 shrink-0">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={handleSubmit} loading={saving}>Save Product</Button>
         </div>

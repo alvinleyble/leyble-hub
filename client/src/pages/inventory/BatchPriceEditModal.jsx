@@ -135,7 +135,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl flex flex-col my-8 max-h-[90vh]">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="batch-price-title" className="text-xl font-bold text-slate-900">
             Batch Edit Prices ({products.length} product{products.length === 1 ? '' : 's'})
           </h2>
@@ -195,7 +195,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
           <div className="border border-slate-200 rounded-lg overflow-hidden mb-5">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-xs border-b border-slate-200">
+                <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-xs border-b border-slate-400">
                   <th className="text-left px-4 py-2 font-semibold">Product</th>
                   <th className="text-left px-4 py-2 font-semibold hidden sm:table-cell">SKU</th>
                   <th className="text-right px-4 py-2 font-semibold">Current</th>
@@ -207,7 +207,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
                 {rows.map(({ product, current, next, wasClamped, invalid }) => {
                   const delta = invalid ? null : round2(next - current);
                   return (
-                    <tr key={product.id} className="border-t border-slate-100">
+                    <tr key={product.id} className="border-t border-slate-300">
                       <td className="px-4 py-3 font-medium text-slate-900">{product.name}</td>
                       <td className="px-4 py-3 text-slate-500 font-mono hidden sm:table-cell">{product.sku ?? '—'}</td>
                       <td className="px-4 py-3 text-right text-slate-500 tabular-nums">{PHP(current)}</td>
@@ -264,7 +264,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
           )}
         </div>
 
-        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0">
+        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-400 shrink-0">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={handleSave} loading={saving}>Save Changes</Button>
         </div>

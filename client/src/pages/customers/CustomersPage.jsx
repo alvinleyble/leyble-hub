@@ -100,7 +100,7 @@ export default function CustomersPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-5 py-3 font-semibold">Name</th>
                 <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">Type</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Phone</th>
@@ -113,7 +113,7 @@ export default function CustomersPage() {
                 <tr
                   key={c.id}
                   onClick={() => setSelectedId(c.id)}
-                  className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                  className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4">
                     <p className={`font-semibold ${c.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>

@@ -151,7 +151,7 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
       <div className="bg-white w-full sm:rounded-xl sm:max-w-2xl h-[95vh] sm:h-auto sm:max-h-[95vh] flex flex-col shadow-2xl">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="delivery-modal-title" className="text-xl font-bold text-slate-900">
             {isEdit ? 'Edit Delivery' : 'Log Delivery'}
           </h2>
@@ -173,7 +173,7 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
             <div className="flex-1 overflow-y-auto">
 
               {/* ── Delivery header fields ───────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-200 space-y-4">
+              <div className="px-6 py-5 border-b border-slate-400 space-y-4">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Delivery Info</p>
 
                 <FormField label="Supplier Name" error={errors.supplierName}>
@@ -308,7 +308,7 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
             </div>
 
             {/* Footer */}
-            <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0 bg-white">
+            <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-400 shrink-0 bg-white">
               <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
               <Button onClick={handleSubmit} loading={saving}>{isEdit ? 'Save Changes' : 'Log Delivery'}</Button>
             </div>

@@ -63,7 +63,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved }) {
         aria-labelledby="ticket-panel-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <h2 id="ticket-panel-title" className="text-xl font-bold text-slate-900 truncate">
               {ticket ? `Ticket #${ticket.id}` : 'Ticket'}
@@ -100,13 +100,13 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved }) {
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Title + Description ──────────────────────────────── */}
-            <div className="px-6 py-5 border-b border-slate-200 space-y-3">
+            <div className="px-6 py-5 border-b border-slate-400 space-y-3">
               <h3 className="text-lg font-bold text-slate-900">{ticket.title}</h3>
               <p className="text-base text-slate-700 whitespace-pre-wrap">{ticket.description}</p>
             </div>
 
             {/* ── Meta ─────────────────────────────────────────────── */}
-            <div className="px-6 py-5 border-b border-slate-200 space-y-4">
+            <div className="px-6 py-5 border-b border-slate-400 space-y-4">
 
               {ticket.amount != null && (
                 <div>
@@ -177,7 +177,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved }) {
                 )}
               </div>
             ) : showResolveForm ? (
-              <div className="px-6 py-5 border-b border-slate-200 space-y-3">
+              <div className="px-6 py-5 border-b border-slate-400 space-y-3">
                 <p className="text-sm font-semibold text-slate-700">Resolution Notes</p>
                 <textarea
                   value={resolutionNotes}

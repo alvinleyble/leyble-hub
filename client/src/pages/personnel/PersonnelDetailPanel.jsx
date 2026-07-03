@@ -132,7 +132,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
         role="dialog" aria-modal="true" aria-labelledby="personnel-detail-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="personnel-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
             {loading ? 'Loading…' : person?.full_name}
           </h2>
@@ -152,7 +152,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Summary bar ───────────────────────────────────── */}
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
               {!person.is_active && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold
                                   bg-red-100 text-red-700 border border-red-300">
@@ -166,7 +166,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
 
             {/* ── Edit form ─────────────────────────────────────── */}
             <form onSubmit={handleSave} noValidate>
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
@@ -199,7 +199,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
               </div>
 
               {/* ── ID Photo ──────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">ID Photo</p>
 
                 {displayImageSrc ? (
@@ -238,7 +238,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
                 <p className="text-xs text-slate-400 mt-2">JPEG, PNG, or WebP — max 2 MB</p>
               </div>
 
-              <div className="px-6 py-4 flex justify-end border-b border-slate-200">
+              <div className="px-6 py-4 flex justify-end border-b border-slate-400">
                 <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>

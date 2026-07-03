@@ -104,7 +104,7 @@ export default function IncomingPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
+              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-5 py-3 font-semibold">Date Received</th>
                 <th className="text-left px-5 py-3 font-semibold">Supplier</th>
                 <th className="text-right px-5 py-3 font-semibold hidden sm:table-cell"># Items</th>
@@ -116,7 +116,7 @@ export default function IncomingPage() {
                 <tr
                   key={d.id}
                   onClick={() => setSelectedId(d.id)}
-                  className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer transition-colors"
+                  className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4 text-slate-700 tabular-nums">
                     {new Date(d.received_at).toLocaleDateString('en-PH', {

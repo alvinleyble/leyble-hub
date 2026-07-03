@@ -173,7 +173,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         role="dialog" aria-modal="true" aria-labelledby="customer-detail-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="customer-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
             {loading ? 'Loading…' : customer?.name}
           </h2>
@@ -193,7 +193,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Summary bar ──────────────────────────────────── */}
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[customer.customer_type]}`}>
                 {customer.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
               </span>
@@ -209,7 +209,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
             {/* ── Edit form ─────────────────────────────────────── */}
             <form onSubmit={handleSave} noValidate>
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
@@ -249,14 +249,14 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                 </div>
               </div>
 
-              <div className="px-6 py-4 flex justify-end border-b border-slate-200">
+              <div className="px-6 py-4 flex justify-end border-b border-slate-400">
                 <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
 
             {/* ── Wholesaler Custom Pricing ────────────────────── */}
             {customer.customer_type === 'wholesaler' && (
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Wholesaler Custom Prices</p>
                   {!pricingOpen && (
@@ -351,7 +351,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-200">
+                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
                           <th className="text-left px-4 py-2 font-semibold">Product</th>
                           <th className="text-right px-4 py-2 font-semibold">Price / Case</th>
                           <th className="text-right px-4 py-2 font-semibold hidden sm:table-cell">Set</th>
@@ -359,7 +359,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                       </thead>
                       <tbody>
                         {customPrices.map((sp) => (
-                          <tr key={sp.id} className="border-t border-slate-100">
+                          <tr key={sp.id} className="border-t border-slate-300">
                             <td className="px-4 py-3 font-medium text-slate-800">
                               {sp.sku || sp.product_name}
                               {sp.notes && (

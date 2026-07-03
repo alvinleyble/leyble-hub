@@ -281,7 +281,7 @@ export default function AuditPage() {
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
                       <th className="text-left px-5 py-3 font-semibold">Product</th>
                       <th className="text-left px-5 py-3 font-semibold">Action</th>
@@ -293,7 +293,7 @@ export default function AuditPage() {
                   </thead>
                   <tbody>
                     {entries.map((e) => (
-                      <tr key={e.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <tr key={e.id} className="border-t border-slate-300 hover:bg-slate-50">
                         <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>
@@ -416,7 +416,7 @@ export default function AuditPage() {
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
                       <th className="text-left px-5 py-3 font-semibold">Entity</th>
                       <th className="text-left px-5 py-3 font-semibold">Action</th>
@@ -426,7 +426,7 @@ export default function AuditPage() {
                   </thead>
                   <tbody>
                     {activityEntries.map((e) => (
-                      <tr key={e.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <tr key={e.id} className="border-t border-slate-300 hover:bg-slate-50">
                         <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>

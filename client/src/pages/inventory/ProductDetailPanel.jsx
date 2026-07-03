@@ -145,7 +145,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
         role="dialog" aria-modal="true" aria-labelledby="product-detail-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="product-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
             {loading ? 'Loading…' : product?.name}
           </h2>
@@ -166,7 +166,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Stock summary ─────────────────────────────────── */}
-            <div className="px-6 py-5 bg-slate-50 border-b border-slate-200">
+            <div className="px-6 py-5 bg-slate-50 border-b border-slate-400">
               <div className="flex items-end justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Current Stock</p>
@@ -277,7 +277,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
 
             {/* ── Edit details form ─────────────────────────────── */}
             <form onSubmit={handleSaveDetails} noValidate>
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
@@ -321,7 +321,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                 </div>
               </div>
 
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Pricing (per case)</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField label="Wholesale Price (₱)" required error={formErrors.base_wholesale_price}>
@@ -337,7 +337,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                 </div>
               </div>
 
-              <div className="px-6 py-5 border-b border-slate-200">
+              <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
                 <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
                   <input
@@ -356,7 +356,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                 </label>
               </div>
 
-              <div className="px-6 py-4 flex justify-end border-b border-slate-200">
+              <div className="px-6 py-4 flex justify-end border-b border-slate-400">
                 <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
@@ -369,7 +369,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
               {auditLog.length === 0 ? (
                 <p className="text-slate-400 text-sm">No audit entries yet.</p>
               ) : (
-                <ol className="relative border-l border-slate-200 ml-2 space-y-5">
+                <ol className="relative border-l border-slate-400 ml-2 space-y-5">
                   {auditLog.map((entry) => (
                     <li key={entry.id} className="ml-4">
                       <div className="absolute -left-1.5 mt-1.5 w-3 h-3 rounded-full bg-slate-300 border-2 border-white" />

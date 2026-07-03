@@ -50,7 +50,7 @@ export default function CustomerFormModal({ onClose, onSaved }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200 shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="create-customer-title" className="text-xl font-bold text-slate-900">Add Customer</h2>
           <button
             onClick={onClose} aria-label="Close"
@@ -93,7 +93,7 @@ export default function CustomerFormModal({ onClose, onSaved }) {
           </FormField>
         </form>
 
-        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200 shrink-0">
+        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-400 shrink-0">
           <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button onClick={handleSubmit} loading={saving}>Save Customer</Button>
         </div>

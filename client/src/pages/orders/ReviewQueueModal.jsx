@@ -227,7 +227,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white" role="dialog" aria-modal="true" aria-label={cfg.title}>
-      <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-200 shrink-0">
+      <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-slate-400 shrink-0">
         <div className="min-w-0">
           <button
             onClick={onClose}
@@ -250,7 +250,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
         <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
       ) : (
         <>
-          <div className="flex gap-2 px-6 py-3 border-b border-slate-200 overflow-x-auto shrink-0">
+          <div className="flex gap-2 px-6 py-3 border-b border-slate-400 overflow-x-auto shrink-0">
             {orderIds.map((orderId) => {
               const o = orders[orderId];
               const isDone   = o ? cfg.isProcessed(o) : false;
@@ -335,7 +335,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                     <p className="text-sm text-slate-600 italic mt-2">"{order.notes}"</p>
                   )}
 
-                  <ul className="mt-4 pt-4 border-t border-slate-100 space-y-2.5">
+                  <ul className="mt-4 pt-4 border-t border-slate-300 space-y-2.5">
                     {order.items.map((item) => {
                       const b = breakdownForItem(item, returnCounts);
                       return (
@@ -370,7 +370,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                     const showBreakdown = showDepositRows || liveAdj !== 0;
                     if (!showBreakdown) return null;
                     return (
-                      <dl className="mt-4 pt-4 border-t border-slate-200 space-y-1.5 text-sm">
+                      <dl className="mt-4 pt-4 border-t border-slate-400 space-y-1.5 text-sm">
                         {showDepositRows && (
                           <>
                             <div className="flex justify-between">
@@ -393,7 +393,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                             </dd>
                           </div>
                         )}
-                        <div className="flex justify-between pt-1.5 border-t border-slate-100">
+                        <div className="flex justify-between pt-1.5 border-t border-slate-300">
                           <dt className="font-semibold text-slate-800">Order Total</dt>
                           <dd className="font-bold text-slate-900 tabular-nums">{PHP(orderTotal)}</dd>
                         </div>

@@ -119,6 +119,13 @@ export default function Combobox({
     // force the on-screen keyboard back up, so parents can browse/scroll the list keyboard-free.
     // (onMouseDown+preventDefault on each row already leaves the input's focus state untouched.)
     setOpen(keepOpenOnSelect);
+    // Tapping a product to add it is the trigger the user is watching for: if the field is
+    // still focused, re-select its text (same as the on-focus behavior) so the very next
+    // keystroke starts a fresh search instead of appending to the old query. Guarded on
+    // focusedRef so a deliberately-dismissed keyboard (still browsing the open list) stays down.
+    if (preserveQueryOnSelect && focusedRef.current) {
+      inputRef.current?.select();
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -224,7 +231,7 @@ export default function Combobox({
                 onMouseDown={(e) => { e.preventDefault(); if (!creating) handleCreate(); }}
                 disabled={creating}
                 className="w-full text-left px-4 py-3 text-sm min-h-[48px] flex items-center gap-2
-                           border-t border-slate-100 font-semibold text-blue-700
+                           border-t border-slate-300 font-semibold text-blue-700
                            hover:bg-blue-50 disabled:opacity-60 disabled:cursor-default"
               >
                 {creating

@@ -39,7 +39,7 @@ export default function Modal({
         tabIndex={-1}
         className="bg-white rounded-xl shadow-2xl w-full max-w-md outline-none"
       >
-        <div className="px-6 py-5 border-b border-slate-200">
+        <div className="px-6 py-5 border-b border-slate-400">
           <h2 id="modal-title" className="text-xl font-bold text-slate-900">{title}</h2>
         </div>
 
@@ -47,7 +47,7 @@ export default function Modal({
           {children}
         </div>
 
-        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-200">
+        <div className="flex gap-3 justify-end px-6 py-4 border-t border-slate-400">
           <Button variant="secondary" onClick={onClose} disabled={loading}>
             {cancelLabel}
           </Button>
