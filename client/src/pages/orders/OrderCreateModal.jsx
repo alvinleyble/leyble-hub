@@ -628,8 +628,8 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                           </button>
                         </div>
 
-                        {/* Line 2: qty stepper + price + deposit */}
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {/* Line 2: qty stepper + price */}
+                        <div className="grid grid-cols-2 gap-2">
                           <FormField label="Qty (cases)">
                             <Stepper
                               value={item.quantity}
@@ -644,13 +644,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                               value={item.unit_price}
                               onChange={(e) => updateItem(item._key, 'unit_price', e.target.value)}
                               className={INPUT} />
-                          </FormField>
-                          <FormField label="Deposit / bottle (₱)">
-                            <input type="number" min="0" step="0.01"
-                              value={item.unit_deposit_fee}
-                              disabled={!item.requires_bottle_return}
-                              onChange={(e) => updateItem(item._key, 'unit_deposit_fee', e.target.value)}
-                              className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
                           </FormField>
                         </div>
                       </div>
