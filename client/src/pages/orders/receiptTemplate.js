@@ -182,6 +182,10 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
     <span>${PHP(printTotal)}</span>
   </div>
 
+  <div>&nbsp;</div>
+  <div>&nbsp;</div>
+  <div>&nbsp;</div>
+
   <div class="hr"></div>
 
   <div style="font-size:9.5px;line-height:1.45;margin-top:2px">
