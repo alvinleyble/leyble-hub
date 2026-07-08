@@ -1,7 +1,8 @@
 // ESC/POS receipt generator for 80mm thermal printers (48 chars/line at normal size).
 // Produces a Uint8Array sent directly to the printer via Bluetooth — no dialog needed.
 
-const W   = 48;
+const W       = 48;
+const W_SMALL = 64; // chars/line at Font B (compressed) — used for the Terms block
 const ESC = 0x1B;
 const GS  = 0x1D;
 const LF  = 0x0A;
@@ -158,10 +159,18 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   ln(padLR(hasSubtotals ? 'FINAL TOTAL' : 'TOTAL', fmtMoney(printTotal)));
   b(ESC, 0x45, 0x00);
 
-  // ── Terms ──────────────────────────────────────────────────────────────────
+  ln();
+  ln();
+  ln();
+
+  // ── Terms (smaller font, tighter line spacing) ────────────────────────────
   hr();
   const terms = "TERMS: 18% interest per annum will be charged to vendee on all overdue accounts plus 25% of the amount due as attorney's fee in case of legal action that may arise out of the transaction and the venue shall be in Antipolo City";
-  for (const l of wrap(terms)) ln(l);
+  b(ESC, 0x4D, 0x01);   // Font B (compressed)
+  b(ESC, 0x33, 0x14);   // line spacing = 20/180"
+  for (const l of wrap(terms, W_SMALL)) ln(l);
+  b(ESC, 0x32);          // restore default line spacing
+  b(ESC, 0x4D, 0x00);   // restore Font A
 
   // ── Signature ──────────────────────────────────────────────────────────────
   ln();

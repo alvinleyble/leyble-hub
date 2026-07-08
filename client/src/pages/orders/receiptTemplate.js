@@ -188,7 +188,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 
   <div class="hr"></div>
 
-  <div style="font-size:9.5px;line-height:1.45;margin-top:2px">
+  <div style="font-size:8px;line-height:1.2;margin-top:2px">
     <strong>TERMS:</strong> 18% interest per annum will be charged to vendee on all overdue
     accounts plus 25% of the amount due as attorney&#39;s fee in case of legal action that may arise
     out of the transaction and the venue shall be in Antipolo City
