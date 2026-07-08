@@ -56,7 +56,7 @@ export default function ProductSearchBar({
         emptyText="No products match."
         placeholder={placeholder}
         onSelect={(p) => (isAdded(p) ? onBump(p) : onAdd(p))}
-        renderRow={(p, { select }) => {
+        renderRow={(p, { select, blur }) => {
           const qty = quantityFor(p);
           const info = (
             <>
@@ -88,13 +88,13 @@ export default function ProductSearchBar({
 
               {qty > 0 && (
                 <div className="flex items-center gap-1 shrink-0 pr-1">
-                  <HoldButton label={`Remove half a case of ${p.sku || p.name}`} onTrigger={() => onSub(p)}>
+                  <HoldButton label={`Remove half a case of ${p.sku || p.name}`} onTrigger={() => { blur(); onSub(p); }}>
                     −
                   </HoldButton>
                   <span className="w-9 text-center text-base font-bold tabular-nums text-slate-900">
                     {fmtQty(qty)}
                   </span>
-                  <HoldButton label={`Add half a case of ${p.sku || p.name}`} onTrigger={() => onBump(p)}>
+                  <HoldButton label={`Add half a case of ${p.sku || p.name}`} onTrigger={() => { blur(); onBump(p); }}>
                     +
                   </HoldButton>
                 </div>

@@ -115,9 +115,12 @@ export default function Combobox({
       setQuery(clearQueryOnSelect ? '' : displayValue(item));
     }
     setActive(0);
-    // Multi-add: keep the list open but DON'T refocus the input — picking a product must never
-    // force the on-screen keyboard back up, so parents can browse/scroll the list keyboard-free.
-    // (onMouseDown+preventDefault on each row already leaves the input's focus state untouched.)
+    // Multi-add: keep the list open but drop focus (and with it the on-screen keyboard) once the
+    // user starts tapping rows — otherwise the input stays focused and Android's WebView keeps
+    // auto-scrolling it back into view above the keyboard on every reflow (e.g. a qty bump lower
+    // in a long list "teleports" the page back up to the search field). Tapping the field again
+    // reopens the keyboard to search something else.
+    if (keepOpenOnSelect) inputRef.current?.blur();
     setOpen(keepOpenOnSelect);
   };
 
@@ -183,7 +186,9 @@ export default function Combobox({
           {matches.map((item, idx) => (
             rawRow ? (
               // The row renders its own controls (e.g. a − qty + stepper); we pass `select`
-              // (the add/bump action) so it can wire its own tap-to-add area.
+              // (the add/bump action) and `blur` (drop keyboard focus, see select() above — the
+              // row's own +/- controls bypass select() entirely, so they need this too) so it can
+              // wire its own tap-to-add area.
               <li
                 key={getKey(item)}
                 role="option"
@@ -195,6 +200,7 @@ export default function Combobox({
                   active: idx === active,
                   added: isAdded?.(item) ?? false,
                   select: () => select(item),
+                  blur: () => inputRef.current?.blur(),
                 })}
               </li>
             ) : (
