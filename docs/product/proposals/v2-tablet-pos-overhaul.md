@@ -105,6 +105,18 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | **Slice 4** | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
 | **Slice 5** | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
 
+### Build Order (recommended)
+
+Dependency + value order; each step lands as one fully-serial PR before the next starts.
+
+0. **Backend stock trio (prerequisite)** — deduct-on-finalize · restore-on-cancel · reconcile-on-edit, with unit tests. Lands first: the POS "Save Order" depends on it to deduct stock correctly from day one.
+1. **Slice 0 — Shell & Nav** — dark tokens, tablet shell, 3-screen nav + Back Office drawer.
+2. **Slice 1 — POS** — 2-tap Save→Print, customer search, product grid + 3-row category matrix, 0.5-case steppers, deposit display, history popup, Amber Edit. Highest value.
+3. **Slice 2 — Inventory (price-first)** — batch price edit + in-line price edits first, then the stock tools (detail drawer, Physical Count).
+4. **Slice 3 — Customers & Suki** — suki pricing matrix + live sync to POS.
+5. **Slice 5 — Android build & verification** — headed-emulator verification on every slice; final production APK at the end.
+6. **Slice 4 — Voice AI** — deferred, after the core is live and stable.
+
 ---
 
 ## 4. Component Structure (Client)
