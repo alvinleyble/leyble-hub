@@ -48,8 +48,16 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, unprintedO
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
+    // "Not printed" is scoped to today on purpose: every pre-V2 order in the backlog
+    // is unprinted, and listing those would bury the ones still worth chasing.
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
     return orders.filter((o) => {
-      if (unprintedOnly && (o.status !== 'pending' || o.pending_receipt_printed_at)) return false;
+      if (unprintedOnly && (
+        o.status !== 'pending' ||
+        o.pending_receipt_printed_at ||
+        new Date(o.created_at) < midnight
+      )) return false;
       if (!q) return true;
       return (o.customer_name || '').toLowerCase().includes(q) || String(o.id).includes(q);
     });
@@ -129,7 +137,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, unprintedO
                 ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
                 : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
             >
-              ⚠️ Not printed only
+              ⚠️ Today, not printed only
             </button>
           </div>
 
