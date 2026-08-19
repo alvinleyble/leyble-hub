@@ -81,6 +81,21 @@ export default function Sidebar({ onClose }) {
         ))}
       </nav>
 
+      {/* Way back into the V2 tablet shell */}
+      <div className="p-3 border-t border-slate-700">
+        <NavLink
+          to="/v2/pos"
+          onClick={onClose}
+          className="flex items-center justify-center w-full min-h-[48px] px-4 rounded-lg
+                     bg-sky-600 text-white font-semibold
+                     hover:bg-sky-500
+                     transition-colors duration-100
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+        >
+          Open POS (V2)
+        </NavLink>
+      </div>
+
       {/* Switch profile / Logout */}
       <div className="p-3 border-t border-slate-700 flex flex-col gap-1">
         <button

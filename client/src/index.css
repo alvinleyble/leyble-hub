@@ -15,6 +15,13 @@
   *:focus-visible {
     @apply outline-none ring-2 ring-blue-600 ring-offset-2;
   }
+
+  /* V2 dark shell: same ring, re-tinted so the offset does not halo white
+     against the slate background. Scoped to the V2 shell only — V1 pages keep
+     the blue-on-white ring above. */
+  .v2-root *:focus-visible {
+    @apply ring-v2-accent ring-offset-v2-bg;
+  }
 }
 
 @layer components {
