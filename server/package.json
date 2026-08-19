@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "test": "node --test test/**/*.test.js",
     "migrate": "node db/migrate.js",
     "seed": "node db/seed.js",
     "reset-data": "node db/reset-data.js",

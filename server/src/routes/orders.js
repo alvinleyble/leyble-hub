@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
-const { applyDeltaMap } = require('../lib/inventory');
+const { applyDeltaMap, hasDeductedStock } = require('../lib/inventory');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -178,6 +178,7 @@ async function getFullOrder(orderId) {
 async function deductStock(client, items, orderId, userId, reason) {
   const deltas = {};
   for (const item of items) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) - Number(item.quantity);
   }
   await applyDeltaMap(client, deltas, { actionType: 'order_fulfillment', reason, userId, orderId });
@@ -187,25 +188,28 @@ async function deductStock(client, items, orderId, userId, reason) {
 async function restoreStock(client, items, orderId, userId, reason) {
   const deltas = {};
   for (const item of items) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) + Number(item.quantity);
   }
   await applyDeltaMap(client, deltas, { actionType: 'order_cancel', reason, userId, orderId });
 }
 
-// Reconcile stock after editing a dispatched order (in_transit/completed/done).
+// Reconcile stock after editing an order with deducted stock.
 // oldItems: DB rows before replacement. newItems: req.body items array.
 // Per-product delta = oldQty − newQty (positive = restore, negative = deduct more).
 async function reconcileStock(client, oldItems, newItems, orderId, userId) {
   const deltas = {};
   for (const item of oldItems) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) + Number(item.quantity);
   }
   for (const item of newItems) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) - Number(item.quantity);
   }
   await applyDeltaMap(client, deltas, {
-    actionType: 'manual_adjustment',
-    reason: `Order #${orderId} edited after dispatch`,
+    actionType: 'order_edit',
+    reason: `Order #${orderId} items edited`,
     userId,
     orderId,
   });
@@ -300,7 +304,13 @@ router.post('/', async (req, res, next) => {
     await syncPersonnel(client, order.id, personnel);
 
     // Drafts are ephemeral — the activity log entry is written when the draft is finalized.
+    // Finalized pending orders deduct stock immediately at creation.
     if (!isDraft) {
+      const { rows: insertedItems } = await client.query(
+        'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
+        [order.id]
+      );
+      await deductStock(client, insertedItems, order.id, req.user.id, `Order #${order.id} created`);
       await logActivity(client, {
         entityType: 'order',
         entityId:   order.id,
@@ -347,7 +357,6 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     const { notes, items, personnel, customer_id, order_type } = req.body;
-    const DISPATCHED_STATUSES = ['in_transit', 'completed', 'done'];
     const isDraft = order.status === 'draft';
 
     const changeNotes = [];
@@ -410,7 +419,7 @@ router.patch('/:id', async (req, res, next) => {
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
 
-      if (DISPATCHED_STATUSES.includes(order.status)) {
+      if (!isDraft && order.status !== 'cancelled' && await hasDeductedStock(client, order.id)) {
         await reconcileStock(client, oldItems, items, order.id, req.user.id);
       }
     }
@@ -479,6 +488,12 @@ router.post('/:id/finalize', async (req, res, next) => {
       [order.id]
     );
     await recomputeTotal(client, order.id);
+
+    const { rows: items } = await client.query(
+      'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
+      [order.id]
+    );
+    await deductStock(client, items, order.id, req.user.id, `Order #${order.id} finalized`);
 
     await logActivity(client, {
       entityType: 'order',
@@ -631,22 +646,12 @@ router.post('/:id/status', async (req, res, next) => {
       [req.params.id]
     );
 
-    // Stock deduction: delivery uses in_transit, pickup uses completed
-    const isDeductTransition =
-      (order.order_type === 'delivery' && newStatus === 'in_transit') ||
-      (order.order_type === 'pickup'   && newStatus === 'completed' && order.status === 'pending');
-
-    if (isDeductTransition) {
-      await deductStock(client, items, order.id, req.user.id, `Order #${order.id} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
-    }
-
-    // Stock restoration on cancellation, or on stepping back across the deduction boundary
-    if ((newStatus === 'cancelled' || newStatus === 'pending') &&
-        ['in_transit', 'completed'].includes(order.status)) {
-      await restoreStock(client, items, order.id, req.user.id,
-        newStatus === 'cancelled'
-          ? `Order #${order.id} cancelled`
-          : `Order #${order.id} status reverted to pending`);
+    // Stock restoration on cancellation if stock was deducted for this order
+    if (newStatus === 'cancelled') {
+      const stockDeducted = await hasDeductedStock(client, order.id);
+      if (stockDeducted) {
+        await restoreStock(client, items, order.id, req.user.id, `Order #${order.id} cancelled`);
+      }
     }
 
     const STEP_BACK = new Set([
