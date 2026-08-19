@@ -7,11 +7,19 @@ import { generateEscPos } from './escposReceipt';
 
 const Printer = registerPlugin('Printer');
 
-// Shared print flow for OrderDetailPage and ReviewQueueModal.
+// Shared print flow for OrderDetailPage, ReviewQueueModal and the V2 POS.
 // On native Android: direct Bluetooth ESC/POS (no dialog, no PrintHand).
 // On web: window.print() via a popup.
-// `onTagged(updatedOrder)` fires after the user confirms the "tag as printed" prompt.
-export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
+// `onTagged(updatedOrder)` fires after the order is tagged as printed.
+// `liveAdjustment` is the receipt override bag (adjustment / adjustment_reason /
+// showDeposit) handed to the receipt renderers.
+// `options`:
+//   copies  — print this many copies with no "print twice?" gate (V2 POS: 2)
+//   autoTag — tag the order as printed straight after a successful print instead of
+//             asking first (V2 POS's zero-prompt flow; the NOT PRINTED badge in
+//             History is what surfaces a print that never happened).
+export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, options = {}) {
+  const { copies: forcedCopies = null, autoTag = false } = options;
   const { addToast } = useToast();
 
   const [printing,      setPrinting]      = useState(false);
@@ -29,6 +37,23 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
   // ESC/POS bytes + phase queued while the user picks a printer
   const [pendingPrint,   setPendingPrint]   = useState(null); // {data: base64, phase} | null
 
+  // ── After a successful print: tag the order, or ask first ───────────────────
+
+  const tagPrinted = useCallback(async (orderId, phase) => {
+    try {
+      const updated = await api.post(`/orders/${orderId}/receipt-printed`, { phase });
+      onTagged?.(updated);
+    } catch (err) {
+      addToast(err.message || 'Failed to tag order as printed.', 'error');
+    }
+  }, [onTagged, addToast]);
+
+  const finishPrint = useCallback((phase) => {
+    if (!phase || !order) return;
+    if (autoTag) tagPrinted(order.id, phase);
+    else setPrintPrompt({ orderId: order.id, phase });
+  }, [order, autoTag, tagPrinted]);
+
   // ── Core Bluetooth send ─────────────────────────────────────────────────────
 
   const sendToPrinter = useCallback(async (data, phase, copies = 1) => {
@@ -36,14 +61,14 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
     try {
       for (let i = 0; i < copies; i++) await Printer.printBytes({ data });
       addToast(copies > 1 ? 'Printed successfully (2 copies).' : 'Printed successfully.', 'success');
-      if (phase && order) setPrintPrompt({ orderId: order.id, phase });
+      finishPrint(phase);
     } catch (e) {
       addToast(`Print failed: ${e.message || 'unknown error'}`, 'error');
     } finally {
       setPrinting(false);
       setPendingPrint(null);
     }
-  }, [order, addToast]);
+  }, [order, addToast, finishPrint]);
 
   // ── Open paired-device picker ───────────────────────────────────────────────
 
@@ -86,13 +111,13 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
         win.removeEventListener('afterprint', finish);
         remaining -= 1;
         if (remaining > 0) printOne();
-        else if (phase) setPrintPrompt({ orderId: order.id, phase });
+        else finishPrint(phase);
       };
       win.addEventListener('afterprint', finish);
       poller = setInterval(() => { if (win.closed) finish(); }, 400);
     };
     printOne();
-  }, [order, returnCounts, liveAdjustment]);
+  }, [order, returnCounts, liveAdjustment, finishPrint]);
 
   const executePrint = useCallback(async (copies) => {
     if (!order || printing) return;
@@ -126,12 +151,14 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
 
   const handlePrint = useCallback(() => {
     if (!order || printing) return;
-    if (order.status === 'pending') {
+    if (forcedCopies) {
+      executePrint(forcedCopies);   // V2 POS: fixed copy count, no gate
+    } else if (order.status === 'pending') {
       setTwicePrompt(true);
     } else {
       executePrint(1);
     }
-  }, [order, printing, executePrint]);
+  }, [order, printing, executePrint, forcedCopies]);
 
   const confirmTwice = useCallback((yes) => {
     setTwicePrompt(false);
@@ -192,16 +219,10 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment) {
   const confirmPrintTag = useCallback(async () => {
     if (!printPrompt) return;
     setTaggingPrint(true);
-    try {
-      const updated = await api.post(`/orders/${printPrompt.orderId}/receipt-printed`, { phase: printPrompt.phase });
-      onTagged?.(updated);
-    } catch (err) {
-      addToast(err.message || 'Failed to tag order as printed.', 'error');
-    } finally {
-      setTaggingPrint(false);
-      setPrintPrompt(null);
-    }
-  }, [printPrompt, onTagged, addToast]);
+    await tagPrinted(printPrompt.orderId, printPrompt.phase);
+    setTaggingPrint(false);
+    setPrintPrompt(null);
+  }, [printPrompt, tagPrinted]);
 
   const cancelPrintTag = useCallback(() => setPrintPrompt(null), []);
 

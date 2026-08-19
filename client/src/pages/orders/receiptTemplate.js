@@ -21,7 +21,10 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   const isPickupOrder = order.order_type === 'pickup';
   // Deposit only appears on the closing receipt (status = completed/delivered).
   // Pending receipts assume full bottle return — no deposit charged.
-  const showDeposit = order.status === 'completed' || order.status === 'done';
+  // `overrides.showDeposit` forces it on regardless of status: the V2 POS charges the
+  // deposit in full at sale, so its pending receipt must show what the screen totalled.
+  const showDeposit = overrides.showDeposit === true
+    || order.status === 'completed' || order.status === 'done';
 
   const itemDepForPrint = (item) => {
     if (!showDeposit) return 0;
