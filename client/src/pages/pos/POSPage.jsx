@@ -12,6 +12,14 @@ import { roundQty } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintReceipt } from '../orders/usePrintReceipt';
 
+const TOP_BTN = `flex h-14 items-center gap-2 rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
+                 hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+
+// Small count pill on the Drafts / History buttons. Decorative: each button's aria-label
+// spells the same number out, so the count never depends on seeing the badge.
+const COUNT_BADGE = `inline-flex h-7 min-w-[1.75rem] items-center justify-center rounded-full px-1.5
+                     text-sm font-black tabular-nums`;
+
 // V2 tablet POS (proposal §2, Slice 1). One screen: catalogue on the left, the live
 // order panel on the right, and a 2-tap Save Order → Print Receipt buffer at the bottom.
 //
@@ -51,6 +59,10 @@ export default function POSPage() {
   // ── History / drafts popups ────────────────────────────────────────────────
   const [historyOpen, setHistoryOpen] = useState(false);
   const [draftsOpen, setDraftsOpen]   = useState(false);
+  // Counts on the two top-bar buttons: parked drafts, and today's orders whose receipt
+  // was never confirmed printed (the count the old standalone alert used to carry).
+  const [draftCount, setDraftCount]         = useState(0);
+  const [unprintedCount, setUnprintedCount] = useState(0);
   const [confirm, setConfirm]         = useState(null); // { kind, ... }
   const [confirmBusy, setConfirmBusy] = useState(false);
 
@@ -65,6 +77,7 @@ export default function POSPage() {
     (updated) => {
       setSavedOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
       setPrintOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
+      refreshCounts();
     },
     {},
     { copies: 2, autoTag: true }
@@ -89,7 +102,21 @@ export default function POSPage() {
       })
       .catch(() => addToast('Failed to load the catalogue.', 'error'))
       .finally(() => setLoading(false));
+    refreshCounts();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Badge counts. Not-printed is scoped to today, like the History filter it mirrors —
+  // every pre-V2 order in the backlog is unprinted and would drown the number.
+  function refreshCounts() {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    api.get('/orders?status=draft')
+      .then((rows) => setDraftCount(rows.length))
+      .catch(() => {});
+    api.get(`/orders?status=pending&from_date=${encodeURIComponent(midnight.toISOString())}`)
+      .then((rows) => setUnprintedCount(rows.filter((o) => !o.pending_receipt_printed_at).length))
+      .catch(() => {});
+  }
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId)) ?? null;
 
@@ -205,7 +232,7 @@ export default function POSPage() {
     const creating = api.post('/orders', { ...orderBody(), status: 'draft' });
     draftPromiseRef.current = creating;
     creating
-      .then((created) => { setDraftId(created.id); setDraftStatus('saved'); })
+      .then((created) => { setDraftId(created.id); setDraftStatus('saved'); refreshCounts(); })
       .catch(() => { creatingDraftRef.current = false; draftPromiseRef.current = null; setDraftStatus('idle'); });
   }, [mode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -293,6 +320,7 @@ export default function POSPage() {
       creatingDraftRef.current = false;
       draftPromiseRef.current = null;
       addToast(`Order #${orderId} created.`, 'success');
+      refreshCounts();
     } catch (err) {
       addToast(err.message || 'Failed to save the order.', 'error');
     } finally {
@@ -347,6 +375,7 @@ export default function POSPage() {
     blankOrder();
     if (id) {
       try { await api.del(`/orders/${id}`); } catch (_) { /* draft already gone — nothing to clean up */ }
+      refreshCounts();
     }
   };
 
@@ -448,6 +477,7 @@ export default function POSPage() {
       setConfirm(null);
       if (editOrder?.id === orderId) exitEditMode();
       if (savedOrder?.id === orderId) startNewOrder();
+      refreshCounts();
     } catch (err) {
       addToast(err.message || 'Failed to cancel the order.', 'error');
     } finally {
@@ -486,18 +516,28 @@ export default function POSPage() {
               <button
                 type="button"
                 onClick={() => setDraftsOpen(true)}
-                className="flex h-14 items-center rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
-                           hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                aria-label={`Drafts — ${draftCount} parked`}
+                className={TOP_BTN}
               >
                 📝 Drafts
+                {draftCount > 0 && (
+                  <span className={`${COUNT_BADGE} bg-v2-accent-strong text-white`} aria-hidden="true">
+                    {draftCount}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
                 onClick={() => setHistoryOpen(true)}
-                className="flex h-14 items-center rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
-                           hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                aria-label={`History — ${unprintedCount} order${unprintedCount === 1 ? '' : 's'} today not printed`}
+                className={TOP_BTN}
               >
                 🕘 History
+                {unprintedCount > 0 && (
+                  <span className={`${COUNT_BADGE} bg-amber-500 text-amber-950`} aria-hidden="true">
+                    {unprintedCount}
+                  </span>
+                )}
               </button>
             </>
           }
@@ -537,14 +577,15 @@ export default function POSPage() {
 
       {draftsOpen && (
         <POSDraftsModal
-          onClose={() => setDraftsOpen(false)}
+          onClose={() => { setDraftsOpen(false); refreshCounts(); }}
           onResume={resumeDraft}
         />
       )}
 
       {historyOpen && (
         <POSHistoryModal
-          onClose={() => setHistoryOpen(false)}
+          onClose={() => { setHistoryOpen(false); refreshCounts(); }}
+          onChanged={refreshCounts}
           onEdit={enterEditMode}
           onReprint={(order) => { setHistoryOpen(false); requestPrint(order); }}
         />

@@ -103,6 +103,8 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   reversing proposal §2.4 — lines still carry `unit_deposit_fee` for V1's close flow). POS copy
   says "order", never "ticket". Two popups share `POSListModal.jsx`: History (Created +
   Cancelled) and Drafts (`status=draft`, resume puts the draft back on the POS keeping its id).
+  Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
+  mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes
   `order_personnel`; Amber Edit Mode cannot change customer or order type (backend accepts those
   on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via

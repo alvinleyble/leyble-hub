@@ -11,7 +11,7 @@ const PHP = (n) =>
 // (backend `pending`) and Cancelled. Drafts have their own popup (POSDraftsModal), and
 // in_transit/completed/done are never requested, so they can never surface here
 // (see proposal §2.1).
-export default function POSHistoryModal({ onClose, onEdit, onReprint }) {
+export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged }) {
   const { addToast } = useToast();
 
   const [orders, setOrders]   = useState([]);
@@ -21,6 +21,8 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint }) {
   const [busyId, setBusyId]   = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling, setCancelling]     = useState(false);
+  const [bulkPrompt, setBulkPrompt]     = useState(false);
+  const [bulkBusy, setBulkBusy]         = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -64,6 +66,34 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint }) {
     }
   };
 
+  // Every row the "today, not printed only" filter is showing — the set the bulk
+  // mark-as-printed acts on.
+  const unprintedVisible = useMemo(
+    () => visible.filter((o) => o.status === 'pending' && !o.pending_receipt_printed_at),
+    [visible]
+  );
+
+  // Tag a whole filtered batch as printed in one go. Same write Reprint's auto-tag makes
+  // (POST /orders/:id/receipt-printed), just batched — nothing is sent to the printer.
+  const markAllPrinted = async () => {
+    setBulkBusy(true);
+    const results = await Promise.allSettled(
+      unprintedVisible.map((o) => api.post(`/orders/${o.id}/receipt-printed`, { phase: 'pending' }))
+    );
+    const done   = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - done;
+    addToast(
+      failed
+        ? `Marked ${done} order${done === 1 ? '' : 's'} as printed, ${failed} failed.`
+        : `${done} order${done === 1 ? '' : 's'} marked as printed.`,
+      failed ? 'error' : 'success'
+    );
+    setBulkBusy(false);
+    setBulkPrompt(false);
+    load();
+    onChanged?.();
+  };
+
   const confirmCancel = async () => {
     setCancelling(true);
     try {
@@ -71,6 +101,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint }) {
       addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
       setCancelTarget(null);
       load();
+      onChanged?.();
     } catch (err) {
       addToast(err.message || 'Failed to cancel the order.', 'error');
     } finally {
@@ -88,16 +119,27 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint }) {
         query={query}
         onQueryChange={setQuery}
         filters={
-          <button
-            type="button"
-            onClick={() => setUnprintedOnly((v) => !v)}
-            aria-pressed={unprintedOnly}
-            className={`${LIST_ACTION_BTN} ${unprintedOnly
-              ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
-              : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
-          >
-            ⚠️ Today, not printed only
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setUnprintedOnly((v) => !v)}
+              aria-pressed={unprintedOnly}
+              className={`${LIST_ACTION_BTN} ${unprintedOnly
+                ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
+                : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
+            >
+              ⚠️ Today, not printed only
+            </button>
+            {unprintedOnly && unprintedVisible.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setBulkPrompt(true)}
+                className={`${LIST_ACTION_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
+              >
+                ✅ Mark all {unprintedVisible.length} as printed
+              </button>
+            )}
+          </div>
         }
         loading={loading}
         isEmpty={visible.length === 0}
@@ -168,6 +210,20 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint }) {
           );
         })}
       </POSListModal>
+
+      {bulkPrompt && (
+        <POSConfirm
+          title={`Mark ${unprintedVisible.length} order${unprintedVisible.length === 1 ? '' : 's'} as printed?`}
+          confirmLabel={`Yes, mark ${unprintedVisible.length} as printed`}
+          cancelLabel="Not now"
+          loading={bulkBusy}
+          onConfirm={markAllPrinted}
+          onClose={() => setBulkPrompt(false)}
+        >
+          This records a printed receipt for every order in the list below — it does not send
+          anything to the printer. Use it when the receipts were printed but never tagged.
+        </POSConfirm>
+      )}
 
       {cancelTarget && (
         <POSConfirm
