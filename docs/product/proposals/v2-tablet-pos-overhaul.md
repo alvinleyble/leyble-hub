@@ -96,14 +96,44 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 
 ## 3. Implementation Slices & Architecture
 
-| Slice # | Slice Name | Scope Summary |
-| :--- | :--- | :--- |
-| **Slice 0** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
-| **Slice 1** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
-| **Slice 2** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
-| **Slice 3** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
-| **Slice 4** | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
-| **Slice 5** | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
+| Slice # | Status | Slice Name | Scope Summary |
+| :--- | :--- | :--- | :--- |
+| **Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
+| **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
+| **Slice 2** | ⬜ Not started | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
+| **Slice 3** | ⬜ Not started | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
+| **Slice 4** | ⬜ Not started | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
+| **Slice 5** | ⬜ Not started | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
+
+### Slice 1 — what shipped
+
+Landed on `dev` as a frontend-only change: no migrations, no route or payload-shape
+changes. The screen is `client/src/pages/pos/POSPage.jsx` with its parts under
+`client/src/components/pos/`.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| 3-row category matrix + "All Categories", icon-free cards (§2.2) | `POSProductGrid.jsx` |
+| Blank customer search bar, punctuation-insensitive (§2.4) | `POSCustomerSearch.jsx` + `client/src/utils/customerSearch.js` |
+| 0.5-case steppers with press-and-hold (§2.3) | `CaseStepper.jsx` (shared `useHoldRepeat`) |
+| In-line `price /cs`, adjustment + required reason (§2.4) | `POSTicket.jsx` |
+| Preemptive deposit totalling, display-only (§2.4) | `posMath.js` — `total_amount` stays goods-only |
+| 2-stage Save → Print, zero prompts, 2 copies (§2.6) | `POSPage.jsx` + `usePrintReceipt(…, { copies: 2, autoTag: true })` |
+| `⚠️ NOT PRINTED` badges + top-bar alert (§2.6) | `POSHistoryModal.jsx`, POS top bar (today's orders only) |
+| Draft / Created / Cancelled only (§2.1) | History fetches `status=pending` + `status=cancelled` — the silenced statuses are never requested |
+| Amber Edit Mode (§2.5) | `AmberEditHeader.jsx` + edit mode in `POSPage.jsx` |
+
+Two additive hooks into shared V1 code (V1 behaviour unchanged):
+
+- `usePrintReceipt(order, returnCounts, onTagged, overrides, options)` — `options.copies`
+  prints a fixed number of copies with no "print twice?" gate, `options.autoTag` records
+  the print without the confirm prompt. V1 callers pass neither and keep both prompts.
+- `generateReceiptHtml` / `generateEscPos` accept `overrides.showDeposit`, which forces the
+  deposit onto a `pending` receipt. The POS passes it so the printed total matches the
+  screen; V1 receipts still only show the deposit at `completed`/`done`.
+
+Known limitation, accepted: the customer and order type cannot be changed in Amber Edit
+Mode (the backend accepts those on a draft only) — wrong customer means cancel and rebuild.
 
 ### Build Order (recommended)
 

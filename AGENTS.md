@@ -96,6 +96,14 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
 - **Back Office** (Personnel, Incoming Supplies, Tickets, Audit Log) stays V1 UI permanently —
   V2 only relocates the entry point.
 - All V2 slices merge to `dev` only; `main` is merged once at the end (batched APK cutover).
+- **POS (Slice 1, done):** [client/src/pages/pos/POSPage.jsx](client/src/pages/pos/POSPage.jsx) plus
+  `client/src/components/pos/`. Ticket math lives in `posMath.js` — the bottle deposit is
+  **display-only** (screen + receipt include it; the stored `total_amount` stays goods-only).
+  The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes
+  `order_personnel`; Amber Edit Mode cannot change customer or order type (backend accepts those
+  on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via
+  `options.copies` / `options.autoTag`, and the deposit on a pending receipt via
+  `overrides.showDeposit` — V1's prompts and receipts are unchanged.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
@@ -225,7 +233,6 @@ There is **one** environment: production. It's defined in [render.yaml](render.y
   HTTP-only, SameSite=Strict cookie (never localStorage, never log the token). This path exists
   solely so login works during local dev — production serves no web client.
 - `requireAuth` accepts both cookie and Bearer.
-- `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - All API routes require `requireAuth` middleware except `POST /api/v1/auth/login`
 - Parameterized queries only — no string interpolation into SQL
