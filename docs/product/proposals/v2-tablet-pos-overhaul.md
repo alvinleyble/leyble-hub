@@ -113,11 +113,11 @@ changes. The screen is `client/src/pages/pos/POSPage.jsx` with its parts under
 
 | Locked rule | Where it lives |
 | :--- | :--- |
-| 3-row category matrix + "All Categories", icon-free cards (§2.2) | `POSProductGrid.jsx` |
+| 3-row category matrix + "All Categories", icon-free cards (§2.2) | `POSProductGrid.jsx` — cards show name, category and price/cs only |
 | Blank customer search bar, punctuation-insensitive (§2.4) | `POSCustomerSearch.jsx` + `client/src/utils/customerSearch.js` |
-| 0.5-case steppers with press-and-hold (§2.3) | `CaseStepper.jsx` (shared `useHoldRepeat`) |
-| In-line `price /cs`, adjustment + required reason (§2.4) | `POSTicket.jsx` |
-| Preemptive deposit totalling, display-only (§2.4) | `posMath.js` — `total_amount` stays goods-only |
+| 0.5-case steppers with press-and-hold (§2.3) | `CaseStepper.jsx` on the order lines and the product cards themselves (shared `useHoldRepeat`) — a card tap adds 0.5 case |
+| In-line `price /cs`, adjustment + required reason (§2.4) | `POSOrderPanel.jsx` |
+| Preemptive deposit totalling, display-only (§2.4) | `posMath.js` — folded into the single **Items** line and the total; `total_amount` stays goods-only |
 | 2-stage Save → Print, zero prompts, 2 copies (§2.6) | `POSPage.jsx` + `usePrintReceipt(…, { copies: 2, autoTag: true })` |
 | `⚠️ NOT PRINTED` badges + top-bar alert (§2.6) | `POSHistoryModal.jsx`, POS top bar (today's orders only) |
 | Draft / Created / Cancelled only (§2.1) | History fetches `status=pending` + `status=cancelled` — the silenced statuses are never requested |
@@ -134,6 +134,8 @@ Two additive hooks into shared V1 code (V1 behaviour unchanged):
 
 Known limitation, accepted: the customer and order type cannot be changed in Amber Edit
 Mode (the backend accepts those on a draft only) — wrong customer means cancel and rebuild.
+
+Screen copy calls these **orders**, never "tickets" — the business does not use that word.
 
 ### Build Order (recommended)
 
@@ -159,7 +161,7 @@ client/src/
 │   └── CustomersV2Page.jsx         # Suki customer profiles & custom rates
 ├── components/pos/
 │   ├── POSProductGrid.jsx          # 3-row category matrix + product cards
-│   ├── POSTicket.jsx               # Sticky ticket, steppers, deposit math, grand total
+│   ├── POSOrderPanel.jsx           # Sticky order panel, steppers, deposit math, grand total
 │   ├── POSHistoryModal.jsx         # Fast order history, reprint & amber edit entry
 │   └── AmberEditHeader.jsx         # Visual header banner during order modification
 └── hooks/

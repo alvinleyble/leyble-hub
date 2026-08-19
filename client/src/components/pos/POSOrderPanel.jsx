@@ -1,7 +1,7 @@
 import React from 'react';
 import CaseStepper from './CaseStepper';
 import POSCustomerSearch from './POSCustomerSearch';
-import { lineDeposit, lineGoods, lineTotal, ticketTotals, totalCases } from './posMath';
+import { lineTotal, orderTotals, totalCases } from './posMath';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,12 +19,9 @@ const SMALL_BTN = `flex min-h-tablet items-center justify-center gap-2 rounded-x
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                    disabled:cursor-not-allowed disabled:opacity-50`;
 
-// One ticket line: stepper, in-line price-per-case edit, and the deposit that is
-// folded into the line total for display (never into the stored total_amount).
-function TicketLine({ item, amber, locked, onStep, onPrice, onRemove }) {
-  const deposit = lineDeposit(item);
-  const bottles = (Number(item.quantity) || 0) * (Number(item.units_per_case) || 1);
-
+// One order line: stepper, in-line price-per-case edit, and a line total that already
+// includes the bottle deposit (display only — never part of the stored total_amount).
+function OrderLine({ item, amber, locked, onStep, onPrice, onRemove }) {
   return (
     <li className={`rounded-xl border p-3 ${amber ? 'border-amber-500/40 bg-amber-950/20' : 'border-v2-border bg-v2-surface'}`}>
       <div className="flex items-start justify-between gap-2">
@@ -36,7 +33,7 @@ function TicketLine({ item, amber, locked, onStep, onPrice, onRemove }) {
           type="button"
           onClick={() => onRemove(item._key)}
           disabled={locked}
-          aria-label={`Remove ${item.product_name} from the ticket`}
+          aria-label={`Remove ${item.product_name} from the order`}
           className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-xl text-v2-muted
                      hover:bg-v2-raised hover:text-v2-text focus-visible:outline-none
                      focus-visible:ring-2 focus-visible:ring-v2-accent disabled:opacity-40"
@@ -84,18 +81,13 @@ function TicketLine({ item, amber, locked, onStep, onPrice, onRemove }) {
         </div>
       </div>
 
-      <p className="mt-2 text-sm text-v2-muted">
-        {deposit > 0
-          ? `w/ dep — goods ${PHP(lineGoods(item))} + ${bottles} btl × ${PHP(item.unit_deposit_fee)} = ${PHP(deposit)}`
-          : 'w/o dep — no bottle deposit on this item'}
-      </p>
     </li>
   );
 }
 
-// The sticky POS ticket: customer, order type, lines, discount, deposit-inclusive
+// The sticky POS order panel: customer, order type, lines, discount, deposit-inclusive
 // totals and the 2-stage Save → Print buffer.
-export default function POSTicket({
+export default function POSOrderPanel({
   mode,                  // 'build' | 'saved' | 'edit'
   customers,
   selectedCustomer,
@@ -121,18 +113,18 @@ export default function POSTicket({
   onUpdate,
   onPrint,
   onNewOrder,
-  onClearTicket,
+  onClearOrder,
   onCancelOrder,
   onExitEdit,
 }) {
   const amber  = mode === 'edit';
   const locked = mode === 'saved';
-  const totals = ticketTotals(items, Number(adjustment.value) || 0);
+  const totals = orderTotals(items, Number(adjustment.value) || 0);
   const printed = Boolean(savedOrder?.pending_receipt_printed_at);
 
   return (
     <aside
-      aria-label="Order ticket"
+      aria-label="Current order"
       className={`flex h-full min-h-0 w-full flex-col rounded-2xl border-2 ${
         amber ? 'border-amber-400 bg-amber-950/10' : 'border-v2-border bg-v2-surface'
       }`}
@@ -183,12 +175,12 @@ export default function POSTicket({
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {items.length === 0 ? (
           <p className="py-10 text-center text-lg text-v2-muted">
-            Tap a product to start the ticket.
+            Tap a product to start the order.
           </p>
         ) : (
           <ul className="space-y-2">
             {items.map((item) => (
-              <TicketLine
+              <OrderLine
                 key={item._key}
                 item={item}
                 amber={amber}
@@ -261,16 +253,11 @@ export default function POSTicket({
       {/* Totals + actions */}
       <div className={`shrink-0 space-y-3 border-t p-3 ${amber ? 'border-amber-500/40' : 'border-v2-border'}`}>
         <dl className="space-y-1 text-base">
+          {/* Goods + bottle deposit as one line — the deposit is never broken out. */}
           <div className="flex justify-between">
             <dt className="text-v2-muted">Items ({totalCases(items)} cs)</dt>
-            <dd className="tabular-nums text-v2-text">{PHP(totals.goods)}</dd>
+            <dd className="tabular-nums text-v2-text">{PHP(totals.goods + totals.deposit)}</dd>
           </div>
-          {totals.deposit > 0 && (
-            <div className="flex justify-between">
-              <dt className="text-v2-muted">Bottle deposit</dt>
-              <dd className="tabular-nums text-v2-text">+{PHP(totals.deposit)}</dd>
-            </div>
-          )}
           {totals.adjustment !== 0 && (
             <div className="flex justify-between">
               <dt className="truncate text-v2-muted">
@@ -289,24 +276,31 @@ export default function POSTicket({
 
         {mode === 'build' && (
           <>
-            <p className="text-sm text-v2-muted" aria-live="polite">
-              {draftStatus === 'saving' ? '📝 Draft — saving…' : draftStatus === 'saved' ? '📝 Draft — saved' : '📝 Draft'}
-            </p>
+            <div className="flex items-stretch gap-2">
+              <span
+                aria-live="polite"
+                className="flex min-h-[64px] w-24 shrink-0 flex-col items-center justify-center rounded-xl
+                           bg-v2-raised px-2 text-center text-xs font-bold leading-tight text-v2-muted"
+              >
+                <span className="text-base">📝</span>
+                {draftStatus === 'saving' ? 'Saving…' : draftStatus === 'saved' ? 'Draft saved' : 'Draft'}
+              </span>
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={saving}
+                className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
+              >
+                {saving ? 'Saving…' : '💾 Save Order'}
+              </button>
+            </div>
             <button
               type="button"
-              onClick={onSave}
-              disabled={saving}
-              className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
-            >
-              {saving ? 'Saving…' : '💾 Save Order'}
-            </button>
-            <button
-              type="button"
-              onClick={onClearTicket}
+              onClick={onClearOrder}
               disabled={saving || (items.length === 0 && !selectedCustomer)}
               className={`${SMALL_BTN} w-full bg-v2-raised text-v2-text hover:bg-v2-border`}
             >
-              🗑 Clear ticket
+              🗑 Clear order
             </button>
           </>
         )}

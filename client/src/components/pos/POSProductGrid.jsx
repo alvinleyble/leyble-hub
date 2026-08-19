@@ -1,16 +1,58 @@
 import React, { useMemo, useState } from 'react';
 import { productMatches } from '../../utils/productSearch';
+import useHoldRepeat from '../ui/useHoldRepeat';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export const ALL_CATEGORIES = '__all__';
 
+// One catalogue card. Tapping adds half a case and holding accelerates, exactly
+// like the −/+ steppers on the order lines (shared useHoldRepeat).
+function ProductCard({ product, quantity, onAdd, disabled }) {
+  const add = useHoldRepeat(() => onAdd(product));
+
+  return (
+    <button
+      type="button"
+      {...(disabled ? {} : add)}
+      disabled={disabled}
+      aria-label={`Add half a case of ${product.name} ${product.sku ? `(${product.sku})` : ''}`}
+      className={`flex h-full w-full touch-none select-none flex-col rounded-xl border p-3 text-left
+                  transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2
+                  focus-visible:ring-v2-accent disabled:opacity-50
+                  ${quantity > 0
+                    ? 'border-v2-accent bg-v2-raised'
+                    : 'border-v2-border bg-v2-surface hover:bg-v2-raised'}`}
+    >
+      <span className="flex items-start justify-between gap-2">
+        <span className="text-base font-bold tracking-wide text-v2-accent">{product.sku || '—'}</span>
+        {quantity > 0 && (
+          <span className="shrink-0 rounded-lg bg-v2-accent-strong px-2 py-0.5 text-sm font-bold text-white">
+            {quantity} cs
+          </span>
+        )}
+      </span>
+
+      <span className="mt-1 line-clamp-2 text-base font-semibold leading-snug text-v2-text">
+        {product.name}
+      </span>
+
+      <span className="text-sm text-v2-muted">{product.category}</span>
+
+      <span className="mt-auto pt-2 text-lg font-bold text-v2-text">
+        {PHP(product.base_wholesale_price)}
+        <span className="text-sm font-semibold text-v2-muted"> /cs</span>
+      </span>
+    </button>
+  );
+}
+
 // Product catalogue for the V2 POS: a search bar, the category matrix (an "All
 // Categories" pill plus one pill per production category — ~12 of them wrap into
-// three rows on the tablet) and clean, icon-free product cards. Tapping a card
-// adds one case to the ticket; tapping it again adds another.
-export default function POSProductGrid({ products, ticketQty, onAdd, disabled = false }) {
+// three rows on the tablet) and clean, icon-free product cards showing just name,
+// category and price per case.
+export default function POSProductGrid({ products, orderQty, onAdd, disabled = false }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [query, setQuery]       = useState('');
 
@@ -86,50 +128,16 @@ export default function POSProductGrid({ products, ticketQty, onAdd, disabled = 
           <p className="py-10 text-center text-lg text-v2-muted">No products match this search.</p>
         ) : (
           <ul className="grid grid-cols-2 gap-3 pb-2 lg:grid-cols-3 xl:grid-cols-4">
-            {visible.map((p) => {
-              const qty = ticketQty[p.id] ?? 0;
-              const deposit = p.requires_bottle_return ? Number(p.deposit_fee) : 0;
-              return (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => onAdd(p)}
-                    disabled={disabled}
-                    aria-label={`Add one case of ${p.name} ${p.sku ? `(${p.sku})` : ''}`}
-                    className={`flex h-full w-full flex-col rounded-xl border p-3 text-left transition-colors
-                                duration-100 focus-visible:outline-none focus-visible:ring-2
-                                focus-visible:ring-v2-accent disabled:opacity-50
-                                ${qty > 0
-                                  ? 'border-v2-accent bg-v2-raised'
-                                  : 'border-v2-border bg-v2-surface hover:bg-v2-raised'}`}
-                  >
-                    <span className="flex items-start justify-between gap-2">
-                      <span className="text-base font-bold tracking-wide text-v2-accent">{p.sku || '—'}</span>
-                      {qty > 0 && (
-                        <span className="shrink-0 rounded-lg bg-v2-accent-strong px-2 py-0.5 text-sm font-bold text-white">
-                          {qty} cs
-                        </span>
-                      )}
-                    </span>
-
-                    <span className="mt-1 line-clamp-2 text-base font-semibold leading-snug text-v2-text">
-                      {p.name}
-                    </span>
-
-                    <span className="mt-auto pt-2 text-lg font-bold text-v2-text">
-                      {PHP(p.base_wholesale_price)}
-                      <span className="text-sm font-semibold text-v2-muted"> /cs</span>
-                    </span>
-
-                    <span className="text-sm text-v2-muted">
-                      {deposit > 0 ? `w/ dep ${PHP(deposit)}/btl` : 'w/o dep'}
-                      {' · '}
-                      {Number(p.current_stock)} in stock
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
+            {visible.map((p) => (
+              <li key={p.id}>
+                <ProductCard
+                  product={p}
+                  quantity={orderQty[p.id] ?? 0}
+                  onAdd={onAdd}
+                  disabled={disabled}
+                />
+              </li>
+            ))}
           </ul>
         )}
       </div>

@@ -1,7 +1,7 @@
 import React from 'react';
 import useHoldRepeat from '../ui/useHoldRepeat';
 
-// 0.5-case stepper for the V2 POS ticket. Tap steps by half a case; press-and-hold
+// 0.5-case stepper for the V2 POS order lines. Tap steps by half a case; press-and-hold
 // accelerates (shared useHoldRepeat, same behaviour as the V1 order search bar).
 // 56px targets — above the 48px minimum, sized for a tablet used at arm's length.
 const BTN = `flex items-center justify-center w-14 h-14 rounded-xl text-2xl font-bold

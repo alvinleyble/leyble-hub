@@ -1,4 +1,4 @@
-// Shared ticket math for the V2 POS. Kept in one place so the on-screen ticket,
+// Shared order math for the V2 POS. Kept in one place so the on-screen order,
 // the History rows and the printed receipt can never drift apart.
 //
 // Deposit rule (V2, see docs/product/proposals/v2-tablet-pos-overhaul.md §2.4):
@@ -26,14 +26,14 @@ export const lineDeposit = (item) =>
 
 export const lineTotal = (item) => round2(lineGoods(item) + lineDeposit(item));
 
-// Whole-ticket totals. `adjustment` is the ± discount / suki correction.
-export function ticketTotals(items, adjustment = 0) {
+// Whole-order totals. `adjustment` is the ± discount / suki correction.
+export function orderTotals(items, adjustment = 0) {
   const goods   = round2(items.reduce((s, i) => s + lineGoods(i), 0));
   const deposit = round2(items.reduce((s, i) => s + lineDeposit(i), 0));
   const adj     = round2(adjustment);
   return { goods, deposit, adjustment: adj, total: round2(goods + deposit + adj) };
 }
 
-// Total cases on the ticket (0.5-case aware) — printed on the receipt too.
+// Total cases on the order (0.5-case aware) — printed on the receipt too.
 export const totalCases = (items) =>
   roundQty(items.reduce((s, i) => s + (Number(i.quantity) || 0), 0));

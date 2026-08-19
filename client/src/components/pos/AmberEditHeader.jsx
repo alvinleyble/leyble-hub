@@ -1,7 +1,7 @@
 import React from 'react';
 
 // Amber Edit Mode banner (proposal §2.5). Editing an existing order repaints the POS
-// screen amber so it is never mistaken for a fresh ticket — the badge animates, and
+// screen amber so it is never mistaken for a fresh order — the badge animates, and
 // the reason the customer / order type are locked is stated right here in words.
 export default function AmberEditHeader({ orderId }) {
   return (

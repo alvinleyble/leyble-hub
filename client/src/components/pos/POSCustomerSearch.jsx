@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { customerMatches } from '../../utils/customerSearch';
 
-// Customer picker for the V2 POS ticket. Same searchable-combobox mechanics the rest
+// Customer picker for the V2 POS order panel. Same searchable-combobox mechanics the rest
 // of the app uses (see client/src/components/ui/Combobox.jsx): filter on keystroke,
 // onFocus opens the list, onBlur closes it after 150ms so a row's onMouseDown lands
 // first. Dark-themed for the V2 shell and sized for tablet taps.

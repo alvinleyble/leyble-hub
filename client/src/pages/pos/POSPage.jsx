@@ -6,13 +6,13 @@ import AmberEditHeader from '../../components/pos/AmberEditHeader';
 import POSConfirm from '../../components/pos/POSConfirm';
 import POSHistoryModal from '../../components/pos/POSHistoryModal';
 import POSProductGrid from '../../components/pos/POSProductGrid';
-import POSTicket from '../../components/pos/POSTicket';
+import POSOrderPanel from '../../components/pos/POSOrderPanel';
 import { roundQty } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintReceipt } from '../orders/usePrintReceipt';
 
 // V2 tablet POS (proposal §2, Slice 1). One screen: catalogue on the left, the live
-// ticket on the right, and a 2-tap Save Order → Print Receipt buffer at the bottom.
+// order panel on the right, and a 2-tap Save Order → Print Receipt buffer at the bottom.
 //
 // Only three order states are ever shown here: 📝 Draft (auto-saved, hidden from
 // history), ✅ Created (backend `pending`) and 🚫 Cancelled. V2 never advances an
@@ -24,7 +24,7 @@ export default function POSPage() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading]     = useState(true);
 
-  // ── Ticket state ───────────────────────────────────────────────────────────
+  // ── Order state ────────────────────────────────────────────────────────────
   const [customerId, setCustomerId] = useState('');
   const [orderType, setOrderType]   = useState('delivery');
   const [customPrices, setCustomPrices] = useState({});
@@ -43,7 +43,7 @@ export default function POSPage() {
   // ── Stage / mode ───────────────────────────────────────────────────────────
   const [savedOrder, setSavedOrder] = useState(null); // set after Save Order → print stage
   const [editOrder, setEditOrder]   = useState(null); // amber edit mode target
-  const buildStash = useRef(null);                    // ticket parked while editing
+  const buildStash = useRef(null);                    // order parked while editing
 
   const mode = editOrder ? 'edit' : savedOrder ? 'saved' : 'build';
 
@@ -140,19 +140,20 @@ export default function POSPage() {
 
   // ── Line helpers ───────────────────────────────────────────────────────────
 
-  const ticketQty = useMemo(() => {
+  const orderQty = useMemo(() => {
     const map = {};
     items.forEach((i) => { map[i.product_id] = (map[i.product_id] || 0) + Number(i.quantity); });
     return map;
   }, [items]);
 
+  // Tapping a card adds half a case; holding it repeats, same as the −/+ on a line.
   const addProduct = (product) => {
     if (mode === 'saved') return;
     setItems((prev) => {
       const existing = prev.find((i) => i.product_id === String(product.id));
       if (existing) {
         return prev.map((i) => i._key === existing._key
-          ? { ...i, quantity: roundQty(Number(i.quantity) + 1) }
+          ? { ...i, quantity: roundQty(Number(i.quantity) + 0.5) }
           : i);
       }
       return [
@@ -162,7 +163,7 @@ export default function POSPage() {
           product_name:     product.name,
           sku:              product.sku || '',
           unit:             product.unit,
-          quantity:         1,
+          quantity:         0.5,
           unit_price:       String(priceFor(product)),
           // Deposit only ever rides on products that take bottles back.
           unit_deposit_fee: product.requires_bottle_return ? Number(product.deposit_fee) : 0,
@@ -220,7 +221,7 @@ export default function POSPage() {
       .catch(() => { creatingDraftRef.current = false; draftPromiseRef.current = null; setDraftStatus('idle'); });
   }, [mode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced auto-save of the live ticket onto the draft.
+  // Debounced auto-save of the live order onto the draft.
   useEffect(() => {
     if (mode !== 'build' || !draftId || saving) return;
     setDraftStatus('saving');
@@ -334,9 +335,9 @@ export default function POSPage() {
     }
   };
 
-  // ── Ticket lifecycle ───────────────────────────────────────────────────────
+  // ── Order lifecycle ────────────────────────────────────────────────────────
 
-  const blankTicket = () => {
+  const blankOrder = () => {
     setCustomerId('');
     setOrderType('delivery');
     setItems([]);
@@ -352,19 +353,19 @@ export default function POSPage() {
   const startNewOrder = () => {
     setSavedOrder(null);
     setPrintOrder(null);
-    blankTicket();
+    blankOrder();
   };
 
-  const clearTicket = async () => {
+  const clearOrder = async () => {
     const id = draftId;
-    blankTicket();
+    blankOrder();
     if (id) {
       try { await api.del(`/orders/${id}`); } catch (_) { /* draft already gone — nothing to clean up */ }
     }
   };
 
   const enterEditMode = (order) => {
-    // Park whatever is on the ticket so exiting edit mode gives it straight back.
+    // Park whatever is on the order panel so exiting edit mode gives it straight back.
     buildStash.current = mode === 'build'
       ? { customerId, orderType, items, notes, adjustment, draftId, draftStatus }
       : null;
@@ -414,7 +415,7 @@ export default function POSPage() {
       creatingDraftRef.current = Boolean(stash.draftId);
       setErrors({});
     } else {
-      blankTicket();
+      blankOrder();
     }
   };
 
@@ -446,15 +447,10 @@ export default function POSPage() {
     <div className="flex h-full min-h-0 flex-col gap-3 p-3">
       {/* Top bar: mode badge + print alert + history */}
       <div className="flex shrink-0 flex-wrap items-center gap-3">
-        {mode === 'edit' ? (
-          <AmberEditHeader orderId={editOrder.id} />
-        ) : mode === 'saved' ? (
+        {mode === 'edit' && <AmberEditHeader orderId={editOrder.id} />}
+        {mode === 'saved' && (
           <span className="flex min-h-tablet items-center rounded-xl bg-emerald-500/15 px-4 text-lg font-bold text-emerald-200">
             ✅ Order #{savedOrder.id} created
-          </span>
-        ) : (
-          <span className="flex min-h-tablet items-center rounded-xl bg-v2-raised px-4 text-lg font-bold text-v2-muted">
-            📝 Draft
           </span>
         )}
 
@@ -481,16 +477,16 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Catalogue + ticket */}
+      {/* Catalogue + order panel */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem]">
         <POSProductGrid
           products={products}
-          ticketQty={ticketQty}
+          orderQty={orderQty}
           onAdd={addProduct}
           disabled={mode === 'saved'}
         />
 
-        <POSTicket
+        <POSOrderPanel
           mode={mode}
           customers={customers}
           selectedCustomer={selectedCustomer}
@@ -516,7 +512,7 @@ export default function POSPage() {
           onUpdate={handleUpdate}
           onPrint={() => requestPrint(savedOrder)}
           onNewOrder={startNewOrder}
-          onClearTicket={clearTicket}
+          onClearOrder={clearOrder}
           onCancelOrder={() => setConfirm({ kind: 'cancel', order: editOrder })}
           onExitEdit={exitEditMode}
         />
