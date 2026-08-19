@@ -11,8 +11,8 @@ const Printer = registerPlugin('Printer');
 // On native Android: direct Bluetooth ESC/POS (no dialog, no PrintHand).
 // On web: window.print() via a popup.
 // `onTagged(updatedOrder)` fires after the order is tagged as printed.
-// `liveAdjustment` is the receipt override bag (adjustment / adjustment_reason /
-// showDeposit) handed to the receipt renderers.
+// `liveAdjustment` is the receipt override bag (adjustment / adjustment_reason)
+// handed to the receipt renderers.
 // `options`:
 //   copies  — print this many copies with no "print twice?" gate (V2 POS: 2)
 //   autoTag — tag the order as printed straight after a successful print instead of

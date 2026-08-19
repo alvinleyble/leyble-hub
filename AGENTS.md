@@ -97,9 +97,11 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   V2 only relocates the entry point.
 - All V2 slices merge to `dev` only; `main` is merged once at the end (batched APK cutover).
 - **POS (Slice 1, done):** [client/src/pages/pos/POSPage.jsx](client/src/pages/pos/POSPage.jsx) plus
-  `client/src/components/pos/`. Order math lives in `posMath.js` — the bottle deposit is
-  **display-only** (folded into the single Items line on screen and into the receipt total; the
-  stored `total_amount` stays goods-only). POS copy says "order", never "ticket".
+  `client/src/components/pos/`. Order math lives in `posMath.js` — every POS figure and the
+  printed receipt are **goods-only**: V2 never charges or shows the bottle deposit, because it
+  never reaches the closing step where returns are counted (captain correction 2026-08-20,
+  reversing proposal §2.4 — lines still carry `unit_deposit_fee` for V1's close flow). POS copy
+  says "order", never "ticket".
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes
   `order_personnel`; Amber Edit Mode cannot change customer or order type (backend accepts those
   on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via

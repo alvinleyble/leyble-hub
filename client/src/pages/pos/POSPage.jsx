@@ -55,8 +55,8 @@ export default function POSPage() {
   const [confirmBusy, setConfirmBusy]         = useState(false);
 
   // ── Printing ───────────────────────────────────────────────────────────────
-  // showDeposit forces the deposit onto the receipt: V2 charges it in full at sale.
-  // copies:2 + autoTag = the zero-prompt print of proposal §2.6.
+  // copies:2 + autoTag = the zero-prompt print of proposal §2.6. No receipt overrides:
+  // a pending receipt is goods-only, which is exactly what V2 charges (see posMath.js).
   const [printOrder, setPrintOrder] = useState(null);
   const [printTick, setPrintTick]   = useState(0);
   const printer = usePrintReceipt(
@@ -67,7 +67,7 @@ export default function POSPage() {
       setPrintOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
       refreshUnprinted();
     },
-    { showDeposit: true },
+    {},
     { copies: 2, autoTag: true }
   );
 

@@ -67,7 +67,10 @@ graph TD
 
 ### 4. Ticket, Pricing & Bottle Deposits
 * **In-line Price per Case:** Direct `price /cs` edit on order lines.
-* **Preemptive Bottle Deposit Calculation:** `w/ dep` vs `w/o dep` calculations are folded directly into line totals, subtotal, and total due for zero visual clutter. Deposit is **display-only** — charged in full at sale and folded into the shown/receipt total, while the stored `total_amount` stays goods-only (deposit folds in only at `done`, which V2 never reaches); bottle returns are handled manually, not tracked in-app.
+* **No deposit anywhere in V2 — goods-only totals.** ⚠️ **CORRECTED 2026-08-20 (captain decision, mid-Slice-1) — this reverses the original "Preemptive Bottle Deposit Calculation" rule locked in this section.** Line totals, the `Items` subtotal, the total due and the printed receipt are all **goods-only** (`quantity × price /cs`, plus the adjustment). Nothing deposit-derived is calculated or displayed on the POS screens, and a deposit-bearing product looks identical to one without: no `w/ dep` / `w/o dep` tag, badge or breakdown.
+  * **Why:** V1 treats every bottle as returned until an order is explicitly closed and the returns are counted, so deposit is effectively zero before that step. §2.1 makes `pending` V2's terminal state — V2 **never advances an order**, so it never reaches `completed`/`done` where a deposit would become real. Charging or showing a preemptive deposit would bill customers for bottles the system will never mark returned.
+  * **Unchanged below the UI:** order lines still carry `unit_deposit_fee` to the backend, `order_items.line_total` keeps its generated-column formula, and `orders.total_amount` stays goods-only exactly as `recomputeTotal` writes it. Those matter at V1's closing step and are untouched.
+  * ~~Original rule (superseded): `w/ dep` vs `w/o dep` folded into line totals, subtotal and total due; deposit display-only, charged in full at sale.~~
 * **Adjustment & Reason:** Discount / Suki adjustment field matching V1 math, requiring an adjustment reason when discount is applied.
 * **Customer Selection:** Default search bar with blank input for quick auto-complete.
 
@@ -88,7 +91,8 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 2. **Restore on cancel.** V2 restores stock when a `pending` order is cancelled; intended restores only for dispatched orders.
 3. **Reconcile on edit.** V2 reconciles stock when a `pending` order's items are edited; intended reconciles only for dispatched orders.
 4. **Statuses.** V2 silences `in_transit`/`completed`/`done`; intended exposes the full lifecycle via the Review Deliveries queue.
-5. **Deposit.** V2 shows deposit as display-only (charged in full at sale, stored total goods-only); intended folds deposit in at `done` on un-returned bottles with returns tracked.
+5. **Deposit.** V2 shows **no deposit at all** — every POS figure and the printed receipt are goods-only; intended folds deposit in at `done` on un-returned bottles with returns tracked.
+   > **Correction, 2026-08-20 (explicit captain decision, mid-Slice-1).** This supersedes the original §2.4 "Preemptive Bottle Deposit Calculation" language — which had V2 charging the deposit in full at sale and folding it into the shown/receipt total — and is a **reversal of a locked decision**, not an implementation detail. The reversal is UI-only: `unit_deposit_fee`, `line_total` and `recomputeTotal` are untouched, so returning to the intended design still only takes re-enabling the closing step.
 6. **Driver/helper.** V2 does not capture `order_personnel`; intended tracks at most one driver per order.
 7. **Backlog.** The ~1,300 (and growing) `pending` orders would need a one-time bulk pass through the intended lifecycle on revert.
 
@@ -117,7 +121,7 @@ changes. The screen is `client/src/pages/pos/POSPage.jsx` with its parts under
 | Blank customer search bar, punctuation-insensitive (§2.4) | `POSCustomerSearch.jsx` + `client/src/utils/customerSearch.js` |
 | 0.5-case steppers with press-and-hold (§2.3) | `CaseStepper.jsx` on the order lines and the product cards themselves (shared `useHoldRepeat`) — a card tap adds 0.5 case |
 | In-line `price /cs`, adjustment + required reason (§2.4) | `POSOrderPanel.jsx` |
-| Preemptive deposit totalling, display-only (§2.4) | `posMath.js` — folded into the single **Items** line and the total; `total_amount` stays goods-only |
+| ~~Preemptive deposit totalling~~ → **goods-only totals** (§2.4, corrected 2026-08-20) | `posMath.js` — no deposit is calculated or shown anywhere in the POS; the receipt prints goods-only too. `unit_deposit_fee` / `line_total` / `total_amount` untouched |
 | 2-stage Save → Print, zero prompts, 2 copies (§2.6) | `POSPage.jsx` + `usePrintReceipt(…, { copies: 2, autoTag: true })` |
 | `⚠️ NOT PRINTED` badges + top-bar alert (§2.6) | `POSHistoryModal.jsx`, POS top bar (today's orders only) |
 | Draft / Created / Cancelled only (§2.1) | History fetches `status=pending` + `status=cancelled` — the silenced statuses are never requested |
@@ -136,6 +140,9 @@ Known limitation, accepted: the customer and order type cannot be changed in Amb
 Mode (the backend accepts those on a draft only) — wrong customer means cancel and rebuild.
 
 Screen copy calls these **orders**, never "tickets" — the business does not use that word.
+
+**Reversal on record:** the preemptive bottle-deposit rule locked in §2.4 was corrected to
+goods-only totals on 2026-08-20 by captain decision, mid-Slice-1. See §2.4 and §7 item 5.
 
 ### Build Order (recommended)
 

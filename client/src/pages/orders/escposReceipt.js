@@ -49,10 +49,7 @@ function itemDepositForPrint(item, returnCounts, showDeposit) {
 
 export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   const isPickup    = order.order_type === 'pickup';
-  // See generateReceiptHtml: overrides.showDeposit forces the deposit on for the V2 POS,
-  // which charges it in full at sale rather than at close.
-  const showDeposit = overrides.showDeposit === true
-    || order.status === 'completed' || order.status === 'done';
+  const showDeposit = order.status === 'completed' || order.status === 'done';
 
   const docDate  = new Date(order.created_at);
   const dateStr  = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;

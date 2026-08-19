@@ -220,8 +220,8 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, unprintedO
           </div>
 
           <p className="shrink-0 border-t border-v2-border px-5 py-3 text-sm text-v2-muted">
-            Totals here are the saved goods total plus any adjustment. The bottle deposit is added on
-            the order panel and the receipt only.
+            Totals here are the saved goods total plus any adjustment — the same goods-only figure
+            the order panel and the receipt show.
           </p>
         </div>
       </div>

@@ -19,8 +19,8 @@ const SMALL_BTN = `flex min-h-tablet items-center justify-center gap-2 rounded-x
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                    disabled:cursor-not-allowed disabled:opacity-50`;
 
-// One order line: stepper, in-line price-per-case edit, and a line total that already
-// includes the bottle deposit (display only — never part of the stored total_amount).
+// One order line: stepper, in-line price-per-case edit and a goods-only line total.
+// Nothing deposit-derived is shown here — see posMath.js.
 function OrderLine({ item, amber, locked, onStep, onPrice, onRemove }) {
   return (
     <li className={`rounded-xl border p-3 ${amber ? 'border-amber-500/40 bg-amber-950/20' : 'border-v2-border bg-v2-surface'}`}>
@@ -85,7 +85,7 @@ function OrderLine({ item, amber, locked, onStep, onPrice, onRemove }) {
   );
 }
 
-// The sticky POS order panel: customer, order type, lines, discount, deposit-inclusive
+// The sticky POS order panel: customer, order type, lines, discount, goods-only
 // totals and the 2-stage Save → Print buffer.
 export default function POSOrderPanel({
   mode,                  // 'build' | 'saved' | 'edit'
@@ -253,10 +253,9 @@ export default function POSOrderPanel({
       {/* Totals + actions */}
       <div className={`shrink-0 space-y-3 border-t p-3 ${amber ? 'border-amber-500/40' : 'border-v2-border'}`}>
         <dl className="space-y-1 text-base">
-          {/* Goods + bottle deposit as one line — the deposit is never broken out. */}
           <div className="flex justify-between">
             <dt className="text-v2-muted">Items ({totalCases(items)} cs)</dt>
-            <dd className="tabular-nums text-v2-text">{PHP(totals.goods + totals.deposit)}</dd>
+            <dd className="tabular-nums text-v2-text">{PHP(totals.goods)}</dd>
           </div>
           {totals.adjustment !== 0 && (
             <div className="flex justify-between">
