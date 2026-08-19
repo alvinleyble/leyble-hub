@@ -200,7 +200,7 @@ export default function POSOrderPanel({
         <div className="mt-4 space-y-2">
           <div>
             <label htmlFor="pos-adjustment" className="block text-sm font-bold uppercase tracking-wide text-v2-muted">
-              Discount / adjustment (₱ — use a minus sign to discount)
+              Adjustment
             </label>
             <input
               id="pos-adjustment"
@@ -208,7 +208,7 @@ export default function POSOrderPanel({
               inputMode="decimal"
               value={adjustment.value}
               disabled={locked}
-              placeholder="0.00"
+              placeholder="0.00  (minus to discount)"
               onChange={(e) => onAdjustment({ ...adjustment, value: e.target.value })}
               className={`${FIELD} mt-1 tabular-nums disabled:opacity-60`}
             />

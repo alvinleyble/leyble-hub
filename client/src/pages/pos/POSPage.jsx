@@ -444,38 +444,15 @@ export default function POSPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-      {/* Top bar: mode badge + print alert + history */}
-      <div className="flex shrink-0 flex-wrap items-center gap-3">
-        {mode === 'edit' && <AmberEditHeader orderId={editOrder.id} />}
-        {mode === 'saved' && (
-          <span className="flex min-h-tablet items-center rounded-xl bg-emerald-500/15 px-4 text-lg font-bold text-emerald-200">
-            ✅ Order #{savedOrder.id} created
-          </span>
-        )}
-
-        <div className="ml-auto flex items-center gap-2">
-          {unprintedToday > 0 && (
-            <button
-              type="button"
-              onClick={() => { setHistoryUnprinted(true); setHistoryOpen(true); }}
-              className="flex min-h-tablet items-center rounded-xl bg-amber-500/20 px-4 text-base font-bold
-                         text-amber-200 hover:bg-amber-500/30 focus-visible:outline-none
-                         focus-visible:ring-2 focus-visible:ring-v2-accent"
-            >
-              ⚠️ {unprintedToday} order{unprintedToday === 1 ? '' : 's'} today NOT PRINTED
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => { setHistoryUnprinted(false); setHistoryOpen(true); }}
-            className="flex min-h-tablet items-center rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
-                       hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-          >
-            🕘 History
-          </button>
+    <div className="flex h-full min-h-0 flex-col gap-2 px-3 pb-3 pt-2">
+      {/* The only full-width row is the amber banner, and only while editing — the
+          catalogue and the order panel otherwise start straight under the nav bar.
+          History and the print alert ride along the search row (headerActions). */}
+      {mode === 'edit' && (
+        <div className="shrink-0">
+          <AmberEditHeader orderId={editOrder.id} />
         </div>
-      </div>
+      )}
 
       {/* Catalogue + order panel */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem]">
@@ -484,6 +461,29 @@ export default function POSPage() {
           orderQty={orderQty}
           onAdd={addProduct}
           disabled={mode === 'saved'}
+          headerActions={
+            <>
+              {unprintedToday > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setHistoryUnprinted(true); setHistoryOpen(true); }}
+                  className="flex h-14 items-center rounded-xl bg-amber-500/20 px-4 text-base font-bold
+                             text-amber-200 hover:bg-amber-500/30 focus-visible:outline-none
+                             focus-visible:ring-2 focus-visible:ring-v2-accent"
+                >
+                  ⚠️ {unprintedToday} today NOT PRINTED
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setHistoryUnprinted(false); setHistoryOpen(true); }}
+                className="flex h-14 items-center rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
+                           hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+              >
+                🕘 History
+              </button>
+            </>
+          }
         />
 
         <POSOrderPanel

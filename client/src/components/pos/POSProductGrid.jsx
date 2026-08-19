@@ -52,7 +52,7 @@ function ProductCard({ product, quantity, onAdd, disabled }) {
 // Categories" pill plus one pill per production category — ~12 of them wrap into
 // three rows on the tablet) and clean, icon-free product cards showing just name,
 // category and price per case.
-export default function POSProductGrid({ products, orderQty, onAdd, disabled = false }) {
+export default function POSProductGrid({ products, orderQty, onAdd, disabled = false, headerActions = null }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [query, setQuery]       = useState('');
 
@@ -80,23 +80,27 @@ export default function POSProductGrid({ products, orderQty, onAdd, disabled = f
 
   return (
     <section className="flex min-h-0 flex-col" aria-label="Products">
-      {/* Search + category matrix */}
-      <div className="shrink-0 space-y-3">
-        <div>
-          <label htmlFor="pos-product-search" className="block text-sm font-bold uppercase tracking-wide text-v2-muted">
-            Search products
-          </label>
-          <input
-            id="pos-product-search"
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoComplete="off"
-            placeholder="SKU, name or category…"
-            className="mt-1 h-14 w-full rounded-xl border border-v2-border bg-v2-bg px-4 text-lg
-                       text-v2-text placeholder:text-slate-500
-                       focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-          />
+      {/* Search + category matrix. `headerActions` (History, print alert) sits on the
+          search row so the top of the screen carries no empty band. */}
+      <div className="shrink-0 space-y-2">
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <label htmlFor="pos-product-search" className="block text-sm font-bold uppercase tracking-wide text-v2-muted">
+              Search products
+            </label>
+            <input
+              id="pos-product-search"
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoComplete="off"
+              placeholder="SKU, name or category…"
+              className="mt-1 h-14 w-full rounded-xl border border-v2-border bg-v2-bg px-4 text-lg
+                         text-v2-text placeholder:text-slate-500
+                         focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            />
+          </div>
+          {headerActions && <div className="flex shrink-0 items-center gap-2">{headerActions}</div>}
         </div>
 
         <div className="flex flex-wrap gap-2" role="group" aria-label="Product categories">
@@ -123,7 +127,7 @@ export default function POSProductGrid({ products, orderQty, onAdd, disabled = f
       </div>
 
       {/* Cards */}
-      <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
         {visible.length === 0 ? (
           <p className="py-10 text-center text-lg text-v2-muted">No products match this search.</p>
         ) : (
