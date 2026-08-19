@@ -48,7 +48,7 @@ graph TD
 
 ### 1. Simplified Order Lifecycle in UI
 * **Two Primary States:**
-  * **`📝 Draft`**: In-progress order, auto-saved as a backend `draft` (created on customer pick, debounced auto-save — V1 behavior), hidden from history until finalized.
+  * **`📝 Draft`**: In-progress order, auto-saved as a backend `draft` (created on customer pick, debounced auto-save — V1 behavior), hidden from history until finalized — reachable (and resumable) via the top bar's **Drafts** popup, added 2026-08-20.
   * **`✅ Created`**: Finalized order (persisted as `pending` under the hood in PostgreSQL).
 * **Order Cancellation:** Handled via History popup or Amber Edit Mode (calls `POST /orders/:id/status` `{ status: 'cancelled' }` to restore inventory).
 * Complex intermediary statuses (`in_transit`, `completed`, `done`) are **silenced entirely** — never surfaced anywhere in V2. V2 exposes only `Draft`, `Created`, and `Cancelled`, catering solely to the features the owners actually use.
@@ -80,7 +80,7 @@ graph TD
 
 ### 6. Thermal Print Flow
 * **Zero-Prompt Printing (two taps):** **Save Order** locks the order, then **Print Receipt** prints a pre-configured 2-copy thermal output — no copy-count or tag confirmation dialogs.
-* **Print Tracking:** Orders missing confirmed print receipts display a prominent `⚠️ NOT PRINTED` badge in History and top bar alerts.
+* **Print Tracking:** Orders missing confirmed print receipts display a prominent `NOT PRINTED` badge on their row in History, plus a "today, not printed only" filter there. **Corrected 2026-08-20 (captain decision, round 4):** the ~~top-bar summary alert~~ was redundant with those per-order badges and is **removed**; its spot in the top bar now holds a **Drafts** button opening a Drafts popup (see §2.1 — drafts are hidden from History, so this is where an unfinished order is found and resumed).
 * **Receipt width stays 80mm** — the project standard since June; gemini's prototype renders 58mm, which is stale.
 
 ### 7. Future Revert — "Ideal Horizon"
@@ -123,8 +123,8 @@ changes. The screen is `client/src/pages/pos/POSPage.jsx` with its parts under
 | In-line `price /cs`, adjustment + required reason (§2.4) | `POSOrderPanel.jsx` |
 | ~~Preemptive deposit totalling~~ → **goods-only totals** (§2.4, corrected 2026-08-20) | `posMath.js` — no deposit is calculated or shown anywhere in the POS; the receipt prints goods-only too. `unit_deposit_fee` / `line_total` / `total_amount` untouched |
 | 2-stage Save → Print, zero prompts, 2 copies (§2.6) | `POSPage.jsx` + `usePrintReceipt(…, { copies: 2, autoTag: true })` |
-| `⚠️ NOT PRINTED` badges + top-bar alert (§2.6) | `POSHistoryModal.jsx`, POS top bar (today's orders only) |
-| Draft / Created / Cancelled only (§2.1) | History fetches `status=pending` + `status=cancelled` — the silenced statuses are never requested |
+| `NOT PRINTED` badges (§2.6) + Drafts popup (§2.1) | `POSHistoryModal.jsx` (per-order badge + "today, not printed only" filter) and `POSDraftsModal.jsx` behind the top bar's **Drafts** button — the top-bar summary alert was removed as redundant (corrected 2026-08-20). Both popups share `POSListModal.jsx` |
+| Draft / Created / Cancelled only (§2.1) | History fetches `status=pending` + `status=cancelled` and Drafts fetches `status=draft` — the silenced statuses are never requested. Resuming a draft keeps its id, so saving finalizes that same order |
 | Amber Edit Mode (§2.5) | `AmberEditHeader.jsx` + edit mode in `POSPage.jsx` |
 
 Two additive hooks into shared V1 code (V1 behaviour unchanged):
@@ -168,8 +168,10 @@ client/src/
 │   └── CustomersV2Page.jsx         # Suki customer profiles & custom rates
 ├── components/pos/
 │   ├── POSProductGrid.jsx          # 3-row category matrix + product cards
-│   ├── POSOrderPanel.jsx           # Sticky order panel, steppers, deposit math, grand total
+│   ├── POSOrderPanel.jsx           # Sticky order panel, steppers, goods-only totals
 │   ├── POSHistoryModal.jsx         # Fast order history, reprint & amber edit entry
+│   ├── POSDraftsModal.jsx          # Parked drafts, resume back onto the POS
+│   ├── POSListModal.jsx            # Shared popup shell + row styling for both lists
 │   └── AmberEditHeader.jsx         # Visual header banner during order modification
 └── hooks/
     ├── usePrintReceipt.js          # Direct zero-prompt 2-copy ESC/POS thermal printing

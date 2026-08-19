@@ -101,7 +101,8 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   printed receipt are **goods-only**: V2 never charges or shows the bottle deposit, because it
   never reaches the closing step where returns are counted (captain correction 2026-08-20,
   reversing proposal §2.4 — lines still carry `unit_deposit_fee` for V1's close flow). POS copy
-  says "order", never "ticket".
+  says "order", never "ticket". Two popups share `POSListModal.jsx`: History (Created +
+  Cancelled) and Drafts (`status=draft`, resume puts the draft back on the POS keeping its id).
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes
   `order_personnel`; Amber Edit Mode cannot change customer or order type (backend accepts those
   on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via

@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
 import AmberEditHeader from '../../components/pos/AmberEditHeader';
 import POSConfirm from '../../components/pos/POSConfirm';
+import POSDraftsModal from '../../components/pos/POSDraftsModal';
 import POSHistoryModal from '../../components/pos/POSHistoryModal';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import POSOrderPanel from '../../components/pos/POSOrderPanel';
@@ -47,12 +48,11 @@ export default function POSPage() {
 
   const mode = editOrder ? 'edit' : savedOrder ? 'saved' : 'build';
 
-  // ── History / alerts ───────────────────────────────────────────────────────
-  const [historyOpen, setHistoryOpen]         = useState(false);
-  const [historyUnprinted, setHistoryUnprinted] = useState(false);
-  const [unprintedToday, setUnprintedToday]   = useState(0);
-  const [confirm, setConfirm]                 = useState(null); // { kind, ... }
-  const [confirmBusy, setConfirmBusy]         = useState(false);
+  // ── History / drafts popups ────────────────────────────────────────────────
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [draftsOpen, setDraftsOpen]   = useState(false);
+  const [confirm, setConfirm]         = useState(null); // { kind, ... }
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   // ── Printing ───────────────────────────────────────────────────────────────
   // copies:2 + autoTag = the zero-prompt print of proposal §2.6. No receipt overrides:
@@ -65,7 +65,6 @@ export default function POSPage() {
     (updated) => {
       setSavedOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
       setPrintOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
-      refreshUnprinted();
     },
     {},
     { copies: 2, autoTag: true }
@@ -90,18 +89,7 @@ export default function POSPage() {
       })
       .catch(() => addToast('Failed to load the catalogue.', 'error'))
       .finally(() => setLoading(false));
-    refreshUnprinted();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Orders saved today whose receipt was never confirmed printed — the ⚠️ top-bar alert.
-  // Scoped to today so the historical backlog of pending orders never buries it.
-  function refreshUnprinted() {
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
-    api.get(`/orders?status=pending&from_date=${encodeURIComponent(midnight.toISOString())}`)
-      .then((rows) => setUnprintedToday(rows.filter((o) => !o.pending_receipt_printed_at).length))
-      .catch(() => {});
-  }
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId)) ?? null;
 
@@ -305,7 +293,6 @@ export default function POSPage() {
       creatingDraftRef.current = false;
       draftPromiseRef.current = null;
       addToast(`Order #${orderId} created.`, 'success');
-      refreshUnprinted();
     } catch (err) {
       addToast(err.message || 'Failed to save the order.', 'error');
     } finally {
@@ -327,7 +314,6 @@ export default function POSPage() {
       await syncAdjustment(editOrder.id, editOrder);
       addToast(`Order #${editOrder.id} updated.`, 'success');
       exitEditMode();
-      refreshUnprinted();
     } catch (err) {
       addToast(err.message || 'Failed to update the order.', 'error');
     } finally {
@@ -400,6 +386,41 @@ export default function POSPage() {
     setHistoryOpen(false);
   };
 
+  // Resume a parked draft: it goes back on the POS in build mode with its draft id, so
+  // the debounced auto-save keeps updating that same draft and Save Order finalizes it.
+  // Any draft already on screen simply stays a draft — it reappears in the Drafts popup.
+  const resumeDraft = (order) => {
+    setSavedOrder(null);
+    setPrintOrder(null);
+    setEditOrder(null);
+    buildStash.current = null;
+    setCustomerId(String(order.customer_id));
+    setOrderType(order.order_type);
+    setNotes(order.notes ?? '');
+    setAdjustment({
+      value:  Number(order.adjustment) ? String(order.adjustment) : '',
+      reason: order.adjustment_reason ?? '',
+    });
+    setItems(order.items.map((i) => ({
+      _key:             `${i.id}`,
+      product_id:       String(i.product_id),
+      product_name:     i.product_name,
+      sku:              i.sku || '',
+      unit:             i.unit,
+      quantity:         Number(i.quantity),
+      unit_price:       String(Number(i.unit_price)),
+      unit_deposit_fee: Number(i.unit_deposit_fee) || 0,
+      units_per_case:   Number(i.units_per_case) || 1,
+      _priceEdited:     true,   // keep the prices the draft was saved with
+    })));
+    setDraftId(order.id);
+    setDraftStatus('saved');
+    creatingDraftRef.current = true;   // this draft exists; don't create another
+    draftPromiseRef.current = null;
+    setErrors({});
+    setDraftsOpen(false);
+  };
+
   const exitEditMode = () => {
     setEditOrder(null);
     const stash = buildStash.current;
@@ -427,7 +448,6 @@ export default function POSPage() {
       setConfirm(null);
       if (editOrder?.id === orderId) exitEditMode();
       if (savedOrder?.id === orderId) startNewOrder();
-      refreshUnprinted();
     } catch (err) {
       addToast(err.message || 'Failed to cancel the order.', 'error');
     } finally {
@@ -463,20 +483,17 @@ export default function POSPage() {
           disabled={mode === 'saved'}
           headerActions={
             <>
-              {unprintedToday > 0 && (
-                <button
-                  type="button"
-                  onClick={() => { setHistoryUnprinted(true); setHistoryOpen(true); }}
-                  className="flex h-14 items-center rounded-xl bg-amber-500/20 px-4 text-base font-bold
-                             text-amber-200 hover:bg-amber-500/30 focus-visible:outline-none
-                             focus-visible:ring-2 focus-visible:ring-v2-accent"
-                >
-                  ⚠️ {unprintedToday} today NOT PRINTED
-                </button>
-              )}
               <button
                 type="button"
-                onClick={() => { setHistoryUnprinted(false); setHistoryOpen(true); }}
+                onClick={() => setDraftsOpen(true)}
+                className="flex h-14 items-center rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
+                           hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+              >
+                📝 Drafts
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
                 className="flex h-14 items-center rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
                            hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
               >
@@ -518,10 +535,16 @@ export default function POSPage() {
         />
       </div>
 
+      {draftsOpen && (
+        <POSDraftsModal
+          onClose={() => setDraftsOpen(false)}
+          onResume={resumeDraft}
+        />
+      )}
+
       {historyOpen && (
         <POSHistoryModal
-          unprintedOnlyDefault={historyUnprinted}
-          onClose={() => { setHistoryOpen(false); refreshUnprinted(); }}
+          onClose={() => setHistoryOpen(false)}
           onEdit={enterEditMode}
           onReprint={(order) => { setHistoryOpen(false); requestPrint(order); }}
         />
