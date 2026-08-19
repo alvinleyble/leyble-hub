@@ -44,4 +44,16 @@ async function applyDeltaMap(client, deltaMap, opts) {
   }
 }
 
-module.exports = { applyStockDelta, applyDeltaMap };
+// Check if stock has been deducted for an order (action_type = 'order_fulfillment')
+async function hasDeductedStock(client, orderId) {
+  const { rows: [result] } = await client.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM inventory_audit_logs
+       WHERE related_order_id = $1 AND action_type = 'order_fulfillment'
+     ) AS deducted`,
+    [orderId]
+  );
+  return Boolean(result?.deducted);
+}
+
+module.exports = { applyStockDelta, applyDeltaMap, hasDeductedStock };

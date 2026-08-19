@@ -45,11 +45,14 @@ timestamps; `done`/`cancelled` set `closed_at`.
 Stock changes only through `applyDeltaMap` (`lib/inventory.js`), inside a transaction, and always
 write an `inventory_audit_logs` row.
 
-- **Deduct** when stock first leaves: delivery `pending → in_transit`, or pickup
-  `pending → completed`.
-- **Restore** on `→ cancelled` (and when stepping back to `pending` from a deducted state).
-- **Reconcile** on item edits (`PATCH /:id`): the diff between old and new item quantities is
-  applied as deltas.
+- **Deduct** on finalize: when an order transitions `draft → pending` (or is created directly as
+  `pending`), ordered quantities are deducted from `products.current_stock`.
+- **Restore** on `→ cancelled`: when a `pending` (or previously deducted) order is cancelled,
+  deducted stock is restored. Legacy pre-cutover `pending` orders that never had stock deducted
+  safely skip stock restoration on cancel.
+- **Reconcile** on item edits (`PATCH /:id`): for orders with deducted stock, the diff between old
+  and new item quantities (`oldQty − newQty`) is applied as deltas. Legacy pre-cutover `pending`
+  orders safely skip stock reconciliation on edit.
 - **Drafts never touch stock.**
 
 ## Totals, deposits & bottle returns
