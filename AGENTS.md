@@ -84,6 +84,19 @@ const PHP = (n) =>
 get the hamburger drawer in both portrait and landscape. Width-based `sm:`/`md:`/`lg:` are
 still used for everything else (table columns etc.).
 
+### V2 tablet shell (in progress — see [docs/product/proposals/v2-tablet-pos-overhaul.md](docs/product/proposals/v2-tablet-pos-overhaul.md))
+
+The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place of it:
+- **Two shells, two route trees.** `/v2/*` renders `client/src/components/layout/V2Shell.jsx`
+  (dark slate, POS/Inventory/Customers + Back Office drawer); every pre-existing route keeps its
+  path and its V1 `AppLayout`. Never repoint or delete a V1 route — add V2 screens under `/v2`.
+- **Dark tokens are V2-only.** `v2-*` colors and `min-h-tablet` (52px) in
+  `client/tailwind.config.js` are for V2 shell/screens; V1 pages stay light. The V2 focus ring is
+  re-tinted via the `.v2-root` rule in `client/src/index.css`.
+- **Back Office** (Personnel, Incoming Supplies, Tickets, Audit Log) stays V1 UI permanently —
+  V2 only relocates the entry point.
+- All V2 slices merge to `dev` only; `main` is merged once at the end (batched APK cutover).
+
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
 - 16px+ fonts
