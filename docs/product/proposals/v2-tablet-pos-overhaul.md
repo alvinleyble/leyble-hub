@@ -143,3 +143,14 @@ client/src/
 * Developed incrementally slice-by-slice via Firstmate crewmates.
 * Tested against tablet viewport (1200×1920 landscape, ~1024–1280px).
 * Verified against production PostgreSQL schemas and Capacitor Android build.
+
+---
+
+## 6. Deployment Strategy: Single Batched Cutover
+
+* **`dev`-only PR landing:** All slices (the backend stock trio prerequisite plus Slices 0–3 and 5; Slice 4 Voice AI remains deferred) merge exclusively into `dev`. There is **no intermediate `dev` → `main` promotion** after individual slices.
+* **Single `main` merge:** `main` (which auto-deploys to Render production) is merged exactly once, only after the entire V2 build is complete and verified in `dev`.
+* **Back-to-back APK rollout:** The single merge to `main` happens back-to-back with rebuilding and sideloading the new Android APK on the owners' tablets/phones — zero time gap between the cloud backend going live and the matching UI reaching their devices.
+* **Rationale:**
+  * Production is a single cloud environment with no staging; the owners cannot realistically be asked to reinstall the APK multiple times across slice iterations.
+  * The backend stock trio timing change (deduct on finalize) is a pure backend change not gated behind a V2 UI flag. Merging it to `main` early would immediately alter stock deduction behavior in the live V1 app before the V2 POS interface is deployed. All commits must remain on `dev` until the full batched V2 cutover.
