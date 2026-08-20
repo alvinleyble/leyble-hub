@@ -349,7 +349,7 @@ export default function InventoryV2Page() {
               <tbody>
                 {categories.map((cat) => (
                   <React.Fragment key={cat}>
-                    <tr className="border-y border-v2-border bg-v2-bg/60">
+                    <tr className="border-y border-v2-border bg-v2-bg">
                       <td colSpan={batchMode ? 7 : 6} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-v2-muted">
                         {cat}
                       </td>

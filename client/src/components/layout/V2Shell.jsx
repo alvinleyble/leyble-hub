@@ -12,11 +12,58 @@ const NAV_ITEMS = [
   { path: '/v2/customers', label: 'Customers' },
 ];
 
+const THEME_VARS = {
+  dark: {
+    '--v2-bg': '#121214',
+    '--v2-surface': '#1B1B1E',
+    '--v2-raised': '#262629',
+    '--v2-border': '#333338',
+    '--v2-text': '#F4F4F5',
+    '--v2-muted': '#A1A1AA',
+    '--v2-accent': '#F43F5E',
+    '--v2-accent-strong': '#9F1239',
+    '--v2-pill-active': '#27272A',
+    '--v2-pill-border': '#3F3F46',
+    '--v2-pill-text': '#FFFFFF',
+    '--v2-print-btn': '#4F46E5',
+    '--v2-print-btn-hover': '#6366F1',
+    '--v2-suki-badge-bg': 'rgba(139, 92, 246, 0.15)',
+    '--v2-suki-badge-border': 'rgba(139, 92, 246, 0.35)',
+    '--v2-suki-badge-text': '#C4B5FD',
+    '--v2-table-hover': '#262629',
+  },
+  light: {
+    '--v2-bg': '#F4F5F7',
+    '--v2-surface': '#FFFFFF',
+    '--v2-raised': '#E9EBEF',
+    '--v2-border': '#D7DAE0',
+    '--v2-text': '#1B1E27',
+    '--v2-muted': '#5B6270',
+    '--v2-accent': '#0D9488',
+    '--v2-accent-strong': '#0F766E',
+    '--v2-pill-active': '#0F766E',
+    '--v2-pill-border': '#0D9488',
+    '--v2-pill-text': '#FFFFFF',
+    '--v2-print-btn': '#0369A1',
+    '--v2-print-btn-hover': '#0284C7',
+    '--v2-suki-badge-bg': '#EDE9FE',
+    '--v2-suki-badge-border': '#DDD6FE',
+    '--v2-suki-badge-text': '#6D28D9',
+    '--v2-table-hover': '#F1F3F6',
+  },
+};
+
 // Persistent V2 tablet shell — landscape-first (Honor Pad X8B, ~1200x1920).
 // Dark slate chrome, 52px+ touch targets, 16-18px+ text.
 export default function V2Shell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('v2_theme') || 'dark');
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem('v2_theme') || 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
   const [tapCount, setTapCount] = useState(0);
   const lastTapRef = useRef(0);
   const { user, logout } = useAuth();
@@ -24,9 +71,11 @@ export default function V2Shell() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    document.documentElement.classList.remove('light', 'dark');
-    document.documentElement.classList.add(theme);
+    try {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.documentElement.classList.remove('light', 'dark');
+      document.documentElement.classList.add(theme);
+    } catch {}
   }, [theme]);
 
   const handleLogout = async () => {
@@ -37,7 +86,9 @@ export default function V2Shell() {
   const toggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
     setTheme(nextTheme);
-    localStorage.setItem('v2_theme', nextTheme);
+    try {
+      localStorage.setItem('v2_theme', nextTheme);
+    } catch {}
   };
 
   // 5 taps/clicks on "Leyble Hub" or the top-right profile area opens the Back Office drawer
@@ -61,6 +112,7 @@ export default function V2Shell() {
   return (
     <div
       data-theme={theme}
+      style={THEME_VARS[theme] || THEME_VARS.dark}
       className={`v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text ${theme}`}
     >
       <header className="shrink-0 flex items-center gap-3 h-[68px] px-3 bg-v2-surface border-b border-v2-border">
