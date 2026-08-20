@@ -57,7 +57,7 @@ export default function POSConfirm({
             disabled={loading}
             className={`flex min-h-tablet items-center rounded-xl px-5 text-base font-bold text-white
                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
-                        disabled:opacity-50 ${danger ? 'bg-red-700 hover:bg-red-600' : 'bg-v2-accent-strong hover:bg-sky-500'}`}
+                        disabled:opacity-50 ${danger ? 'bg-red-700 hover:bg-red-600' : 'bg-v2-accent-strong hover:bg-v2-accent'}`}
           >
             {loading ? 'Working…' : confirmLabel}
           </button>

@@ -229,7 +229,7 @@ export default function InventoryV2Page() {
           <button
             type="button" onClick={() => setCreating(true)}
             className="flex h-12 items-center gap-1.5 rounded-xl bg-v2-accent-strong px-4 text-base font-bold
-                       text-white hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+                       text-white hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
                        focus-visible:ring-v2-accent"
           >
             + Add Product
@@ -247,7 +247,7 @@ export default function InventoryV2Page() {
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search products"
             className="h-12 flex-1 rounded-xl border border-v2-border bg-v2-bg px-4 text-base text-v2-text
-                       placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                       placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           />
           <label className="flex min-h-tablet cursor-pointer select-none items-center gap-3 rounded-xl border
                             border-v2-border bg-v2-bg px-4">
@@ -303,7 +303,7 @@ export default function InventoryV2Page() {
             <button
               type="button" onClick={() => setBatchEditOpen(true)}
               className="flex h-12 items-center rounded-xl bg-v2-accent-strong px-5 text-base font-bold
-                         text-white hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+                         text-white hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
                          focus-visible:ring-v2-accent"
             >
               Edit Prices →

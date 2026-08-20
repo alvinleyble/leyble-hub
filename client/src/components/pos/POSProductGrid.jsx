@@ -96,7 +96,7 @@ export default function POSProductGrid({ products, orderQty, onAdd, disabled = f
               autoComplete="off"
               placeholder="SKU, name or category…"
               className="mt-1 h-14 w-full rounded-xl border border-v2-border bg-v2-bg px-4 text-lg
-                         text-v2-text placeholder:text-slate-500
+                         text-v2-text placeholder:text-v2-muted
                          focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
             />
           </div>

@@ -82,7 +82,7 @@ export default function POSSavePriceModal({
                 onClick={onAcceptFirst}
                 disabled={prompt.busy}
                 className="flex min-h-tablet items-center rounded-xl bg-v2-accent-strong px-5 text-base font-bold text-white
-                           hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+                           hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
                            focus-visible:ring-v2-accent disabled:opacity-50"
               >
                 {prompt.busy ? 'Saving…' : 'Yes, Save'}
@@ -120,7 +120,7 @@ export default function POSSavePriceModal({
                 onClick={onConfirmConvert}
                 disabled={prompt.busy}
                 className="flex min-h-tablet items-center rounded-xl bg-v2-accent-strong px-5 text-base font-bold text-white
-                           hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+                           hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
                            focus-visible:ring-v2-accent disabled:opacity-50"
               >
                 {prompt.busy ? 'Saving…' : 'Yes, Continue'}

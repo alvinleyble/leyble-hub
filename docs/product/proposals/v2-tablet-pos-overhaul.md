@@ -106,7 +106,7 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | **V2.0 Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. |
 | **V2.0 Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
 | **V2.0 Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS, and "Save custom price?" prompt. |
-| **V2.0 Slice 6** | ⬜ Not started | **Coca-Cola Color Palette Overhaul** | Overhaul V2 theme tokens (`tailwind.config.js` / `index.css`) to the iconic Coca-Cola beverage distributor palette: Coca-Cola Red primary branding (`#F40009` / `#E41E2B`), deep carbonated charcoal surfaces (`#0F0F10`, `#1A1A1C`, `#262629`), crisp white text, high-contrast focus rings, and matching POS/Inventory/Customer CTAs. |
+| **V2.0 Slice 6** | ✅ **Done** | **Coca-Cola Color Palette Overhaul** | Overhauled V2 theme tokens (`tailwind.config.js`) to the iconic Coca-Cola beverage distributor palette: Coca-Cola Red primary branding (`#F40009` / `#E41E2B`), deep carbonated charcoal surfaces (`#0F0F10`, `#1A1A1C`, `#262629`), crisp white text, high-contrast focus rings, and matching POS/Inventory/Customer CTAs. |
 | **V2.0 Slice 5** | ⬜ Not started | **Android Sync & Dual-App Verification** | Capacitor Android sync, `com.leyble.hub.pos` dual-app ID configuration, production Gradle build, `Pixel_Tablet` emulator headed verification. Concluding slice of V2.0. |
 | **V2.5 Slice 1** | ⏳ **Queued (Grill)** | **Offline Accessibility** | Offline order creation, local IndexedDB/SQLite cache, background reconnect sync, and conflict resolution policies. |
 | **V3.0 Slice 1** | ⏳ **Queued** | **Voice AI (OpenAI API)** | OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing (re-allocated from earlier V2 draft). |
@@ -185,6 +185,24 @@ with components under `client/src/components/customers/` and `client/src/compone
 | Live Suki pricing sync with POS | `POSPage.jsx` — automatic price recomputation on customer select, line item add, or order type toggle (`delivery` ↔ `pickup`) |
 | "Save custom price?" prompt on order submit | `POSSavePriceModal.jsx` + `POSPage.jsx` — hand-edited lines detected at submit; 2-step prompt for regular customers (convert to wholesaler + save rates) and 1-step prompt for wholesalers, non-blocking on dismissal (matches `save-custom-price-prompt.md`) |
 
+### Slice 6 — what shipped
+
+Landed as a token-only change to [client/tailwind.config.js](../../../client/tailwind.config.js) — no
+component markup was restructured. Every V2 screen and popup already composed its styling from the
+semantic `v2-*` classes (`bg-v2-bg`, `text-v2-accent`, `bg-v2-accent-strong`, …), so retinting the
+seven tokens repainted the shell, POS, Inventory, and Customers screens in one pass.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| Coca-Cola red / carbonated-charcoal tokens (`bg`, `surface`, `raised`, `border`, `text`, `muted`, `accent`, `accent-strong`) | `client/tailwind.config.js` `theme.extend.colors.v2` |
+| Off-palette hardcoded colors folded into the token system | `placeholder:text-slate-500` → `placeholder:text-v2-muted` and CTA `hover:bg-sky-500` → `hover:bg-v2-accent` across every V2 modal/drawer/page that still had them (customers, inventory, POS components) |
+| Prominent Coke-red primary CTAs | `POSOrderPanel.jsx` — **Save Order** was hardcoded `bg-emerald-600`; recolored to `bg-v2-accent-strong` / `hover:bg-v2-accent` to match **Print Receipt**, per the "prominent Coke Red Save Order / Print Receipt" requirement |
+| Preserved functional indicators (untouched) | Amber Edit Mode (`AmberEditHeader.jsx`) keeps its animated `amber-*` classes; printed/active status badges keep `emerald-*`; stock-level and order-status pills (`Low Stock`, `Cancelled`, `Created`, etc.) keep their existing semantic colors — none of these consume `v2-*` tokens, so the retheme did not touch them |
+
+No backend changes, no new routes. `client/src/index.css`'s `.v2-root *:focus-visible` rule already
+referenced `ring-v2-accent` / `ring-offset-v2-bg`, so the focus ring re-tints automatically with the
+new token values — it needed no edit.
+
 ### Build Order & Release Roadmap
 
 Dependency + value order; each step lands as one fully-serial PR before the next starts.
@@ -195,8 +213,8 @@ Dependency + value order; each step lands as one fully-serial PR before the next
 2. **Slice 1 — POS, History & Receipt** — ✅ Done (PR #3).
 3. **Slice 2 — Inventory & Stock** — ✅ Done (PR #4).
 4. **Slice 3 — Customers & Suki Pricing** — ✅ Done (PR #5).
-5. **Slice 6 — Coca-Cola Color Palette Overhaul** — ⬜ Next up (Retheme V2 design tokens in `tailwind.config.js` / `index.css` to Coca-Cola red branding, deep carbonated charcoal background, crisp white typography, and high-contrast tablet CTAs).
-6. **Slice 5 — Android Build & Dual-App Verification** — ⬜ Concluding slice of V2.0 (Capacitor sync, `com.leyble.hub.pos` profile, Gradle build, emulator pass, final V2.0 production APK).
+5. **Slice 6 — Coca-Cola Color Palette Overhaul** — ✅ Done. Retheme V2 design tokens in `tailwind.config.js` to Coca-Cola red branding, deep carbonated charcoal background, crisp white typography, and high-contrast tablet CTAs.
+6. **Slice 5 — Android Build & Dual-App Verification** — ⬜ Next up (Concluding slice of V2.0: Capacitor sync, `com.leyble.hub.pos` profile, Gradle build, emulator pass, final V2.0 production APK).
 
 ---
 

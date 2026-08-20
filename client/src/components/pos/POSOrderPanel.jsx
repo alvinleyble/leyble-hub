@@ -7,7 +7,7 @@ const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const FIELD = `h-12 w-full rounded-lg border border-v2-border bg-v2-bg px-3 text-lg text-v2-text
-               placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+               placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
 
 const BIG_BTN = `flex min-h-[64px] w-full items-center justify-center gap-2 rounded-xl px-4 text-xl font-black
                  uppercase tracking-wide transition-colors duration-100
@@ -288,7 +288,7 @@ export default function POSOrderPanel({
                 type="button"
                 onClick={onSave}
                 disabled={saving}
-                className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
+                className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
               >
                 {saving ? 'Saving…' : '💾 Save Order'}
               </button>
@@ -320,7 +320,7 @@ export default function POSOrderPanel({
               type="button"
               onClick={onPrint}
               disabled={printing}
-              className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-sky-500`}
+              className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
             >
               {printing ? 'Printing…' : '🖨️ Print Receipt (2 copies)'}
             </button>

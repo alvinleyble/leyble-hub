@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 
 const FIELD = `w-full h-12 rounded-lg border border-v2-border bg-v2-bg px-4 text-base text-v2-text
-               placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+               placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
 
 const LABEL = 'block text-sm font-bold uppercase tracking-wide text-v2-muted mb-1';
 
@@ -135,7 +135,7 @@ export default function CustomerCreateModal({ onClose, onSaved }) {
                 onChange={set('notes')}
                 rows={3}
                 className="w-full rounded-lg border border-v2-border bg-v2-bg px-4 py-3 text-base text-v2-text
-                           placeholder:text-slate-500 focus:outline-none focus-visible:ring-2
+                           placeholder:text-v2-muted focus:outline-none focus-visible:ring-2
                            focus-visible:ring-v2-accent resize-none"
                 placeholder="Any notes about this customer…"
               />
@@ -160,7 +160,7 @@ export default function CustomerCreateModal({ onClose, onSaved }) {
             onClick={handleSubmit}
             disabled={saving}
             className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-accent-strong px-5 text-base
-                       font-bold text-white hover:bg-sky-500 disabled:opacity-50
+                       font-bold text-white hover:bg-v2-accent disabled:opacity-50
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           >
             {saving ? 'Saving…' : 'Save Customer'}
