@@ -39,8 +39,12 @@ export default function POSReviewExitConfirm({
         tabIndex={-1}
         className="w-full max-w-md rounded-2xl border border-v2-border bg-v2-surface shadow-2xl outline-none"
       >
+        {/* Never "close": closing an order is a distinct domain action here (the
+            settlement step where bottle returns are counted and it goes done). */}
         <h2 id="pos-review-exit-title" className="border-b border-v2-border px-6 py-4 text-xl font-bold text-v2-text">
-          {orderId ? `Close order #${orderId}?` : 'Close this order?'}
+          {canDiscard
+            ? (orderId ? `Discard order #${orderId}?` : 'Discard this order?')
+            : (orderId ? `Order #${orderId}` : 'This order')}
         </h2>
 
         {/* One line of context, not three: Discard is destructive and the buttons

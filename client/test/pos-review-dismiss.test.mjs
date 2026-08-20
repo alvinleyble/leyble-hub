@@ -69,6 +69,10 @@ test('F5: the dismiss dialog offers three one-word choices, wired to their own a
   assert.equal(buttons.length, 3);
   assert.deepEqual(buttons.map((b) => b.textContent.replace(/[^A-Za-z ]/g, '').trim()),
     ['Discard', 'Draft', 'Go Back']);
+  // "Close" is the settlement step in this domain (returns counted, order done),
+  // so the dismiss dialog must never borrow the word.
+  assert.equal(r.container.querySelector('h2').textContent, 'Discard order #91?');
+  assert.equal(/close/i.test(r.text()), false);
   // Copy must not promise deletion — a saved order can only ever be cancelled.
   assert.equal(r.text().includes('Delete'), false);
   // The stock consequence is stated once, in the body, not on every button.
@@ -96,5 +100,6 @@ test('F5: an already-cancelled order is offered no discard choice', () => {
   const buttons = r.all('button');
   assert.deepEqual(buttons.map((b) => b.textContent.replace(/[^A-Za-z ]/g, '').trim()),
     ['Draft', 'Go Back']);
-  assert.equal(r.text().includes('Discard'), false);
+  assert.equal(r.text().includes('Discard'), false, 'nothing offers a discard that cannot happen');
+  assert.equal(r.container.querySelector('h2').textContent, 'Order #91');
 });
