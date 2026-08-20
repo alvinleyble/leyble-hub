@@ -288,7 +288,7 @@ export default function POSOrderPanel({
                 type="button"
                 onClick={onSave}
                 disabled={saving}
-                className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
+                className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm`}
               >
                 {saving ? 'Saving…' : '💾 Save Order'}
               </button>
@@ -320,7 +320,7 @@ export default function POSOrderPanel({
               type="button"
               onClick={onPrint}
               disabled={printing}
-              className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
+              className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm`}
             >
               {printing ? 'Printing…' : '🖨️ Print Receipt (2 copies)'}
             </button>

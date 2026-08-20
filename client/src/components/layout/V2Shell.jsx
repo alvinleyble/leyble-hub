@@ -28,7 +28,10 @@ export default function V2Shell() {
   return (
     <div className="v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text">
       <header className="shrink-0 flex items-center gap-3 h-[68px] px-3 bg-v2-surface border-b border-v2-border">
-        <p className="px-2 text-xl font-bold tracking-tight select-none shrink-0">Leyble Hub</p>
+        <p className="px-2 text-xl font-bold tracking-tight select-none shrink-0 flex items-center gap-2.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-red-600 shadow-[0_0_8px_rgba(220,38,38,0.6)]" aria-hidden="true" />
+          Leyble Hub
+        </p>
 
         <nav className="flex items-center gap-2 min-w-0" aria-label="Main navigation">
           {NAV_ITEMS.map(({ path, label }) => (
@@ -36,15 +39,20 @@ export default function V2Shell() {
               key={path}
               to={path}
               className={({ isActive }) =>
-                `flex items-center justify-center min-h-tablet px-6 rounded-xl text-lg font-semibold
+                `flex items-center justify-center gap-2 min-h-tablet px-6 rounded-xl text-lg font-semibold
                  transition-colors duration-100
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                  ${isActive
-                   ? 'bg-v2-accent-strong text-white'
+                   ? 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm'
                    : 'text-v2-muted hover:bg-v2-raised hover:text-v2-text'}`
               }
             >
-              {label}
+              {({ isActive }) => (
+                <>
+                  {isActive && <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" aria-hidden="true" />}
+                  {label}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
