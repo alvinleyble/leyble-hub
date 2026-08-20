@@ -107,6 +107,7 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | **V2.0 Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
 | **V2.0 Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS, and "Save custom price?" prompt. |
 | **V2.0 Slice 6** | ✅ **Done** | **Coca-Cola Color Palette Overhaul** | Overhauled V2 theme tokens (`tailwind.config.js`) to the iconic Coca-Cola beverage distributor palette: Coca-Cola Red primary branding (`#F40009` / `#E41E2B`), deep carbonated charcoal surfaces (`#0F0F10`, `#1A1A1C`, `#262629`), crisp white text, high-contrast focus rings, and matching POS/Inventory/Customer CTAs. |
+| **V2.0 Slice 7** | ✅ **Done** | **Pre-Print Order Review Modal & Edit ⇄ Review Loop** | Large high-contrast tablet order review modal (`POSReviewModal.jsx`) before thermal printing, itemized bill breakdown with case counts, suki custom pricing badges, goods total & adjustments, and a frictionless Edit ⇄ Review loop allowing operators to jump seamlessly between modifying items and reviewing order totals. |
 | **V2.0 Slice 5** | ⬜ Not started | **Android Sync & Dual-App Verification** | Capacitor Android sync, `com.leyble.hub.pos` dual-app ID configuration, production Gradle build, `Pixel_Tablet` emulator headed verification. Concluding slice of V2.0. |
 | **V2.5 Slice 1** | ⏳ **Queued (Grill)** | **Offline Accessibility** | Offline order creation, local IndexedDB/SQLite cache, background reconnect sync, and conflict resolution policies. |
 | **V3.0 Slice 1** | ⏳ **Queued** | **Voice AI (OpenAI API)** | OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing (re-allocated from earlier V2 draft). |
@@ -203,6 +204,23 @@ No backend changes, no new routes. `client/src/index.css`'s `.v2-root *:focus-vi
 referenced `ring-v2-accent` / `ring-offset-v2-bg`, so the focus ring re-tints automatically with the
 new token values — it needed no edit.
 
+### Slice 7 — what shipped
+
+Landed on `dev` as a frontend-only addition (`POSReviewModal.jsx`) and POS lifecycle integration
+in `POSPage.jsx` and `POSOrderPanel.jsx`. Provides a full-screen/wide, high-contrast review modal
+before thermal receipt printing, eliminating scrolling friction on tablets and establishing a
+seamless Edit ⇄ Review loop.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| Pre-Print Order Review Modal | `POSReviewModal.jsx` — tablet-optimized centered modal (~800–1000px wide, high contrast) opening automatically upon saving an order |
+| Itemized Bill Breakdown | `POSReviewModal.jsx` — large-typography table displaying case quantities (`2.0 cs`, `0.5 cs`), product name & SKU/unit packaging, price per case with custom **Suki Price** badge when custom pricing is active, and line totals. Fits 8–12 items cleanly without scrolling |
+| Totals & Suki Adjustment Footer | `POSReviewModal.jsx` — displays total case count, goods subtotal, discount/suki adjustment row with reason, and grand total in prominent `3xl/4xl font-black` typography |
+| Seamless Edit ⇄ Review Loop | `POSPage.jsx` — tapping **Edit Items / Back** transitions directly into Amber Edit mode with all lines and customer state intact; tapping **Update Order** refreshes and re-opens the review modal with updated totals |
+| 52px+ Tactile Action Buttons | `POSReviewModal.jsx` — **Print Receipt (2 Copies)** (primary CTA Coke Red), **Edit Items / Back** (secondary CTA), and **New Order / Skip Print** |
+| Saved Mode Panel Review & Edit Triggers | `POSOrderPanel.jsx` — added `📝 Review Order` and `✏️ Edit Order` buttons in saved mode so operators can easily re-enter review or edit mode at any time |
+| Save Custom Price Coordination | `POSSavePriceModal.jsx` (`z-[60]`) overlays cleanly on top of `POSReviewModal` (`z-50`) when dirty prices are detected at submit |
+
 ### Build Order & Release Roadmap
 
 Dependency + value order; each step lands as one fully-serial PR before the next starts.
@@ -213,8 +231,9 @@ Dependency + value order; each step lands as one fully-serial PR before the next
 2. **Slice 1 — POS, History & Receipt** — ✅ Done (PR #3).
 3. **Slice 2 — Inventory & Stock** — ✅ Done (PR #4).
 4. **Slice 3 — Customers & Suki Pricing** — ✅ Done (PR #5).
-5. **Slice 6 — Coca-Cola Color Palette Overhaul** — ✅ Done. Retheme V2 design tokens in `tailwind.config.js` to Coca-Cola red branding, deep carbonated charcoal background, crisp white typography, and high-contrast tablet CTAs.
-6. **Slice 5 — Android Build & Dual-App Verification** — ⬜ Next up (Concluding slice of V2.0: Capacitor sync, `com.leyble.hub.pos` profile, Gradle build, emulator pass, final V2.0 production APK).
+5. **Slice 6 — Coca-Cola Color Palette Overhaul** — ✅ Done (PR #6).
+6. **Slice 7 — Pre-Print Order Review Modal & Edit ⇄ Review Loop** — ✅ Done (PR #7). Large high-contrast review modal before printing, itemized breakdown with case counts & suki badges, goods totals, and seamless POS Edit ⇄ Review loop.
+7. **Slice 5 — Android Build & Dual-App Verification** — ⬜ Next up (Concluding slice of V2.0: Capacitor sync, `com.leyble.hub.pos` profile, Gradle build, emulator pass, final V2.0 production APK).
 
 ---
 
@@ -237,6 +256,7 @@ client/src/
 ├── components/pos/
 │   ├── POSProductGrid.jsx          # 3-row category matrix + product cards
 │   ├── POSOrderPanel.jsx           # Sticky order panel, steppers, goods-only totals
+│   ├── POSReviewModal.jsx          # High-contrast pre-print review modal & edit loop
 │   ├── POSHistoryModal.jsx         # Fast order history, reprint & amber edit entry
 │   ├── POSDraftsModal.jsx          # Parked drafts, resume back onto the POS
 │   ├── POSListModal.jsx            # Shared popup shell + row styling for both lists

@@ -8,6 +8,7 @@ import POSDraftsModal from '../../components/pos/POSDraftsModal';
 import POSHistoryModal from '../../components/pos/POSHistoryModal';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import POSOrderPanel from '../../components/pos/POSOrderPanel';
+import POSReviewModal from '../../components/pos/POSReviewModal';
 import POSSavePriceModal from '../../components/pos/POSSavePriceModal';
 import { roundQty } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
@@ -57,9 +58,11 @@ export default function POSPage() {
 
   const mode = editOrder ? 'edit' : savedOrder ? 'saved' : 'build';
 
-  // ── History / drafts popups ────────────────────────────────────────────────
+  // ── History / drafts / review popups ───────────────────────────────────────
   const [historyOpen, setHistoryOpen] = useState(false);
   const [draftsOpen, setDraftsOpen]   = useState(false);
+  const [reviewOpen, setReviewOpen]   = useState(false);
+  const [reviewOrder, setReviewOrder] = useState(null);
   // Counts on the two top-bar buttons: parked drafts, and today's orders whose receipt
   // was never confirmed printed (the count the old standalone alert used to carry).
   const [draftCount, setDraftCount]         = useState(0);
@@ -339,6 +342,10 @@ export default function POSPage() {
       addToast(`Order #${orderId} created.`, 'success');
       refreshCounts();
 
+      // Open pre-print review modal
+      setReviewOrder(full);
+      setReviewOpen(true);
+
       // Offer to save custom prices if any were hand-edited
       if (dirtyItems.length && selectedCustomer) {
         setPriceSavePrompt({
@@ -385,7 +392,15 @@ export default function POSPage() {
       await syncAdjustment(editOrder.id, editOrder);
       addToast(`Order #${editOrder.id} updated.`, 'success');
       const editedOrderId = editOrder.id;
-      exitEditMode();
+      const updatedFull = await api.get(`/orders/${editedOrderId}`);
+      setSavedOrder(updatedFull);
+      setEditOrder(null);
+      buildStash.current = null;
+      refreshCounts();
+
+      // Re-open review modal with fresh data
+      setReviewOrder(updatedFull);
+      setReviewOpen(true);
 
       if (dirtyItems.length && selectedCustomer) {
         setPriceSavePrompt({
@@ -522,6 +537,31 @@ export default function POSPage() {
     draftPromiseRef.current = null;
     setErrors({});
     setHistoryOpen(false);
+  };
+
+  // ── Review modal handlers (Pre-Print Order Review & Edit ⇄ Review Loop) ────
+  const handleReviewEdit = () => {
+    const target = reviewOrder || savedOrder;
+    setReviewOpen(false);
+    if (target) {
+      enterEditMode(target);
+    }
+  };
+
+  const handleReviewPrint = () => {
+    const target = reviewOrder || savedOrder;
+    setReviewOpen(false);
+    setReviewOrder(null);
+    if (target) {
+      requestPrint(target);
+    }
+    startNewOrder();
+  };
+
+  const handleReviewNewOrder = () => {
+    setReviewOpen(false);
+    setReviewOrder(null);
+    startNewOrder();
   };
 
   // Resume a parked draft: it goes back on the POS in build mode with its draft id, so
@@ -677,12 +717,32 @@ export default function POSPage() {
           onSave={handleSave}
           onUpdate={handleUpdate}
           onPrint={() => requestPrint(savedOrder)}
+          onReview={() => {
+            setReviewOrder(savedOrder);
+            setReviewOpen(true);
+          }}
+          onEditSaved={() => {
+            enterEditMode(savedOrder);
+          }}
           onNewOrder={startNewOrder}
           onClearOrder={clearOrder}
           onCancelOrder={() => setConfirm({ kind: 'cancel', order: editOrder })}
           onExitEdit={exitEditMode}
         />
       </div>
+
+      {/* Pre-Print Order Review Modal (proposal & Edit ⇄ Review Loop) */}
+      {reviewOpen && reviewOrder && (
+        <POSReviewModal
+          order={reviewOrder}
+          products={products}
+          customPrices={customPrices}
+          printing={printer.printing}
+          onPrint={handleReviewPrint}
+          onEdit={handleReviewEdit}
+          onNewOrder={handleReviewNewOrder}
+        />
+      )}
 
       {draftsOpen && (
         <POSDraftsModal
