@@ -3,7 +3,9 @@
 import { JSDOM } from 'jsdom';
 import React from 'react';
 
-const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
+// `url` matters: jsdom refuses localStorage on an opaque origin, and api/client.js
+// reads it to pick the active profile.
+const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 
 globalThis.window   = dom.window;
 globalThis.document = dom.window.document;
@@ -13,6 +15,7 @@ globalThis.Node     = dom.window.Node;
 globalThis.Event    = dom.window.Event;
 globalThis.KeyboardEvent = dom.window.KeyboardEvent;
 globalThis.MouseEvent    = dom.window.MouseEvent;
+globalThis.localStorage = dom.window.localStorage;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const { createRoot } = await import('react-dom/client');

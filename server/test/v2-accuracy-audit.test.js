@@ -397,6 +397,55 @@ describe('V2 accuracy audit', () => {
       if (n > 200) assert.equal(body.length, 200);
     });
 
+    it('a discarded order is hidden from POS History; a deliberate cancel is not', async () => {
+      const p = await mkProduct('AUD_DISCARD', 20);
+      const mkOrder = async () => {
+        const { body } = await json(await api('/orders', {
+          method: 'POST',
+          body: JSON.stringify({ customer_id: customerId,
+            items: [{ product_id: p.id, quantity: 2, unit_price: 100 }] }),
+        }));
+        return body;
+      };
+
+      const discarded = await mkOrder();
+      const cancelled = await mkOrder();
+      assert.equal(await stockOf(p.id), 16);
+
+      // POSReviewExitConfirm "Discard" — a cancel carrying the discard marker.
+      const { body: afterDiscard } = await json(await api(`/orders/${discarded.id}/status`, {
+        method: 'POST', body: JSON.stringify({ status: 'cancelled', discard: true }) }));
+      // POSHistoryModal's own Cancel — a deliberate decision about an existing order.
+      const { body: afterCancel } = await json(await api(`/orders/${cancelled.id}/status`, {
+        method: 'POST', body: JSON.stringify({ status: 'cancelled' }) }));
+
+      // Both are ordinary cancellations: same status, stock back either way.
+      assert.equal(afterDiscard.status, 'cancelled');
+      assert.equal(afterCancel.status, 'cancelled');
+      assert.equal(await stockOf(p.id), 20);
+      assert.ok(afterDiscard.discarded_at, 'the discard is marked');
+      assert.equal(afterCancel.discarded_at, null, 'a plain cancel is not a discard');
+
+      // POS History (exclude_discarded=1) shows the cancel and not the discard...
+      const { body: posHistory } = await json(await api('/orders?status=cancelled&exclude_discarded=1'));
+      const posIds = posHistory.map((o) => o.id);
+      assert.ok(posIds.includes(cancelled.id), 'a deliberate cancel still shows in POS History');
+      assert.equal(posIds.includes(discarded.id), false, 'a discard never clutters POS History');
+
+      // ...while V1's list is untouched: without the flag both are still returned.
+      const { body: v1List } = await json(await api('/orders?status=cancelled'));
+      const v1Ids = v1List.map((o) => o.id);
+      assert.ok(v1Ids.includes(cancelled.id));
+      assert.ok(v1Ids.includes(discarded.id), 'the discard stays auditable outside the POS');
+
+      // A discard is its own activity_logs action, distinct from a status change.
+      const { rows: [log] } = await db.query(
+        `SELECT action, summary FROM activity_logs
+          WHERE entity_type='order' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [discarded.id]);
+      assert.equal(log.action, 'discarded');
+      assert.match(log.summary, /discarded at the POS review/);
+    });
+
     it('a negative unit price is rejected end-to-end (F6)', async () => {
       const p = await mkProduct('AUD_NEGATIVE_PRICE', 10, 100);
       const { status } = await json(await api('/orders', {

@@ -24,7 +24,9 @@ const datePill = (active) =>
 // Order history for the V2 POS. Only the states V2 admits are ever fetched: Created
 // (backend `pending`) and Cancelled. Drafts have their own popup (POSDraftsModal), and
 // in_transit/completed/done are never requested, so they can never surface here
-// (see proposal §2.1).
+// (see proposal §2.1). Orders discarded at the review stage are cancelled too, but they
+// were abandoned before they ever left the counter, so `exclude_discarded=1` keeps them
+// out of the Cancelled list; a deliberate cancel from this popup still shows.
 export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged }) {
   const { addToast } = useToast();
 
@@ -41,7 +43,10 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
 
   const load = () => {
     setLoading(true);
-    Promise.all([api.get('/orders?status=pending'), api.get('/orders?status=cancelled')])
+    Promise.all([
+      api.get('/orders?status=pending&exclude_discarded=1'),
+      api.get('/orders?status=cancelled&exclude_discarded=1'),
+    ])
       .then(([created, cancelled]) =>
         setOrders([...created, ...cancelled].sort(
           (a, b) => new Date(b.created_at) - new Date(a.created_at)

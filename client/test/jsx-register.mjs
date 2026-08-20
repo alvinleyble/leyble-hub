@@ -17,9 +17,15 @@ registerHooks({
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
-    if (url.startsWith('file:') && url.endsWith('.jsx')) {
-      const { code } = transformSync(readFileSync(fileURLToPath(url), 'utf8'),
-        { loader: 'jsx', format: 'esm', sourcefile: url });
+    // Everything under client/src goes through esbuild: .jsx for the syntax, .js so
+    // Vite-only `import.meta.env` (api/client.js) resolves instead of throwing.
+    if (url.startsWith('file:') && /\/client\/src\/.*\.jsx?$/.test(url)) {
+      const { code } = transformSync(readFileSync(fileURLToPath(url), 'utf8'), {
+        loader: url.endsWith('.jsx') ? 'jsx' : 'js',
+        format: 'esm',
+        sourcefile: url,
+        define: { 'import.meta.env': '{}' },
+      });
       return { format: 'module', shortCircuit: true, source: code };
     }
     return nextLoad(url, context);

@@ -601,22 +601,24 @@ export default function POSPage() {
     startNewOrder();
   };
 
-  // "Discard" — a saved order can never be deleted (DELETE /orders/:id takes drafts
-  // only), so this cancels it: stock restored, kept in History as Cancelled.
+  // "Discard" — abandoning a fresh order in the moment, distinct from cancelling an
+  // existing one from History. A saved order can never be deleted (DELETE /orders/:id
+  // takes drafts only), so this cancels it with `discard`, which restores the stock and
+  // keeps it out of POS History (migration 031).
   const discardReviewedOrder = async () => {
     const target = reviewOrder || savedOrder;
     if (!target) return;
     setConfirmBusy(true);
     try {
-      await api.post(`/orders/${target.id}/status`, { status: 'cancelled' });
-      addToast(`Order #${target.id} cancelled — stock restored.`, 'success');
+      await api.post(`/orders/${target.id}/status`, { status: 'cancelled', discard: true });
+      addToast(`Order #${target.id} discarded — stock restored.`, 'success');
       setReviewExit(false);
       setReviewOpen(false);
       setReviewOrder(null);
       startNewOrder();
       refreshCounts();
     } catch (err) {
-      addToast(err.message || 'Failed to cancel the order.', 'error');
+      addToast(err.message || 'Failed to discard the order.', 'error');
     } finally {
       setConfirmBusy(false);
     }
