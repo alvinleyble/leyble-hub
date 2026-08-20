@@ -102,12 +102,13 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 
 | Slice # | Status | Slice Name | Scope Summary |
 | :--- | :--- | :--- | :--- |
-| **Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
-| **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. |
-| **Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
-| **Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS, and "Save custom price?" prompt. |
-| **Slice 5** | ⬜ Not started | **Android Sync & Dual-App Verification** | Capacitor Android sync, `com.leyble.hub.pos` dual-app ID configuration, production Gradle build, `Pixel_Tablet` emulator headed verification. Final slice of V2.0. |
-| *(Deferred)* | ⏳ **V3.0** | **Voice AI (OpenAI API)** | Re-queued to **V3.0** (OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing). |
+| **V2.0 Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
+| **V2.0 Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. |
+| **V2.0 Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
+| **V2.0 Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS, and "Save custom price?" prompt. |
+| **V2.0 Slice 5** | ⬜ Not started | **Android Sync & Dual-App Verification** | Capacitor Android sync, `com.leyble.hub.pos` dual-app ID configuration, production Gradle build, `Pixel_Tablet` emulator headed verification. Concluding slice of V2.0. |
+| **V2.5 Slice 1** | ⏳ **Queued (Grill)** | **Offline Accessibility** | Offline order creation, local IndexedDB/SQLite cache, background reconnect sync, and conflict resolution policies. |
+| **V3.0 Slice 1** | ⏳ **Queued** | **Voice AI (OpenAI API)** | OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing (re-allocated from earlier V2 draft). |
 
 ### Slice 1 — what shipped
 
@@ -198,8 +199,10 @@ Dependency + value order; each step lands as one fully-serial PR before the next
 ---
 
 #### **Future Releases on Roadmap**
-* **V2.5 — Offline Accessibility (Queued for Grilling):** Local storage / indexedDB offline caching, offline order creation on POS, background synchronization upon network reconnection, and conflict resolution rules during store internet drops.
-* **V3.0 — Voice AI (Taglish Parsing):** OpenAI API integration for Taglish voice order creation and catalog queries across POS, Inventory, and Customers (re-queued from earlier V2 scope).
+* **V2.5 (Offline Operations):**
+  * **Slice 1 — Offline Accessibility (Queued for Grilling):** Local storage / IndexedDB offline caching, offline order creation on POS, background synchronization upon network reconnection, and conflict resolution rules during store internet drops.
+* **V3.0 (AI-Powered Operations):**
+  * **Slice 1 — Voice AI (Taglish Parsing):** OpenAI API integration for Taglish voice order creation and catalog queries across POS, Inventory, and Customers.
 
 ---
 
