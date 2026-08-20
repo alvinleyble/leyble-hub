@@ -103,11 +103,11 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | Slice # | Status | Slice Name | Scope Summary |
 | :--- | :--- | :--- | :--- |
 | **Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
-| **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
+| **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. |
 | **Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
-| **Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
-| **Slice 4** | ⬜ Not started | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
-| **Slice 5** | ⬜ Not started | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
+| **Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS, and "Save custom price?" prompt. |
+| **Slice 5** | ⬜ Not started | **Android Sync & Dual-App Verification** | Capacitor Android sync, `com.leyble.hub.pos` dual-app ID configuration, production Gradle build, `Pixel_Tablet` emulator headed verification. Final slice of V2.0. |
+| *(Deferred)* | ⏳ **V3.0** | **Voice AI (OpenAI API)** | Re-queued to **V3.0** (OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing). |
 
 ### Slice 1 — what shipped
 
@@ -183,17 +183,23 @@ with components under `client/src/components/customers/` and `client/src/compone
 | Live Suki pricing sync with POS | `POSPage.jsx` — automatic price recomputation on customer select, line item add, or order type toggle (`delivery` ↔ `pickup`) |
 | "Save custom price?" prompt on order submit | `POSSavePriceModal.jsx` + `POSPage.jsx` — hand-edited lines detected at submit; 2-step prompt for regular customers (convert to wholesaler + save rates) and 1-step prompt for wholesalers, non-blocking on dismissal (matches `save-custom-price-prompt.md`) |
 
-### Build Order (recommended)
+### Build Order & Release Roadmap
 
 Dependency + value order; each step lands as one fully-serial PR before the next starts.
 
-0. **Backend stock trio (prerequisite)** — deduct-on-finalize · restore-on-cancel · reconcile-on-edit, with unit tests. Lands first: the POS "Save Order" depends on it to deduct stock correctly from day one.
-1. **Slice 0 — Shell & Nav** — dark tokens, tablet shell, 3-screen nav + Back Office drawer.
-2. **Slice 1 — POS** — 2-tap Save→Print, customer search, product grid + 3-row category matrix, 0.5-case steppers, deposit display, history popup, Amber Edit. Highest value.
-3. **Slice 2 — Inventory (price-first)** — batch price edit + in-line price edits first, then the stock tools (detail drawer, Physical Count).
-4. **Slice 3 — Customers & Suki** — suki pricing matrix + live sync to POS.
-5. **Slice 5 — Android build & verification** — headed-emulator verification on every slice; final production APK at the end.
-6. **Slice 4 — Voice AI** — deferred, after the core is live and stable.
+#### **V2.0 — Tablet POS Overhaul (Active)**
+0. **Backend stock trio (prerequisite)** — ✅ Done (PR #1).
+1. **Slice 0 — Shell & Nav** — ✅ Done (PR #2).
+2. **Slice 1 — POS, History & Receipt** — ✅ Done (PR #3).
+3. **Slice 2 — Inventory & Stock** — ✅ Done (PR #4).
+4. **Slice 3 — Customers & Suki Pricing** — ✅ Done (PR #5).
+5. **Slice 5 — Android Build & Dual-App Verification** — ⬜ Next up (Capacitor sync, `com.leyble.hub.pos` profile, Gradle build, emulator pass, final V2.0 production APK).
+
+---
+
+#### **Future Releases on Roadmap**
+* **V2.5 — Offline Accessibility (Queued for Grilling):** Local storage / indexedDB offline caching, offline order creation on POS, background synchronization upon network reconnection, and conflict resolution rules during store internet drops.
+* **V3.0 — Voice AI (Taglish Parsing):** OpenAI API integration for Taglish voice order creation and catalog queries across POS, Inventory, and Customers (re-queued from earlier V2 scope).
 
 ---
 
