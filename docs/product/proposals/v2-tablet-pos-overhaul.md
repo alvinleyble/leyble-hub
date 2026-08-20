@@ -234,3 +234,16 @@ client/src/
 * **Rationale:**
   * Production is a single cloud environment with no staging; the owners cannot realistically be asked to reinstall the APK multiple times across slice iterations.
   * The backend stock trio timing change (deduct on finalize) is a pure backend change not gated behind a V2 UI flag. Merging it to `main` early would immediately alter stock deduction behavior in the live V1 app before the V2 POS interface is deployed. All commits must remain on `dev` until the full batched V2 cutover.
+
+---
+
+## 7. Dual-App Coexistence & Android Package Identity (Locked 2026-08-20)
+
+* **Coexistence Model:** V1 and V2 co-exist concurrently on user devices as two independent Android applications connecting to the exact same backend API and PostgreSQL database. See [ADR 0002](../../adr/0002-v1-v2-dual-app-coexistence.md).
+* **Package Profiles:**
+  * **V1 App ("Leyble Hub Classic"):** `appId: com.leyble.hub`, `appName: "Leyble Hub"`, landing on `/dashboard`. Retains all V1 back-office modules and desktop flows.
+  * **V2 App ("Leyble Hub POS"):** `appId: com.leyble.hub.pos`, `appName: "Leyble Hub POS"`, landing on `/v2/pos`. Fast 2-tap POS, Price/Stock management, and Suki customer profiles.
+* **Shared Real-Time State:**
+  * All database records are unified. Orders saved in V2 POS immediately deduct inventory stock and appear in V1 order history and audit logs.
+  * Suki custom pricing configured in either version applies across both apps.
+* **Slice 5 Scope:** Slice 5 will configure the Capacitor build artifacts for `com.leyble.hub.pos` so installing the V2 APK installs cleanly alongside V1 on the Honor Pad X8B tablet without overwriting the existing installation.
