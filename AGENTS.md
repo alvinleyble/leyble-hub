@@ -110,6 +110,15 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via
   `options.copies` / `options.autoTag`, and the deposit on a pending receipt via
   `overrides.showDeposit` — V1's prompts and receipts are unchanged.
+- **Inventory (Slice 2, done):** [client/src/pages/inventory/InventoryV2Page.jsx](client/src/pages/inventory/InventoryV2Page.jsx)
+  plus `client/src/components/inventory/`. Ships with zero backend changes — batch price edit
+  (`InventoryBatchPriceModal.jsx`, reason required client-side), in-line price edit and the
+  `w/ dep` toggle (both inline in `InventoryV2Page.jsx`, PATCH `/products/:id` per field) and the
+  product detail/audit drawer (`ProductDetailDrawer.jsx`, "Adjust Stock & Audit" + "Recent Stock
+  Movements") all reuse V1's existing `products` routes as-is. The physical stock count sheet
+  (`productCountSheetHtml`/`productCountSheetEscPos` in `pages/shared/`) is new and distinct from
+  V1's price-list print — blank `Counted:` line per item instead of the system count. No per-row
+  `−1`/`+1` steppers (V1 had none in its table either).
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
