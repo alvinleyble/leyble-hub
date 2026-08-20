@@ -28,6 +28,27 @@ Vite dev proxy: `/api` → `http://localhost:3000`
 DB: `DATABASE_URL=postgresql://localhost/leyble_hub`
 **Never expose `server/.env` contents** — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`.
 
+### Tests
+
+```bash
+# API integration suites — run against a throwaway DB, never the dev one
+createdb leyble_hub_v2audit && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit node server/db/migrate.js
+cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit \
+  JWT_SECRET='test-jwt-secret-key-32-chars-minimum!!' npm test
+
+# Component tests (jsdom + react-dom, no framework; client/test/jsx-register.mjs
+# transforms .jsx with esbuild so the real components import directly)
+cd client && npm test
+
+# Pure client modules (posMath, ESC/POS + HTML receipts)
+node --test audit-client.test.mjs
+```
+
+`server/test/v2-accuracy-audit.test.js` + `audit-client.test.mjs` come from the V2 accuracy audit
+and deliberately **pin some still-broken behaviour** (the closed-order deposit total, the ESC/POS
+non-ASCII bytes, the blank no-SKU receipt line). Invert those assertions as each fix lands rather
+than treating a passing run as "all correct".
+
 ---
 
 ## Tech stack
@@ -103,6 +124,12 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   reversing proposal §2.4 — lines still carry `unit_deposit_fee` for V1's close flow). POS copy
   says "order", never "ticket". Two popups share `POSListModal.jsx`: History (Created +
   Cancelled) and Drafts (`status=draft`, resume puts the draft back on the POS keeping its id).
+  Catalogue cards price through `priceFor` — the picked customer's rate for the current
+  channel, with a "Suki" pill when it differs from standard. Dismissing the review modal
+  (Escape / backdrop / ✕) opens `POSReviewExitConfirm` — void / keep & print later /
+  continue — and never enters Edit Mode; leaving Edit Mode restores whatever was parked,
+  print buffer included. The debounced draft save also parks the adjustment (its own
+  endpoint), and neither the POS nor `insertItems` accepts a negative price.
   Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
   mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes

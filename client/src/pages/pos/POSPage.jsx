@@ -8,6 +8,7 @@ import POSDraftsModal from '../../components/pos/POSDraftsModal';
 import POSHistoryModal from '../../components/pos/POSHistoryModal';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import POSOrderPanel from '../../components/pos/POSOrderPanel';
+import POSReviewExitConfirm from '../../components/pos/POSReviewExitConfirm';
 import POSReviewModal from '../../components/pos/POSReviewModal';
 import POSSavePriceModal from '../../components/pos/POSSavePriceModal';
 import { roundQty } from '../../components/pos/posMath';
@@ -50,6 +51,7 @@ export default function POSPage() {
   const [draftStatus, setDraftStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const creatingDraftRef = useRef(false);
   const draftPromiseRef  = useRef(null);   // in-flight draft create, awaited by Save Order
+  const lastSavedAdjRef  = useRef({ value: 0, reason: '' });  // adjustment already on the draft
 
   // ── Stage / mode ───────────────────────────────────────────────────────────
   const [savedOrder, setSavedOrder] = useState(null); // set after Save Order → print stage
@@ -63,6 +65,7 @@ export default function POSPage() {
   const [draftsOpen, setDraftsOpen]   = useState(false);
   const [reviewOpen, setReviewOpen]   = useState(false);
   const [reviewOrder, setReviewOrder] = useState(null);
+  const [reviewExit, setReviewExit]   = useState(false);  // 3-choice dismiss dialog
   // Counts on the two top-bar buttons: parked drafts, and today's orders whose receipt
   // was never confirmed printed (the count the old standalone alert used to carry).
   const [draftCount, setDraftCount]         = useState(0);
@@ -237,17 +240,32 @@ export default function POSPage() {
       .catch(() => { creatingDraftRef.current = false; draftPromiseRef.current = null; setDraftStatus('idle'); });
   }, [mode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The draft payload carries no adjustment — it lives on its own endpoint — so park it
+  // explicitly, or a resumed draft comes back with its discount silently dropped.
+  const saveDraftAdjustment = async (id) => {
+    const value  = Number(adjustment.value) || 0;
+    const reason = adjustment.reason.trim();
+    if (value === lastSavedAdjRef.current.value && reason === lastSavedAdjRef.current.reason) return;
+    if (value !== 0 && !reason) return;   // the endpoint 400s on a non-zero adjustment with no reason
+    await api.patch(`/orders/${id}/adjustment`, { adjustment: value, adjustment_reason: reason });
+    lastSavedAdjRef.current = { value, reason };
+  };
+
   // Debounced auto-save of the live order onto the draft.
   useEffect(() => {
     if (mode !== 'build' || !draftId || saving) return;
     setDraftStatus('saving');
-    const t = setTimeout(() => {
-      api.patch(`/orders/${draftId}`, orderBody())
-        .then(() => setDraftStatus('saved'))
-        .catch(() => setDraftStatus('idle'));
+    const t = setTimeout(async () => {
+      try {
+        await api.patch(`/orders/${draftId}`, orderBody());
+        await saveDraftAdjustment(draftId);
+        setDraftStatus('saved');
+      } catch (_) {
+        setDraftStatus('idle');
+      }
     }, 800);
     return () => clearTimeout(t);
-  }, [mode, draftId, saving, customerId, orderType, notes, items]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, draftId, saving, customerId, orderType, notes, items, adjustment]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save / update ──────────────────────────────────────────────────────────
 
@@ -258,6 +276,8 @@ export default function POSPage() {
     else if (items.some((i) => !Number(i.quantity))) e.items = 'Every line needs a quantity.';
     else if (items.some((i) => i.unit_price === '' || Number.isNaN(Number(i.unit_price))))
       e.items = 'Every line needs a price per case.';
+    else if (items.some((i) => Number(i.unit_price) < 0))
+      e.items = 'A price per case cannot be negative.';
     if (Number(adjustment.value) !== 0 && !adjustment.reason.trim())
       e.adjustment = 'Give a reason for the discount / adjustment.';
     return e;
@@ -326,7 +346,9 @@ export default function POSPage() {
         const created = await api.post('/orders', finalPayload());
         orderId = created.id;
       }
-      await syncAdjustment(orderId, null);
+      await syncAdjustment(orderId, openDraftId
+        ? { adjustment: lastSavedAdjRef.current.value, adjustment_reason: lastSavedAdjRef.current.reason }
+        : null);
 
       const full = await api.get(`/orders/${orderId}`);
       setSavedOrder(full);
@@ -481,6 +503,7 @@ export default function POSPage() {
     setDraftStatus('idle');
     creatingDraftRef.current = false;
     draftPromiseRef.current = null;
+    lastSavedAdjRef.current = { value: 0, reason: '' };
   };
 
   const startNewOrder = () => {
@@ -499,10 +522,16 @@ export default function POSPage() {
   };
 
   const enterEditMode = (order) => {
-    // Park whatever is on the order panel so exiting edit mode gives it straight back.
-    buildStash.current = mode === 'build'
-      ? { customerId, orderType, items, notes, adjustment, draftId, draftStatus }
-      : null;
+    // Park whatever is on the order panel so exiting edit mode gives it straight back —
+    // including the saved order behind the print buffer, so Edit → Exit from the print
+    // stage returns to Print / Review / Edit instead of a blank panel.
+    buildStash.current = mode === 'edit'
+      ? null
+      : {
+          customerId, orderType, items, notes, adjustment, draftId, draftStatus,
+          savedOrder:   mode === 'saved' ? savedOrder : null,
+          lastSavedAdj: lastSavedAdjRef.current,
+        };
 
     setSavedOrder(null);
     setPrintOrder(null);
@@ -559,6 +588,37 @@ export default function POSPage() {
     startNewOrder();
   };
 
+  // Dismissing the review (Escape / backdrop / ✕) is ambiguous on a tablet, so it asks
+  // rather than silently dropping into edit mode or throwing the print buffer away.
+  const handleReviewClose = () => setReviewExit(true);
+
+  const closeReviewKeeping = () => {
+    const target = reviewOrder || savedOrder;
+    setReviewExit(false);
+    setReviewOpen(false);
+    setReviewOrder(null);
+    if (target) setSavedOrder(target);
+  };
+
+  const voidReviewedOrder = async () => {
+    const target = reviewOrder || savedOrder;
+    if (!target) return;
+    setConfirmBusy(true);
+    try {
+      await api.post(`/orders/${target.id}/status`, { status: 'cancelled' });
+      addToast(`Order #${target.id} cancelled — stock restored.`, 'success');
+      setReviewExit(false);
+      setReviewOpen(false);
+      setReviewOrder(null);
+      startNewOrder();
+      refreshCounts();
+    } catch (err) {
+      addToast(err.message || 'Failed to cancel the order.', 'error');
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
   // Resume a parked draft: it goes back on the POS in build mode with its draft id, so
   // the debounced auto-save keeps updating that same draft and Save Order finalizes it.
   // Any draft already on screen simply stays a draft — it reappears in the Drafts popup.
@@ -588,13 +648,18 @@ export default function POSPage() {
     })));
     setDraftId(order.id);
     setDraftStatus('saved');
+    lastSavedAdjRef.current = {
+      value:  Number(order.adjustment) || 0,
+      reason: order.adjustment_reason || '',
+    };
     creatingDraftRef.current = true;   // this draft exists; don't create another
     draftPromiseRef.current = null;
     setErrors({});
     setDraftsOpen(false);
   };
 
-  const exitEditMode = () => {
+  // `dropOrderId` — the order just cancelled must not come back on the print buffer.
+  const exitEditMode = ({ dropOrderId = null } = {}) => {
     setEditOrder(null);
     const stash = buildStash.current;
     buildStash.current = null;
@@ -607,6 +672,8 @@ export default function POSPage() {
       setDraftId(stash.draftId);
       setDraftStatus(stash.draftStatus);
       creatingDraftRef.current = Boolean(stash.draftId);
+      lastSavedAdjRef.current = stash.lastSavedAdj ?? { value: 0, reason: '' };
+      setSavedOrder(stash.savedOrder && stash.savedOrder.id !== dropOrderId ? stash.savedOrder : null);
       setErrors({});
     } else {
       blankOrder();
@@ -619,7 +686,7 @@ export default function POSPage() {
       await api.post(`/orders/${orderId}/status`, { status: 'cancelled' });
       addToast(`Order #${orderId} cancelled — stock restored.`, 'success');
       setConfirm(null);
-      if (editOrder?.id === orderId) exitEditMode();
+      if (editOrder?.id === orderId) exitEditMode({ dropOrderId: orderId });
       if (savedOrder?.id === orderId) startNewOrder();
       refreshCounts();
     } catch (err) {
@@ -663,6 +730,7 @@ export default function POSPage() {
           products={products}
           orderQty={orderQty}
           onAdd={addProduct}
+          priceFor={priceFor}
           disabled={mode === 'saved'}
           headerActions={
             <>
@@ -744,7 +812,21 @@ export default function POSPage() {
           printing={printer.printing}
           onPrint={handleReviewPrint}
           onEdit={handleReviewEdit}
+          onClose={handleReviewClose}
           onNewOrder={handleReviewNewOrder}
+        />
+      )}
+
+      {reviewExit && (
+        <POSReviewExitConfirm
+          orderId={(reviewOrder || savedOrder)?.id}
+          customerName={(reviewOrder || savedOrder)?.customer_name}
+          canVoid={Boolean((reviewOrder || savedOrder)?.id)
+                   && (reviewOrder || savedOrder)?.status !== 'cancelled'}
+          loading={confirmBusy}
+          onVoid={voidReviewedOrder}
+          onKeep={closeReviewKeeping}
+          onContinue={() => setReviewExit(false)}
         />
       )}
 

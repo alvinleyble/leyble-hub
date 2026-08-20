@@ -9,15 +9,22 @@ export const ALL_CATEGORIES = '__all__';
 
 // One catalogue card. Tapping adds half a case and holding accelerates, exactly
 // like the −/+ steppers on the order lines (shared useHoldRepeat).
-function ProductCard({ product, quantity, onAdd, disabled }) {
+function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
   const add = useHoldRepeat(() => onAdd(product));
+
+  // The card must read the same price the line will be created with — the selected
+  // customer's rate for the current delivery/pickup channel, not the standard price.
+  const base      = Number(product.base_wholesale_price);
+  const effective = priceFor(product);
+  const isSuki    = effective !== base;
 
   return (
     <button
       type="button"
       {...(disabled ? {} : add)}
       disabled={disabled}
-      aria-label={`Add half a case of ${product.name} ${product.sku ? `(${product.sku})` : ''}`}
+      aria-label={`Add half a case of ${product.name} ${product.sku ? `(${product.sku})` : ''}, `
+                  + `${PHP(effective)} per case${isSuki ? ', Suki price' : ''}`}
       className={`flex h-full w-full touch-none select-none flex-col rounded-xl border p-3 text-left
                   transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2
                   focus-visible:ring-v2-accent disabled:opacity-50
@@ -40,9 +47,24 @@ function ProductCard({ product, quantity, onAdd, disabled }) {
 
       <span className="text-sm text-v2-muted">{product.category}</span>
 
-      <span className="mt-auto pt-2 text-lg font-bold text-v2-text">
-        {PHP(product.base_wholesale_price)}
-        <span className="text-sm font-semibold text-v2-muted"> /cs</span>
+      <span className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-1 pt-2">
+        <span className="text-lg font-bold text-v2-text">
+          {PHP(effective)}
+          <span className="text-sm font-semibold text-v2-muted"> /cs</span>
+        </span>
+        {isSuki && (
+          <span
+            style={{
+              backgroundColor: 'var(--v2-suki-badge-bg)',
+              borderColor: 'var(--v2-suki-badge-border)',
+              color: 'var(--v2-suki-badge-text)',
+            }}
+            className="inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-bold"
+            aria-hidden="true"
+          >
+            Suki
+          </span>
+        )}
       </span>
     </button>
   );
@@ -52,7 +74,14 @@ function ProductCard({ product, quantity, onAdd, disabled }) {
 // Categories" pill plus one pill per production category — ~12 of them wrap into
 // three rows on the tablet) and clean, icon-free product cards showing just name,
 // category and price per case.
-export default function POSProductGrid({ products, orderQty, onAdd, disabled = false, headerActions = null }) {
+export default function POSProductGrid({
+  products,
+  orderQty,
+  onAdd,
+  disabled = false,
+  headerActions = null,
+  priceFor = (p) => Number(p.base_wholesale_price),
+}) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [query, setQuery]       = useState('');
 
@@ -139,6 +168,7 @@ export default function POSProductGrid({ products, orderQty, onAdd, disabled = f
                   quantity={orderQty[p.id] ?? 0}
                   onAdd={onAdd}
                   disabled={disabled}
+                  priceFor={priceFor}
                 />
               </li>
             ))}

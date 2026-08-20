@@ -19,20 +19,23 @@ export default function POSReviewModal({
   printing = false,
   onPrint,
   onEdit,
+  onClose,
   onNewOrder,
 }) {
   const modalRef = useRef(null);
 
   useEffect(() => {
     modalRef.current?.focus();
+    // Escape / backdrop / ✕ mean "close", never "edit" — dismissing the review must
+    // not drop the operator into amber edit mode they never asked for.
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        onEdit();
+        onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onEdit]);
+  }, [onClose]);
 
   if (!order) return null;
 
@@ -61,7 +64,7 @@ export default function POSReviewModal({
       aria-modal="true"
       aria-labelledby="pos-review-title"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onEdit();
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -103,8 +106,8 @@ export default function POSReviewModal({
 
           <button
             type="button"
-            onClick={onEdit}
-            aria-label="Close review and edit order"
+            onClick={onClose}
+            aria-label="Close review"
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-xl text-v2-muted
                        hover:bg-v2-raised hover:text-v2-text focus-visible:outline-none
                        focus-visible:ring-2 focus-visible:ring-v2-accent"
