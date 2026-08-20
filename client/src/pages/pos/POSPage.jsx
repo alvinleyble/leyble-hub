@@ -8,7 +8,6 @@ import POSDraftsModal from '../../components/pos/POSDraftsModal';
 import POSHistoryModal from '../../components/pos/POSHistoryModal';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import POSOrderPanel from '../../components/pos/POSOrderPanel';
-import POSReviewExitConfirm from '../../components/pos/POSReviewExitConfirm';
 import POSReviewModal from '../../components/pos/POSReviewModal';
 import POSSavePriceModal from '../../components/pos/POSSavePriceModal';
 import { roundQty } from '../../components/pos/posMath';
@@ -65,7 +64,6 @@ export default function POSPage() {
   const [draftsOpen, setDraftsOpen]   = useState(false);
   const [reviewOpen, setReviewOpen]   = useState(false);
   const [reviewOrder, setReviewOrder] = useState(null);
-  const [reviewExit, setReviewExit]   = useState(false);  // 3-choice dismiss dialog
   // Counts on the two top-bar buttons: parked drafts, and today's orders whose receipt
   // was never confirmed printed (the count the old standalone alert used to carry).
   const [draftCount, setDraftCount]         = useState(0);
@@ -349,11 +347,8 @@ export default function POSPage() {
   // Confirm & Print: the draft becomes Created (backend `pending`), stock deducts
   // server-side and the receipt prints. This is the first irreversible step.
   const handleConfirmPrint = async () => {
-    const target = reviewOrder || savedOrder;
+    const target = reviewOrder;
     if (!target) return;
-    // Reviewing an order that is already Created (📝 Review Order, or after an edit):
-    // there is nothing left to finalize, so this is a plain reprint.
-    if (target.status !== 'draft') { handleReviewPrint(); return; }
 
     // Snapshot hand-edited ("dirty") lines against priceFor() before committing
     const dirtyItems = items.reduce((acc, i) => {
@@ -442,9 +437,8 @@ export default function POSPage() {
       buildStash.current = null;
       refreshCounts();
 
-      // Re-open review modal with fresh data
-      setReviewOrder(updatedFull);
-      setReviewOpen(true);
+      // Straight back to the print stage — the review modal is for drafts only, and this
+      // order already exists. Read it back with History's 👁️ View if needed.
 
       if (dirtyItems.length && selectedCustomer) {
         setPriceSavePrompt({
@@ -590,51 +584,19 @@ export default function POSPage() {
     setHistoryOpen(false);
   };
 
-  // ── Review modal handlers (Pre-Print Order Review & Edit ⇄ Review Loop) ────
-
-  // Reviewing a draft, the cart on the panel behind the modal is still the same order,
-  // so "Edit Items" just closes the modal. Only a finalized order needs Amber Edit Mode.
-  const handleReviewEdit = () => {
-    const target = reviewOrder || savedOrder;
-    setReviewOpen(false);
-    if (target && target.status !== 'draft') {
-      enterEditMode(target);
-    }
-  };
-
-  const handleReviewPrint = () => {
-    const target = reviewOrder || savedOrder;
+  // ── Review modal handlers ─────────────────────────────────────────────────
+  // The review only ever shows a draft, and the cart it came from is still on the panel
+  // behind it, so every way out of it (✕, Escape, backdrop, ✏️ Edit Items) is the same
+  // thing: go back to the cart. Nothing is committed, so nothing needs confirming.
+  const closeReview = () => {
     setReviewOpen(false);
     setReviewOrder(null);
-    if (target) {
-      setSavedOrder(target);
-      requestPrint(target);
-    }
-  };
-
-  const handleReviewNewOrder = () => {
-    setReviewOpen(false);
-    setReviewOrder(null);
-    startNewOrder();
-  };
-
-  // Dismissing the review. On a draft nothing is committed and the cart is untouched
-  // behind the modal, so this just goes back to it. On a finalized order it asks, so an
-  // accidental backdrop tap can neither enter Edit Mode nor strand the print buffer.
-  const handleReviewClose = () => {
-    if ((reviewOrder || savedOrder)?.status === 'draft') {
-      setReviewOpen(false);
-      setReviewOrder(null);
-      return;
-    }
-    setReviewExit(true);
   };
 
   // "Draft" — the draft is already saved on the server, so this only clears the screen.
   // It reappears in the Drafts popup, count badge and all.
   const parkReviewedDraft = () => {
-    setReviewOpen(false);
-    setReviewOrder(null);
+    closeReview();
     startNewOrder();
     refreshCounts();
   };
@@ -653,21 +615,10 @@ export default function POSPage() {
     } finally {
       setConfirmBusy(false);
       setConfirm(null);
-      setReviewOpen(false);
-      setReviewOrder(null);
+      closeReview();
       startNewOrder();
       refreshCounts();
     }
-  };
-
-  // Closing the review of an order that is already Created: keep it on the POS with
-  // Print / Review / Edit live. Getting rid of it is History's Cancel, deliberately.
-  const keepReviewedOrder = () => {
-    const target = reviewOrder || savedOrder;
-    setReviewExit(false);
-    setReviewOpen(false);
-    setReviewOrder(null);
-    if (target) setSavedOrder(target);
   };
 
   // Resume a parked draft: it goes back on the POS in build mode with its draft id, so
@@ -840,10 +791,6 @@ export default function POSPage() {
           onSave={handleReview}
           onUpdate={handleUpdate}
           onPrint={() => requestPrint(savedOrder)}
-          onReview={() => {
-            setReviewOrder(savedOrder);
-            setReviewOpen(true);
-          }}
           onEditSaved={() => {
             enterEditMode(savedOrder);
           }}
@@ -860,22 +807,12 @@ export default function POSPage() {
           order={reviewOrder}
           products={products}
           customPrices={customPrices}
-          printing={printer.printing}
           saving={saving}
           onConfirm={handleConfirmPrint}
-          onEdit={handleReviewEdit}
-          onClose={handleReviewClose}
+          onEdit={closeReview}
+          onClose={closeReview}
           onDiscard={() => setConfirm({ kind: 'discard-draft', order: reviewOrder })}
           onDraft={parkReviewedDraft}
-          onNewOrder={handleReviewNewOrder}
-        />
-      )}
-
-      {reviewExit && (
-        <POSReviewExitConfirm
-          orderId={(reviewOrder || savedOrder)?.id}
-          onKeep={keepReviewedOrder}
-          onBack={() => setReviewExit(false)}
         />
       )}
 
@@ -889,6 +826,7 @@ export default function POSPage() {
 
       {historyOpen && (
         <POSHistoryModal
+          products={products}
           onClose={() => { setHistoryOpen(false); refreshCounts(); }}
           onChanged={refreshCounts}
           onEdit={enterEditMode}

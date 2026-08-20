@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
 import { productMatches } from '../../utils/productSearch';
-import CustomerOrderDetailModal from './CustomerOrderDetailModal';
+import OrderViewModal from '../pos/OrderViewModal';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -842,7 +842,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
       </div>
 
       {previewOrder && (
-        <CustomerOrderDetailModal
+        <OrderViewModal
           order={previewOrder}
           products={products}
           onClose={() => setPreviewOrder(null)}

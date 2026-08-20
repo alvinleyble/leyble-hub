@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { lineTotal, orderTotals, totalCases } from '../pos/posMath';
+import { lineTotal, orderTotals, totalCases } from './posMath';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -17,9 +17,12 @@ const ORDER_STATUS = {
   cancelled:  { label: 'Cancelled',   color: 'border-red-500/30 bg-red-950/40 text-red-400' },
 };
 
-// Tablet-optimized Read-Only Order Preview Modal for V2 Customers Drawer.
-// Styled like POSReviewModal with itemized lines, case counts, suki price badges, and totals.
-export default function CustomerOrderDetailModal({
+// Tablet-optimized read-only order view for V2. Styled like POSReviewModal — itemized
+// lines, case counts, suki price badges, totals — but with no action on the order at all:
+// it is the "look at what this order was" screen. Used by the Customers drawer's order
+// history and by the POS History popup's 👁️ View, both of which stay open behind it, so
+// its one button is ↩️ Back rather than a close.
+export default function OrderViewModal({
   order,
   products = [],
   onClose,
@@ -62,7 +65,7 @@ export default function CustomerOrderDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-3 sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="customer-order-preview-title"
@@ -244,7 +247,7 @@ export default function CustomerOrderDetailModal({
           </div>
         </div>
 
-        {/* ── Close Action ─────────────────────────────────────────────────── */}
+        {/* ── Back to whatever opened it ───────────────────────────────────── */}
         <div className="shrink-0 border-t border-v2-border bg-v2-surface px-6 py-4 flex justify-end">
           <button
             type="button"
@@ -253,7 +256,7 @@ export default function CustomerOrderDetailModal({
                        text-v2-text hover:bg-v2-border transition-colors duration-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           >
-            Close
+            ↩️ Back
           </button>
         </div>
       </div>

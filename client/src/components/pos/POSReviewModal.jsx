@@ -17,26 +17,25 @@ const formatQty = (qty) => {
   return `${n.toLocaleString('en-PH', { minimumFractionDigits: n % 1 === 0 ? 1 : 1, maximumFractionDigits: 2 })} cs`;
 };
 
-// Tablet-optimized Pre-Print Order Review Modal for V2 POS.
-// Provides a full-screen/wide, high-contrast breakdown of items, custom suki pricing,
-// and order totals before printing, with tactile 52px+ actions for the Edit ⇄ Review loop.
+// Tablet-optimized pre-print review for V2 POS — a full-screen, high-contrast breakdown
+// of items, custom suki pricing and totals, with tactile 52px+ actions.
 //
-// It reviews the order while it is still a **draft**: nothing is created and no stock
-// moves until Confirm & Print, so Discard can genuinely delete it and backing out costs
-// nothing. Reopened on an order that is already Created (📝 Review Order, or after an
-// Amber Edit), it falls back to the print/edit actions — there is nothing to confirm.
+// It reviews the order while it is still a **draft**, and only ever a draft: nothing is
+// created and no stock moves until Confirm & Print, so Discard genuinely deletes it and
+// backing out costs nothing. Dismissing it (✕ / Escape / backdrop / Edit Items) simply
+// returns to the cart, which is still sitting on the panel behind it — no confirmation,
+// because there is nothing to lose. Looking at an order that already exists is a
+// different job, done read-only from POS History's 👁️ View (OrderViewModal).
 export default function POSReviewModal({
   order,
   products = [],
   customPrices = {},
-  printing = false,
   saving = false,
   onConfirm,
   onEdit,
   onClose,
   onDiscard,
   onDraft,
-  onNewOrder,
 }) {
   const modalRef = useRef(null);
 
@@ -55,7 +54,6 @@ export default function POSReviewModal({
 
   if (!order) return null;
 
-  const isDraft = order.status === 'draft';
   const items = order.items || [];
   const adjustmentVal = Number(order.adjustment) || 0;
   const totals = orderTotals(items, adjustmentVal);
@@ -94,7 +92,7 @@ export default function POSReviewModal({
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-black uppercase tracking-wider text-v2-accent">
-                {order.id ? `${isDraft ? '📝 Draft' : 'Order'} #${order.id}` : '📝 Order Review'}
+                {order.id ? `📝 Draft #${order.id}` : '📝 Order Review'}
               </span>
               {isWholesaler ? (
                 <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-300">
@@ -242,72 +240,41 @@ export default function POSReviewModal({
 
         {/* ── Tactile Action Buttons (52px+ touch height) ────────────────────── */}
         <div className="shrink-0 border-t border-v2-border bg-v2-surface px-6 py-4 flex flex-col sm:flex-row items-stretch gap-3">
-          {isDraft ? (
-            <>
-              <button
-                type="button"
-                onClick={onDiscard}
-                disabled={saving}
-                className={`${SECONDARY} bg-red-700 text-white hover:bg-red-600`}
-              >
-                🗑️ Discard
-              </button>
+          <button
+            type="button"
+            onClick={onDiscard}
+            disabled={saving}
+            className={`${SECONDARY} bg-red-700 text-white hover:bg-red-600`}
+          >
+            🗑️ Discard
+          </button>
 
-              <button
-                type="button"
-                onClick={onDraft}
-                disabled={saving}
-                className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
-              >
-                📝 Draft
-              </button>
+          <button
+            type="button"
+            onClick={onDraft}
+            disabled={saving}
+            className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
+          >
+            📝 Draft
+          </button>
 
-              <button
-                type="button"
-                onClick={onEdit}
-                disabled={saving}
-                className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
-              >
-                ✏️ Edit Items
-              </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            disabled={saving}
+            className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
+          >
+            ✏️ Edit Items
+          </button>
 
-              <button
-                type="button"
-                onClick={onConfirm}
-                disabled={saving || printing || items.length === 0}
-                className={PRIMARY}
-              >
-                {saving ? 'Creating…' : '✅ Confirm & Print'}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onEdit}
-                className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
-              >
-                ✏️ Edit Items / Back
-              </button>
-
-              <button
-                type="button"
-                onClick={onNewOrder}
-                className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
-              >
-                ＋ New Order / Skip Print
-              </button>
-
-              <button
-                type="button"
-                onClick={onConfirm}
-                disabled={printing || items.length === 0}
-                className={PRIMARY}
-              >
-                {printing ? 'Printing…' : '🖨️ Print Receipt (2 Copies)'}
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={saving || items.length === 0}
+            className={PRIMARY}
+          >
+            {saving ? 'Creating…' : '✅ Confirm & Print'}
+          </button>
         </div>
       </div>
     </div>

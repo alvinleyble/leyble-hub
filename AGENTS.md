@@ -135,11 +135,14 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   exactly like V1's *Discard draft* — **Draft** parks it in Drafts and blanks the screen,
   and Escape / backdrop / ✕ just go back to the cart. Never word any of this as
   "closing" an order: that is the settlement step (returns counted, status `done`).
-  Reopened on an order that is already Created (📝 Review Order, or after an Amber Edit),
-  the modal falls back to print/edit and its dismissal asks via `POSReviewExitConfirm`
-  (Keep / Go Back) so the print buffer cannot be stranded; a Created order is never
-  discarded, only cancelled from History, where it stays visible as 🚫 Cancelled.
-  Leaving Edit Mode restores whatever was parked, print buffer included. The debounced draft save also parks the adjustment (its own
+  **The review modal is for drafts and only drafts** — the saved panel offers Print /
+  Edit Order / New order, nothing that reopens it. Reading back an order that already
+  exists is a separate read-only job: History's 👁️ View opens `OrderViewModal.jsx`
+  (shared with the Customers drawer's order history — it moved out of
+  `components/customers/CustomerOrderDetailModal.jsx`), whose only action is ↩️ Back to
+  the list behind it. A Created order is never discarded, only cancelled from History,
+  where it stays visible as 🚫 Cancelled. Leaving Edit Mode restores whatever was parked,
+  print buffer included. The debounced draft save also parks the adjustment (its own
   endpoint), and neither the POS nor `insertItems` accepts a negative price.
   Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
   mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.

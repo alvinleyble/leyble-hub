@@ -218,7 +218,7 @@ seamless Edit ⇄ Review loop.
 | Totals & Suki Adjustment Footer | `POSReviewModal.jsx` — displays total case count, goods subtotal, discount/suki adjustment row with reason, and grand total in prominent `3xl/4xl font-black` typography |
 | Seamless Edit ⇄ Review Loop | `POSPage.jsx` — tapping **Edit Items / Back** transitions directly into Amber Edit mode with all lines and customer state intact; tapping **Update Order** refreshes and re-opens the review modal with updated totals |
 | 52px+ Tactile Action Buttons | `POSReviewModal.jsx` — **Print Receipt (2 Copies)** (primary CTA Coke Red), **Edit Items / Back** (secondary CTA), and **New Order / Skip Print** |
-| Saved Mode Panel Review & Edit Triggers | `POSOrderPanel.jsx` — added `📝 Review Order` and `✏️ Edit Order` buttons in saved mode so operators can easily re-enter review or edit mode at any time |
+| Saved Mode Panel Edit Trigger | `POSOrderPanel.jsx` — saved mode offers `🖨️ Print Receipt`, `✏️ Edit Order` and `＋ New order`. (A `📝 Review Order` button existed briefly; it was dropped once the review modal became draft-only — reading a finished order is History's read-only `👁️ View`.) |
 | Save Custom Price Coordination | `POSSavePriceModal.jsx` (`z-[60]`) overlays cleanly on top of `POSReviewModal` (`z-50`) when dirty prices are detected at submit |
 
 ### Build Order & Release Roadmap
