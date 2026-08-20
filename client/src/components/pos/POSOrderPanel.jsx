@@ -112,6 +112,8 @@ export default function POSOrderPanel({
   onSave,
   onUpdate,
   onPrint,
+  onReview,
+  onEditSaved,
   onNewOrder,
   onClearOrder,
   onCancelOrder,
@@ -320,10 +322,26 @@ export default function POSOrderPanel({
               type="button"
               onClick={onPrint}
               disabled={printing}
-              className={`${BIG_BTN} bg-v2-print-btn text-white hover:bg-v2-print-btn-hover shadow-sm`}
+              className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent shadow-sm`}
             >
               {printing ? 'Printing…' : '🖨️ Print Receipt (2 copies)'}
             </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onReview}
+                className={`${SMALL_BTN} flex-1 bg-v2-raised text-v2-text hover:bg-v2-border`}
+              >
+                📝 Review Order
+              </button>
+              <button
+                type="button"
+                onClick={onEditSaved}
+                className={`${SMALL_BTN} flex-1 bg-amber-500 text-amber-950 hover:bg-amber-400`}
+              >
+                ✏️ Edit Order
+              </button>
+            </div>
             <button
               type="button"
               onClick={onNewOrder}
