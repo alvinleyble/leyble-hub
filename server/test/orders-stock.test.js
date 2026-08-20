@@ -504,4 +504,60 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       assert.equal(await getProductStock(prod.id), 50); // Stock restored on cancel
     });
   });
+
+  describe('7. Draft deletion (DELETE /orders/:id)', () => {
+    it('successfully deletes a draft order and leaves stock untouched', async () => {
+      const prod = await createProduct('TEST_PROD_DRAFT_DEL', 50);
+
+      // Create draft
+      const resCreate = await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: testCustomerId,
+          status: 'draft',
+          items: [{ product_id: prod.id, quantity: 10, unit_price: 100 }],
+        }),
+      });
+      assert.equal(resCreate.status, 201);
+      const draft = await resCreate.json();
+      assert.equal(draft.status, 'draft');
+
+      // Delete draft
+      const resDel = await api(`/${draft.id}`, { method: 'DELETE' });
+      assert.equal(resDel.status, 204);
+
+      // Verify draft no longer exists
+      const resGet = await api(`/${draft.id}`);
+      assert.equal(resGet.status, 404);
+
+      // Verify stock is untouched
+      assert.equal(await getProductStock(prod.id), 50);
+    });
+
+    it('rejects deletion of non-draft orders with 400', async () => {
+      const prod = await createProduct('TEST_PROD_PENDING_DEL', 50);
+
+      // Create pending order
+      const resCreate = await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: testCustomerId,
+          items: [{ product_id: prod.id, quantity: 5, unit_price: 100 }],
+        }),
+      });
+      assert.equal(resCreate.status, 201);
+      const order = await resCreate.json();
+      assert.equal(order.status, 'pending');
+
+      // Attempt to delete pending order
+      const resDel = await api(`/${order.id}`, { method: 'DELETE' });
+      assert.equal(resDel.status, 400);
+
+      // Clean up order via cancellation
+      await api(`/${order.id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
+    });
+  });
 });

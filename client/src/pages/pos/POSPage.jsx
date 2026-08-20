@@ -743,6 +743,7 @@ export default function POSPage() {
         <POSDraftsModal
           onClose={() => { setDraftsOpen(false); refreshCounts(); }}
           onResume={resumeDraft}
+          onChanged={refreshCounts}
         />
       )}
 
