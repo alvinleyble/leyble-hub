@@ -21,13 +21,18 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
   const [busyId, setBusyId]               = useState(null);
   const [discardTarget, setDiscardTarget] = useState(null);
   const [discarding, setDiscarding]       = useState(false);
+  const [bulkPrompt, setBulkPrompt]       = useState(false);
+  const [bulkBusy, setBulkBusy]           = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     api.get('/orders?status=draft')
       .then((rows) => setDrafts(rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))))
       .catch((err) => addToast(err.message || 'Failed to load drafts.', 'error'))
       .finally(() => setLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  };
+
+  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -64,6 +69,25 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
     }
   };
 
+  const discardAll = async () => {
+    setBulkBusy(true);
+    const results = await Promise.allSettled(
+      visible.map((d) => api.del(`/orders/${d.id}`))
+    );
+    const done   = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - done;
+    addToast(
+      failed
+        ? `Discarded ${done} draft${done === 1 ? '' : 's'}, ${failed} failed.`
+        : `${done} draft${done === 1 ? '' : 's'} discarded.`,
+      failed ? 'error' : 'success'
+    );
+    setBulkBusy(false);
+    setBulkPrompt(false);
+    load();
+    onChanged?.();
+  };
+
   return (
     <>
       <POSListModal
@@ -73,6 +97,19 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
         searchLabel="Search by customer or order number"
         query={query}
         onQueryChange={setQuery}
+        filters={
+          visible.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkPrompt(true)}
+                className={`${LIST_ACTION_BTN} bg-red-700 text-white hover:bg-red-600`}
+              >
+                🗑️ Discard all {visible.length} {visible.length === 1 ? 'draft' : 'drafts'}
+              </button>
+            </div>
+          ) : null
+        }
         loading={loading}
         loadingText="Loading drafts…"
         isEmpty={visible.length === 0}
@@ -105,7 +142,7 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
-                disabled={busyId === o.id || (discarding && discardTarget?.id === o.id)}
+                disabled={busyId === o.id || (discarding && discardTarget?.id === o.id) || bulkBusy}
                 onClick={() => resume(o.id)}
                 className={`${LIST_ACTION_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
               >
@@ -113,7 +150,7 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
               </button>
               <button
                 type="button"
-                disabled={busyId === o.id || (discarding && discardTarget?.id === o.id)}
+                disabled={busyId === o.id || (discarding && discardTarget?.id === o.id) || bulkBusy}
                 onClick={() => setDiscardTarget(o)}
                 className={`${LIST_ACTION_BTN} bg-red-700 text-white hover:bg-red-600`}
               >
@@ -136,6 +173,20 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
         >
           The draft order for <strong className="text-v2-text">{discardTarget.customer_name}</strong> will be
           permanently removed. It cannot be undone.
+        </POSConfirm>
+      )}
+
+      {bulkPrompt && (
+        <POSConfirm
+          title={`Discard ${visible.length} draft${visible.length === 1 ? '' : 's'}?`}
+          confirmLabel={`Yes, discard ${visible.length} ${visible.length === 1 ? 'draft' : 'drafts'}`}
+          cancelLabel="Keep them"
+          danger
+          loading={bulkBusy}
+          onConfirm={discardAll}
+          onClose={() => setBulkPrompt(false)}
+        >
+          This permanently removes {visible.length === 1 ? 'this draft' : `all ${visible.length} drafts currently listed`}. It cannot be undone.
         </POSConfirm>
       )}
     </>
