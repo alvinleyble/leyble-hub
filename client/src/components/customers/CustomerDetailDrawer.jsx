@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
 import { productMatches } from '../../utils/productSearch';
+import CustomerOrderDetailModal from './CustomerOrderDetailModal';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -127,7 +127,6 @@ function DarkProductPicker({ products, selectedProductId, onSelect }) {
 // Exposes 100% of V1 fields, dark slate styling, Delivery vs. Pickup custom pricing
 // matrix with live discount math, order history, and delete danger zone.
 export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
-  const navigate = useNavigate();
   const { addToast } = useToast();
 
   const [customer, setCustomer]     = useState(null);
@@ -146,6 +145,10 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   const [priceForm, setPriceForm]       = useState(DEFAULT_PRICE_FORM);
   const [priceErrors, setPriceErrors]   = useState({});
   const [priceSaving, setPriceSaving]   = useState(false);
+
+  // Order history read-only preview
+  const [previewOrder, setPreviewOrder]   = useState(null);
+  const [previewBusyId, setPreviewBusyId] = useState(null);
 
   // Danger zone
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -203,6 +206,21 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  const handlePreviewOrder = async (orderId) => {
+    setPreviewBusyId(orderId);
+    try {
+      const full = await api.get(`/orders/${orderId}`);
+      if (products.length === 0) {
+        await loadProducts();
+      }
+      setPreviewOrder(full);
+    } catch (err) {
+      addToast(err.message || 'Failed to load order details.', 'error');
+    } finally {
+      setPreviewBusyId(null);
+    }
+  };
 
   const set = (field) => (e) => {
     const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -735,13 +753,15 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                     return (
                       <li
                         key={o.id}
-                        onClick={() => navigate(`/v2/pos?amberOrderId=${o.id}`)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/v2/pos?amberOrderId=${o.id}`); }}
+                        onClick={() => handlePreviewOrder(o.id)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handlePreviewOrder(o.id); }}
                         role="button"
                         tabIndex={0}
-                        className="flex items-center justify-between gap-4 rounded-xl border border-v2-border bg-v2-bg p-3.5
+                        aria-busy={previewBusyId === o.id}
+                        className={`flex items-center justify-between gap-4 rounded-xl border border-v2-border bg-v2-bg p-3.5
                                    cursor-pointer transition-colors hover:bg-v2-raised
-                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+                                   ${previewBusyId === o.id ? 'opacity-60 cursor-wait' : ''}`}
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
@@ -749,6 +769,9 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${st.color}`}>
                               {st.label}
                             </span>
+                            {previewBusyId === o.id && (
+                              <span className="text-xs text-v2-muted">Loading…</span>
+                            )}
                           </div>
                           <p className="mt-1 text-xs text-v2-muted">
                             {new Date(o.created_at).toLocaleDateString('en-PH', {
@@ -817,6 +840,14 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           </div>
         )}
       </div>
+
+      {previewOrder && (
+        <CustomerOrderDetailModal
+          order={previewOrder}
+          products={products}
+          onClose={() => setPreviewOrder(null)}
+        />
+      )}
     </>
   );
 }
