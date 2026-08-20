@@ -7,8 +7,8 @@ import ProductDetailDrawer from '../../components/inventory/ProductDetailDrawer'
 import InventoryBatchPriceModal from '../../components/inventory/InventoryBatchPriceModal';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintList } from '../shared/usePrintList';
-import { productCountSheetHtml } from '../shared/listPrintTemplate';
-import { productCountSheetEscPos } from '../shared/listEscPos';
+import { productListHtml, productCountSheetHtml } from '../shared/listPrintTemplate';
+import { productListEscPos, productCountSheetEscPos } from '../shared/listEscPos';
 import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
@@ -142,7 +142,10 @@ export default function InventoryV2Page() {
     savePrinter, scanWifi, testPrint, closePicker,
   } = usePrintList();
 
-  // Physical stock count sheet — blank "Counted" line per item, distinct from a price list.
+  // Prints the full active product list (ignores on-screen search/filters) — same V1 output.
+  const handlePrintList = () => printList(productListHtml(products), productListEscPos(products));
+
+  // Physical stock count sheet — blank "Counted" line per item, distinct from the price list above.
   const handleCountSheet = () =>
     printList(productCountSheetHtml(products), productCountSheetEscPos(products));
 
@@ -208,6 +211,9 @@ export default function InventoryV2Page() {
       <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold text-v2-text">Inventory</h1>
         <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={handlePrintList} disabled={printing || products.length === 0} className={TOP_BTN}>
+            🖶 {printing ? 'Printing…' : 'Print List'}
+          </button>
           <button type="button" onClick={handleCountSheet} disabled={printing || products.length === 0} className={TOP_BTN}>
             🖶 {printing ? 'Printing…' : 'Stock Count Sheet'}
           </button>
