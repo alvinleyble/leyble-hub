@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
@@ -16,6 +16,8 @@ const NAV_ITEMS = [
 // Dark slate chrome, 52px+ touch targets, 16-18px+ text.
 export default function V2Shell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [tapCount, setTapCount] = useState(0);
+  const lastTapRef = useRef(0);
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
   const navigate = useNavigate();
@@ -25,13 +27,36 @@ export default function V2Shell() {
     navigate('/login', { replace: true });
   };
 
+  // 5 taps/clicks on "Leyble Hub" or the top-right profile area opens the Back Office drawer
+  const handleSecretTap = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current > 2500) {
+      lastTapRef.current = now;
+      setTapCount(1);
+      return;
+    }
+    lastTapRef.current = now;
+    const nextCount = tapCount + 1;
+    if (nextCount >= 5) {
+      setTapCount(0);
+      setDrawerOpen(true);
+    } else {
+      setTapCount(nextCount);
+    }
+  };
+
   return (
     <div className="v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text">
       <header className="shrink-0 flex items-center gap-3 h-[68px] px-3 bg-v2-surface border-b border-v2-border">
-        <p className="px-2 text-xl font-bold tracking-tight select-none shrink-0 flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={handleSecretTap}
+          className="px-2 text-xl font-bold tracking-tight select-none shrink-0 flex items-center gap-2.5 bg-transparent border-0 text-left focus:outline-none cursor-default"
+          aria-label="Leyble Hub"
+        >
           <span className="h-2.5 w-2.5 rounded-full bg-red-600 shadow-[0_0_8px_rgba(220,38,38,0.6)]" aria-hidden="true" />
           Leyble Hub
-        </p>
+        </button>
 
         <nav className="flex items-center gap-2 min-w-0" aria-label="Main navigation">
           {NAV_ITEMS.map(({ path, label }) => (
@@ -58,9 +83,14 @@ export default function V2Shell() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
-          <span className="hidden sm:block px-2 text-base text-v2-muted truncate max-w-[12rem]">
+          <button
+            type="button"
+            onClick={handleSecretTap}
+            className="hidden sm:block px-2 text-base text-v2-muted truncate max-w-[12rem] bg-transparent border-0 text-left focus:outline-none cursor-default select-none"
+            title="Profile"
+          >
             {activeProfile?.full_name || user?.full_name}
-          </span>
+          </button>
           <button
             type="button"
             onClick={switchProfile}
@@ -78,20 +108,6 @@ export default function V2Shell() {
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           >
             Log out
-          </button>
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            aria-haspopup="dialog"
-            aria-expanded={drawerOpen}
-            className="flex items-center gap-2 min-h-tablet px-5 rounded-xl text-lg font-semibold
-                       bg-v2-raised text-v2-text hover:bg-v2-border transition-colors duration-100
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-          >
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <path d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-            Back Office
           </button>
         </div>
       </header>
