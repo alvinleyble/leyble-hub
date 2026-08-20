@@ -156,7 +156,7 @@ export default function POSOrderPanel({
                               transition-colors duration-100 focus-visible:outline-none
                               focus-visible:ring-2 focus-visible:ring-v2-accent
                               ${orderType === value
-                                ? 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm'
+                                ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
                                 : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`}
                 >
                   {label}
@@ -320,7 +320,7 @@ export default function POSOrderPanel({
               type="button"
               onClick={onPrint}
               disabled={printing}
-              className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm`}
+              className={`${BIG_BTN} bg-v2-print-btn text-white hover:bg-v2-print-btn-hover shadow-sm`}
             >
               {printing ? 'Printing…' : '🖨️ Print Receipt (2 copies)'}
             </button>

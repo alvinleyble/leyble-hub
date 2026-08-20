@@ -525,7 +525,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       className={`flex min-h-[44px] flex-1 items-center justify-center rounded-xl border text-sm font-bold transition-colors
                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                         ${priceTab === type
-                          ? 'border-[#3F3F46] bg-[#27272A] text-white shadow-sm'
+                          ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
                           : 'border-v2-border bg-v2-bg text-v2-muted hover:bg-v2-raised hover:text-v2-text'
                         }`}
                     >

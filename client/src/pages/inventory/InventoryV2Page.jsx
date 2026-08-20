@@ -197,13 +197,13 @@ export default function InventoryV2Page() {
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
      ${active
-       ? tone === 'out' ? 'bg-red-600 text-white' : tone === 'low' ? 'bg-amber-500 text-slate-950' : 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm'
+       ? tone === 'out' ? 'bg-red-600 text-white' : tone === 'low' ? 'bg-amber-500 text-slate-950' : 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
        : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
 
   const catPill = (active) =>
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
-     ${active ? 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm' : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
+     ${active ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm' : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 px-3 pb-3 pt-2">

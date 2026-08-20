@@ -9,19 +9,25 @@ export default {
         desktop: { raw: '(min-width: 1024px) and (pointer: fine)' },
       },
       colors: {
-        // ── V2 Coca-Cola design tokens ──────────────────────────────────
+        // ── V2 Design Tokens (Theme-aware via CSS variables) ────────────
         // Used ONLY by the V2 tablet shell / nav chrome and V2 screens.
         // V1 pages (Personnel, Incoming, Tickets, Audit, …) keep their
         // existing light styling and must not consume these.
         v2: {
-          bg: '#0F0F10',              // app background — deep carbonated charcoal/black
-          surface: '#1A1A1C',        // shell chrome / cards — dark charcoal surface
-          raised: '#262629',         // hovered / raised surface
-          border: '#2E2E33',         // dividers — subtle charcoal
-          text: '#FFFFFF',           // primary text — pure crisp white
-          muted: '#A1A1AA',          // secondary / helper text — clear muted gray
-          accent: '#EF4444',          // focus rings / subtle red brand accents
-          'accent-strong': '#27272A', // active nav / clean elevated slate buttons
+          bg: 'var(--v2-bg)',
+          surface: 'var(--v2-surface)',
+          raised: 'var(--v2-raised)',
+          border: 'var(--v2-border)',
+          text: 'var(--v2-text)',
+          muted: 'var(--v2-muted)',
+          accent: 'var(--v2-accent)',
+          'accent-strong': 'var(--v2-accent-strong)',
+          'pill-active': 'var(--v2-pill-active)',
+          'pill-border': 'var(--v2-pill-border)',
+          'pill-text': 'var(--v2-pill-text)',
+          'print-btn': 'var(--v2-print-btn)',
+          'print-btn-hover': 'var(--v2-print-btn-hover)',
+          'table-hover': 'var(--v2-table-hover)',
         },
       },
       minHeight: {

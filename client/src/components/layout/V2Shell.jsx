@@ -16,6 +16,7 @@ const NAV_ITEMS = [
 // Dark slate chrome, 52px+ touch targets, 16-18px+ text.
 export default function V2Shell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('v2_theme') || 'dark');
   const [tapCount, setTapCount] = useState(0);
   const lastTapRef = useRef(0);
   const { user, logout } = useAuth();
@@ -25,6 +26,12 @@ export default function V2Shell() {
   const handleLogout = async () => {
     await logout();
     navigate('/login', { replace: true });
+  };
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    localStorage.setItem('v2_theme', nextTheme);
   };
 
   // 5 taps/clicks on "Leyble Hub" or the top-right profile area opens the Back Office drawer
@@ -46,7 +53,7 @@ export default function V2Shell() {
   };
 
   return (
-    <div className="v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text">
+    <div className={`v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text ${theme === 'light' ? 'light' : ''}`}>
       <header className="shrink-0 flex items-center gap-3 h-[68px] px-3 bg-v2-surface border-b border-v2-border">
         <button
           type="button"
@@ -68,7 +75,7 @@ export default function V2Shell() {
                  transition-colors duration-100
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                  ${isActive
-                   ? 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm'
+                   ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
                    : 'text-v2-muted hover:bg-v2-raised hover:text-v2-text'}`
               }
             >
@@ -83,6 +90,17 @@ export default function V2Shell() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex items-center justify-center min-h-tablet px-3.5 rounded-xl text-base font-semibold
+                       text-v2-muted hover:bg-v2-raised hover:text-v2-text transition-colors duration-100
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            aria-label={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+          >
+            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+          </button>
           <button
             type="button"
             onClick={handleSecretTap}
