@@ -20,8 +20,8 @@ export default {
           border: '#2E2E33',         // dividers — subtle charcoal
           text: '#FFFFFF',           // primary text — pure crisp white
           muted: '#A1A1AA',          // secondary / helper text — clear muted gray
-          accent: '#F40009',         // focus rings / highlights — iconic Coca-Cola red
-          'accent-strong': '#E41E2B', // active nav / primary CTAs — deep vibrant red
+          accent: '#DC2626',         // focus rings / highlights — balanced crimson
+          'accent-strong': '#991B1B', // active nav / primary CTAs — deep rich crimson
         },
       },
       minHeight: {
