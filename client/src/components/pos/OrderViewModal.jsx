@@ -9,6 +9,10 @@ const formatQty = (qty) => {
   return `${n.toLocaleString('en-PH', { minimumFractionDigits: n % 1 === 0 ? 1 : 1, maximumFractionDigits: 2 })} cs`;
 };
 
+const ACTION = `flex min-h-tablet items-center justify-center gap-2 whitespace-nowrap rounded-xl px-6
+                text-base font-bold transition-colors duration-100 focus-visible:outline-none
+                focus-visible:ring-2 focus-visible:ring-v2-accent disabled:opacity-50`;
+
 const ORDER_STATUS = {
   pending:    { label: 'Created',     color: 'border-blue-500/30 bg-blue-500/10 text-blue-300' },
   in_transit: { label: 'In Transit',  color: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
@@ -17,15 +21,22 @@ const ORDER_STATUS = {
   cancelled:  { label: 'Cancelled',   color: 'border-red-500/30 bg-red-950/40 text-red-400' },
 };
 
-// Tablet-optimized read-only order view for V2. Styled like POSReviewModal — itemized
-// lines, case counts, suki price badges, totals — but with no action on the order at all:
-// it is the "look at what this order was" screen. Used by the Customers drawer's order
-// history and by the POS History popup's 👁️ View, both of which stay open behind it, so
-// its one button is ↩️ Back rather than a close.
+// Tablet-optimized order view for V2 — itemized lines, case counts, suki price badges
+// and totals, styled like POSReviewModal. Whatever opened it stays mounted behind it, so
+// it leads with ↩️ Back rather than a close.
+//
+// The order itself is never edited here; the optional `onEdit` / `onReprint` / `onCancel`
+// are the same row actions POS History offers, hoisted onto the open order so the
+// operator does not have to go back and find its row again. Omit them — as the Customers
+// drawer's order history does — and the modal is purely read-only.
 export default function OrderViewModal({
   order,
   products = [],
+  busy = false,
   onClose,
+  onEdit,
+  onReprint,
+  onCancel,
 }) {
   const modalRef = useRef(null);
 
@@ -57,6 +68,9 @@ export default function OrderViewModal({
     return false;
   };
 
+  // Only a live order can be edited, reprinted or cancelled — matching the row buttons
+  // in POS History, which grey out on anything already cancelled.
+  const canAct = order.status === 'pending';
   const isWholesaler = order.customer_type === 'wholesaler';
   const st = ORDER_STATUS[order.status] ?? {
     label: order.status,
@@ -68,7 +82,7 @@ export default function OrderViewModal({
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-3 sm:p-6"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="customer-order-preview-title"
+      aria-labelledby="order-view-title"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -102,7 +116,7 @@ export default function OrderViewModal({
               </span>
             </div>
 
-            <h2 id="customer-order-preview-title" className="text-2xl sm:text-3xl font-black text-v2-text tracking-tight truncate">
+            <h2 id="order-view-title" className="text-2xl sm:text-3xl font-black text-v2-text tracking-tight truncate">
               {order.customer_name || 'Customer'}
             </h2>
 
@@ -124,7 +138,7 @@ export default function OrderViewModal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close order details"
+            aria-label="Back to the list"
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-xl text-v2-muted
                        hover:bg-v2-raised hover:text-v2-text focus-visible:outline-none
                        focus-visible:ring-2 focus-visible:ring-v2-accent"
@@ -247,17 +261,49 @@ export default function OrderViewModal({
           </div>
         </div>
 
-        {/* ── Back to whatever opened it ───────────────────────────────────── */}
-        <div className="shrink-0 border-t border-v2-border bg-v2-surface px-6 py-4 flex justify-end">
+        {/* ── Back, plus History's row actions on the open order ───────────── */}
+        <div className="shrink-0 border-t border-v2-border bg-v2-surface px-6 py-4
+                        flex flex-col sm:flex-row items-stretch gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="flex min-h-tablet w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-v2-raised px-8 text-base font-bold
-                       text-v2-text hover:bg-v2-border transition-colors duration-100
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            className={`${ACTION} bg-v2-raised text-v2-text hover:bg-v2-border sm:mr-auto sm:min-w-[8rem]`}
           >
             ↩️ Back
           </button>
+
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(order)}
+              disabled={busy || !canAct}
+              className={`${ACTION} bg-amber-500 text-amber-950 hover:bg-amber-400`}
+            >
+              ✏️ Edit
+            </button>
+          )}
+
+          {onReprint && (
+            <button
+              type="button"
+              onClick={() => onReprint(order)}
+              disabled={busy || !canAct}
+              className={`${ACTION} bg-v2-accent-strong text-white hover:bg-v2-accent`}
+            >
+              🖨️ Reprint
+            </button>
+          )}
+
+          {onCancel && (
+            <button
+              type="button"
+              onClick={() => onCancel(order)}
+              disabled={busy || !canAct}
+              className={`${ACTION} bg-red-700 text-white hover:bg-red-600`}
+            >
+              🚫 Cancel
+            </button>
+          )}
         </div>
       </div>
     </div>

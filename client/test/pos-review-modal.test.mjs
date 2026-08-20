@@ -70,7 +70,7 @@ test('✕, the backdrop, Escape and Edit Items all just return to the cart', () 
   assert.equal(calls.draft, 0);
 });
 
-test('the read-only view shows the order and offers nothing but Back', () => {
+test('the order view is read-only when no actions are passed (Customers drawer)', () => {
   let closed = 0;
   const r = render(React.createElement(OrderViewModal, {
     order: order({ status: 'pending' }),
@@ -88,4 +88,47 @@ test('the read-only view shows the order and offers nothing but Back', () => {
   r.press('Escape');
   r.click(r.all('button').find((b) => b.textContent.includes('Back')));
   assert.equal(closed, 2, 'Escape and Back both return to whatever opened it');
+});
+
+test('opened from History, the order view carries that row\'s actions', () => {
+  const calls = { close: 0, edit: 0, reprint: 0, cancel: 0 };
+  const handlers = {
+    onClose:   () => { calls.close += 1; },
+    onEdit:    (o) => { calls.edit += 1; assert.equal(o.id, 91); },
+    onReprint: (o) => { calls.reprint += 1; assert.equal(o.id, 91); },
+    onCancel:  (o) => { calls.cancel += 1; assert.equal(o.id, 91); },
+  };
+  const r = render(React.createElement(OrderViewModal, {
+    order: order({ status: 'pending' }), ...handlers,
+  }));
+
+  assert.deepEqual(labels(r), ['Back', 'Edit', 'Reprint', 'Cancel']);
+  for (const label of ['Back', 'Edit', 'Reprint', 'Cancel']) {
+    r.click(r.all('button').find((b) => b.textContent.includes(label)));
+  }
+  assert.deepEqual(calls, { close: 1, edit: 1, reprint: 1, cancel: 1 });
+  assert.ok(r.all('button').every((b) => b.className.includes('min-h-tablet') || b.getAttribute('aria-label')));
+});
+
+test('a cancelled order can be read but not acted on', () => {
+  const calls = { close: 0, edit: 0, reprint: 0, cancel: 0 };
+  const r = render(React.createElement(OrderViewModal, {
+    order: order({ status: 'cancelled' }),
+    onClose:   () => { calls.close += 1; },
+    onEdit:    () => { calls.edit += 1; },
+    onReprint: () => { calls.reprint += 1; },
+    onCancel:  () => { calls.cancel += 1; },
+  }));
+
+  assert.match(r.text(), /Cancelled/);
+  const enabled = (label) => !r.all('button').find((b) => b.textContent.includes(label)).disabled;
+  assert.equal(enabled('Edit'), false);
+  assert.equal(enabled('Reprint'), false);
+  assert.equal(enabled('Cancel'), false);
+  assert.equal(enabled('Back'), true, 'you can always get back to the list');
+
+  for (const label of ['Edit', 'Reprint', 'Cancel']) {
+    r.click(r.all('button').find((b) => b.textContent.includes(label)));
+  }
+  assert.deepEqual(calls, { close: 0, edit: 0, reprint: 0, cancel: 0 });
 });

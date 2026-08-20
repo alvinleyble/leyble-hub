@@ -130,6 +130,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
       await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
       addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
       setCancelTarget(null);
+      setViewOrder(null);   // back to the list, which reloads with the new status
       load();
       onChanged?.();
     } catch (err) {
@@ -268,12 +269,17 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
         })}
       </POSListModal>
 
-      {/* Read-only view. History stays mounted behind it, so ↩️ Back returns to the list. */}
+      {/* The open order, with the same actions its row offers. History stays mounted
+          behind it, so ↩️ Back returns to the list. */}
       {viewOrder && (
         <OrderViewModal
           order={viewOrder}
           products={products}
+          busy={busyId === viewOrder.id || cancelling}
           onClose={() => setViewOrder(null)}
+          onEdit={(o) => { setViewOrder(null); onEdit(o); }}
+          onReprint={(o) => { setViewOrder(null); onReprint(o); }}
+          onCancel={(o) => setCancelTarget(o)}
         />
       )}
 
@@ -294,6 +300,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
       {cancelTarget && (
         <POSConfirm
           title={`Cancel order #${cancelTarget.id}?`}
+          zClass={viewOrder ? 'z-[70]' : 'z-50'}
           confirmLabel="Yes, cancel the order"
           cancelLabel="Keep it"
           danger
