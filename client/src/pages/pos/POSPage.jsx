@@ -592,15 +592,18 @@ export default function POSPage() {
   // rather than silently dropping into edit mode or throwing the print buffer away.
   const handleReviewClose = () => setReviewExit(true);
 
-  const closeReviewKeeping = () => {
-    const target = reviewOrder || savedOrder;
+  // "Draft" — the order is already saved, so this only clears the screen. It stays in
+  // History (as Created) and can be reprinted from there.
+  const leaveReviewedOrder = () => {
     setReviewExit(false);
     setReviewOpen(false);
     setReviewOrder(null);
-    if (target) setSavedOrder(target);
+    startNewOrder();
   };
 
-  const voidReviewedOrder = async () => {
+  // "Discard" — a saved order can never be deleted (DELETE /orders/:id takes drafts
+  // only), so this cancels it: stock restored, kept in History as Cancelled.
+  const discardReviewedOrder = async () => {
     const target = reviewOrder || savedOrder;
     if (!target) return;
     setConfirmBusy(true);
@@ -820,13 +823,12 @@ export default function POSPage() {
       {reviewExit && (
         <POSReviewExitConfirm
           orderId={(reviewOrder || savedOrder)?.id}
-          customerName={(reviewOrder || savedOrder)?.customer_name}
-          canVoid={Boolean((reviewOrder || savedOrder)?.id)
-                   && (reviewOrder || savedOrder)?.status !== 'cancelled'}
+          canDiscard={Boolean((reviewOrder || savedOrder)?.id)
+                      && (reviewOrder || savedOrder)?.status !== 'cancelled'}
           loading={confirmBusy}
-          onVoid={voidReviewedOrder}
-          onKeep={closeReviewKeeping}
-          onContinue={() => setReviewExit(false)}
+          onDiscard={discardReviewedOrder}
+          onLeave={leaveReviewedOrder}
+          onBack={() => setReviewExit(false)}
         />
       )}
 

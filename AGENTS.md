@@ -125,10 +125,12 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   says "order", never "ticket". Two popups share `POSListModal.jsx`: History (Created +
   Cancelled) and Drafts (`status=draft`, resume puts the draft back on the POS keeping its id).
   Catalogue cards price through `priceFor` — the picked customer's rate for the current
-  channel, with a "Suki" pill when it differs from standard. Dismissing the review modal
-  (Escape / backdrop / ✕) opens `POSReviewExitConfirm` — void / keep & print later /
-  continue — and never enters Edit Mode; leaving Edit Mode restores whatever was parked,
-  print buffer included. The debounced draft save also parks the adjustment (its own
+  channel — badged with the gap from standard (`−₱55.00 (18.3%)`, emerald for a discount
+  via `--v2-discount-badge-*`, the purple `--v2-suki-badge-*` for the rarer markup).
+  Dismissing the review modal (Escape / backdrop / ✕) opens `POSReviewExitConfirm` —
+  Discard (cancel: stock back, stays in History as Cancelled) / Draft (leave the order,
+  clear the screen) / Go Back — and never enters Edit Mode; leaving Edit Mode restores
+  whatever was parked, print buffer included. The debounced draft save also parks the adjustment (its own
   endpoint), and neither the POS nor `insertItems` accepts a negative price.
   Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
   mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.

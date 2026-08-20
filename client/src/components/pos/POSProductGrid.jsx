@@ -16,7 +16,13 @@ function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
   // customer's rate for the current delivery/pickup channel, not the standard price.
   const base      = Number(product.base_wholesale_price);
   const effective = priceFor(product);
-  const isSuki    = effective !== base;
+  // How far off standard this customer's rate is, in pesos and percent — the operator
+  // quotes from this card, so the saving is spelled out rather than merely hinted at.
+  const diff      = base - effective;
+  const pct       = base > 0 ? Math.abs((diff / base) * 100).toFixed(1) : null;
+  const isSuki    = diff !== 0;
+  const isCheaper = diff > 0;
+  const gapLabel  = `${isCheaper ? '−' : '+'}${PHP(Math.abs(diff))}${pct ? ` (${pct}%)` : ''}`;
 
   return (
     <button
@@ -24,7 +30,11 @@ function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
       {...(disabled ? {} : add)}
       disabled={disabled}
       aria-label={`Add half a case of ${product.name} ${product.sku ? `(${product.sku})` : ''}, `
-                  + `${PHP(effective)} per case${isSuki ? ', Suki price' : ''}`}
+                  + `${PHP(effective)} per case`
+                  + (isSuki
+                      ? `, Suki price — ${PHP(Math.abs(diff))} ${isCheaper ? 'less' : 'more'} than `
+                        + `standard${pct ? ` (${pct}%)` : ''}`
+                      : '')}
       className={`flex h-full w-full touch-none select-none flex-col rounded-xl border p-3 text-left
                   transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2
                   focus-visible:ring-v2-accent disabled:opacity-50
@@ -52,17 +62,19 @@ function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
           {PHP(effective)}
           <span className="text-sm font-semibold text-v2-muted"> /cs</span>
         </span>
+        {/* Emerald for a discount (the normal Suki case); the standard purple Suki
+            tokens for the rarer above-standard rate, so the two never read alike. */}
         {isSuki && (
           <span
             style={{
-              backgroundColor: 'var(--v2-suki-badge-bg)',
-              borderColor: 'var(--v2-suki-badge-border)',
-              color: 'var(--v2-suki-badge-text)',
+              backgroundColor: `var(--v2-${isCheaper ? 'discount' : 'suki'}-badge-bg)`,
+              borderColor:     `var(--v2-${isCheaper ? 'discount' : 'suki'}-badge-border)`,
+              color:           `var(--v2-${isCheaper ? 'discount' : 'suki'}-badge-text)`,
             }}
-            className="inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-bold"
+            className="inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
             aria-hidden="true"
           >
-            Suki
+            {gapLabel}
           </span>
         )}
       </span>

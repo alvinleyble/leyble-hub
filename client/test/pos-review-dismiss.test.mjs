@@ -56,40 +56,45 @@ test('F5: only the explicit "Edit Items / Back" button starts an edit', () => {
   assert.equal(calls.close, 0);
 });
 
-test('F5: the dismiss dialog offers three choices, and voiding says the order is kept as Cancelled', () => {
-  const calls = { void: 0, keep: 0, cont: 0 };
+test('F5: the dismiss dialog offers three one-word choices, wired to their own actions', () => {
+  const calls = { discard: 0, leave: 0, back: 0 };
   const r = render(React.createElement(POSReviewExitConfirm, {
     orderId: 91,
-    customerName: 'Aling Nena Store',
-    onVoid:     () => { calls.void += 1; },
-    onKeep:     () => { calls.keep += 1; },
-    onContinue: () => { calls.cont += 1; },
+    onDiscard: () => { calls.discard += 1; },
+    onLeave:   () => { calls.leave += 1; },
+    onBack:    () => { calls.back += 1; },
   }));
 
   const buttons = r.all('button');
   assert.equal(buttons.length, 3);
+  assert.deepEqual(buttons.map((b) => b.textContent.replace(/[^A-Za-z ]/g, '').trim()),
+    ['Discard', 'Draft', 'Go Back']);
   // Copy must not promise deletion — a saved order can only ever be cancelled.
-  assert.match(r.text(), /put the stock back\?.*stay in History as Cancelled/s);
   assert.equal(r.text().includes('Delete'), false);
+  // The stock consequence is stated once, in the body, not on every button.
+  assert.match(r.text(), /Discard puts the stock back/);
 
   const find = (label) => buttons.find((b) => b.textContent.includes(label));
-  r.click(find('Void / Trash this order'));
-  r.click(find('Keep & Print Later'));
-  r.click(find('Continue Reviewing'));
-  assert.deepEqual(calls, { void: 1, keep: 1, cont: 1 });
+  r.click(find('Discard'));
+  r.click(find('Draft'));
+  r.click(find('Go Back'));
+  assert.deepEqual(calls, { discard: 1, leave: 1, back: 1 });
 
-  // Every choice is a tablet-sized target (min-h-tablet = 52px).
+  // Every choice is a tablet-sized target (min-h-tablet = 52px) and carries a spoken
+  // label, since the visible text is one word.
   assert.ok(buttons.every((b) => b.className.includes('min-h-tablet')));
+  assert.ok(buttons.every((b) => b.getAttribute('aria-label')));
 
   r.press('Escape');
-  assert.equal(calls.cont, 2, 'Escape backs out of the dialog, not out of the order');
+  assert.equal(calls.back, 2, 'Escape backs out of the dialog, not out of the order');
 });
 
-test('F5: an already-cancelled order is offered no void choice', () => {
+test('F5: an already-cancelled order is offered no discard choice', () => {
   const r = render(React.createElement(POSReviewExitConfirm, {
-    orderId: 91, canVoid: false, onVoid: () => {}, onKeep: () => {}, onContinue: () => {},
+    orderId: 91, canDiscard: false, onDiscard: () => {}, onLeave: () => {}, onBack: () => {},
   }));
   const buttons = r.all('button');
-  assert.equal(buttons.length, 2);
-  assert.equal(r.text().includes('Void / Trash'), false);
+  assert.deepEqual(buttons.map((b) => b.textContent.replace(/[^A-Za-z ]/g, '').trim()),
+    ['Draft', 'Go Back']);
+  assert.equal(r.text().includes('Discard'), false);
 });
