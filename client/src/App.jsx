@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProfileProvider, useProfile } from './context/ProfileContext';
 import { ToastProvider } from './components/ui/Toast';
+import { PrinterProvider } from './context/PrinterContext';
 import AppLayout from './components/layout/AppLayout';
 import V2Shell from './components/layout/V2Shell';
 import ProfilePickerModal from './components/profile/ProfilePickerModal';
@@ -96,7 +97,9 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <AppRoutes />
+        <PrinterProvider>
+          <AppRoutes />
+        </PrinterProvider>
       </ToastProvider>
     </AuthProvider>
   );

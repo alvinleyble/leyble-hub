@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
+import { usePrinter } from '../../context/PrinterContext';
 import BackOfficeDrawer from './BackOfficeDrawer';
 
 // V2 exposes exactly three top-level destinations. Everything else lives
@@ -68,6 +69,7 @@ export default function V2Shell() {
   const lastTapRef = useRef(0);
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
+  const { openPicker: openPrinterPicker } = usePrinter();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -151,6 +153,17 @@ export default function V2Shell() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={openPrinterPicker}
+            className="flex items-center justify-center min-h-tablet px-3.5 rounded-xl text-base font-semibold
+                       text-v2-muted hover:bg-v2-raised hover:text-v2-text transition-colors duration-100
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            aria-label="Configure printer"
+            title="Configure printer"
+          >
+            🖨️ Printer
+          </button>
           <button
             type="button"
             onClick={toggleTheme}
