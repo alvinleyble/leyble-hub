@@ -62,7 +62,7 @@ function InlinePriceCell({ product, onCommitted }) {
         onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
         aria-label={`Price per case for ${product.name}`}
         className="w-20 rounded bg-transparent px-1 py-1 text-right text-sm font-bold tabular-nums
-                   text-v2-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+                   text-v2-text focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                    disabled:opacity-50"
       />
     </div>
@@ -101,7 +101,7 @@ function DepositToggle({ product, onCommitted }) {
                   font-bold transition-colors disabled:opacity-50
                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                   ${withDep
-                    ? 'border-v2-accent bg-v2-accent/10 text-v2-accent'
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
                     : 'border-v2-border bg-v2-bg text-v2-muted hover:bg-v2-raised'}`}
     >
       {withDep ? `w/ dep ${PHP(product.deposit_fee)}` : 'w/o dep'}
@@ -197,13 +197,13 @@ export default function InventoryV2Page() {
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
      ${active
-       ? tone === 'out' ? 'bg-red-600 text-white' : tone === 'low' ? 'bg-amber-500 text-slate-950' : 'bg-v2-accent-strong text-white'
+       ? tone === 'out' ? 'bg-red-600 text-white' : tone === 'low' ? 'bg-amber-500 text-slate-950' : 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
        : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
 
   const catPill = (active) =>
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
-     ${active ? 'bg-v2-accent-strong text-white' : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
+     ${active ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm' : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 px-3 pb-3 pt-2">
@@ -228,8 +228,8 @@ export default function InventoryV2Page() {
           )}
           <button
             type="button" onClick={() => setCreating(true)}
-            className="flex h-12 items-center gap-1.5 rounded-xl bg-v2-accent-strong px-4 text-base font-bold
-                       text-white hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+            className="flex h-12 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-base font-bold
+                       text-white hover:bg-emerald-500 shadow-sm focus-visible:outline-none focus-visible:ring-2
                        focus-visible:ring-v2-accent"
           >
             + Add Product
@@ -247,7 +247,7 @@ export default function InventoryV2Page() {
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search products"
             className="h-12 flex-1 rounded-xl border border-v2-border bg-v2-bg px-4 text-base text-v2-text
-                       placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                       placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           />
           <label className="flex min-h-tablet cursor-pointer select-none items-center gap-3 rounded-xl border
                             border-v2-border bg-v2-bg px-4">
@@ -292,8 +292,8 @@ export default function InventoryV2Page() {
       {/* ── Bulk action bar ─────────────────────────────────────── */}
       {batchMode && selectedIds.size > 0 && (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-xl border
-                        border-v2-accent/40 bg-v2-accent/10 px-5 py-3">
-          <p className="text-base font-bold text-v2-accent">
+                        border-v2-border bg-v2-raised px-5 py-3">
+          <p className="text-base font-bold text-v2-text">
             {selectedIds.size} product{selectedIds.size === 1 ? '' : 's'} selected
           </p>
           <div className="flex shrink-0 gap-2">
@@ -302,8 +302,8 @@ export default function InventoryV2Page() {
             </button>
             <button
               type="button" onClick={() => setBatchEditOpen(true)}
-              className="flex h-12 items-center rounded-xl bg-v2-accent-strong px-5 text-base font-bold
-                         text-white hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+              className="flex h-12 items-center rounded-xl bg-emerald-600 px-5 text-base font-bold
+                         text-white hover:bg-emerald-500 shadow-sm focus-visible:outline-none focus-visible:ring-2
                          focus-visible:ring-v2-accent"
             >
               Edit Prices →
@@ -349,7 +349,7 @@ export default function InventoryV2Page() {
               <tbody>
                 {categories.map((cat) => (
                   <React.Fragment key={cat}>
-                    <tr className="border-y border-v2-border bg-v2-bg/60">
+                    <tr className="border-y border-v2-border bg-v2-bg">
                       <td colSpan={batchMode ? 7 : 6} className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-v2-muted">
                         {cat}
                       </td>

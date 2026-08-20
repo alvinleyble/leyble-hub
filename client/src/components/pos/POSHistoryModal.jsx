@@ -193,7 +193,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
                   type="button"
                   disabled={cancelled || busyId === o.id}
                   onClick={() => withFullOrder(o.id, onReprint)}
-                  className={`${LIST_ACTION_BTN} bg-v2-accent-strong text-white hover:bg-sky-500`}
+                  className={`${LIST_ACTION_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
                 >
                   🖨️ Reprint
                 </button>

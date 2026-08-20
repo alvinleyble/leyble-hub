@@ -7,7 +7,7 @@ const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const FIELD = `h-12 w-full rounded-lg border border-v2-border bg-v2-bg px-3 text-lg text-v2-text
-               placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+               placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
 
 const BIG_BTN = `flex min-h-[64px] w-full items-center justify-center gap-2 rounded-xl px-4 text-xl font-black
                  uppercase tracking-wide transition-colors duration-100
@@ -26,7 +26,7 @@ function OrderLine({ item, amber, locked, onStep, onPrice, onRemove }) {
     <li className={`rounded-xl border p-3 ${amber ? 'border-amber-500/40 bg-amber-950/20' : 'border-v2-border bg-v2-surface'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-base font-bold tracking-wide text-v2-accent">{item.sku || '—'}</p>
+          <p className="text-base font-bold tracking-wide text-v2-muted">{item.sku || '—'}</p>
           <p className="truncate text-base font-semibold text-v2-text">{item.product_name}</p>
         </div>
         <button
@@ -156,7 +156,7 @@ export default function POSOrderPanel({
                               transition-colors duration-100 focus-visible:outline-none
                               focus-visible:ring-2 focus-visible:ring-v2-accent
                               ${orderType === value
-                                ? 'bg-v2-accent-strong text-white'
+                                ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
                                 : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`}
                 >
                   {label}
@@ -288,7 +288,7 @@ export default function POSOrderPanel({
                 type="button"
                 onClick={onSave}
                 disabled={saving}
-                className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
+                className={`${BIG_BTN} bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm`}
               >
                 {saving ? 'Saving…' : '💾 Save Order'}
               </button>
@@ -320,7 +320,7 @@ export default function POSOrderPanel({
               type="button"
               onClick={onPrint}
               disabled={printing}
-              className={`${BIG_BTN} bg-v2-accent-strong text-white hover:bg-sky-500`}
+              className={`${BIG_BTN} bg-v2-print-btn text-white hover:bg-v2-print-btn-hover shadow-sm`}
             >
               {printing ? 'Printing…' : '🖨️ Print Receipt (2 copies)'}
             </button>

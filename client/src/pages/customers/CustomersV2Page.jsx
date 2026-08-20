@@ -61,7 +61,7 @@ export default function CustomersV2Page() {
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
      ${active
-       ? 'bg-v2-accent-strong text-white'
+       ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
        : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'
      }`;
 
@@ -82,8 +82,8 @@ export default function CustomersV2Page() {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="flex h-12 items-center gap-1.5 rounded-xl bg-v2-accent-strong px-4 text-base font-bold
-                       text-white hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+            className="flex h-12 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-base font-bold
+                       text-white hover:bg-emerald-500 shadow-sm focus-visible:outline-none focus-visible:ring-2
                        focus-visible:ring-v2-accent"
           >
             + Add Customer
@@ -101,7 +101,7 @@ export default function CustomersV2Page() {
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search customers"
             className="h-12 flex-1 rounded-xl border border-v2-border bg-v2-bg px-4 text-base text-v2-text
-                       placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                       placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           />
           <label className="flex min-h-tablet cursor-pointer select-none items-center gap-3 rounded-xl border
                             border-v2-border bg-v2-bg px-4">

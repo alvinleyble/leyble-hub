@@ -9,7 +9,7 @@ const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const FIELD = `w-full h-11 rounded-lg border border-v2-border bg-v2-bg px-3 text-base text-v2-text
-               placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+               placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
 
 const LABEL = 'block text-sm font-bold uppercase tracking-wide text-v2-muted mb-1';
 
@@ -107,7 +107,7 @@ function DarkProductPicker({ products, selectedProductId, onSelect }) {
                              hover:bg-v2-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                 >
                   <span className="min-w-0 font-medium text-v2-text">
-                    {p.sku ? <span className="font-mono text-xs text-v2-accent mr-1.5">{p.sku}</span> : null}
+                    {p.sku ? <span className="font-mono text-xs text-v2-muted mr-1.5">{p.sku}</span> : null}
                     {p.name}
                   </span>
                   <span className="shrink-0 tabular-nums text-xs text-v2-muted">
@@ -458,7 +458,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       onChange={set('notes')}
                       rows={3}
                       className="w-full rounded-lg border border-v2-border bg-v2-bg px-3 py-2 text-base text-v2-text
-                                 placeholder:text-slate-500 focus:outline-none focus-visible:ring-2
+                                 placeholder:text-v2-muted focus:outline-none focus-visible:ring-2
                                  focus-visible:ring-v2-accent resize-none"
                       placeholder="Any customer preferences or directions…"
                     />
@@ -480,8 +480,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-accent-strong px-6 text-base
-                             font-bold text-white hover:bg-sky-500 disabled:opacity-50
+                  className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-6 text-base
+                             font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                 >
                   {saving ? 'Saving…' : 'Save Changes'}
@@ -525,7 +525,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       className={`flex min-h-[44px] flex-1 items-center justify-center rounded-xl border text-sm font-bold transition-colors
                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
                         ${priceTab === type
-                          ? 'border-v2-accent-strong bg-v2-accent-strong text-white'
+                          ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
                           : 'border-v2-border bg-v2-bg text-v2-muted hover:bg-v2-raised hover:text-v2-text'
                         }`}
                     >
@@ -536,8 +536,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
 
                 {/* Inline Set Price Form */}
                 {pricingOpen && (
-                  <div className="mb-5 rounded-xl border border-v2-accent/40 bg-v2-accent/10 p-4">
-                    <p className="mb-3 text-sm font-bold text-v2-accent">
+                  <div className="mb-5 rounded-xl border border-v2-border bg-v2-raised p-4">
+                    <p className="mb-3 text-sm font-bold text-v2-text">
                       Set {priceTab === 'pickup' ? 'Pickup' : 'Delivery'} Custom Price
                     </p>
 
@@ -631,8 +631,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                           type="button"
                           onClick={handleSetPrice}
                           disabled={priceSaving}
-                          className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-accent-strong px-5 text-base
-                                     font-bold text-white hover:bg-sky-500 disabled:opacity-50
+                          className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-5 text-base
+                                     font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                         >
                           {priceSaving ? 'Saving…' : 'Save Price'}
@@ -670,7 +670,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                             <tr key={sp.id} className="border-t border-v2-border transition-colors hover:bg-v2-raised">
                               <td className="px-3 py-3 font-medium text-v2-text">
                                 <div>
-                                  {sp.sku ? <span className="font-mono text-xs text-v2-accent mr-1">{sp.sku}</span> : null}
+                                  {sp.sku ? <span className="font-mono text-xs text-v2-muted mr-1">{sp.sku}</span> : null}
                                   {sp.product_name}
                                 </div>
                                 {sp.notes && (
@@ -680,7 +680,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                               <td className="hidden px-3 py-3 text-right tabular-nums text-v2-muted sm:table-cell">
                                 {base !== undefined ? PHP(base) : '—'}
                               </td>
-                              <td className="px-3 py-3 text-right font-bold tabular-nums text-v2-accent">
+                              <td className="px-3 py-3 text-right font-bold tabular-nums text-v2-text">
                                 {PHP(sp.custom_unit_price)}
                               </td>
                               <td className="px-3 py-3 text-right tabular-nums">

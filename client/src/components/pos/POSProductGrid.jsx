@@ -26,9 +26,9 @@ function ProductCard({ product, quantity, onAdd, disabled }) {
                     : 'border-v2-border bg-v2-surface hover:bg-v2-raised'}`}
     >
       <span className="flex items-start justify-between gap-2">
-        <span className="text-base font-bold tracking-wide text-v2-accent">{product.sku || '—'}</span>
+        <span className="text-base font-bold tracking-wide text-v2-muted">{product.sku || '—'}</span>
         {quantity > 0 && (
-          <span className="shrink-0 rounded-lg bg-v2-accent-strong px-2 py-0.5 text-sm font-bold text-white">
+          <span className="shrink-0 rounded-lg bg-emerald-600 px-2 py-0.5 text-sm font-bold text-white shadow-sm">
             {quantity} cs
           </span>
         )}
@@ -75,7 +75,7 @@ export default function POSProductGrid({ products, orderQty, onAdd, disabled = f
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
      ${active
-       ? 'bg-v2-accent-strong text-white'
+       ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
        : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
 
   return (
@@ -96,7 +96,7 @@ export default function POSProductGrid({ products, orderQty, onAdd, disabled = f
               autoComplete="off"
               placeholder="SKU, name or category…"
               className="mt-1 h-14 w-full rounded-xl border border-v2-border bg-v2-bg px-4 text-lg
-                         text-v2-text placeholder:text-slate-500
+                         text-v2-text placeholder:text-v2-muted
                          focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
             />
           </div>

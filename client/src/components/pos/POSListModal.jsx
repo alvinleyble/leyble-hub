@@ -71,7 +71,7 @@ export default function POSListModal({
               onChange={(e) => onQueryChange(e.target.value)}
               autoComplete="off"
               className="mt-1 h-14 w-full rounded-xl border border-v2-border bg-v2-bg px-4 text-lg text-v2-text
-                         placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                         placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
             />
           </div>
           {filters}

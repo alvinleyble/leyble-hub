@@ -7,7 +7,7 @@ const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const FIELD = `w-full h-11 rounded-lg border border-v2-border bg-v2-bg px-3 text-base text-v2-text
-               placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+               placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
 
 const LABEL = 'block text-sm font-bold uppercase tracking-wide text-v2-muted mb-1';
 
@@ -305,8 +305,8 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
                       type="button"
                       onClick={handleAdjust}
                       disabled={adjSaving}
-                      className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-accent-strong px-5 text-base
-                                 font-bold text-white hover:bg-sky-500 disabled:opacity-50
+                      className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-5 text-base
+                                 font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
                                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                     >
                       {adjSaving ? 'Saving…' : 'Apply'}
@@ -401,7 +401,7 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
                     className="h-6 w-6 accent-v2-accent-strong"
                   />
                   <span className="text-base text-v2-text">
-                    Requires bottle return <span className="font-bold text-v2-accent">(w/ dep)</span>
+                    Requires bottle return <span className="font-bold text-amber-300">(w/ dep)</span>
                     <span className="block text-sm text-v2-muted">Off for plastic / non-returnable products</span>
                   </span>
                 </label>
@@ -410,8 +410,8 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
               <div className="flex justify-end border-b border-v2-border px-6 py-4">
                 <button
                   type="submit" disabled={saving}
-                  className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-accent-strong px-6 text-base
-                             font-bold text-white hover:bg-sky-500 disabled:opacity-50
+                  className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-6 text-base
+                             font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                 >
                   {saving ? 'Saving…' : 'Save Changes'}

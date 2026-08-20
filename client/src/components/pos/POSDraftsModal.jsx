@@ -87,7 +87,7 @@ export default function POSDraftsModal({ onClose, onResume }) {
               type="button"
               disabled={busyId === o.id}
               onClick={() => resume(o.id)}
-              className={`${LIST_ACTION_BTN} bg-v2-accent-strong text-white hover:bg-sky-500`}
+              className={`${LIST_ACTION_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
             >
               ▶ Resume draft
             </button>
