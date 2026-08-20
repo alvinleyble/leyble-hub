@@ -71,12 +71,11 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
         if (createdAt < startOf7DaysAgo) return false;
       }
 
-      // "Not printed" is scoped to today on purpose: every pre-V2 order in the backlog
-      // is unprinted, and listing those would bury the ones still worth chasing.
+      // "Not printed" filter composes with whichever date preset is active
+      // (Today, Yesterday, Last 7 Days, or All Time).
       if (unprintedOnly && (
         o.status !== 'pending' ||
-        o.pending_receipt_printed_at ||
-        createdAt < startOfToday
+        o.pending_receipt_printed_at
       )) return false;
 
       if (!q) return true;
@@ -95,7 +94,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
     }
   };
 
-  // Every row the "today, not printed only" filter is showing — the set the bulk
+  // Every row the "not printed only" filter is showing — the set the bulk
   // mark-as-printed acts on.
   const unprintedVisible = useMemo(
     () => visible.filter((o) => o.status === 'pending' && !o.pending_receipt_printed_at),
@@ -175,7 +174,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
                   ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
                   : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
               >
-                ⚠️ Today, not printed only
+                ⚠️ Not printed only
               </button>
               {unprintedOnly && unprintedVisible.length > 0 && (
                 <button
