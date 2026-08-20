@@ -1,4 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
+import { api } from '../../api/client';
+import { useToast } from '../ui/Toast';
 import { customerMatches } from '../../utils/customerSearch';
 
 // Customer picker for the V2 POS order panel. Same searchable-combobox mechanics the rest
@@ -6,6 +8,8 @@ import { customerMatches } from '../../utils/customerSearch';
 // onFocus opens the list, onBlur closes it after 150ms so a row's onMouseDown lands
 // first. Dark-themed for the V2 shell and sized for tablet taps.
 // The bar starts blank so the full customer list is one tap away.
+// When no customers match a non-empty search query, an inline 1-tap quick-create button
+// lets operators create a new Regular Customer immediately without leaving the POS.
 export default function POSCustomerSearch({
   customers,
   selected,
@@ -13,8 +17,10 @@ export default function POSCustomerSearch({
   onClear,
   disabled = false,
 }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen]   = useState(false);
+  const { addToast } = useToast();
+  const [query, setQuery]       = useState('');
+  const [open, setOpen]         = useState(false);
+  const [creating, setCreating] = useState(false);
   const blurTimer = useRef(null);
 
   const matches = useMemo(
@@ -33,6 +39,32 @@ export default function POSCustomerSearch({
     onSelect(customer);
     setQuery('');
     setOpen(false);
+  };
+
+  const handleQuickCreate = async () => {
+    const trimmed = query.trim();
+    if (!trimmed || creating) return;
+    setCreating(true);
+    try {
+      const created = await api.post('/customers', { name: trimmed, customer_type: 'regular' });
+      addToast(`${created.name} added as a Regular Customer.`, 'success');
+      pick(created);
+    } catch (err) {
+      addToast(err.message || 'Failed to create customer.', 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      if (matches.length === 0 && query.trim()) {
+        e.preventDefault();
+        handleQuickCreate();
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
   };
 
   // Locked (saved / amber edit): the backend only accepts a customer change on a
@@ -82,6 +114,7 @@ export default function POSCustomerSearch({
           onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => { cancelClose(); setOpen(true); }}
           onBlur={closeSoon}
+          onKeyDown={handleKeyDown}
           autoComplete="off"
           role="combobox"
           aria-expanded={open}
@@ -100,32 +133,59 @@ export default function POSCustomerSearch({
           className="absolute left-0 right-0 z-30 mt-1 max-h-80 overflow-y-auto rounded-xl border
                      border-v2-border bg-v2-surface shadow-2xl"
         >
-          {matches.length === 0 && (
-            <li className="px-4 py-4 text-base text-v2-muted">No customers match.</li>
-          )}
-          {matches.map((c) => (
-            <li key={c.id} role="option" aria-selected={false}>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => pick(c)}
-                className="flex min-h-tablet w-full items-center justify-between gap-3 px-4 py-3 text-left
-                           hover:bg-v2-raised focus-visible:outline-none focus-visible:ring-2
-                           focus-visible:ring-v2-accent"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-lg font-semibold text-v2-text">{c.name}</span>
-                  {c.address && <span className="block truncate text-sm text-v2-muted">{c.address}</span>}
-                </span>
-                {c.customer_type === 'wholesaler' && (
-                  <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-400/10 px-2 py-0.5
-                                   text-xs font-bold uppercase text-amber-300">
-                    Wholesaler
+          {matches.length === 0 ? (
+            query.trim() ? (
+              <li role="option" aria-selected={false} className="p-2">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={handleQuickCreate}
+                  disabled={creating}
+                  className="flex min-h-tablet w-full items-center justify-center gap-2 rounded-xl
+                             bg-v2-raised px-4 py-3 text-base font-bold text-emerald-400
+                             hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2
+                             focus-visible:ring-v2-accent disabled:opacity-60"
+                >
+                  {creating ? (
+                    <span>Adding “{query.trim()}”…</span>
+                  ) : (
+                    <>
+                      <span className="text-xl leading-none">＋</span>
+                      <span className="truncate">
+                        Create <span className="text-v2-text">“{query.trim()}”</span> as Regular Customer
+                      </span>
+                    </>
+                  )}
+                </button>
+              </li>
+            ) : (
+              <li className="px-4 py-4 text-base text-v2-muted">No customers match.</li>
+            )
+          ) : (
+            matches.map((c) => (
+              <li key={c.id} role="option" aria-selected={false}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pick(c)}
+                  className="flex min-h-tablet w-full items-center justify-between gap-3 px-4 py-3 text-left
+                             hover:bg-v2-raised focus-visible:outline-none focus-visible:ring-2
+                             focus-visible:ring-v2-accent"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-lg font-semibold text-v2-text">{c.name}</span>
+                    {c.address && <span className="block truncate text-sm text-v2-muted">{c.address}</span>}
                   </span>
-                )}
-              </button>
-            </li>
-          ))}
+                  {c.customer_type === 'wholesaler' && (
+                    <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-400/10 px-2 py-0.5
+                                     text-xs font-bold uppercase text-amber-300">
+                      Wholesaler
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))
+          )}
         </ul>
       )}
     </div>

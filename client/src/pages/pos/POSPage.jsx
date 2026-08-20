@@ -629,6 +629,15 @@ export default function POSPage() {
     }
   };
 
+  const handleSelectCustomer = (customer) => {
+    if (!customer) {
+      setCustomerId('');
+      return;
+    }
+    setCustomers((prev) => (prev.some((c) => String(c.id) === String(customer.id)) ? prev : [...prev, customer]));
+    setCustomerId(String(customer.id));
+  };
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -691,7 +700,7 @@ export default function POSPage() {
           mode={mode}
           customers={customers}
           selectedCustomer={selectedCustomer}
-          onSelectCustomer={(c) => setCustomerId(String(c.id))}
+          onSelectCustomer={handleSelectCustomer}
           onClearCustomer={() => setCustomerId('')}
           orderType={orderType}
           onOrderType={setOrderType}
