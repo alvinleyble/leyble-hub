@@ -7,6 +7,9 @@ import { generateEscPos } from './escposReceipt';
 
 const Printer = registerPlugin('Printer');
 
+// Helper to determine if an argument is a valid order object vs an event object
+const isOrderObject = (val) => Boolean(val && typeof val === 'object' && val.id && (val.status || val.items));
+
 // Shared print flow for OrderDetailPage, ReviewQueueModal and the V2 POS.
 // On native Android: direct Bluetooth ESC/POS (no dialog, no PrintHand).
 // On web: window.print() via a popup.
@@ -35,7 +38,7 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
   const [pickerLoading,  setPickerLoading]  = useState(false);
   const [pickerCurrent,  setPickerCurrent]  = useState(null); // currently-saved printer (pre-fill)
   // ESC/POS bytes + phase queued while the user picks a printer
-  const [pendingPrint,   setPendingPrint]   = useState(null); // {data: base64, phase} | null
+  const [pendingPrint,   setPendingPrint]   = useState(null); // {data: base64, phase, copies, order} | null
 
   // ── After a successful print: tag the order, or ask first ───────────────────
 
@@ -48,20 +51,21 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
     }
   }, [onTagged, addToast]);
 
-  const finishPrint = useCallback((phase) => {
-    if (!phase || !order) return;
-    if (autoTag) tagPrinted(order.id, phase);
-    else setPrintPrompt({ orderId: order.id, phase });
+  const finishPrint = useCallback((phase, targetOrder = order) => {
+    const active = isOrderObject(targetOrder) ? targetOrder : order;
+    if (!phase || !active) return;
+    if (autoTag) tagPrinted(active.id, phase);
+    else setPrintPrompt({ orderId: active.id, phase });
   }, [order, autoTag, tagPrinted]);
 
   // ── Core Bluetooth send ─────────────────────────────────────────────────────
 
-  const sendToPrinter = useCallback(async (data, phase, copies = 1) => {
+  const sendToPrinter = useCallback(async (data, phase, copies = 1, targetOrder = order) => {
     setPrinting(true);
     try {
       for (let i = 0; i < copies; i++) await Printer.printBytes({ data });
       addToast(copies > 1 ? 'Printed successfully (2 copies).' : 'Printed successfully.', 'success');
-      finishPrint(phase);
+      finishPrint(phase, targetOrder);
     } catch (e) {
       addToast(`Print failed: ${e.message || 'unknown error'}`, 'error');
     } finally {
@@ -93,11 +97,17 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
 
   // Web: print `copies` popups back-to-back — the next copy opens once the
   // previous one's print dialog closes (afterprint, or the window itself closing).
-  const printWeb = useCallback((copies, phase) => {
-    const html = generateReceiptHtml(order, returnCounts, liveAdjustment || {});
+  const printWeb = useCallback((copies, phase, targetOrder = order) => {
+    const activeOrder = isOrderObject(targetOrder) ? targetOrder : order;
+    if (!activeOrder) return;
+    const html = generateReceiptHtml(activeOrder, returnCounts, liveAdjustment || {});
     let remaining = copies;
     const printOne = () => {
       const win = window.open('', '_blank', 'width=360,height=700');
+      if (!win) {
+        addToast('Allow pop-ups to print receipt.', 'error');
+        return;
+      }
       win.document.write(html);
       win.document.close();
       win.focus();
@@ -111,25 +121,26 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
         win.removeEventListener('afterprint', finish);
         remaining -= 1;
         if (remaining > 0) printOne();
-        else finishPrint(phase);
+        else finishPrint(phase, activeOrder);
       };
       win.addEventListener('afterprint', finish);
       poller = setInterval(() => { if (win.closed) finish(); }, 400);
     };
     printOne();
-  }, [order, returnCounts, liveAdjustment, finishPrint]);
+  }, [order, returnCounts, liveAdjustment, finishPrint, addToast]);
 
-  const executePrint = useCallback(async (copies) => {
-    if (!order || printing) return;
-    const phase = printPhaseForStatus(order.status);
+  const executePrint = useCallback(async (copies, explicitOrder = null) => {
+    const activeOrder = isOrderObject(explicitOrder) ? explicitOrder : order;
+    if (!activeOrder || printing) return;
+    const phase = printPhaseForStatus(activeOrder.status);
 
     if (!Capacitor.isNativePlatform()) {
-      printWeb(copies, phase);
+      printWeb(copies, phase, activeOrder);
       return;
     }
 
     // Native: generate ESC/POS bytes
-    const escposBytes = generateEscPos(order, returnCounts, liveAdjustment || {});
+    const escposBytes = generateEscPos(activeOrder, returnCounts, liveAdjustment || {});
     let bin = '';
     for (let i = 0; i < escposBytes.length; i++) bin += String.fromCharCode(escposBytes[i]);
     const data = btoa(bin);
@@ -139,9 +150,9 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
     try { savedPrinter = await Printer.getSelectedPrinter(); } catch (_) {}
 
     if (savedPrinter?.address) {
-      await sendToPrinter(data, phase, copies);
+      await sendToPrinter(data, phase, copies, activeOrder);
     } else {
-      await openPicker({ data, phase, copies });
+      await openPicker({ data, phase, copies, order: activeOrder });
     }
   }, [order, returnCounts, liveAdjustment, printing, sendToPrinter, openPicker, printWeb]);
 
@@ -149,21 +160,23 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
   // Pending orders get a "Print twice for your copy?" gate first; every other
   // status prints once immediately, same as before.
 
-  const handlePrint = useCallback(() => {
-    if (!order || printing) return;
-    if (forcedCopies) {
-      executePrint(forcedCopies);   // V2 POS: fixed copy count, no gate
-    } else if (order.status === 'pending') {
+  const handlePrint = useCallback((explicitOrder = null, copiesOverride = null) => {
+    const activeOrder = isOrderObject(explicitOrder) ? explicitOrder : order;
+    if (!activeOrder || printing) return;
+    const copies = typeof copiesOverride === 'number' ? copiesOverride : forcedCopies;
+    if (copies) {
+      executePrint(copies, activeOrder);   // V2 POS: fixed copy count, no gate
+    } else if (activeOrder.status === 'pending') {
       setTwicePrompt(true);
     } else {
-      executePrint(1);
+      executePrint(1, activeOrder);
     }
   }, [order, printing, executePrint, forcedCopies]);
 
   const confirmTwice = useCallback((yes) => {
     setTwicePrompt(false);
-    executePrint(yes ? 2 : 1);
-  }, [executePrint]);
+    executePrint(yes ? 2 : 1, order);
+  }, [executePrint, order]);
 
   // ── Picker callbacks ────────────────────────────────────────────────────────
 
@@ -174,7 +187,7 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
       await Printer.saveSelectedPrinter({ type, address, port, name });
     } catch (_) {}
     if (pendingPrint) {
-      await sendToPrinter(pendingPrint.data, pendingPrint.phase, pendingPrint.copies);
+      await sendToPrinter(pendingPrint.data, pendingPrint.phase, pendingPrint.copies, pendingPrint.order);
     } else {
       addToast(`Printer set to ${name}.`, 'success');
     }
@@ -229,6 +242,7 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
   return {
     // Print trigger
     handlePrint,
+    executePrint,
     printing,
     // Printer picker
     pickerVisible,
