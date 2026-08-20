@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../ui/Toast';
 import POSConfirm from './POSConfirm';
 import POSListModal, { LIST_ACTION_BTN, LIST_ROW, listDateTime } from './POSListModal';
+import OrderViewModal from './OrderViewModal';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -25,7 +26,7 @@ const datePill = (active) =>
 // (backend `pending`) and Cancelled. Drafts have their own popup (POSDraftsModal), and
 // in_transit/completed/done are never requested, so they can never surface here
 // (see proposal §2.1).
-export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged }) {
+export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged, products = [] }) {
   const { addToast } = useToast();
 
   const [orders, setOrders]       = useState([]);
@@ -34,6 +35,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
   const [dateFilter, setDateFilter] = useState('all');
   const [unprintedOnly, setUnprintedOnly] = useState(false);
   const [busyId, setBusyId]       = useState(null);
+  const [viewOrder, setViewOrder]       = useState(null);   // read-only 👁️ View
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling, setCancelling]     = useState(false);
   const [bulkPrompt, setBulkPrompt]     = useState(false);
@@ -128,6 +130,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
       await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
       addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
       setCancelTarget(null);
+      setViewOrder(null);   // back to the list, which reloads with the new status
       load();
       onChanged?.();
     } catch (err) {
@@ -230,6 +233,14 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
+                  disabled={busyId === o.id}
+                  onClick={() => withFullOrder(o.id, setViewOrder)}
+                  className={`${LIST_ACTION_BTN} bg-v2-raised text-v2-text hover:bg-v2-border`}
+                >
+                  👁️ View
+                </button>
+                <button
+                  type="button"
                   disabled={cancelled || busyId === o.id}
                   onClick={() => withFullOrder(o.id, onEdit)}
                   className={`${LIST_ACTION_BTN} bg-amber-500 text-amber-950 hover:bg-amber-400`}
@@ -258,6 +269,20 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
         })}
       </POSListModal>
 
+      {/* The open order, with the same actions its row offers. History stays mounted
+          behind it, so ↩️ Back returns to the list. */}
+      {viewOrder && (
+        <OrderViewModal
+          order={viewOrder}
+          products={products}
+          busy={busyId === viewOrder.id || cancelling}
+          onClose={() => setViewOrder(null)}
+          onEdit={(o) => { setViewOrder(null); onEdit(o); }}
+          onReprint={(o) => { setViewOrder(null); onReprint(o); }}
+          onCancel={(o) => setCancelTarget(o)}
+        />
+      )}
+
       {bulkPrompt && (
         <POSConfirm
           title={`Mark ${unprintedVisible.length} order${unprintedVisible.length === 1 ? '' : 's'} as printed?`}
@@ -275,6 +300,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
       {cancelTarget && (
         <POSConfirm
           title={`Cancel order #${cancelTarget.id}?`}
+          zClass={viewOrder ? 'z-[70]' : 'z-50'}
           confirmLabel="Yes, cancel the order"
           cancelLabel="Keep it"
           danger

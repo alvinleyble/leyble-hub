@@ -50,6 +50,7 @@ export default function POSPage() {
   const [draftStatus, setDraftStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const creatingDraftRef = useRef(false);
   const draftPromiseRef  = useRef(null);   // in-flight draft create, awaited by Save Order
+  const lastSavedAdjRef  = useRef({ value: 0, reason: '' });  // adjustment already on the draft
 
   // ── Stage / mode ───────────────────────────────────────────────────────────
   const [savedOrder, setSavedOrder] = useState(null); // set after Save Order → print stage
@@ -237,17 +238,33 @@ export default function POSPage() {
       .catch(() => { creatingDraftRef.current = false; draftPromiseRef.current = null; setDraftStatus('idle'); });
   }, [mode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced auto-save of the live order onto the draft.
+  // The draft payload carries no adjustment — it lives on its own endpoint — so park it
+  // explicitly, or a resumed draft comes back with its discount silently dropped.
+  const saveDraftAdjustment = async (id) => {
+    const value  = Number(adjustment.value) || 0;
+    const reason = adjustment.reason.trim();
+    if (value === lastSavedAdjRef.current.value && reason === lastSavedAdjRef.current.reason) return;
+    if (value !== 0 && !reason) return;   // the endpoint 400s on a non-zero adjustment with no reason
+    await api.patch(`/orders/${id}/adjustment`, { adjustment: value, adjustment_reason: reason });
+    lastSavedAdjRef.current = { value, reason };
+  };
+
+  // Debounced auto-save of the live order onto the draft. Paused while the review
+  // modal is up, so no stray PATCH can race the finalize behind it.
   useEffect(() => {
-    if (mode !== 'build' || !draftId || saving) return;
+    if (mode !== 'build' || !draftId || saving || reviewOpen) return;
     setDraftStatus('saving');
-    const t = setTimeout(() => {
-      api.patch(`/orders/${draftId}`, orderBody())
-        .then(() => setDraftStatus('saved'))
-        .catch(() => setDraftStatus('idle'));
+    const t = setTimeout(async () => {
+      try {
+        await api.patch(`/orders/${draftId}`, orderBody());
+        await saveDraftAdjustment(draftId);
+        setDraftStatus('saved');
+      } catch (_) {
+        setDraftStatus('idle');
+      }
     }, 800);
     return () => clearTimeout(t);
-  }, [mode, draftId, saving, customerId, orderType, notes, items]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, draftId, saving, reviewOpen, customerId, orderType, notes, items, adjustment]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save / update ──────────────────────────────────────────────────────────
 
@@ -258,6 +275,8 @@ export default function POSPage() {
     else if (items.some((i) => !Number(i.quantity))) e.items = 'Every line needs a quantity.';
     else if (items.some((i) => i.unit_price === '' || Number.isNaN(Number(i.unit_price))))
       e.items = 'Every line needs a price per case.';
+    else if (items.some((i) => Number(i.unit_price) < 0))
+      e.items = 'A price per case cannot be negative.';
     if (Number(adjustment.value) !== 0 && !adjustment.reason.trim())
       e.adjustment = 'Give a reason for the discount / adjustment.';
     return e;
@@ -287,14 +306,51 @@ export default function POSPage() {
     await api.patch(`/orders/${orderId}/adjustment`, { adjustment: value, adjustment_reason: reason });
   };
 
-  // Save Order: draft → Created (backend `pending`), stock deducts server-side.
-  // Checks for hand-edited prices at submit time and prompts to save them if dirty.
-  const handleSave = async () => {
+  // Save Order: flush the cart onto the draft and review it *before* anything is
+  // committed. Nothing is finalized and no stock moves until Confirm & Print, so
+  // backing out of the review costs nothing — same shape as V1's draft flow.
+  const handleReview = async () => {
     const errs = validate();
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
-    // Snapshot hand-edited ("dirty") lines against priceFor() before submitting
+    setSaving(true);
+    try {
+      // Tapping Save within the first second of picking a customer can land while the
+      // draft POST is still in flight — wait for it rather than creating a second order.
+      let openDraftId = draftId;
+      if (!openDraftId && draftPromiseRef.current) {
+        try { openDraftId = (await draftPromiseRef.current).id; } catch (_) { openDraftId = null; }
+      }
+      if (!openDraftId) {
+        const created = await api.post('/orders', { ...orderBody(), status: 'draft' });
+        openDraftId = created.id;
+        creatingDraftRef.current = true;
+        setDraftId(openDraftId);
+      }
+
+      await api.patch(`/orders/${openDraftId}`, finalPayload());
+      await saveDraftAdjustment(openDraftId);
+      setDraftStatus('saved');
+
+      const full = await api.get(`/orders/${openDraftId}`);
+      setReviewOrder(full);
+      setReviewOpen(true);
+      refreshCounts();
+    } catch (err) {
+      addToast(err.message || 'Failed to open the order review.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Confirm & Print: the draft becomes Created (backend `pending`), stock deducts
+  // server-side and the receipt prints. This is the first irreversible step.
+  const handleConfirmPrint = async () => {
+    const target = reviewOrder;
+    if (!target) return;
+
+    // Snapshot hand-edited ("dirty") lines against priceFor() before committing
     const dirtyItems = items.reduce((acc, i) => {
       const product = products.find((p) => String(p.id) === i.product_id);
       if (product && Number(i.unit_price) !== priceFor(product)) {
@@ -310,42 +366,30 @@ export default function POSPage() {
 
     setSaving(true);
     try {
-      // Tapping Save within the first second of picking a customer can land while the
-      // draft POST is still in flight — wait for it rather than creating a second order.
-      let openDraftId = draftId;
-      if (!openDraftId && draftPromiseRef.current) {
-        try { openDraftId = (await draftPromiseRef.current).id; } catch (_) { openDraftId = null; }
-      }
+      await api.post(`/orders/${target.id}/finalize`, {});
+      await syncAdjustment(target.id, {
+        adjustment:        lastSavedAdjRef.current.value,
+        adjustment_reason: lastSavedAdjRef.current.reason,
+      });
 
-      let orderId;
-      if (openDraftId) {
-        await api.patch(`/orders/${openDraftId}`, finalPayload());
-        await api.post(`/orders/${openDraftId}/finalize`, {});
-        orderId = openDraftId;
-      } else {
-        const created = await api.post('/orders', finalPayload());
-        orderId = created.id;
-      }
-      await syncAdjustment(orderId, null);
-
-      const full = await api.get(`/orders/${orderId}`);
+      const full = await api.get(`/orders/${target.id}`);
       setSavedOrder(full);
       setDraftId(null);
       setDraftStatus('idle');
       creatingDraftRef.current = false;
       draftPromiseRef.current = null;
-      addToast(`Order #${orderId} created.`, 'success');
-      refreshCounts();
+      addToast(`Order #${target.id} created.`, 'success');
 
-      // Open pre-print review modal
-      setReviewOrder(full);
-      setReviewOpen(true);
+      setReviewOpen(false);
+      setReviewOrder(null);
+      requestPrint(full);
+      refreshCounts();
 
       // Offer to save custom prices if any were hand-edited
       if (dirtyItems.length && selectedCustomer) {
         setPriceSavePrompt({
           step: 'first',
-          orderId,
+          orderId: target.id,
           customer: selectedCustomer,
           orderType,
           dirty: dirtyItems,
@@ -353,7 +397,7 @@ export default function POSPage() {
         });
       }
     } catch (err) {
-      addToast(err.message || 'Failed to save the order.', 'error');
+      addToast(err.message || 'Failed to create the order.', 'error');
     } finally {
       setSaving(false);
     }
@@ -393,9 +437,8 @@ export default function POSPage() {
       buildStash.current = null;
       refreshCounts();
 
-      // Re-open review modal with fresh data
-      setReviewOrder(updatedFull);
-      setReviewOpen(true);
+      // Straight back to the print stage — the review modal is for drafts only, and this
+      // order already exists. Read it back with History's 👁️ View if needed.
 
       if (dirtyItems.length && selectedCustomer) {
         setPriceSavePrompt({
@@ -481,6 +524,7 @@ export default function POSPage() {
     setDraftStatus('idle');
     creatingDraftRef.current = false;
     draftPromiseRef.current = null;
+    lastSavedAdjRef.current = { value: 0, reason: '' };
   };
 
   const startNewOrder = () => {
@@ -499,10 +543,16 @@ export default function POSPage() {
   };
 
   const enterEditMode = (order) => {
-    // Park whatever is on the order panel so exiting edit mode gives it straight back.
-    buildStash.current = mode === 'build'
-      ? { customerId, orderType, items, notes, adjustment, draftId, draftStatus }
-      : null;
+    // Park whatever is on the order panel so exiting edit mode gives it straight back —
+    // including the saved order behind the print buffer, so Edit → Exit from the print
+    // stage returns to Print / Review / Edit instead of a blank panel.
+    buildStash.current = mode === 'edit'
+      ? null
+      : {
+          customerId, orderType, items, notes, adjustment, draftId, draftStatus,
+          savedOrder:   mode === 'saved' ? savedOrder : null,
+          lastSavedAdj: lastSavedAdjRef.current,
+        };
 
     setSavedOrder(null);
     setPrintOrder(null);
@@ -534,29 +584,41 @@ export default function POSPage() {
     setHistoryOpen(false);
   };
 
-  // ── Review modal handlers (Pre-Print Order Review & Edit ⇄ Review Loop) ────
-  const handleReviewEdit = () => {
-    const target = reviewOrder || savedOrder;
-    setReviewOpen(false);
-    if (target) {
-      enterEditMode(target);
-    }
-  };
-
-  const handleReviewPrint = () => {
-    const target = reviewOrder || savedOrder;
+  // ── Review modal handlers ─────────────────────────────────────────────────
+  // The review only ever shows a draft, and the cart it came from is still on the panel
+  // behind it, so every way out of it (✕, Escape, backdrop, ✏️ Edit Items) is the same
+  // thing: go back to the cart. Nothing is committed, so nothing needs confirming.
+  const closeReview = () => {
     setReviewOpen(false);
     setReviewOrder(null);
-    if (target) {
-      setSavedOrder(target);
-      requestPrint(target);
-    }
   };
 
-  const handleReviewNewOrder = () => {
-    setReviewOpen(false);
-    setReviewOrder(null);
+  // "Draft" — the draft is already saved on the server, so this only clears the screen.
+  // It reappears in the Drafts popup, count badge and all.
+  const parkReviewedDraft = () => {
+    closeReview();
     startNewOrder();
+    refreshCounts();
+  };
+
+  // "Discard" — the draft never deducted stock and was never a business event, so it is
+  // genuinely deleted, exactly like V1's Discard draft (OrderCreateModal handleDiscard).
+  const discardReviewedDraft = async () => {
+    const target = reviewOrder;
+    if (!target) return;
+    setConfirmBusy(true);
+    try {
+      await api.del(`/orders/${target.id}`);
+      addToast('Draft discarded.', 'success');
+    } catch (err) {
+      addToast(err.message || 'Failed to discard the draft.', 'error');
+    } finally {
+      setConfirmBusy(false);
+      setConfirm(null);
+      closeReview();
+      startNewOrder();
+      refreshCounts();
+    }
   };
 
   // Resume a parked draft: it goes back on the POS in build mode with its draft id, so
@@ -588,13 +650,18 @@ export default function POSPage() {
     })));
     setDraftId(order.id);
     setDraftStatus('saved');
+    lastSavedAdjRef.current = {
+      value:  Number(order.adjustment) || 0,
+      reason: order.adjustment_reason || '',
+    };
     creatingDraftRef.current = true;   // this draft exists; don't create another
     draftPromiseRef.current = null;
     setErrors({});
     setDraftsOpen(false);
   };
 
-  const exitEditMode = () => {
+  // `dropOrderId` — the order just cancelled must not come back on the print buffer.
+  const exitEditMode = ({ dropOrderId = null } = {}) => {
     setEditOrder(null);
     const stash = buildStash.current;
     buildStash.current = null;
@@ -607,6 +674,8 @@ export default function POSPage() {
       setDraftId(stash.draftId);
       setDraftStatus(stash.draftStatus);
       creatingDraftRef.current = Boolean(stash.draftId);
+      lastSavedAdjRef.current = stash.lastSavedAdj ?? { value: 0, reason: '' };
+      setSavedOrder(stash.savedOrder && stash.savedOrder.id !== dropOrderId ? stash.savedOrder : null);
       setErrors({});
     } else {
       blankOrder();
@@ -619,7 +688,7 @@ export default function POSPage() {
       await api.post(`/orders/${orderId}/status`, { status: 'cancelled' });
       addToast(`Order #${orderId} cancelled — stock restored.`, 'success');
       setConfirm(null);
-      if (editOrder?.id === orderId) exitEditMode();
+      if (editOrder?.id === orderId) exitEditMode({ dropOrderId: orderId });
       if (savedOrder?.id === orderId) startNewOrder();
       refreshCounts();
     } catch (err) {
@@ -663,6 +732,7 @@ export default function POSPage() {
           products={products}
           orderQty={orderQty}
           onAdd={addProduct}
+          priceFor={priceFor}
           disabled={mode === 'saved'}
           headerActions={
             <>
@@ -718,13 +788,9 @@ export default function POSPage() {
           editOrderId={editOrder?.id}
           saving={saving}
           printing={printer.printing}
-          onSave={handleSave}
+          onSave={handleReview}
           onUpdate={handleUpdate}
           onPrint={() => requestPrint(savedOrder)}
-          onReview={() => {
-            setReviewOrder(savedOrder);
-            setReviewOpen(true);
-          }}
           onEditSaved={() => {
             enterEditMode(savedOrder);
           }}
@@ -741,10 +807,12 @@ export default function POSPage() {
           order={reviewOrder}
           products={products}
           customPrices={customPrices}
-          printing={printer.printing}
-          onPrint={handleReviewPrint}
-          onEdit={handleReviewEdit}
-          onNewOrder={handleReviewNewOrder}
+          saving={saving}
+          onConfirm={handleConfirmPrint}
+          onEdit={closeReview}
+          onClose={closeReview}
+          onDiscard={() => setConfirm({ kind: 'discard-draft', order: reviewOrder })}
+          onDraft={parkReviewedDraft}
         />
       )}
 
@@ -758,11 +826,28 @@ export default function POSPage() {
 
       {historyOpen && (
         <POSHistoryModal
+          products={products}
           onClose={() => { setHistoryOpen(false); refreshCounts(); }}
           onChanged={refreshCounts}
           onEdit={enterEditMode}
           onReprint={(order) => { setHistoryOpen(false); requestPrint(order); }}
         />
+      )}
+
+      {confirm?.kind === 'discard-draft' && (
+        <POSConfirm
+          title="Discard this draft?"
+          confirmLabel="Yes, discard it"
+          cancelLabel="Keep it"
+          danger
+          loading={confirmBusy}
+          onConfirm={discardReviewedDraft}
+          onClose={() => setConfirm(null)}
+        >
+          Nothing has been created yet and no stock has moved, so this simply deletes the
+          draft{confirm.order?.customer_name ? ` for ${confirm.order.customer_name}` : ''}.
+          It cannot be undone.
+        </POSConfirm>
       )}
 
       {confirm?.kind === 'cancel' && (

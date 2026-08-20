@@ -28,6 +28,27 @@ Vite dev proxy: `/api` → `http://localhost:3000`
 DB: `DATABASE_URL=postgresql://localhost/leyble_hub`
 **Never expose `server/.env` contents** — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`.
 
+### Tests
+
+```bash
+# API integration suites — run against a throwaway DB, never the dev one
+createdb leyble_hub_v2audit && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit node server/db/migrate.js
+cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit \
+  JWT_SECRET='test-jwt-secret-key-32-chars-minimum!!' npm test
+
+# Component tests (jsdom + react-dom, no framework; client/test/jsx-register.mjs
+# transforms .jsx with esbuild so the real components import directly)
+cd client && npm test
+
+# Pure client modules (posMath, ESC/POS + HTML receipts)
+node --test audit-client.test.mjs
+```
+
+`server/test/v2-accuracy-audit.test.js` + `audit-client.test.mjs` come from the V2 accuracy audit
+and deliberately **pin some still-broken behaviour** (the closed-order deposit total, the ESC/POS
+non-ASCII bytes, the blank no-SKU receipt line). Invert those assertions as each fix lands rather
+than treating a passing run as "all correct".
+
 ---
 
 ## Tech stack
@@ -103,6 +124,28 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   reversing proposal §2.4 — lines still carry `unit_deposit_fee` for V1's close flow). POS copy
   says "order", never "ticket". Two popups share `POSListModal.jsx`: History (Created +
   Cancelled) and Drafts (`status=draft`, resume puts the draft back on the POS keeping its id).
+  Catalogue cards price through `priceFor` — the picked customer's rate for the current
+  channel — badged with the gap from standard (`−₱55.00 (18.3%)`, emerald for a discount
+  via `--v2-discount-badge-*`, the purple `--v2-suki-badge-*` for the rarer markup).
+  **Save Order reviews the draft; it does not create the order.** `handleReview` flushes
+  the cart onto the draft and opens `POSReviewModal` on it, so nothing exists and no
+  stock moves until **Confirm & Print** (`handleConfirmPrint` → `POST /:id/finalize`,
+  which keeps the same id, so the number reviewed is the number printed). That makes the
+  review's other actions free: **Discard** is `DELETE /orders/:draftId` — a real delete,
+  exactly like V1's *Discard draft* — **Draft** parks it in Drafts and blanks the screen,
+  and Escape / backdrop / ✕ just go back to the cart. Never word any of this as
+  "closing" an order: that is the settlement step (returns counted, status `done`).
+  **The review modal is for drafts and only drafts** — the saved panel offers Print /
+  Edit Order / New order, nothing that reopens it. Reading back an order that already
+  exists is a separate job: History's 👁️ View opens `OrderViewModal.jsx` (shared with the
+  Customers drawer's order history — it moved out of
+  `components/customers/CustomerOrderDetailModal.jsx`). It never edits the order inline;
+  it leads with ↩️ Back to the list behind it, and takes optional `onEdit`/`onReprint`/
+  `onCancel` so History can hoist its row actions onto the open order (greyed out once
+  cancelled). Omit them, as Customers does, and it is purely read-only. A Created order is never discarded, only cancelled from History,
+  where it stays visible as 🚫 Cancelled. Leaving Edit Mode restores whatever was parked,
+  print buffer included. The debounced draft save also parks the adjustment (its own
+  endpoint), and neither the POS nor `insertItems` accepts a negative price.
   Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
   mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes

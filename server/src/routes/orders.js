@@ -93,14 +93,23 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
     // Drafts tolerate a blank quantity/price (e.g. mid-entry). quantity has a
     // CHECK (> 0), so fall back to 1; unit_price may be 0.
     const qty   = draft ? (Number(quantity) > 0 ? Number(quantity) : 1) : quantity;
-    const price = draft ? (Number(unit_price) || 0) : unit_price;
+    // Money never goes negative on a line: a discount is the order-level
+    // `adjustment` (which stays signed), never a negative price. Finalized rows
+    // are rejected outright; drafts, which tolerate half-typed values, clamp.
+    if (!draft && (Number(unit_price) < 0 || Number(unit_deposit_fee) < 0)) {
+      const err = new Error('A price per case and a deposit fee cannot be negative.');
+      err.status = 400;
+      throw err;
+    }
+    const price   = draft ? Math.max(0, Number(unit_price) || 0) : unit_price;
+    const deposit = draft ? Math.max(0, Number(unit_deposit_fee) || 0) : unit_deposit_fee;
 
     await client.query(
       `INSERT INTO order_items
          (order_id, product_id, quantity, unit_price, unit_deposit_fee,
           is_price_overridden, units_per_case, bottles_returned)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
-      [orderId, product_id, qty, price, unit_deposit_fee, is_price_overridden, units_per_case]
+      [orderId, product_id, qty, price, deposit, is_price_overridden, units_per_case]
     );
 
     if (is_price_overridden) {
@@ -108,7 +117,7 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
         `INSERT INTO customer_product_prices
            (customer_id, product_id, custom_unit_price, set_by_user_id, notes, order_type)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [customerId, product_id, unit_price, userId,
+        [customerId, product_id, price, userId,
          `Set on order #${orderId}`, orderType || 'delivery']
       );
     }

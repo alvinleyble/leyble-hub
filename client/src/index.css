@@ -44,6 +44,9 @@
   --v2-suki-badge-bg: rgba(139, 92, 246, 0.15);
   --v2-suki-badge-border: rgba(139, 92, 246, 0.35);
   --v2-suki-badge-text: #C4B5FD;
+  --v2-discount-badge-bg: rgba(16, 185, 129, 0.15);
+  --v2-discount-badge-border: rgba(16, 185, 129, 0.40);
+  --v2-discount-badge-text: #6EE7B7;
   --v2-table-hover: #262629;
 }
 
@@ -67,6 +70,9 @@
   --v2-suki-badge-bg: #EDE9FE !important;
   --v2-suki-badge-border: #DDD6FE !important;
   --v2-suki-badge-text: #6D28D9 !important;
+  --v2-discount-badge-bg: #D1FAE5 !important;
+  --v2-discount-badge-border: #A7F3D0 !important;
+  --v2-discount-badge-text: #065F46 !important;
   --v2-table-hover: #F1F3F6 !important;
 }
 

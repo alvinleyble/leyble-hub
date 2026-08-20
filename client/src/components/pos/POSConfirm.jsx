@@ -11,6 +11,9 @@ export default function POSConfirm({
   cancelLabel = 'Cancel',
   danger = false,
   loading = false,
+  // Normally the topmost layer; raised when it has to sit over another z-[60] modal
+  // (POS History's 👁️ View, which stays open behind its Cancel confirmation).
+  zClass = 'z-50',
   onConfirm,
   onClose,
 }) {
@@ -25,7 +28,7 @@ export default function POSConfirm({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className={`fixed inset-0 ${zClass} flex items-center justify-center bg-black/60 p-4`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="pos-confirm-title"

@@ -4,35 +4,53 @@ import { lineTotal, orderTotals, totalCases } from './posMath';
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const SECONDARY = `flex min-h-tablet items-center justify-center gap-2 whitespace-nowrap rounded-xl px-5
+                   text-base font-bold transition-colors duration-100 focus-visible:outline-none
+                   focus-visible:ring-2 focus-visible:ring-v2-accent disabled:opacity-50`;
+
+const PRIMARY = `flex-1 flex min-h-tablet items-center justify-center gap-2 rounded-xl bg-v2-accent-strong px-6
+                 text-lg font-black text-white hover:bg-v2-accent shadow-md transition-colors duration-100
+                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent disabled:opacity-50`;
+
 const formatQty = (qty) => {
   const n = Number(qty) || 0;
   return `${n.toLocaleString('en-PH', { minimumFractionDigits: n % 1 === 0 ? 1 : 1, maximumFractionDigits: 2 })} cs`;
 };
 
-// Tablet-optimized Pre-Print Order Review Modal for V2 POS.
-// Provides a full-screen/wide, high-contrast breakdown of items, custom suki pricing,
-// and order totals before printing, with tactile 52px+ actions for the Edit ⇄ Review loop.
+// Tablet-optimized pre-print review for V2 POS — a full-screen, high-contrast breakdown
+// of items, custom suki pricing and totals, with tactile 52px+ actions.
+//
+// It reviews the order while it is still a **draft**, and only ever a draft: nothing is
+// created and no stock moves until Confirm & Print, so Discard genuinely deletes it and
+// backing out costs nothing. Dismissing it (✕ / Escape / backdrop / Edit Items) simply
+// returns to the cart, which is still sitting on the panel behind it — no confirmation,
+// because there is nothing to lose. Looking at an order that already exists is a
+// different job, done read-only from POS History's 👁️ View (OrderViewModal).
 export default function POSReviewModal({
   order,
   products = [],
   customPrices = {},
-  printing = false,
-  onPrint,
+  saving = false,
+  onConfirm,
   onEdit,
-  onNewOrder,
+  onClose,
+  onDiscard,
+  onDraft,
 }) {
   const modalRef = useRef(null);
 
   useEffect(() => {
     modalRef.current?.focus();
+    // Escape / backdrop / ✕ mean "close", never "edit" — dismissing the review must
+    // not drop the operator into amber edit mode they never asked for.
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        onEdit();
+        onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onEdit]);
+  }, [onClose]);
 
   if (!order) return null;
 
@@ -61,7 +79,7 @@ export default function POSReviewModal({
       aria-modal="true"
       aria-labelledby="pos-review-title"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onEdit();
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -74,7 +92,7 @@ export default function POSReviewModal({
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-black uppercase tracking-wider text-v2-accent">
-                {order.id ? `Order #${order.id}` : '📝 Order Review'}
+                {order.id ? `📝 Draft #${order.id}` : '📝 Order Review'}
               </span>
               {isWholesaler ? (
                 <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-300">
@@ -103,8 +121,8 @@ export default function POSReviewModal({
 
           <button
             type="button"
-            onClick={onEdit}
-            aria-label="Close review and edit order"
+            onClick={onClose}
+            aria-label="Close review"
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-xl text-v2-muted
                        hover:bg-v2-raised hover:text-v2-text focus-visible:outline-none
                        focus-visible:ring-2 focus-visible:ring-v2-accent"
@@ -224,33 +242,38 @@ export default function POSReviewModal({
         <div className="shrink-0 border-t border-v2-border bg-v2-surface px-6 py-4 flex flex-col sm:flex-row items-stretch gap-3">
           <button
             type="button"
+            onClick={onDiscard}
+            disabled={saving}
+            className={`${SECONDARY} bg-red-700 text-white hover:bg-red-600`}
+          >
+            🗑️ Discard
+          </button>
+
+          <button
+            type="button"
+            onClick={onDraft}
+            disabled={saving}
+            className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
+          >
+            📝 Draft
+          </button>
+
+          <button
+            type="button"
             onClick={onEdit}
-            className="flex min-h-tablet items-center justify-center gap-2 rounded-xl bg-v2-raised px-5 text-base font-bold
-                       text-v2-text hover:bg-v2-border transition-colors duration-100
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            disabled={saving}
+            className={`${SECONDARY} bg-v2-raised text-v2-text hover:bg-v2-border`}
           >
-            ✏️ Edit Items / Back
+            ✏️ Edit Items
           </button>
 
           <button
             type="button"
-            onClick={onNewOrder}
-            className="flex min-h-tablet items-center justify-center gap-2 rounded-xl bg-v2-raised px-5 text-base font-bold
-                       text-v2-text hover:bg-v2-border transition-colors duration-100
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            onClick={onConfirm}
+            disabled={saving || items.length === 0}
+            className={PRIMARY}
           >
-            ＋ New Order / Skip Print
-          </button>
-
-          <button
-            type="button"
-            onClick={onPrint}
-            disabled={printing || items.length === 0}
-            className="flex-1 flex min-h-tablet items-center justify-center gap-2 rounded-xl bg-v2-accent-strong px-6
-                       text-lg font-black text-white hover:bg-v2-accent shadow-md transition-colors duration-100
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent disabled:opacity-50"
-          >
-            {printing ? 'Printing…' : '🖨️ Print Receipt (2 Copies)'}
+            {saving ? 'Creating…' : '✅ Confirm & Print'}
           </button>
         </div>
       </div>
