@@ -154,12 +154,12 @@ export default function POSOrderPanel({
                   type="button"
                   onClick={() => onOrderType(value)}
                   aria-pressed={orderType === value}
-                  className={`flex min-h-tablet flex-1 items-center justify-center rounded-xl text-base font-bold
+                  className={`flex min-h-tablet flex-1 items-center justify-center rounded-xl border text-base font-bold
                               transition-colors duration-100 focus-visible:outline-none
                               focus-visible:ring-2 focus-visible:ring-v2-accent
                               ${orderType === value
-                                ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
-                                : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`}
+                                ? 'border-v2-accent bg-v2-pill-active text-v2-pill-text shadow-sm'
+                                : 'border-v2-border bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`}
                 >
                   {label}
                 </button>
