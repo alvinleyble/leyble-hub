@@ -104,7 +104,7 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | :--- | :--- | :--- | :--- |
 | **Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
 | **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
-| **Slice 2** | ⬜ Not started | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
+| **Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
 | **Slice 3** | ⬜ Not started | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
 | **Slice 4** | ⬜ Not started | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
 | **Slice 5** | ⬜ Not started | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
@@ -143,6 +143,27 @@ Screen copy calls these **orders**, never "tickets" — the business does not us
 
 **Reversal on record:** the preemptive bottle-deposit rule locked in §2.4 was corrected to
 goods-only totals on 2026-08-20 by captain decision, mid-Slice-1. See §2.4 and §7 item 5.
+
+### Slice 2 — what shipped
+
+Landed on `dev` as a frontend-only change plus zero new backend routes — every capability
+below already existed on `server/src/routes/products.js` from V1 (batch-price, PATCH with
+audit, GET with `audit_log`) and is reused as-is. The screen is
+[client/src/pages/inventory/InventoryV2Page.jsx](client/src/pages/inventory/InventoryV2Page.jsx)
+plus `client/src/components/inventory/`.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| Batch price edit, **required** audit reason (§3 priority item) | `InventoryBatchPriceModal.jsx` — same uniform/individual math as V1's `BatchPriceEditModal.jsx`, but Save is disabled until a reason is typed (V1's `PATCH /products/batch-price` already accepted a reason; V2 just makes it non-optional client-side, so the V1 screen's optional-reason behaviour is unchanged) |
+| In-line price edit | `InlinePriceCell` in `InventoryV2Page.jsx` — editable cell right in the table row, commits via `PATCH /products/:id` on blur, reverts on failure |
+| `w/ dep` flag, visible + toggleable per product | `DepositToggle` in `InventoryV2Page.jsx` — a row-level pill (`w/ dep ₱X.XX` / `w/o dep`) that flips `requires_bottle_return` directly; the deposit **amount** is still edited in the detail drawer (toggling on defaults to whatever `deposit_fee` was last, incl. 0) |
+| Product detail & audit drawer | `ProductDetailDrawer.jsx` — slide-over (same `fixed right-0 h-full` shape as V1's `ProductDetailPanel.jsx`), an "Adjust Stock & Audit" control with a **required** reason, a "Recent Stock Movements" log (last 50 from `inventory_audit_logs`, unchanged query), and Danger Zone delete |
+| Physical stock count sheet generator | `productCountSheetHtml` / `productCountSheetEscPos` (new exports in `client/src/pages/shared/listPrintTemplate.js` / `listEscPos.js`), wired through the existing `usePrintList` hook — blank `Counted: ________` line per item plus signature lines, distinct from the price-list `productListHtml`/`productListEscPos` V1 already had |
+| No per-row `−1`/`+1` steppers | Not present anywhere in `InventoryV2Page.jsx` — stock only moves through the drawer's Adjust Stock & Audit control |
+
+No backend changes were needed for this slice: `PATCH /products/:id` (single-field price/
+deposit/stock edits, all audit-logged), `PATCH /products/batch-price` (bulk price + reason)
+and `GET /products/:id` (audit_log) already covered every Slice 2 requirement.
 
 ### Build Order (recommended)
 

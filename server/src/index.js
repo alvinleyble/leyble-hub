@@ -30,6 +30,12 @@ app.use(
     origin(origin, cb) {
       // No origin = same-origin / non-browser clients (e.g. native fetch); allow.
       if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      // Outside production, also allow any :5173 origin (e.g. a LAN/Tailscale IP)
+      // so `npm run dev` can be reached from another device — a tablet doing a
+      // live review of the app over the network, for instance — during local dev.
+      if (process.env.NODE_ENV !== 'production' && /^https?:\/\/[^/]+:5173$/.test(origin)) {
+        return cb(null, true);
+      }
       cb(new Error(`Origin not allowed by CORS: ${origin}`));
     },
     credentials: true,
