@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
@@ -22,6 +22,12 @@ export default function V2Shell() {
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.classList.remove('light', 'dark');
+    document.documentElement.classList.add(theme);
+  }, [theme]);
 
   const handleLogout = async () => {
     await logout();
@@ -53,7 +59,10 @@ export default function V2Shell() {
   };
 
   return (
-    <div className={`v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text ${theme === 'light' ? 'light' : ''}`}>
+    <div
+      data-theme={theme}
+      className={`v2-root flex h-screen flex-col overflow-hidden bg-v2-bg text-v2-text ${theme}`}
+    >
       <header className="shrink-0 flex items-center gap-3 h-[68px] px-3 bg-v2-surface border-b border-v2-border">
         <button
           type="button"
