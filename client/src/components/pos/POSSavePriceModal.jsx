@@ -48,17 +48,17 @@ export default function POSSavePriceModal({
               <p>
                 Save the custom price{isMultiple ? 's' : ''} for{' '}
                 <strong className="text-v2-text">{prompt.customer.name}</strong> on future{' '}
-                <strong className="text-v2-accent">{prompt.orderType}</strong> orders?
+                <strong className="text-v2-text">{prompt.orderType}</strong> orders?
               </p>
 
               <ul className="mt-4 space-y-2 rounded-xl border border-v2-border bg-v2-bg p-3">
                 {prompt.dirty.map((d) => (
                   <li key={d.product_id} className="flex items-center justify-between text-sm">
                     <span className="font-medium text-v2-text truncate pr-2">
-                      {d.sku ? <span className="font-mono text-xs text-v2-accent mr-1.5">{d.sku}</span> : null}
+                      {d.sku ? <span className="font-mono text-xs text-v2-muted mr-1.5">{d.sku}</span> : null}
                       {d.product_name}
                     </span>
-                    <span className="font-bold tabular-nums text-v2-accent shrink-0">
+                    <span className="font-bold tabular-nums text-v2-text shrink-0">
                       {PHP(d.unit_price)}
                     </span>
                   </li>
@@ -81,8 +81,8 @@ export default function POSSavePriceModal({
                 type="button"
                 onClick={onAcceptFirst}
                 disabled={prompt.busy}
-                className="flex min-h-tablet items-center rounded-xl bg-v2-accent-strong px-5 text-base font-bold text-white
-                           hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
+                className="flex min-h-tablet items-center rounded-xl bg-emerald-600 px-5 text-base font-bold text-white
+                           hover:bg-emerald-500 shadow-sm focus-visible:outline-none focus-visible:ring-2
                            focus-visible:ring-v2-accent disabled:opacity-50"
               >
                 {prompt.busy ? 'Saving…' : 'Yes, Save'}
@@ -119,8 +119,8 @@ export default function POSSavePriceModal({
                 type="button"
                 onClick={onConfirmConvert}
                 disabled={prompt.busy}
-                className="flex min-h-tablet items-center rounded-xl bg-v2-accent-strong px-5 text-base font-bold text-white
-                           hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
+                className="flex min-h-tablet items-center rounded-xl bg-emerald-600 px-5 text-base font-bold text-white
+                           hover:bg-emerald-500 shadow-sm focus-visible:outline-none focus-visible:ring-2
                            focus-visible:ring-v2-accent disabled:opacity-50"
               >
                 {prompt.busy ? 'Saving…' : 'Yes, Continue'}

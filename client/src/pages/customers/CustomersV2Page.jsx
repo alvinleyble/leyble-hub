@@ -61,7 +61,7 @@ export default function CustomersV2Page() {
     `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
      ${active
-       ? 'bg-v2-accent-strong text-white'
+       ? 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm'
        : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'
      }`;
 
@@ -82,8 +82,8 @@ export default function CustomersV2Page() {
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="flex h-12 items-center gap-1.5 rounded-xl bg-v2-accent-strong px-4 text-base font-bold
-                       text-white hover:bg-v2-accent focus-visible:outline-none focus-visible:ring-2
+            className="flex h-12 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-base font-bold
+                       text-white hover:bg-emerald-500 shadow-sm focus-visible:outline-none focus-visible:ring-2
                        focus-visible:ring-v2-accent"
           >
             + Add Customer

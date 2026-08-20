@@ -26,7 +26,7 @@ function OrderLine({ item, amber, locked, onStep, onPrice, onRemove }) {
     <li className={`rounded-xl border p-3 ${amber ? 'border-amber-500/40 bg-amber-950/20' : 'border-v2-border bg-v2-surface'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-base font-bold tracking-wide text-v2-accent">{item.sku || '—'}</p>
+          <p className="text-base font-bold tracking-wide text-v2-muted">{item.sku || '—'}</p>
           <p className="truncate text-base font-semibold text-v2-text">{item.product_name}</p>
         </div>
         <button
@@ -156,7 +156,7 @@ export default function POSOrderPanel({
                               transition-colors duration-100 focus-visible:outline-none
                               focus-visible:ring-2 focus-visible:ring-v2-accent
                               ${orderType === value
-                                ? 'bg-v2-accent-strong text-white'
+                                ? 'bg-[#27272A] text-white border border-[#3F3F46] shadow-sm'
                                 : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`}
                 >
                   {label}
