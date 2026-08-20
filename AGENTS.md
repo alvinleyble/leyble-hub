@@ -127,16 +127,19 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   Catalogue cards price through `priceFor` — the picked customer's rate for the current
   channel — badged with the gap from standard (`−₱55.00 (18.3%)`, emerald for a discount
   via `--v2-discount-badge-*`, the purple `--v2-suki-badge-*` for the rarer markup).
-  Dismissing the review modal (Escape / backdrop / ✕) opens `POSReviewExitConfirm` —
-  Discard / Draft (leave the order, clear the screen) / Go Back — and never enters Edit
-  Mode; leaving Edit Mode restores whatever was parked, print buffer included. Never
-  word any of this as "closing" an order: that is the settlement step (returns counted,
-  status `done`). **Discard ≠ Cancel:** both are the `cancelled` status with the stock
-  put back, but a discard is an order abandoned at the review stage before it ever left
-  the counter — `POST /orders/:id/status { status:'cancelled', discard:true }` stamps
-  `discarded_at`, and POS History passes `exclude_discarded=1` so it never clutters the
-  Cancelled list. A cancel from History stays visible there. V1's order list is
-  unfiltered, so a discard is still auditable outside the POS. The debounced draft save also parks the adjustment (its own
+  **Save Order reviews the draft; it does not create the order.** `handleReview` flushes
+  the cart onto the draft and opens `POSReviewModal` on it, so nothing exists and no
+  stock moves until **Confirm & Print** (`handleConfirmPrint` → `POST /:id/finalize`,
+  which keeps the same id, so the number reviewed is the number printed). That makes the
+  review's other actions free: **Discard** is `DELETE /orders/:draftId` — a real delete,
+  exactly like V1's *Discard draft* — **Draft** parks it in Drafts and blanks the screen,
+  and Escape / backdrop / ✕ just go back to the cart. Never word any of this as
+  "closing" an order: that is the settlement step (returns counted, status `done`).
+  Reopened on an order that is already Created (📝 Review Order, or after an Amber Edit),
+  the modal falls back to print/edit and its dismissal asks via `POSReviewExitConfirm`
+  (Keep / Go Back) so the print buffer cannot be stranded; a Created order is never
+  discarded, only cancelled from History, where it stays visible as 🚫 Cancelled.
+  Leaving Edit Mode restores whatever was parked, print buffer included. The debounced draft save also parks the adjustment (its own
   endpoint), and neither the POS nor `insertItems` accepts a negative price.
   Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
   mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.
@@ -203,7 +206,6 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | `order_items.line_total = quantity*(unit_price+unit_deposit_fee)` | **Reformulated** (migration 023) to `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee`; still a `GENERATED ... STORED` column. Defaults (`units_per_case=1, bottles_returned=0`) reproduce the old result |
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
-| `orders` cannot distinguish a discard from a cancel | `discarded_at TIMESTAMPTZ`, `discarded_by INT REFERENCES users(id)` added (migration 031). A discard is a cancellation abandoned at the V2 POS review stage; `GET /orders?exclude_discarded=1` hides those (opt-in, so V1 is unchanged) |
 
 ### `order_personnel` join table (migration 016)
 ```sql

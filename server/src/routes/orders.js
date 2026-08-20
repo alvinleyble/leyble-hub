@@ -229,7 +229,7 @@ async function reconcileStock(client, oldItems, newItems, orderId, userId) {
 // GET /api/v1/orders
 router.get('/', async (req, res, next) => {
   try {
-    const { status, customer_id, from_date, to_date, exclude_discarded } = req.query;
+    const { status, customer_id, from_date, to_date } = req.query;
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -253,11 +253,6 @@ router.get('/', async (req, res, next) => {
     if (to_date) {
       conditions.push(`o.created_at < $${idx++}`);
       params.push(to_date);
-    }
-    // Opt-in, so V1's order list is unchanged: the V2 POS History passes this to keep
-    // orders abandoned at its review stage out of the Cancelled list (migration 031).
-    if (exclude_discarded === '1' || exclude_discarded === 'true') {
-      conditions.push('o.discarded_at IS NULL');
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -644,10 +639,7 @@ router.post('/:id/status', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const { status: newStatus, discard = false } = req.body;
-    // A discard is a cancel that never enters POS History (migration 031). It is only
-    // ever an abandonment of a fresh order, so it rides on the cancel transition alone.
-    const isDiscard = Boolean(discard) && newStatus === 'cancelled';
+    const { status: newStatus } = req.body;
     const allowed = getAllowedTransitions(order.status, order.order_type);
 
     if (!allowed.includes(newStatus)) {
@@ -667,8 +659,7 @@ router.post('/:id/status', async (req, res, next) => {
     if (newStatus === 'cancelled') {
       const stockDeducted = await hasDeductedStock(client, order.id);
       if (stockDeducted) {
-        await restoreStock(client, items, order.id, req.user.id,
-          `Order #${order.id} ${isDiscard ? 'discarded' : 'cancelled'}`);
+        await restoreStock(client, items, order.id, req.user.id, `Order #${order.id} cancelled`);
       }
     }
 
@@ -684,11 +675,6 @@ router.post('/:id/status', async (req, res, next) => {
     if (newStatus === 'in_transit') setClauses.push('dispatched_at = NOW()');
     if (newStatus === 'completed')  setClauses.push('delivered_at = NOW()');
     if (['done', 'cancelled'].includes(newStatus)) setClauses.push('closed_at = NOW()');
-    const statusParams = [newStatus, order.id];
-    if (isDiscard) {
-      statusParams.push(req.user.id);
-      setClauses.push('discarded_at = NOW()', `discarded_by = $${statusParams.length}`);
-    }
     if (isStepBack) {
       if (order.status === 'in_transit') setClauses.push('dispatched_at = NULL');
       if (order.status === 'completed') {
@@ -699,16 +685,14 @@ router.post('/:id/status', async (req, res, next) => {
 
     await client.query(
       `UPDATE orders SET ${setClauses.join(', ')} WHERE id = $2`,
-      statusParams
+      [newStatus, order.id]
     );
 
     await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
-      action:     isDiscard ? 'discarded' : 'status_changed',
-      summary:    isDiscard
-        ? `Order #${order.id} discarded at the POS review — stock restored, hidden from POS History`
-        : `Order #${order.id} status changed from '${order.status}' to '${newStatus}'`,
+      action:     'status_changed',
+      summary:    `Order #${order.id} status changed from '${order.status}' to '${newStatus}'`,
       performedBy: req.user.id,
     });
 

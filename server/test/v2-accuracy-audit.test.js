@@ -211,6 +211,55 @@ describe('V2 accuracy audit', () => {
       assert.equal(noReason, 400);
     });
 
+    it('the reviewed draft holds no stock, and discarding it leaves nothing behind', async () => {
+      // POSPage handleReview: the cart is flushed onto the draft and reviewed there.
+      const p = await mkProduct('AUD_REVIEW_DISCARD', 30);
+      const { body: draft } = await json(await api('/orders', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId, status: 'draft',
+          items: [{ product_id: p.id, quantity: 3, unit_price: 100 }] }),
+      }));
+      await json(await api(`/orders/${draft.id}`, { method: 'PATCH',
+        body: JSON.stringify({ items: [{ product_id: p.id, quantity: 4, unit_price: 100 }] }) }));
+      assert.equal(await stockOf(p.id), 30, 'reviewing a draft moves no stock');
+
+      // POSReviewModal "Discard" — V1's handleDiscard, byte for byte.
+      const del = await api(`/orders/${draft.id}`, { method: 'DELETE' });
+      assert.equal(del.status, 204);
+
+      const gone = await api(`/orders/${draft.id}`);
+      assert.equal(gone.status, 404, 'the draft is really gone, not cancelled');
+      assert.equal(await stockOf(p.id), 30, 'nothing to restore, because nothing was taken');
+      assert.equal((await auditRows(draft.id)).length, 0, 'no stock audit rows at all');
+      const { rows: acts } = await db.query(
+        `SELECT 1 FROM activity_logs WHERE entity_type='order' AND entity_id=$1`, [draft.id]);
+      assert.equal(acts.length, 0, 'an abandoned draft is not a business event');
+    });
+
+    it('confirming the reviewed draft is what creates the order and deducts the stock', async () => {
+      const p = await mkProduct('AUD_REVIEW_CONFIRM', 30);
+      const { body: draft } = await json(await api('/orders', {
+        method: 'POST',
+        body: JSON.stringify({ customer_id: customerId, status: 'draft',
+          items: [{ product_id: p.id, quantity: 4, unit_price: 100 }] }),
+      }));
+      await json(await api(`/orders/${draft.id}/adjustment`, { method: 'PATCH',
+        body: JSON.stringify({ adjustment: -40, adjustment_reason: 'suki discount' }) }));
+      assert.equal(await stockOf(p.id), 30);
+
+      // POSReviewModal "Confirm & Print".
+      const { status, body: created } = await json(
+        await api(`/orders/${draft.id}/finalize`, { method: 'POST', body: '{}' }));
+      assert.equal(status, 200);
+      assert.equal(created.id, draft.id, 'the number reviewed is the number printed');
+      assert.equal(created.status, 'pending');
+      assert.equal(await stockOf(p.id), 26, 'stock moves at confirm, not before');
+      // The adjustment parked on the draft survives the finalize (F11).
+      assert.equal(Number(created.adjustment), -40);
+      assert.equal(created.adjustment_reason, 'suki discount');
+      assert.equal(Number(created.total_amount), 400, 'total stays goods-only');
+    });
+
     it('discarding the draft the POS is still holding breaks the in-progress order', async () => {
       const p = await mkProduct('AUD_DRAFT_DISCARD', 30);
       const { body: draft } = await json(await api('/orders', {
@@ -395,55 +444,6 @@ describe('V2 accuracy audit', () => {
       const { body } = await json(await api('/orders?status=pending'));
       assert.ok(body.length <= 200);
       if (n > 200) assert.equal(body.length, 200);
-    });
-
-    it('a discarded order is hidden from POS History; a deliberate cancel is not', async () => {
-      const p = await mkProduct('AUD_DISCARD', 20);
-      const mkOrder = async () => {
-        const { body } = await json(await api('/orders', {
-          method: 'POST',
-          body: JSON.stringify({ customer_id: customerId,
-            items: [{ product_id: p.id, quantity: 2, unit_price: 100 }] }),
-        }));
-        return body;
-      };
-
-      const discarded = await mkOrder();
-      const cancelled = await mkOrder();
-      assert.equal(await stockOf(p.id), 16);
-
-      // POSReviewExitConfirm "Discard" — a cancel carrying the discard marker.
-      const { body: afterDiscard } = await json(await api(`/orders/${discarded.id}/status`, {
-        method: 'POST', body: JSON.stringify({ status: 'cancelled', discard: true }) }));
-      // POSHistoryModal's own Cancel — a deliberate decision about an existing order.
-      const { body: afterCancel } = await json(await api(`/orders/${cancelled.id}/status`, {
-        method: 'POST', body: JSON.stringify({ status: 'cancelled' }) }));
-
-      // Both are ordinary cancellations: same status, stock back either way.
-      assert.equal(afterDiscard.status, 'cancelled');
-      assert.equal(afterCancel.status, 'cancelled');
-      assert.equal(await stockOf(p.id), 20);
-      assert.ok(afterDiscard.discarded_at, 'the discard is marked');
-      assert.equal(afterCancel.discarded_at, null, 'a plain cancel is not a discard');
-
-      // POS History (exclude_discarded=1) shows the cancel and not the discard...
-      const { body: posHistory } = await json(await api('/orders?status=cancelled&exclude_discarded=1'));
-      const posIds = posHistory.map((o) => o.id);
-      assert.ok(posIds.includes(cancelled.id), 'a deliberate cancel still shows in POS History');
-      assert.equal(posIds.includes(discarded.id), false, 'a discard never clutters POS History');
-
-      // ...while V1's list is untouched: without the flag both are still returned.
-      const { body: v1List } = await json(await api('/orders?status=cancelled'));
-      const v1Ids = v1List.map((o) => o.id);
-      assert.ok(v1Ids.includes(cancelled.id));
-      assert.ok(v1Ids.includes(discarded.id), 'the discard stays auditable outside the POS');
-
-      // A discard is its own activity_logs action, distinct from a status change.
-      const { rows: [log] } = await db.query(
-        `SELECT action, summary FROM activity_logs
-          WHERE entity_type='order' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [discarded.id]);
-      assert.equal(log.action, 'discarded');
-      assert.match(log.summary, /discarded at the POS review/);
     });
 
     it('a negative unit price is rejected end-to-end (F6)', async () => {
