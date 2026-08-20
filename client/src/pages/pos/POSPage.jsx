@@ -76,7 +76,6 @@ export default function POSPage() {
   // copies:2 + autoTag = the zero-prompt print of proposal §2.6. No receipt overrides:
   // a pending receipt is goods-only, which is exactly what V2 charges (see posMath.js).
   const [printOrder, setPrintOrder] = useState(null);
-  const [printTick, setPrintTick]   = useState(0);
   const printer = usePrintReceipt(
     printOrder,
     {},
@@ -89,13 +88,9 @@ export default function POSPage() {
     { copies: 2, autoTag: true }
   );
 
-  useEffect(() => {
-    if (printTick > 0) printer.handlePrint();
-  }, [printTick]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const requestPrint = (order) => {
     setPrintOrder(order);
-    setPrintTick((t) => t + 1);
+    printer.handlePrint(order, 2);
   };
 
   // ── Data load ──────────────────────────────────────────────────────────────
@@ -553,9 +548,9 @@ export default function POSPage() {
     setReviewOpen(false);
     setReviewOrder(null);
     if (target) {
+      setSavedOrder(target);
       requestPrint(target);
     }
-    startNewOrder();
   };
 
   const handleReviewNewOrder = () => {
