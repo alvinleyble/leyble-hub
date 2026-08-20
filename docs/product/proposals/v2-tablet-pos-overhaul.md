@@ -48,7 +48,7 @@ graph TD
 
 ### 1. Simplified Order Lifecycle in UI
 * **Two Primary States:**
-  * **`📝 Draft`**: In-progress order, auto-saved as a backend `draft` (created on customer pick, debounced auto-save — V1 behavior), hidden from history until finalized.
+  * **`📝 Draft`**: In-progress order, auto-saved as a backend `draft` (created on customer pick, debounced auto-save — V1 behavior), hidden from history until finalized — reachable (and resumable) via the top bar's **Drafts** popup, added 2026-08-20.
   * **`✅ Created`**: Finalized order (persisted as `pending` under the hood in PostgreSQL).
 * **Order Cancellation:** Handled via History popup or Amber Edit Mode (calls `POST /orders/:id/status` `{ status: 'cancelled' }` to restore inventory).
 * Complex intermediary statuses (`in_transit`, `completed`, `done`) are **silenced entirely** — never surfaced anywhere in V2. V2 exposes only `Draft`, `Created`, and `Cancelled`, catering solely to the features the owners actually use.
@@ -67,7 +67,10 @@ graph TD
 
 ### 4. Ticket, Pricing & Bottle Deposits
 * **In-line Price per Case:** Direct `price /cs` edit on order lines.
-* **Preemptive Bottle Deposit Calculation:** `w/ dep` vs `w/o dep` calculations are folded directly into line totals, subtotal, and total due for zero visual clutter. Deposit is **display-only** — charged in full at sale and folded into the shown/receipt total, while the stored `total_amount` stays goods-only (deposit folds in only at `done`, which V2 never reaches); bottle returns are handled manually, not tracked in-app.
+* **No deposit anywhere in V2 — goods-only totals.** ⚠️ **CORRECTED 2026-08-20 (captain decision, mid-Slice-1) — this reverses the original "Preemptive Bottle Deposit Calculation" rule locked in this section.** Line totals, the `Items` subtotal, the total due and the printed receipt are all **goods-only** (`quantity × price /cs`, plus the adjustment). Nothing deposit-derived is calculated or displayed on the POS screens, and a deposit-bearing product looks identical to one without: no `w/ dep` / `w/o dep` tag, badge or breakdown.
+  * **Why:** V1 treats every bottle as returned until an order is explicitly closed and the returns are counted, so deposit is effectively zero before that step. §2.1 makes `pending` V2's terminal state — V2 **never advances an order**, so it never reaches `completed`/`done` where a deposit would become real. Charging or showing a preemptive deposit would bill customers for bottles the system will never mark returned.
+  * **Unchanged below the UI:** order lines still carry `unit_deposit_fee` to the backend, `order_items.line_total` keeps its generated-column formula, and `orders.total_amount` stays goods-only exactly as `recomputeTotal` writes it. Those matter at V1's closing step and are untouched.
+  * ~~Original rule (superseded): `w/ dep` vs `w/o dep` folded into line totals, subtotal and total due; deposit display-only, charged in full at sale.~~
 * **Adjustment & Reason:** Discount / Suki adjustment field matching V1 math, requiring an adjustment reason when discount is applied.
 * **Customer Selection:** Default search bar with blank input for quick auto-complete.
 
@@ -77,7 +80,7 @@ graph TD
 
 ### 6. Thermal Print Flow
 * **Zero-Prompt Printing (two taps):** **Save Order** locks the order, then **Print Receipt** prints a pre-configured 2-copy thermal output — no copy-count or tag confirmation dialogs.
-* **Print Tracking:** Orders missing confirmed print receipts display a prominent `⚠️ NOT PRINTED` badge in History and top bar alerts.
+* **Print Tracking:** Orders missing confirmed print receipts display a prominent `NOT PRINTED` badge on their row in History, plus a "today, not printed only" filter there. **Corrected 2026-08-20 (captain decision, round 4):** the ~~top-bar summary alert~~ was redundant with those per-order badges and is **removed**; its spot in the top bar now holds a **Drafts** button opening a Drafts popup (see §2.1 — drafts are hidden from History, so this is where an unfinished order is found and resumed). The not-printed count is back as a **badge on the History button** (today-scoped, same set as that filter), and History can **mark the whole filtered batch as printed** in one action when the receipts were printed but never tagged (added 2026-08-20, round 5).
 * **Receipt width stays 80mm** — the project standard since June; gemini's prototype renders 58mm, which is stale.
 
 ### 7. Future Revert — "Ideal Horizon"
@@ -88,7 +91,8 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 2. **Restore on cancel.** V2 restores stock when a `pending` order is cancelled; intended restores only for dispatched orders.
 3. **Reconcile on edit.** V2 reconciles stock when a `pending` order's items are edited; intended reconciles only for dispatched orders.
 4. **Statuses.** V2 silences `in_transit`/`completed`/`done`; intended exposes the full lifecycle via the Review Deliveries queue.
-5. **Deposit.** V2 shows deposit as display-only (charged in full at sale, stored total goods-only); intended folds deposit in at `done` on un-returned bottles with returns tracked.
+5. **Deposit.** V2 shows **no deposit at all** — every POS figure and the printed receipt are goods-only; intended folds deposit in at `done` on un-returned bottles with returns tracked.
+   > **Correction, 2026-08-20 (explicit captain decision, mid-Slice-1).** This supersedes the original §2.4 "Preemptive Bottle Deposit Calculation" language — which had V2 charging the deposit in full at sale and folding it into the shown/receipt total — and is a **reversal of a locked decision**, not an implementation detail. The reversal is UI-only: `unit_deposit_fee`, `line_total` and `recomputeTotal` are untouched, so returning to the intended design still only takes re-enabling the closing step.
 6. **Driver/helper.** V2 does not capture `order_personnel`; intended tracks at most one driver per order.
 7. **Backlog.** The ~1,300 (and growing) `pending` orders would need a one-time bulk pass through the intended lifecycle on revert.
 
@@ -96,14 +100,49 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 
 ## 3. Implementation Slices & Architecture
 
-| Slice # | Slice Name | Scope Summary |
-| :--- | :--- | :--- |
-| **Slice 0** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
-| **Slice 1** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
-| **Slice 2** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
-| **Slice 3** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
-| **Slice 4** | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
-| **Slice 5** | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
+| Slice # | Status | Slice Name | Scope Summary |
+| :--- | :--- | :--- | :--- |
+| **Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
+| **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
+| **Slice 2** | ⬜ Not started | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
+| **Slice 3** | ⬜ Not started | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
+| **Slice 4** | ⬜ Not started | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
+| **Slice 5** | ⬜ Not started | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
+
+### Slice 1 — what shipped
+
+Landed on `dev` as a frontend-only change: no migrations, no route or payload-shape
+changes. The screen is `client/src/pages/pos/POSPage.jsx` with its parts under
+`client/src/components/pos/`.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| 3-row category matrix + "All Categories", icon-free cards (§2.2) | `POSProductGrid.jsx` — cards show name, category and price/cs only |
+| Blank customer search bar, punctuation-insensitive (§2.4) | `POSCustomerSearch.jsx` + `client/src/utils/customerSearch.js` |
+| 0.5-case steppers with press-and-hold (§2.3) | `CaseStepper.jsx` on the order lines and the product cards themselves (shared `useHoldRepeat`) — a card tap adds 0.5 case |
+| In-line `price /cs`, adjustment + required reason (§2.4) | `POSOrderPanel.jsx` |
+| ~~Preemptive deposit totalling~~ → **goods-only totals** (§2.4, corrected 2026-08-20) | `posMath.js` — no deposit is calculated or shown anywhere in the POS; the receipt prints goods-only too. `unit_deposit_fee` / `line_total` / `total_amount` untouched |
+| 2-stage Save → Print, zero prompts, 2 copies (§2.6) | `POSPage.jsx` + `usePrintReceipt(…, { copies: 2, autoTag: true })` |
+| `NOT PRINTED` badges (§2.6) + Drafts popup (§2.1) | `POSHistoryModal.jsx` (per-order badge + "today, not printed only" filter) and `POSDraftsModal.jsx` behind the top bar's **Drafts** button — the top-bar summary alert was removed as redundant (corrected 2026-08-20). Both popups share `POSListModal.jsx`. Each top-bar button carries a count badge (parked drafts / today's not-printed), and History has a bulk "mark all as printed" for the filtered batch |
+| Draft / Created / Cancelled only (§2.1) | History fetches `status=pending` + `status=cancelled` and Drafts fetches `status=draft` — the silenced statuses are never requested. Resuming a draft keeps its id, so saving finalizes that same order |
+| Amber Edit Mode (§2.5) | `AmberEditHeader.jsx` + edit mode in `POSPage.jsx` |
+
+Two additive hooks into shared V1 code (V1 behaviour unchanged):
+
+- `usePrintReceipt(order, returnCounts, onTagged, overrides, options)` — `options.copies`
+  prints a fixed number of copies with no "print twice?" gate, `options.autoTag` records
+  the print without the confirm prompt. V1 callers pass neither and keep both prompts.
+- `generateReceiptHtml` / `generateEscPos` accept `overrides.showDeposit`, which forces the
+  deposit onto a `pending` receipt. The POS passes it so the printed total matches the
+  screen; V1 receipts still only show the deposit at `completed`/`done`.
+
+Known limitation, accepted: the customer and order type cannot be changed in Amber Edit
+Mode (the backend accepts those on a draft only) — wrong customer means cancel and rebuild.
+
+Screen copy calls these **orders**, never "tickets" — the business does not use that word.
+
+**Reversal on record:** the preemptive bottle-deposit rule locked in §2.4 was corrected to
+goods-only totals on 2026-08-20 by captain decision, mid-Slice-1. See §2.4 and §7 item 5.
 
 ### Build Order (recommended)
 
@@ -129,8 +168,10 @@ client/src/
 │   └── CustomersV2Page.jsx         # Suki customer profiles & custom rates
 ├── components/pos/
 │   ├── POSProductGrid.jsx          # 3-row category matrix + product cards
-│   ├── POSTicket.jsx               # Sticky ticket, steppers, deposit math, grand total
+│   ├── POSOrderPanel.jsx           # Sticky order panel, steppers, goods-only totals
 │   ├── POSHistoryModal.jsx         # Fast order history, reprint & amber edit entry
+│   ├── POSDraftsModal.jsx          # Parked drafts, resume back onto the POS
+│   ├── POSListModal.jsx            # Shared popup shell + row styling for both lists
 │   └── AmberEditHeader.jsx         # Visual header banner during order modification
 └── hooks/
     ├── usePrintReceipt.js          # Direct zero-prompt 2-copy ESC/POS thermal printing
