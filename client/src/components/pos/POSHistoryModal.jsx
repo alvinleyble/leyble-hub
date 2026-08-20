@@ -7,6 +7,20 @@ import POSListModal, { LIST_ACTION_BTN, LIST_ROW, listDateTime } from './POSList
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+export const DATE_PRESETS = [
+  { id: 'all', label: 'All Time' },
+  { id: 'today', label: 'Today' },
+  { id: 'yesterday', label: 'Yesterday' },
+  { id: '7d', label: 'Last 7 Days' },
+];
+
+const datePill = (active) =>
+  `flex min-h-tablet items-center justify-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
+   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+   ${active
+     ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
+     : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
+
 // Order history for the V2 POS. Only the states V2 admits are ever fetched: Created
 // (backend `pending`) and Cancelled. Drafts have their own popup (POSDraftsModal), and
 // in_transit/completed/done are never requested, so they can never surface here
@@ -14,11 +28,12 @@ const PHP = (n) =>
 export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged }) {
   const { addToast } = useToast();
 
-  const [orders, setOrders]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery]     = useState('');
+  const [orders, setOrders]       = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [query, setQuery]         = useState('');
+  const [dateFilter, setDateFilter] = useState('all');
   const [unprintedOnly, setUnprintedOnly] = useState(false);
-  const [busyId, setBusyId]   = useState(null);
+  const [busyId, setBusyId]       = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling, setCancelling]     = useState(false);
   const [bulkPrompt, setBulkPrompt]     = useState(false);
@@ -40,20 +55,34 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // "Not printed" is scoped to today on purpose: every pre-V2 order in the backlog
-    // is unprinted, and listing those would bury the ones still worth chasing.
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const startOf7DaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+
     return orders.filter((o) => {
+      const createdAt = new Date(o.created_at);
+
+      if (dateFilter === 'today') {
+        if (createdAt < startOfToday) return false;
+      } else if (dateFilter === 'yesterday') {
+        if (createdAt < startOfYesterday || createdAt >= startOfToday) return false;
+      } else if (dateFilter === '7d') {
+        if (createdAt < startOf7DaysAgo) return false;
+      }
+
+      // "Not printed" is scoped to today on purpose: every pre-V2 order in the backlog
+      // is unprinted, and listing those would bury the ones still worth chasing.
       if (unprintedOnly && (
         o.status !== 'pending' ||
         o.pending_receipt_printed_at ||
-        new Date(o.created_at) < midnight
+        createdAt < startOfToday
       )) return false;
+
       if (!q) return true;
       return (o.customer_name || '').toLowerCase().includes(q) || String(o.id).includes(q);
     });
-  }, [orders, query, unprintedOnly]);
+  }, [orders, query, unprintedOnly, dateFilter]);
 
   const withFullOrder = async (id, run) => {
     setBusyId(id);
@@ -119,26 +148,45 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged 
         query={query}
         onQueryChange={setQuery}
         filters={
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setUnprintedOnly((v) => !v)}
-              aria-pressed={unprintedOnly}
-              className={`${LIST_ACTION_BTN} ${unprintedOnly
-                ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
-                : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
-            >
-              ⚠️ Today, not printed only
-            </button>
-            {unprintedOnly && unprintedVisible.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Date range filter">
+              {DATE_PRESETS.map((preset) => {
+                const active = dateFilter === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => setDateFilter(preset.id)}
+                    aria-pressed={active}
+                    className={datePill(active)}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setBulkPrompt(true)}
-                className={`${LIST_ACTION_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
+                onClick={() => setUnprintedOnly((v) => !v)}
+                aria-pressed={unprintedOnly}
+                className={`${LIST_ACTION_BTN} ${unprintedOnly
+                  ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
+                  : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
               >
-                ✅ Mark all {unprintedVisible.length} as printed
+                ⚠️ Today, not printed only
               </button>
-            )}
+              {unprintedOnly && unprintedVisible.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setBulkPrompt(true)}
+                  className={`${LIST_ACTION_BTN} bg-emerald-600 text-white hover:bg-emerald-500`}
+                >
+                  ✅ Mark all {unprintedVisible.length} as printed
+                </button>
+              )}
+            </div>
           </div>
         }
         loading={loading}
