@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
@@ -30,6 +31,8 @@ const COUNT_BADGE = `inline-flex h-7 min-w-[1.75rem] items-center justify-center
 // order past `pending` and never writes order_personnel.
 export default function POSPage() {
   const { addToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const amberOrderId = searchParams.get('amberOrderId') || searchParams.get('editOrderId');
 
   const [products, setProducts]   = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -119,7 +122,16 @@ export default function POSPage() {
       .catch(() => {});
   }
 
-  const selectedCustomer = customers.find((c) => String(c.id) === String(customerId)) ?? null;
+  const selectedCustomer =
+    customers.find((c) => String(c.id) === String(customerId)) ??
+    (editOrder && String(editOrder.customer_id) === String(customerId)
+      ? {
+          id: editOrder.customer_id,
+          name: editOrder.customer_name,
+          address: editOrder.customer_address,
+          customer_type: editOrder.customer_type,
+        }
+      : null);
 
   // Wholesaler custom prices for the picked customer + channel (same rule as V1).
   useEffect(() => {
@@ -533,6 +545,30 @@ export default function POSPage() {
     setErrors({});
     setHistoryOpen(false);
   };
+
+  // Enter Amber Edit mode if routed in via query parameter (e.g. from V2 Customers order history)
+  useEffect(() => {
+    if (loading || !amberOrderId) return;
+    api.get(`/orders/${amberOrderId}`)
+      .then((order) => {
+        if (order.status === 'cancelled') {
+          addToast(`Order #${order.id} is cancelled and cannot be edited.`, 'error');
+        } else {
+          enterEditMode(order);
+        }
+      })
+      .catch((err) => {
+        addToast(err.message || `Failed to load order #${amberOrderId}.`, 'error');
+      })
+      .finally(() => {
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('amberOrderId');
+          next.delete('editOrderId');
+          return next;
+        }, { replace: true });
+      });
+  }, [loading, amberOrderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Review modal handlers (Pre-Print Order Review & Edit ⇄ Review Loop) ────
   const handleReviewEdit = () => {

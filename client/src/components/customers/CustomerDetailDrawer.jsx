@@ -735,8 +735,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                     return (
                       <li
                         key={o.id}
-                        onClick={() => navigate(`/orders/${o.id}`)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/orders/${o.id}`); }}
+                        onClick={() => navigate(`/v2/pos?amberOrderId=${o.id}`)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/v2/pos?amberOrderId=${o.id}`); }}
                         role="button"
                         tabIndex={0}
                         className="flex items-center justify-between gap-4 rounded-xl border border-v2-border bg-v2-bg p-3.5
