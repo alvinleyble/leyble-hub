@@ -8,6 +8,7 @@ import POSDraftsModal from '../../components/pos/POSDraftsModal';
 import POSHistoryModal from '../../components/pos/POSHistoryModal';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import POSOrderPanel from '../../components/pos/POSOrderPanel';
+import POSSavePriceModal from '../../components/pos/POSSavePriceModal';
 import { roundQty } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintReceipt } from '../orders/usePrintReceipt';
@@ -65,6 +66,8 @@ export default function POSPage() {
   const [unprintedCount, setUnprintedCount] = useState(0);
   const [confirm, setConfirm]         = useState(null); // { kind, ... }
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // Save custom price prompt on submit (proposal §4 & save-custom-price-prompt.md)
+  const [priceSavePrompt, setPriceSavePrompt] = useState(null);
 
   // ── Printing ───────────────────────────────────────────────────────────────
   // copies:2 + autoTag = the zero-prompt print of proposal §2.6. No receipt overrides:
@@ -287,11 +290,25 @@ export default function POSPage() {
   };
 
   // Save Order: draft → Created (backend `pending`), stock deducts server-side.
-  // No prompts — printing is the separate second tap.
+  // Checks for hand-edited prices at submit time and prompts to save them if dirty.
   const handleSave = async () => {
     const errs = validate();
     setErrors(errs);
     if (Object.keys(errs).length) return;
+
+    // Snapshot hand-edited ("dirty") lines against priceFor() before submitting
+    const dirtyItems = items.reduce((acc, i) => {
+      const product = products.find((p) => String(p.id) === i.product_id);
+      if (product && Number(i.unit_price) !== priceFor(product)) {
+        acc.push({
+          product_id:   Number(i.product_id),
+          product_name: product.name,
+          sku:          product.sku || '',
+          unit_price:   Number(i.unit_price),
+        });
+      }
+      return acc;
+    }, []);
 
     setSaving(true);
     try {
@@ -321,6 +338,18 @@ export default function POSPage() {
       draftPromiseRef.current = null;
       addToast(`Order #${orderId} created.`, 'success');
       refreshCounts();
+
+      // Offer to save custom prices if any were hand-edited
+      if (dirtyItems.length && selectedCustomer) {
+        setPriceSavePrompt({
+          step: 'first',
+          orderId,
+          customer: selectedCustomer,
+          orderType,
+          dirty: dirtyItems,
+          busy: false,
+        });
+      }
     } catch (err) {
       addToast(err.message || 'Failed to save the order.', 'error');
     } finally {
@@ -335,17 +364,97 @@ export default function POSPage() {
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
+    // Snapshot hand-edited ("dirty") lines against priceFor() before submitting
+    const dirtyItems = items.reduce((acc, i) => {
+      const product = products.find((p) => String(p.id) === i.product_id);
+      if (product && Number(i.unit_price) !== priceFor(product)) {
+        acc.push({
+          product_id:   Number(i.product_id),
+          product_name: product.name,
+          sku:          product.sku || '',
+          unit_price:   Number(i.unit_price),
+        });
+      }
+      return acc;
+    }, []);
+
     setSaving(true);
     try {
       const { customer_id, order_type, ...editable } = finalPayload();
       await api.patch(`/orders/${editOrder.id}`, editable);
       await syncAdjustment(editOrder.id, editOrder);
       addToast(`Order #${editOrder.id} updated.`, 'success');
+      const editedOrderId = editOrder.id;
       exitEditMode();
+
+      if (dirtyItems.length && selectedCustomer) {
+        setPriceSavePrompt({
+          step: 'first',
+          orderId: editedOrderId,
+          customer: selectedCustomer,
+          orderType,
+          dirty: dirtyItems,
+          busy: false,
+        });
+      }
     } catch (err) {
       addToast(err.message || 'Failed to update the order.', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ── Save-custom-price prompt handlers ──────────────────────────────────────
+  const declinePriceSave = () => {
+    setPriceSavePrompt(null);
+  };
+
+  const acceptFirstPrompt = () => {
+    if (priceSavePrompt.customer.customer_type === 'wholesaler') {
+      persistPriceSave(false);
+    } else {
+      setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
+    }
+  };
+
+  const persistPriceSave = async (convertToWholesaler) => {
+    setPriceSavePrompt((p) => ({ ...p, busy: true }));
+    try {
+      if (convertToWholesaler) {
+        await api.patch(`/customers/${priceSavePrompt.customer.id}`, {
+          customer_type:   'wholesaler',
+          conversion_note: `custom price saved from order #${priceSavePrompt.orderId}`,
+        });
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === priceSavePrompt.customer.id ? { ...c, customer_type: 'wholesaler' } : c
+          )
+        );
+      }
+
+      await Promise.all(
+        priceSavePrompt.dirty.map((d) =>
+          api.post(`/customers/${priceSavePrompt.customer.id}/prices`, {
+            product_id:        d.product_id,
+            custom_unit_price: d.unit_price,
+            order_type:        priceSavePrompt.orderType,
+          })
+        )
+      );
+
+      addToast('Custom price saved.', 'success');
+
+      // Refresh custom prices map in POS
+      const refreshedPrices = await api.get(
+        `/customers/${priceSavePrompt.customer.id}/prices?order_type=${priceSavePrompt.orderType}`
+      );
+      const map = {};
+      refreshedPrices.forEach((p) => { map[p.product_id] = p; });
+      setCustomPrices(map);
+    } catch (err) {
+      addToast(err.message || 'Failed to save custom price.', 'error');
+    } finally {
+      setPriceSavePrompt(null);
     }
   };
 
@@ -605,6 +714,14 @@ export default function POSPage() {
           puts the stock back. It cannot be undone.
         </POSConfirm>
       )}
+
+      {/* Save Custom Price prompt (proposal §4 & save-custom-price-prompt.md) */}
+      <POSSavePriceModal
+        prompt={priceSavePrompt}
+        onAcceptFirst={acceptFirstPrompt}
+        onConfirmConvert={() => persistPriceSave(true)}
+        onDecline={declinePriceSave}
+      />
 
       {/* Printer picker (Android only — first print or "change printer") */}
       {printer.pickerVisible && (

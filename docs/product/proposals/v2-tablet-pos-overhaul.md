@@ -105,7 +105,7 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | **Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
 | **Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. Voice AI excluded — ships in Slice 4. |
 | **Slice 2** | ✅ **Done** | **Inventory & Stock** | In-line price edits, `w/ dep` flags, product detail & audit drawer, batch price edit modal with audit reason, physical stock count sheet generator. Per-row `−1`/`+1` stock steppers removed. **Priority: batch price edit** — the owners rarely touch stock and mainly open Inventory to change prices (this is why V1 added batch update price). |
-| **Slice 3** | ⬜ Not started | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
+| **Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS. Custom prices fetched fresh at line-add and re-applied when the customer or order type changes. |
 | **Slice 4** | ⬜ Not started | **Voice AI (OpenAI API)** | OpenAI API Key integration, configurable model (`gpt-4o-mini`/`gpt-4o`), Taglish voice parsing for POS, Inventory, and Customer Suki pricing. |
 | **Slice 5** | ⬜ Not started | **Android Sync & Verification** | Capacitor Android sync, production Gradle build, `Pixel_Tablet` emulator headed verification. |
 
@@ -164,6 +164,24 @@ plus `client/src/components/inventory/`.
 No backend changes were needed for this slice: `PATCH /products/:id` (single-field price/
 deposit/stock edits, all audit-logged), `PATCH /products/batch-price` (bulk price + reason)
 and `GET /products/:id` (audit_log) already covered every Slice 2 requirement.
+
+### Slice 3 — what shipped
+
+Landed on `dev` as a frontend-only change plus zero new backend routes — every endpoint
+on `server/src/routes/customers.js` (list, create, edit with conversion note, prices GET/POST,
+and delete) is reused as-is. The screen is
+[client/src/pages/customers/CustomersV2Page.jsx](client/src/pages/customers/CustomersV2Page.jsx)
+with components under `client/src/components/customers/` and `client/src/components/pos/`.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| Fast tablet directory with search & filter pills | `CustomersV2Page.jsx` — instant filter on name/phone/address, `All` / `Wholesalers` / `Regular` pills, and `Show inactive` checkbox |
+| 80mm Customer List Print | `CustomersV2Page.jsx` + `usePrintList` reusing `customerListHtml` / `customerListEscPos` |
+| Add Customer modal | `CustomerCreateModal.jsx` — dark-themed tablet modal for rapid customer entry |
+| Slide-over profile & Suki pricing drawer | `CustomerDetailDrawer.jsx` — 100% of V1 fields, dark tokens, active toggle, Danger Zone delete with order-history safety check |
+| Delivery vs Pickup custom pricing matrix | `CustomerDetailDrawer.jsx` — channel tabs (`🚚 Delivery` vs `🏪 Pickup`), quick add/edit custom price per case, and live delta comparison against standard base wholesale price (`-₱X.XX / -Y% discount`) |
+| Live Suki pricing sync with POS | `POSPage.jsx` — automatic price recomputation on customer select, line item add, or order type toggle (`delivery` ↔ `pickup`) |
+| "Save custom price?" prompt on order submit | `POSSavePriceModal.jsx` + `POSPage.jsx` — hand-edited lines detected at submit; 2-step prompt for regular customers (convert to wholesaler + save rates) and 1-step prompt for wholesalers, non-blocking on dismissal (matches `save-custom-price-prompt.md`) |
 
 ### Build Order (recommended)
 

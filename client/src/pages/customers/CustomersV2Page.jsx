@@ -1,15 +1,259 @@
-import React from 'react';
-import V2Placeholder from '../shared/V2Placeholder';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { api } from '../../api/client';
+import { useToast } from '../../components/ui/Toast';
+import Spinner from '../../components/ui/Spinner';
+import CustomerCreateModal from '../../components/customers/CustomerCreateModal';
+import CustomerDetailDrawer from '../../components/customers/CustomerDetailDrawer';
+import PrinterPicker from '../orders/PrinterPicker';
+import { usePrintList } from '../shared/usePrintList';
+import { customerListHtml } from '../shared/listPrintTemplate';
+import { customerListEscPos } from '../shared/listEscPos';
+import { customerMatches } from '../../utils/customerSearch';
 
-// Placeholder landing — the real V2 customers screen ships in Slice 3.
-// The V1 CustomersPage stays untouched at /customers.
+const TOP_BTN = `flex h-12 items-center gap-1.5 rounded-xl bg-v2-raised px-4 text-base font-bold text-v2-text
+                 hover:bg-v2-border transition-colors duration-100 disabled:opacity-40
+                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
+
+// V2 Tablet Customers Directory & Suki Pricing Screen (proposal §3, Slice 3).
+// Fast tablet-optimized directory with quick search, filter pills, dark slate tokens,
+// and slide-over profile drawer with custom pricing matrix.
 export default function CustomersV2Page() {
+  const { addToast } = useToast();
+
+  const [customers, setCustomers]       = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+  const [typeFilter, setTypeFilter]     = useState('all'); // 'all' | 'wholesaler' | 'regular'
+  const [creating, setCreating]         = useState(false);
+  const [selectedId, setSelectedId]     = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (showInactive) params.set('include_inactive', 'true');
+
+    api.get(`/customers?${params}`)
+      .then(setCustomers)
+      .catch(() => addToast('Failed to load customers.', 'error'))
+      .finally(() => setLoading(false));
+  }, [showInactive, addToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const {
+    printList, printing,
+    pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
+    savePrinter, scanWifi, testPrint, closePicker,
+  } = usePrintList();
+
+  const handlePrintList = () => printList(customerListHtml(customers), customerListEscPos(customers));
+
+  const filtered = useMemo(() => {
+    return customers.filter((c) => {
+      const matchSearch = customerMatches(c, search) || (c.phone && c.phone.toLowerCase().includes(search.toLowerCase()));
+      const matchType = typeFilter === 'all' || c.customer_type === typeFilter;
+      return matchSearch && matchType;
+    });
+  }, [customers, search, typeFilter]);
+
+  const pill = (active, label) =>
+    `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
+     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+     ${active
+       ? 'bg-v2-accent-strong text-white'
+       : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'
+     }`;
+
   return (
-    <V2Placeholder
-      title="Customers"
-      slice="Slice 3"
-      description="Directory filters, the slide-over profile drawer and the delivery vs pickup suki pricing matrix land here."
-      v1Path="/customers"
-    />
+    <div className="flex h-full min-h-0 flex-col gap-3 px-3 pb-3 pt-2">
+      {/* ── Header ───────────────────────────────────────────────── */}
+      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-2xl font-bold text-v2-text">Customers</h1>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handlePrintList}
+            disabled={printing || customers.length === 0}
+            className={TOP_BTN}
+          >
+            🖶 {printing ? 'Printing…' : 'Print List'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="flex h-12 items-center gap-1.5 rounded-xl bg-v2-accent-strong px-4 text-base font-bold
+                       text-white hover:bg-sky-500 focus-visible:outline-none focus-visible:ring-2
+                       focus-visible:ring-v2-accent"
+          >
+            + Add Customer
+          </button>
+        </div>
+      </div>
+
+      {/* ── Search & Filters ─────────────────────────────────────── */}
+      <div className="shrink-0 space-y-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            type="search"
+            placeholder="Search by name, phone, or address…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search customers"
+            className="h-12 flex-1 rounded-xl border border-v2-border bg-v2-bg px-4 text-base text-v2-text
+                       placeholder:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+          />
+          <label className="flex min-h-tablet cursor-pointer select-none items-center gap-3 rounded-xl border
+                            border-v2-border bg-v2-bg px-4">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="h-6 w-6 accent-v2-accent-strong"
+            />
+            <span className="whitespace-nowrap text-base font-medium text-v2-text">Show inactive</span>
+          </label>
+        </div>
+
+        {!loading && (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Customer type filters">
+            <button
+              type="button"
+              onClick={() => setTypeFilter('all')}
+              aria-pressed={typeFilter === 'all'}
+              className={pill(typeFilter === 'all')}
+            >
+              All Customers ({customers.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter('wholesaler')}
+              aria-pressed={typeFilter === 'wholesaler'}
+              className={pill(typeFilter === 'wholesaler')}
+            >
+              Wholesalers ({customers.filter((c) => c.customer_type === 'wholesaler').length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter('regular')}
+              aria-pressed={typeFilter === 'regular'}
+              className={pill(typeFilter === 'regular')}
+            >
+              Regular Customers ({customers.filter((c) => c.customer_type === 'regular').length})
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Table ────────────────────────────────────────────────── */}
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-v2-border bg-v2-surface">
+        {loading ? (
+          <div className="flex h-64 items-center justify-center"><Spinner size="lg" /></div>
+        ) : filtered.length === 0 ? (
+          <p className="py-20 text-center text-lg text-v2-muted">
+            {search ? 'No customers match your search.' : 'No customers found. Add one to get started.'}
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-base">
+              <thead className="sticky top-0 z-10 bg-v2-bg">
+                <tr className="border-b border-v2-border text-xs uppercase tracking-wider text-v2-muted">
+                  <th className="px-5 py-3 text-left font-semibold">Customer</th>
+                  <th className="hidden px-5 py-3 text-left font-semibold sm:table-cell">Type</th>
+                  <th className="hidden px-5 py-3 text-left font-semibold md:table-cell">Phone</th>
+                  <th className="hidden px-5 py-3 text-left font-semibold lg:table-cell">Address</th>
+                  <th className="px-5 py-3 text-left font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c) => (
+                  <tr
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className="cursor-pointer border-t border-v2-border transition-colors hover:bg-v2-raised"
+                  >
+                    <td className="px-5 py-4">
+                      <p className={`font-semibold text-lg ${c.is_active ? 'text-v2-text' : 'text-v2-muted line-through'}`}>
+                        {c.name}
+                      </p>
+                      {c.notes && (
+                        <p className="mt-0.5 max-w-sm truncate text-xs italic text-v2-muted">{c.notes}</p>
+                      )}
+                    </td>
+
+                    <td className="hidden px-5 py-4 sm:table-cell">
+                      {c.customer_type === 'wholesaler' ? (
+                        <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-sm font-semibold text-amber-300">
+                          Wholesaler
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-bg px-2.5 py-1 text-sm font-semibold text-v2-muted">
+                          Regular
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="hidden px-5 py-4 font-mono text-sm text-v2-muted md:table-cell">
+                      {c.phone ?? '—'}
+                    </td>
+
+                    <td className="hidden px-5 py-4 text-sm text-v2-muted lg:table-cell">
+                      <span className="block max-w-[260px] truncate">{c.address ?? '—'}</span>
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {c.is_active ? (
+                        <span className="inline-flex items-center rounded-full border border-emerald-500/30
+                                         bg-emerald-500/10 px-2.5 py-1 text-sm font-semibold text-emerald-300">
+                          Active
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full border border-v2-border
+                                         bg-v2-raised px-2.5 py-1 text-sm font-semibold text-v2-muted">
+                          Inactive
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Modals / Drawer ──────────────────────────────────────── */}
+      {creating && (
+        <CustomerCreateModal
+          onClose={() => setCreating(false)}
+          onSaved={(created) => {
+            setCreating(false);
+            load();
+            if (created?.id) setSelectedId(created.id);
+          }}
+        />
+      )}
+
+      {selectedId !== null && (
+        <CustomerDetailDrawer
+          customerId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onSaved={load}
+        />
+      )}
+
+      {pickerVisible && (
+        <PrinterPicker
+          devices={pickerDevices}
+          loading={pickerLoading}
+          current={pickerCurrent}
+          printPending={printPending}
+          onSave={savePrinter}
+          onScanWifi={scanWifi}
+          onTestPrint={testPrint}
+          onClose={closePicker}
+        />
+      )}
+    </div>
   );
 }
