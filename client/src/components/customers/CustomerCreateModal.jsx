@@ -101,6 +101,7 @@ export default function CustomerCreateModal({ onClose, onSaved }) {
                 <option value="regular">Regular Customer</option>
                 <option value="discounted">Discounted Customer</option>
                 <option value="wholesaler">Wholesaler</option>
+                <option value="markup">Markup Customer</option>
                 <option value="unassigned">Unassigned</option>
               </select>
             </div>

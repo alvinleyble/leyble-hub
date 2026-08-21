@@ -121,9 +121,9 @@ export default function POSPage() {
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId)) ?? null;
 
-  // Custom prices for the picked customer + channel (wholesaler, discounted, unassigned).
+  // Custom prices for the picked customer + channel (wholesaler, discounted, markup, unassigned).
   useEffect(() => {
-    if (!customerId || !['wholesaler', 'discounted', 'unassigned'].includes(selectedCustomer?.customer_type)) {
+    if (!customerId || !['wholesaler', 'discounted', 'markup', 'unassigned'].includes(selectedCustomer?.customer_type)) {
       setCustomPrices({});
       return;
     }
@@ -462,7 +462,7 @@ export default function POSPage() {
   };
 
   const acceptFirstPrompt = () => {
-    if (['wholesaler', 'discounted', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
+    if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
       persistPriceSave(false);
     } else {
       setPriceSavePrompt((p) => ({ ...p, step: 'second' }));

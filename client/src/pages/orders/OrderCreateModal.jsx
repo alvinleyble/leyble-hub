@@ -102,7 +102,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   // Load custom prices when customer or order_type changes
   useEffect(() => {
-    if (!customerId || !['wholesaler', 'discounted', 'unassigned'].includes(selectedCustomer?.customer_type)) {
+    if (!customerId || !['wholesaler', 'discounted', 'markup', 'unassigned'].includes(selectedCustomer?.customer_type)) {
       setCustomPrices({});
       return;
     }
@@ -379,7 +379,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(priceSavePrompt?.orderId); };
 
   const acceptFirstPrompt = () => {
-    if (['wholesaler', 'discounted', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
+    if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
       persistPriceSave(false);
     } else {
       setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
@@ -536,8 +536,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                           Discounted
                         </span>
                       )}
+                      {c.customer_type === 'markup' && (
+                        <span className="text-xs font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-300 shrink-0">
+                          Markup
+                        </span>
+                      )}
                       {c.customer_type === 'unassigned' && (
-                        <span className="text-xs font-semibold text-yellow-800 bg-yellow-100 px-2 py-0.5 rounded-full border border-yellow-300 shrink-0">
+                        <span className="text-xs font-semibold text-red-800 bg-red-100 px-2 py-0.5 rounded-full border border-red-300 shrink-0">
                           Unassigned
                         </span>
                       )}
@@ -552,13 +557,17 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                           ? 'bg-amber-100 text-amber-800 border-amber-300'
                           : selectedCustomer.customer_type === 'discounted'
                           ? 'bg-blue-100 text-blue-800 border-blue-300'
+                          : selectedCustomer.customer_type === 'markup'
+                          ? 'bg-purple-100 text-purple-800 border-purple-300'
                           : selectedCustomer.customer_type === 'unassigned'
-                          ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
+                          ? 'bg-red-100 text-red-800 border-red-300'
                           : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                         {selectedCustomer.customer_type === 'wholesaler'
                           ? 'Wholesaler — custom pricing applied'
                           : selectedCustomer.customer_type === 'discounted'
                           ? 'Discounted — custom pricing applied'
+                          : selectedCustomer.customer_type === 'markup'
+                          ? 'Markup Customer (Custom Pricing)'
                           : selectedCustomer.customer_type === 'unassigned'
                           ? 'Unassigned — custom pricing applied'
                           : 'Regular Customer'}

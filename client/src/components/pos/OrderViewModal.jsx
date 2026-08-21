@@ -68,7 +68,7 @@ export default function OrderViewModal({
   // Only a live order can be edited, reprinted or cancelled — matching the row buttons
   // in POS History, which grey out on anything already cancelled.
   const canAct = order.status === 'pending';
-  const isWholesaler = ['wholesaler', 'discounted', 'unassigned'].includes(order.customer_type);
+  const isWholesaler = ['wholesaler', 'discounted', 'markup', 'unassigned'].includes(order.customer_type);
   const st = ORDER_STATUS[order.status] ?? {
     label: order.status,
     color: 'border-v2-border bg-v2-raised text-v2-muted',
@@ -107,8 +107,12 @@ export default function OrderViewModal({
                 <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-0.5 text-xs font-bold text-blue-300">
                   Discounted
                 </span>
+              ) : order.customer_type === 'markup' ? (
+                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-2.5 py-0.5 text-xs font-bold text-purple-300">
+                  Markup
+                </span>
               ) : order.customer_type === 'unassigned' ? (
-                <span className="inline-flex items-center rounded-full border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-0.5 text-xs font-bold text-yellow-300">
+                <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-0.5 text-xs font-bold text-red-400">
                   Unassigned
                 </span>
               ) : (
