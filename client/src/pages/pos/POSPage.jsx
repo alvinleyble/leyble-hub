@@ -469,17 +469,18 @@ export default function POSPage() {
     }
   };
 
-  const persistPriceSave = async (convertToWholesaler) => {
+  const persistPriceSave = async (targetType) => {
     setPriceSavePrompt((p) => ({ ...p, busy: true }));
     try {
-      if (convertToWholesaler) {
+      if (targetType) {
+        const newType = typeof targetType === 'string' ? targetType : 'unassigned';
         await api.patch(`/customers/${priceSavePrompt.customer.id}`, {
-          customer_type:   'wholesaler',
+          customer_type:   newType,
           conversion_note: `custom price saved from order #${priceSavePrompt.orderId}`,
         });
         setCustomers((prev) =>
           prev.map((c) =>
-            c.id === priceSavePrompt.customer.id ? { ...c, customer_type: 'wholesaler' } : c
+            c.id === priceSavePrompt.customer.id ? { ...c, customer_type: newType } : c
           )
         );
       }
@@ -876,7 +877,7 @@ export default function POSPage() {
       <POSSavePriceModal
         prompt={priceSavePrompt}
         onAcceptFirst={acceptFirstPrompt}
-        onConfirmConvert={() => persistPriceSave(true)}
+        onConfirmConvert={(targetType) => persistPriceSave(targetType || 'unassigned')}
         onDecline={declinePriceSave}
       />
 

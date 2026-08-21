@@ -374,6 +374,8 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   // ── Save-custom-price prompt handlers ────────────────────────────────────
 
+  const [convertTarget, setConvertTarget] = useState('unassigned');
+
   // Declining (either step) or dismissing without an answer both just close the order flow —
   // the order itself was already committed above, so there's nothing to undo.
   const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(priceSavePrompt?.orderId); };
@@ -382,21 +384,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
       persistPriceSave(false);
     } else {
+      setConvertTarget('unassigned');
       setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
     }
   };
 
-  // Saving a custom price and becoming a wholesaler are inseparable for a regular customer
-  // (ADR 0001) — declining this second prompt discards the save entirely, same as declining
-  // the first. Convert *before* saving prices: if the price POSTs fail partway, the worst
-  // case is a wholesaler with fewer saved prices than intended, never a regular customer
-  // with orphaned customer_product_prices rows (the exact case ADR 0001 warns about).
-  const persistPriceSave = async (convertToWholesaler) => {
+  const persistPriceSave = async (targetType) => {
     setPriceSavePrompt((p) => ({ ...p, busy: true }));
     try {
-      if (convertToWholesaler) {
+      if (targetType) {
+        const newType = typeof targetType === 'string' ? targetType : 'unassigned';
         await api.patch(`/customers/${priceSavePrompt.customer.id}`, {
-          customer_type:   'wholesaler',
+          customer_type:   newType,
           conversion_note: `custom price saved from order #${priceSavePrompt.orderId}`,
         });
       }
@@ -882,18 +881,49 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       </Modal>
     )}
 
-    {/* ── Wholesaler-conversion warning (step 2 — regular customers only) ─ */}
+    {/* ── Customer type selection (step 2 — regular customers only) ─ */}
     {priceSavePrompt?.step === 'second' && (
       <Modal
-        title="Convert to Wholesaler?"
+        title="Select Customer Type"
         onClose={declinePriceSave}
-        onConfirm={() => persistPriceSave(true)}
-        confirmLabel="Yes, Continue"
-        cancelLabel="No"
+        onConfirm={() => persistPriceSave(convertTarget || 'unassigned')}
+        confirmLabel="Yes, Save Price"
+        cancelLabel="Cancel"
         loading={priceSavePrompt.busy}
       >
-        Saving this custom price for <strong>{priceSavePrompt.customer.name}</strong> will
-        make them a Wholesaler. Continue?
+        <p className="text-slate-600 mb-3">
+          Saving custom prices for <strong>{priceSavePrompt.customer.name}</strong> requires assigning a customer type:
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { value: 'unassigned', label: 'Unassigned', desc: 'Default category' },
+            { value: 'wholesaler', label: 'Wholesaler', desc: 'Bulk pricing tier' },
+            { value: 'discounted', label: 'Discounted', desc: 'Reduced rate tier' },
+            { value: 'markup',     label: 'Markup',     desc: 'Surcharge tier' },
+          ].map((opt) => (
+            <label
+              key={opt.value}
+              className={`flex cursor-pointer flex-col rounded-lg border p-2.5 text-sm transition ${
+                convertTarget === opt.value
+                  ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
+                  : 'border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-800">{opt.label}</span>
+                <input
+                  type="radio"
+                  name="convertTarget"
+                  value={opt.value}
+                  checked={convertTarget === opt.value}
+                  onChange={() => setConvertTarget(opt.value)}
+                  className="text-blue-600 focus:ring-blue-500"
+                />
+              </div>
+              <span className="text-xs text-slate-500 mt-0.5">{opt.desc}</span>
+            </label>
+          ))}
+        </div>
       </Modal>
     )}
     </>
