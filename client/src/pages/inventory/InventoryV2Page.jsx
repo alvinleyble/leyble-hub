@@ -130,12 +130,14 @@ export default function InventoryV2Page() {
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
   const [batchEditOpen, setBatchEditOpen] = useState(false);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
       .then(setProducts)
       .catch(() => addToast('Failed to load products', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -431,7 +433,7 @@ export default function InventoryV2Page() {
       {creating && (
         <ProductCreateModal
           onClose={() => setCreating(false)}
-          onSaved={() => { setCreating(false); load(); }}
+          onSaved={() => { setCreating(false); load(true); }}
         />
       )}
 
@@ -439,7 +441,7 @@ export default function InventoryV2Page() {
         <ProductDetailDrawer
           productId={selectedId}
           onClose={() => setSelectedId(null)}
-          onSaved={load}
+          onSaved={() => load(true)}
         />
       )}
 
@@ -447,7 +449,7 @@ export default function InventoryV2Page() {
         <InventoryBatchPriceModal
           products={selectedProducts}
           onClose={() => setBatchEditOpen(false)}
-          onSaved={() => { setBatchEditOpen(false); exitBatchMode(); load(); }}
+          onSaved={() => { setBatchEditOpen(false); exitBatchMode(); load(true); }}
         />
       )}
 

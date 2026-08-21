@@ -41,8 +41,8 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (showInactive) params.set('include_inactive', 'true');
     if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
@@ -50,7 +50,9 @@ export default function CustomersPage() {
     api.get(`/customers?${params}`)
       .then(setCustomers)
       .catch(() => addToast('Failed to load customers', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [showInactive, debouncedSearch, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -161,7 +163,7 @@ export default function CustomersPage() {
       {creating && (
         <CustomerFormModal
           onClose={() => setCreating(false)}
-          onSaved={() => { setCreating(false); load(); }}
+          onSaved={() => { setCreating(false); load(true); }}
         />
       )}
 
@@ -169,7 +171,7 @@ export default function CustomersPage() {
         <CustomerDetailPanel
           customerId={selectedId}
           onClose={() => setSelectedId(null)}
-          onSaved={load}
+          onSaved={() => load(true)}
         />
       )}
 
