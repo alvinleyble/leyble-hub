@@ -43,10 +43,10 @@ script (not run automatically by `migrate.js`/`seed.js`). See
 | `current_stock` | NUMERIC(10,2) | was INT, now decimal (022) |
 | `is_active` | BOOLEAN | soft-delete flag |
 
-### `customers` (003, altered by 015, 025, 031)
-`customer_type` ∈ **`('regular','wholesaler','discounted','unassigned')`** default `'regular'`. (History: started as
-`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031).) Wholesaler,
-discounted, and unassigned customers get custom per-product pricing. Fields: `name`, `address`, `phone`, `notes`,
+### `customers` (003, altered by 015, 025, 031, 032)
+`customer_type` ∈ **`('regular','wholesaler','discounted','markup','unassigned')`** default `'regular'`. (History: started as
+`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032).) Wholesaler,
+discounted, markup, and unassigned customers get custom per-product pricing. Fields: `name`, `address`, `phone`, `notes`,
 `is_active`.
 
 ### `customer_product_prices` (004, altered by 020, 026) — **append-only**

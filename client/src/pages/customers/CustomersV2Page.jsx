@@ -145,6 +145,14 @@ export default function CustomersV2Page() {
             </button>
             <button
               type="button"
+              onClick={() => setTypeFilter('markup')}
+              aria-pressed={typeFilter === 'markup'}
+              className={pill(typeFilter === 'markup')}
+            >
+              Markup ({customers.filter((c) => c.customer_type === 'markup').length})
+            </button>
+            <button
+              type="button"
               onClick={() => setTypeFilter('regular')}
               aria-pressed={typeFilter === 'regular'}
               className={pill(typeFilter === 'regular')}
@@ -208,8 +216,12 @@ export default function CustomersV2Page() {
                         <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-1 text-sm font-semibold text-blue-300">
                           Discounted
                         </span>
+                      ) : c.customer_type === 'markup' ? (
+                        <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-2.5 py-1 text-sm font-semibold text-purple-300">
+                          Markup
+                        </span>
                       ) : c.customer_type === 'unassigned' ? (
-                        <span className="inline-flex items-center rounded-full border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1 text-sm font-semibold text-yellow-300">
+                        <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-sm font-semibold text-red-400">
                           Unassigned
                         </span>
                       ) : (

@@ -121,7 +121,24 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     createdCustomerIds.push(res.data.id);
   });
 
-  it('3. Rejects invalid customer_type via DB check constraint', async () => {
+  it('3. Successfully creates a customer with customer_type="markup"', async () => {
+    const res = await apiRequest('', {
+      method: 'POST',
+      body: {
+        name: 'TEST Markup Customer Store',
+        customer_type: 'markup',
+        phone: '09123456783',
+        address: 'Barangay Dela Paz',
+      },
+    });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.data.customer_type, 'markup');
+    assert.equal(res.data.name, 'TEST Markup Customer Store');
+    createdCustomerIds.push(res.data.id);
+  });
+
+  it('4. Rejects invalid customer_type via DB check constraint', async () => {
     const res = await apiRequest('', {
       method: 'POST',
       body: {
@@ -133,7 +150,7 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     assert.equal(res.status, 500); // DB constraint violation returns 500 through errorHandler
   });
 
-  it('4. Supports custom pricing for "discounted" customers', async () => {
+  it('5. Supports custom pricing for "discounted" customers', async () => {
     const custId = createdCustomerIds[0]; // discounted customer
 
     // POST /customers/:id/prices
@@ -156,7 +173,7 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     assert.equal(Number(getRes.data[0].custom_unit_price), 475.00);
   });
 
-  it('5. Supports custom pricing for "unassigned" customers', async () => {
+  it('6. Supports custom pricing for "unassigned" customers', async () => {
     const custId = createdCustomerIds[1]; // unassigned customer
 
     const setRes = await apiRequest(`/${custId}/prices`, {
@@ -177,8 +194,37 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     assert.equal(Number(getRes.data[0].custom_unit_price), 480.00);
   });
 
-  it('6. Allows updating customer_type from unassigned to discounted or regular or wholesaler', async () => {
+  it('7. Supports custom pricing for "markup" customers', async () => {
+    const custId = createdCustomerIds[2]; // markup customer
+
+    const setRes = await apiRequest(`/${custId}/prices`, {
+      method: 'POST',
+      body: {
+        product_id: testProductId,
+        custom_unit_price: 550.00,
+        order_type: 'delivery',
+        notes: 'Remote delivery surcharge rate',
+      },
+    });
+    assert.equal(setRes.status, 201);
+    assert.equal(Number(setRes.data.custom_unit_price), 550.00);
+
+    const getRes = await apiRequest(`/${custId}/prices?order_type=delivery`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.data.length, 1);
+    assert.equal(Number(getRes.data[0].custom_unit_price), 550.00);
+  });
+
+  it('8. Allows updating customer_type between all valid types including markup', async () => {
     const custId = createdCustomerIds[1]; // unassigned customer
+
+    // Update to markup
+    const patch0 = await apiRequest(`/${custId}`, {
+      method: 'PATCH',
+      body: { customer_type: 'markup' },
+    });
+    assert.equal(patch0.status, 200);
+    assert.equal(patch0.data.customer_type, 'markup');
 
     // Update to discounted
     const patch1 = await apiRequest(`/${custId}`, {

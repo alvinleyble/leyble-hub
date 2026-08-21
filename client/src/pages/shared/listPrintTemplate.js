@@ -135,7 +135,7 @@ export function customerListHtml(customers) {
   const body = active.map((c) => `
   <div class="entry">
     <div class="name">${esc(c.name)}</div>
-    <div class="sub">${c.customer_type === 'wholesaler' ? 'Wholesaler' : c.customer_type === 'discounted' ? 'Discounted' : c.customer_type === 'unassigned' ? 'Unassigned' : 'Regular'}</div>
+    <div class="sub">${c.customer_type === 'wholesaler' ? 'Wholesaler' : c.customer_type === 'discounted' ? 'Discounted' : c.customer_type === 'markup' ? 'Markup' : c.customer_type === 'unassigned' ? 'Unassigned' : 'Regular'}</div>
     ${c.address ? `<div>${esc(c.address)}</div>` : ''}
   </div>`).join('');
 

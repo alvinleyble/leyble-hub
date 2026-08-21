@@ -14,13 +14,15 @@ const TYPE_BADGE = {
   regular:    'bg-slate-100 text-slate-600 border-slate-200',
   discounted: 'bg-blue-100 text-blue-800 border-blue-300',
   wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
-  unassigned: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+  markup:     'bg-purple-100 text-purple-800 border-purple-300',
+  unassigned: 'bg-red-100 text-red-800 border-red-300',
 };
 
 const TYPE_LABEL = {
   regular:    'Regular Customer',
   discounted: 'Discounted',
   wholesaler: 'Wholesaler',
+  markup:     'Markup',
   unassigned: 'Unassigned',
 };
 

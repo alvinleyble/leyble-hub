@@ -240,7 +240,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (['wholesaler', 'discounted', 'unassigned'].includes(data.customer_type)) {
+        if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(data.customer_type)) {
           await loadCustomPrices(priceTabRef.current);
         } else {
           setCustomPrices([]);
@@ -452,8 +452,12 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                 <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1 text-sm font-semibold text-blue-300">
                   Discounted Customer
                 </span>
+              ) : customer.customer_type === 'markup' ? (
+                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-sm font-semibold text-purple-300">
+                  Markup Customer
+                </span>
               ) : customer.customer_type === 'unassigned' ? (
-                <span className="inline-flex items-center rounded-full border border-yellow-500/40 bg-yellow-500/10 px-3 py-1 text-sm font-semibold text-yellow-300">
+                <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-sm font-semibold text-red-400">
                   Unassigned
                 </span>
               ) : (
@@ -502,6 +506,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       <option value="regular">Regular Customer</option>
                       <option value="discounted">Discounted Customer</option>
                       <option value="wholesaler">Wholesaler</option>
+                      <option value="markup">Markup Customer</option>
                       <option value="unassigned">Unassigned</option>
                     </select>
                   </div>
@@ -537,22 +542,25 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       value={form.notes}
                       onChange={set('notes')}
                       rows={3}
-                      className="w-full rounded-lg border border-v2-border bg-v2-bg px-3 py-2 text-base text-v2-text
+                      className="w-full rounded-lg border border-v2-border bg-v2-bg px-4 py-3 text-base text-v2-text
                                  placeholder:text-v2-muted focus:outline-none focus-visible:ring-2
                                  focus-visible:ring-v2-accent resize-none"
-                      placeholder="Any customer preferences or directions…"
+                      placeholder="Internal notes about this customer…"
                     />
                   </div>
 
-                  <label className="flex min-h-[48px] cursor-pointer select-none items-center gap-3 sm:col-span-2">
+                  <div className="flex min-h-tablet items-center gap-3 sm:col-span-2">
                     <input
                       type="checkbox"
+                      id="cust-active"
                       checked={form.is_active}
                       onChange={set('is_active')}
-                      className="h-6 w-6 accent-v2-accent-strong"
+                      className="h-6 w-6 rounded border-v2-border bg-v2-bg accent-v2-accent"
                     />
-                    <span className="text-base font-medium text-v2-text">Active (visible in POS & order create)</span>
-                  </label>
+                    <label htmlFor="cust-active" className="cursor-pointer text-base font-semibold text-v2-text">
+                      Active Customer
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -560,8 +568,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-6 text-base
-                             font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
+                  className="flex min-h-tablet items-center rounded-xl bg-v2-accent px-6 text-base font-bold
+                             text-white shadow-lg transition-colors hover:bg-v2-accent-hover disabled:opacity-50
                              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                 >
                   {saving ? 'Saving…' : 'Save Changes'}
@@ -570,7 +578,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
             </form>
 
             {/* ── Custom Pricing Matrix ──────────────────────────────── */}
-            {['wholesaler', 'discounted', 'unassigned'].includes(customer.customer_type) && (
+            {['wholesaler', 'discounted', 'markup', 'unassigned'].includes(customer.customer_type) && (
               <div className="border-b border-v2-border px-6 py-5">
                 <div className="mb-4 flex items-center justify-between">
                   <div>

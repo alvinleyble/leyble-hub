@@ -28,13 +28,15 @@ const TYPE_BADGE = {
   regular:    'bg-slate-100 text-slate-600 border-slate-200',
   discounted: 'bg-blue-100 text-blue-800 border-blue-300',
   wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
-  unassigned: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+  markup:     'bg-purple-100 text-purple-800 border-purple-300',
+  unassigned: 'bg-red-100 text-red-800 border-red-300',
 };
 
 const TYPE_LABEL = {
   regular:    'Regular Customer',
   discounted: 'Discounted Customer',
   wholesaler: 'Wholesaler',
+  markup:     'Markup Customer',
   unassigned: 'Unassigned',
 };
 
@@ -88,7 +90,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (['wholesaler', 'discounted', 'unassigned'].includes(data.customer_type)) {
+        if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(data.customer_type)) {
           await loadCustomPrices(priceTabRef.current);
         } else {
           setCustomPrices([]);
@@ -241,6 +243,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                       <option value="regular">Regular Customer</option>
                       <option value="discounted">Discounted Customer</option>
                       <option value="wholesaler">Wholesaler</option>
+                      <option value="markup">Markup Customer</option>
                       <option value="unassigned">Unassigned</option>
                     </select>
                   </FormField>
@@ -276,7 +279,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             </form>
 
             {/* ── Custom Pricing ────────────────────────────────── */}
-            {['wholesaler', 'discounted', 'unassigned'].includes(customer.customer_type) && (
+            {['wholesaler', 'discounted', 'markup', 'unassigned'].includes(customer.customer_type) && (
               <div className="px-6 py-5 border-b border-slate-400">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Prices</p>

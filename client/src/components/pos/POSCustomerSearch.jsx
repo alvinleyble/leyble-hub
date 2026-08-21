@@ -92,7 +92,7 @@ export default function POSCustomerSearch({
           <div className="min-w-0 flex-1">
             <p className="truncate text-xl font-bold text-v2-text">{selected.name}</p>
             <p className="truncate text-base text-v2-muted">
-              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : selected.customer_type === 'discounted' ? 'Discounted — custom pricing applied' : selected.customer_type === 'unassigned' ? 'Unassigned — custom pricing applied' : 'Regular customer'}
+              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : selected.customer_type === 'discounted' ? 'Discounted — custom pricing applied' : selected.customer_type === 'markup' ? 'Markup — custom pricing applied' : selected.customer_type === 'unassigned' ? 'Unassigned — custom pricing applied' : 'Regular customer'}
               {selected.address ? ` · ${selected.address}` : ''}
             </p>
           </div>
@@ -188,9 +188,15 @@ export default function POSCustomerSearch({
                       Discounted
                     </span>
                   )}
+                  {c.customer_type === 'markup' && (
+                    <span className="shrink-0 rounded-full border border-purple-400/50 bg-purple-400/10 px-2 py-0.5
+                                     text-xs font-bold uppercase text-purple-300">
+                      Markup
+                    </span>
+                  )}
                   {c.customer_type === 'unassigned' && (
-                    <span className="shrink-0 rounded-full border border-yellow-400/50 bg-yellow-400/10 px-2 py-0.5
-                                     text-xs font-bold uppercase text-yellow-300">
+                    <span className="shrink-0 rounded-full border border-red-400/50 bg-red-400/10 px-2 py-0.5
+                                     text-xs font-bold uppercase text-red-400">
                       Unassigned
                     </span>
                   )}
