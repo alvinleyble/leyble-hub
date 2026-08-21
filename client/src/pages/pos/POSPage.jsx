@@ -64,8 +64,8 @@ export default function POSPage() {
   const [draftsOpen, setDraftsOpen]   = useState(false);
   const [reviewOpen, setReviewOpen]   = useState(false);
   const [reviewOrder, setReviewOrder] = useState(null);
-  // Counts on the two top-bar buttons: parked drafts, and today's orders whose receipt
-  // was never confirmed printed (the count the old standalone alert used to carry).
+  // Counts on the two top-bar buttons: parked drafts, and all pending orders whose
+  // receipt was never confirmed printed.
   const [draftCount, setDraftCount]         = useState(0);
   const [unprintedCount, setUnprintedCount] = useState(0);
   const [confirm, setConfirm]         = useState(null); // { kind, ... }
@@ -107,15 +107,13 @@ export default function POSPage() {
     refreshCounts();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Badge counts. Not-printed is scoped to today, like the History filter it mirrors —
-  // every pre-V2 order in the backlog is unprinted and would drown the number.
+  // Badge counts. Unprinted count covers all pending orders whose receipt was
+  // never confirmed printed, matching History's default All Time view.
   function refreshCounts() {
-    const midnight = new Date();
-    midnight.setHours(0, 0, 0, 0);
     api.get('/orders?status=draft')
       .then((rows) => setDraftCount(rows.length))
       .catch(() => {});
-    api.get(`/orders?status=pending&from_date=${encodeURIComponent(midnight.toISOString())}`)
+    api.get('/orders?status=pending')
       .then((rows) => setUnprintedCount(rows.filter((o) => !o.pending_receipt_printed_at).length))
       .catch(() => {});
   }
@@ -752,7 +750,7 @@ export default function POSPage() {
               <button
                 type="button"
                 onClick={() => setHistoryOpen(true)}
-                aria-label={`History — ${unprintedCount} order${unprintedCount === 1 ? '' : 's'} today not printed`}
+                aria-label={`History — ${unprintedCount} order${unprintedCount === 1 ? '' : 's'} not printed`}
                 className={TOP_BTN}
               >
                 🕘 History

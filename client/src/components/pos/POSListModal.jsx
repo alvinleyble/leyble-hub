@@ -89,7 +89,7 @@ export default function POSListModal({
         </div>
 
         {footnote && (
-          <p className="shrink-0 border-t border-v2-border px-5 py-3 text-sm text-v2-muted">{footnote}</p>
+          <div className="shrink-0 border-t border-v2-border px-5 py-3 text-sm text-v2-muted">{footnote}</div>
         )}
       </div>
     </div>
