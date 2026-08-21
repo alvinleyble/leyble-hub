@@ -1,9 +1,12 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
 import { productMatches } from '../../utils/productSearch';
 import OrderViewModal from '../pos/OrderViewModal';
+import POSConfirm from '../pos/POSConfirm';
+import { usePrintReceipt } from '../../pages/orders/usePrintReceipt';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -146,9 +149,52 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   const [priceErrors, setPriceErrors]   = useState({});
   const [priceSaving, setPriceSaving]   = useState(false);
 
-  // Order history read-only preview
+  // Order history preview and actions
+  const navigate = useNavigate();
   const [previewOrder, setPreviewOrder]   = useState(null);
   const [previewBusyId, setPreviewBusyId] = useState(null);
+  const [cancelTarget, setCancelTarget]   = useState(null);
+  const [cancelling, setCancelling]       = useState(false);
+  const [printOrder, setPrintOrder]       = useState(null);
+
+  const printer = usePrintReceipt(
+    printOrder,
+    {},
+    () => {
+      addToast(`Order #${printOrder?.id} receipt sent to printer.`, 'success');
+      setPrintOrder(null);
+    },
+    {},
+    { copies: 2, autoTag: true }
+  );
+
+  const handleEdit = (order) => {
+    setPreviewOrder(null);
+    onClose?.();
+    navigate('/v2/pos', { state: { editOrder: order } });
+  };
+
+  const handleReprint = (order) => {
+    setPrintOrder(order);
+    printer.handlePrint(order, 2);
+  };
+
+  const confirmCancel = async () => {
+    if (!cancelTarget) return;
+    setCancelling(true);
+    try {
+      await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
+      addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
+      setCancelTarget(null);
+      setPreviewOrder(null);
+      load();
+      onSaved?.();
+    } catch (err) {
+      addToast(err.message || 'Failed to cancel the order.', 'error');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   // Danger zone
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -845,8 +891,28 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
         <OrderViewModal
           order={previewOrder}
           products={products}
+          busy={cancelling}
           onClose={() => setPreviewOrder(null)}
+          onEdit={handleEdit}
+          onReprint={handleReprint}
+          onCancel={(o) => setCancelTarget(o)}
         />
+      )}
+
+      {cancelTarget && (
+        <POSConfirm
+          title={`Cancel order #${cancelTarget.id}?`}
+          zClass="z-[70]"
+          confirmLabel="Yes, cancel the order"
+          cancelLabel="Keep it"
+          danger
+          loading={cancelling}
+          onConfirm={confirmCancel}
+          onClose={() => setCancelTarget(null)}
+        >
+          This voids the order for <strong className="text-v2-text">{customer?.name || cancelTarget.customer_name}</strong> and
+          puts the stock back. It cannot be undone.
+        </POSConfirm>
       )}
     </>
   );

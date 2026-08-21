@@ -481,13 +481,8 @@ describe('V2 accuracy audit', () => {
         method: 'PATCH', body: JSON.stringify({ adjustment: -20, adjustment_reason: 'discount' }) }));
       assert.equal(adjStatus, 200);
     });
-=======
-process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-key-32-chars-minimum!!';
-
-const db = require('../src/db');
-const customerRoutes = require('../src/routes/customers');
-const orderRoutes = require('../src/routes/orders');
-const { errorHandler } = require('../src/middleware/errorHandler');
+  });
+});
 
 describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
   let server;
@@ -757,6 +752,5 @@ describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
     const wholesalerOrder = { customer_type: 'wholesaler' };
     assert.equal(posCustomPrice(itemNormal, wholesalerOrder, { 1: 90 }), true);
     assert.equal(posCustomPrice(itemNormal, wholesalerOrder, {}), false);
->>>>>>> 02a8e95 (feat(v2): fix customer drawer totals (F4) and custom price badge inference (F10))
   });
 });
