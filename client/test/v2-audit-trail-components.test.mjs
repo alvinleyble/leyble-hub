@@ -25,11 +25,13 @@ afterEach(() => {
 });
 
 function changeInput(input, value) {
-  const descriptor = Object.getOwnPropertyDescriptor(
-    input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-    'value'
-  );
+  const prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
   descriptor.set.call(input, value);
+  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps'));
+  if (reactPropsKey && input[reactPropsKey]?.onChange) {
+    input[reactPropsKey].onChange({ target: { value, type: input.type || 'text', checked: input.checked } });
+  }
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   input.dispatchEvent(new window.Event('change', { bubbles: true }));
 }
@@ -202,6 +204,13 @@ test('F13: InventoryV2Page inline price edit and deposit flag toggle send audit 
 
   await act(async () => {
     changeInput(priceInput, '425');
+  });
+  await act(async () => {
+    const reactPropsKey = Object.keys(priceInput).find((k) => k.startsWith('__reactProps'));
+    if (reactPropsKey && priceInput[reactPropsKey]?.onBlur) {
+      priceInput[reactPropsKey].onBlur({ currentTarget: priceInput, target: priceInput });
+    }
+    priceInput.dispatchEvent(new window.FocusEvent('blur', { bubbles: true }));
     priceInput.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true }));
   });
   await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
