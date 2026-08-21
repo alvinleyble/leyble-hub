@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -56,20 +56,27 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
   const [customPrices, setCustomPrices]     = useState([]);
   const [priceTab, setPriceTab]             = useState('delivery');
+  const priceTabRef                         = useRef(priceTab);
+  useEffect(() => { priceTabRef.current = priceTab; }, [priceTab]);
+
   const [products, setProducts]             = useState([]);
   const [pricingOpen, setPricingOpen]       = useState(false);
   const [priceForm, setPriceForm]           = useState(DEFAULT_PRICE_FORM);
   const [priceErrors, setPriceErrors]       = useState({});
   const [priceSaving, setPriceSaving]       = useState(false);
 
-  const loadCustomPrices = useCallback(async (orderType = priceTab) => {
-    const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`).catch(() => []);
-    setCustomPrices(prices);
-  }, [customerId, priceTab]);
+  const loadCustomPrices = useCallback(async (orderType = priceTabRef.current) => {
+    try {
+      const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`);
+      setCustomPrices(Array.isArray(prices) ? prices : []);
+    } catch {
+      setCustomPrices([]);
+    }
+  }, [customerId]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api.get(`/customers/${customerId}`)
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    return api.get(`/customers/${customerId}`)
       .then(async (data) => {
         setCustomer(data);
         setOrders(data.orders ?? []);
@@ -82,15 +89,16 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           is_active:     data.is_active,
         });
         if (['wholesaler', 'discounted', 'unassigned'].includes(data.customer_type)) {
-          const prices = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`).catch(() => []);
-          setCustomPrices(prices);
+          await loadCustomPrices(priceTabRef.current);
         } else {
           setCustomPrices([]);
         }
       })
       .catch(() => addToast('Failed to load customer.', 'error'))
-      .finally(() => setLoading(false));
-  }, [customerId, addToast, priceTab]);
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
+  }, [customerId, loadCustomPrices, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -116,8 +124,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         is_active:     form.is_active,
       });
       addToast('Customer updated.', 'success');
-      onSaved();
-      load();
+      onSaved?.();
+      await load(true);
     } catch (err) {
       addToast(err.message || 'Failed to update customer.', 'error');
     } finally {
@@ -166,8 +174,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       setPricingOpen(false);
       setPriceForm(DEFAULT_PRICE_FORM);
       setPriceErrors({});
-      const updated = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`);
-      setCustomPrices(updated);
+      await loadCustomPrices(priceTab);
+      onSaved?.();
     } catch (err) {
       addToast(err.message || 'Failed to set price.', 'error');
     } finally {
@@ -288,9 +296,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                       onClick={() => {
                         setPriceTab(type);
                         setPricingOpen(false);
-                        api.get(`/customers/${customerId}/prices?order_type=${type}`)
-                          .then(setCustomPrices)
-                          .catch(() => {});
+                        loadCustomPrices(type);
                       }}
                       className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
                         ${priceTab === type

@@ -144,6 +144,9 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   // Wholesaler custom pricing matrix
   const [customPrices, setCustomPrices] = useState([]);
   const [priceTab, setPriceTab]         = useState('delivery'); // 'delivery' | 'pickup'
+  const priceTabRef                     = useRef(priceTab);
+  useEffect(() => { priceTabRef.current = priceTab; }, [priceTab]);
+
   const [products, setProducts]         = useState([]);
   const [pricingOpen, setPricingOpen]   = useState(false);
   const [priceForm, setPriceForm]       = useState(DEFAULT_PRICE_FORM);
@@ -188,7 +191,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
       addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
       setCancelTarget(null);
       setPreviewOrder(null);
-      load();
+      await load(true);
       onSaved?.();
     } catch (err) {
       addToast(err.message || 'Failed to cancel the order.', 'error');
@@ -202,10 +205,10 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting]                 = useState(false);
 
-  const loadCustomPrices = useCallback(async (orderType = 'delivery') => {
+  const loadCustomPrices = useCallback(async (orderType = priceTabRef.current) => {
     try {
       const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`);
-      setCustomPrices(prices);
+      setCustomPrices(Array.isArray(prices) ? prices : []);
     } catch {
       setCustomPrices([]);
     }
@@ -223,9 +226,9 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
     }
   }, [addToast]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api.get(`/customers/${customerId}`)
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    return api.get(`/customers/${customerId}`)
       .then(async (data) => {
         setCustomer(data);
         setOrders(data.orders ?? []);
@@ -238,13 +241,15 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           is_active:     data.is_active,
         });
         if (['wholesaler', 'discounted', 'unassigned'].includes(data.customer_type)) {
-          await loadCustomPrices('delivery');
+          await loadCustomPrices(priceTabRef.current);
         } else {
           setCustomPrices([]);
         }
       })
       .catch(() => addToast('Failed to load customer details.', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [customerId, loadCustomPrices, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -291,8 +296,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
         is_active:     form.is_active,
       });
       addToast('Customer updated.', 'success');
-      onSaved();
-      load();
+      onSaved?.();
+      await load(true);
     } catch (err) {
       addToast(err.message || 'Failed to update customer.', 'error');
     } finally {
@@ -361,7 +366,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
       setPriceForm(DEFAULT_PRICE_FORM);
       setPriceErrors({});
       await loadCustomPrices(priceTab);
-      onSaved();
+      onSaved?.();
     } catch (err) {
       addToast(err.message || 'Failed to set custom price.', 'error');
     } finally {

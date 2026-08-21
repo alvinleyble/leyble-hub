@@ -18,6 +18,8 @@ globalThis.MouseEvent    = dom.window.MouseEvent;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+import { MemoryRouter } from 'react-router-dom';
+
 const { createRoot } = await import('react-dom/client');
 const { act } = React;
 
@@ -25,7 +27,7 @@ export function render(element) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => { root.render(element); });
+  act(() => { root.render(React.createElement(MemoryRouter, null, element)); });
   return {
     container,
     text: () => container.textContent,
