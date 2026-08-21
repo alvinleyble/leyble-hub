@@ -3,10 +3,8 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
 import { usePrinter } from '../../context/PrinterContext';
-import BackOfficeDrawer from './BackOfficeDrawer';
 
-// V2 exposes exactly three top-level destinations. Everything else lives
-// behind the Back Office drawer.
+// V2 exposes exactly three top-level destinations.
 const NAV_ITEMS = [
   { path: '/v2/pos',       label: 'POS' },
   { path: '/v2/inventory', label: 'Inventory' },
@@ -57,7 +55,6 @@ const THEME_VARS = {
 // Persistent V2 tablet shell — landscape-first (Honor Pad X8B, ~1200x1920).
 // Dark slate chrome, 52px+ touch targets, 16-18px+ text.
 export default function V2Shell() {
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem('v2_theme') || 'dark';
@@ -65,8 +62,7 @@ export default function V2Shell() {
       return 'dark';
     }
   });
-  const [tapCount, setTapCount] = useState(0);
-  const lastTapRef = useRef(0);
+  const longPressTimerRef = useRef(null);
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
   const { openPicker: openPrinterPicker } = usePrinter();
@@ -79,6 +75,14 @@ export default function V2Shell() {
       document.documentElement.classList.add(theme);
     } catch {}
   }, [theme]);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -93,21 +97,19 @@ export default function V2Shell() {
     } catch {}
   };
 
-  // 5 taps/clicks on "Leyble Hub" or the top-right profile area opens the Back Office drawer
-  const handleSecretTap = () => {
-    const now = Date.now();
-    if (now - lastTapRef.current > 2500) {
-      lastTapRef.current = now;
-      setTapCount(1);
-      return;
-    }
-    lastTapRef.current = now;
-    const nextCount = tapCount + 1;
-    if (nextCount >= 5) {
-      setTapCount(0);
-      setDrawerOpen(true);
-    } else {
-      setTapCount(nextCount);
+  // 3-second long-press on "Leyble Hub" navigates directly to V1 Outgoing Orders
+  const startLongPress = (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      navigate('/orders');
+    }, 3000);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
     }
   };
 
@@ -120,7 +122,11 @@ export default function V2Shell() {
       <header className="shrink-0 flex items-center gap-3 h-[68px] px-3 bg-v2-surface border-b border-v2-border">
         <button
           type="button"
-          onClick={handleSecretTap}
+          onPointerDown={startLongPress}
+          onPointerUp={cancelLongPress}
+          onPointerLeave={cancelLongPress}
+          onPointerCancel={cancelLongPress}
+          onContextMenu={(e) => e.preventDefault()}
           className="px-2 text-xl font-bold tracking-tight select-none shrink-0 flex items-center gap-2.5 bg-transparent border-0 text-left focus:outline-none cursor-default"
           aria-label="Leyble Hub"
         >
@@ -175,14 +181,12 @@ export default function V2Shell() {
           >
             {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
           </button>
-          <button
-            type="button"
-            onClick={handleSecretTap}
-            className="hidden sm:block px-2 text-base text-v2-muted truncate max-w-[12rem] bg-transparent border-0 text-left focus:outline-none cursor-default select-none"
+          <span
+            className="hidden sm:block px-2 text-base text-v2-muted truncate max-w-[12rem] select-none"
             title="Profile"
           >
             {activeProfile?.full_name || user?.full_name}
-          </button>
+          </span>
           <button
             type="button"
             onClick={switchProfile}
@@ -207,8 +211,6 @@ export default function V2Shell() {
       <main className="flex-1 overflow-y-auto focus:outline-none" tabIndex={-1} id="v2-main-content">
         <Outlet />
       </main>
-
-      <BackOfficeDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </div>
   );
 }

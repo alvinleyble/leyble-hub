@@ -64,8 +64,7 @@ function AppRoutes() {
 
       {/* All authenticated pages live inside ProtectedLayout */}
       <Route element={<ProtectedLayout />}>
-        {/* V2 tablet shell — POS-first, 3 destinations + Back Office drawer.
-            Screen bodies are placeholders until Slices 1-3. */}
+        {/* V2 tablet shell — POS-first, 3 destinations. */}
         <Route path="/v2" element={<V2Shell />}>
           <Route index element={<Navigate to="/v2/pos" replace />} />
           <Route path="pos"       element={<POSPage />} />

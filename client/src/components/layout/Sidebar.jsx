@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
@@ -18,6 +18,15 @@ export default function Sidebar({ onClose }) {
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
   const navigate = useNavigate();
+  const longPressTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleLogout = async () => {
     if (onClose) onClose();
@@ -30,6 +39,23 @@ export default function Sidebar({ onClose }) {
     switchProfile();
   };
 
+  // 3-second long-press on "Leyble Hub" navigates directly to V2 Tablet POS
+  const startLongPress = (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      if (onClose) onClose();
+      navigate('/v2/pos');
+    }, 3000);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
   return (
     <aside
       className="w-56 h-full flex flex-col shrink-0 bg-slate-900 text-slate-100"
@@ -37,8 +63,15 @@ export default function Sidebar({ onClose }) {
     >
       {/* Brand header */}
       <div className="flex items-start justify-between px-5 py-5 border-b border-slate-700">
-        <div className="min-w-0">
-          <p className="text-lg font-bold tracking-tight select-none">Leyble Hub</p>
+        <div
+          onPointerDown={startLongPress}
+          onPointerUp={cancelLongPress}
+          onPointerLeave={cancelLongPress}
+          onPointerCancel={cancelLongPress}
+          onContextMenu={(e) => e.preventDefault()}
+          className="min-w-0 select-none cursor-default"
+        >
+          <p className="text-lg font-bold tracking-tight">Leyble Hub</p>
           <p className="text-xs text-slate-400 mt-0.5 truncate" title={user?.full_name}>
             {activeProfile?.full_name || user?.full_name}
           </p>
