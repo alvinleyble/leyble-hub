@@ -133,7 +133,7 @@ export default function CustomersV2Page() {
               aria-pressed={typeFilter === 'wholesaler'}
               className={pill(typeFilter === 'wholesaler')}
             >
-              Wholesalers ({customers.filter((c) => c.customer_type === 'wholesaler').length})
+              Wholesaler ({customers.filter((c) => c.customer_type === 'wholesaler').length})
             </button>
             <button
               type="button"
@@ -157,7 +157,7 @@ export default function CustomersV2Page() {
               aria-pressed={typeFilter === 'regular'}
               className={pill(typeFilter === 'regular')}
             >
-              Regular Customers ({customers.filter((c) => c.customer_type === 'regular').length})
+              Regular ({customers.filter((c) => c.customer_type === 'regular').length})
             </button>
             <button
               type="button"

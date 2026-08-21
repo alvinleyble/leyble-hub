@@ -567,10 +567,10 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                           : selectedCustomer.customer_type === 'discounted'
                           ? 'Discounted — custom pricing applied'
                           : selectedCustomer.customer_type === 'markup'
-                          ? 'Markup Customer (Custom Pricing)'
+                          ? 'Markup — custom pricing applied'
                           : selectedCustomer.customer_type === 'unassigned'
                           ? 'Unassigned — custom pricing applied'
-                          : 'Regular Customer'}
+                          : 'Regular'}
                       </span>
                     </div>
                     {selectedCustomer.phone && (

@@ -19,7 +19,7 @@ const TYPE_BADGE = {
 };
 
 const TYPE_LABEL = {
-  regular:    'Regular Customer',
+  regular:    'Regular',
   discounted: 'Discounted',
   wholesaler: 'Wholesaler',
   markup:     'Markup',

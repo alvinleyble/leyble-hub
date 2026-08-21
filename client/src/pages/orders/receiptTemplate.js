@@ -185,6 +185,9 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   <div>&nbsp;</div>
   <div>&nbsp;</div>
   <div>&nbsp;</div>
+  <div>&nbsp;</div>
+  <div>&nbsp;</div>
+  <div>&nbsp;</div>
 
   <div class="hr"></div>
 

@@ -162,6 +162,9 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   ln();
   ln();
   ln();
+  ln();
+  ln();
+  ln();
 
   // ── Terms (smaller font, tighter line spacing) ────────────────────────────
   hr();
