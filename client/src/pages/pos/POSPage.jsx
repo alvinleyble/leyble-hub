@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
@@ -581,6 +582,14 @@ export default function POSPage() {
     setErrors({});
     setHistoryOpen(false);
   };
+
+  const location = useLocation();
+  useEffect(() => {
+    if (location.state?.editOrder) {
+      enterEditMode(location.state.editOrder);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Review modal handlers ─────────────────────────────────────────────────
   // The review only ever shows a draft, and the cart it came from is still on the panel
