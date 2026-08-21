@@ -98,8 +98,10 @@ export default function CustomerCreateModal({ onClose, onSaved }) {
                 onChange={set('customer_type')}
                 className={FIELD}
               >
-                <option value="regular">Regular Customer — Without Custom Prices</option>
-                <option value="wholesaler">Wholesalers — With Custom Prices</option>
+                <option value="regular">Regular Customer</option>
+                <option value="discounted">Discounted Customer</option>
+                <option value="wholesaler">Wholesaler</option>
+                <option value="unassigned">Unassigned</option>
               </select>
             </div>
 

@@ -198,7 +198,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | `products` has no case-size field | `units_per_case INT NOT NULL DEFAULT 1` added (migration 012) |
 | `order_items.quantity INT` | **`NUMERIC(10,2)`** (migration 013) — supports partial cases |
 | `inventory_audit_logs.delta INT` | **`NUMERIC`** (migration 014) |
-| `customers.customer_type IN ('retail','wholesale','suki')` | **`IN ('regular','wholesaler')`** only (migrations 015 + 025); default `'regular'` |
+| `customers.customer_type IN ('retail','wholesale','suki')` | **`IN ('regular','wholesaler','discounted','unassigned')`** (migrations 015, 025, 031); default `'regular'` |
 | `orders.driver_id`, `orders.helper_id` FK columns | **Dropped** (migration 016); replaced by `order_personnel` join table |
 | `personnel.role_label VARCHAR(100)` | **Renamed to `remarks TEXT`** (migration 017) |
 | `orders` has no `order_type` | `order_type VARCHAR(20) IN ('delivery','pickup') DEFAULT 'delivery'` (migration 018) |

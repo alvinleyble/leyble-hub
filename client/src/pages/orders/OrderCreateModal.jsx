@@ -100,9 +100,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId));
 
-  // Load wholesaler custom prices when customer or order_type changes
+  // Load custom prices when customer or order_type changes
   useEffect(() => {
-    if (!customerId || selectedCustomer?.customer_type !== 'wholesaler') {
+    if (!customerId || !['wholesaler', 'discounted', 'unassigned'].includes(selectedCustomer?.customer_type)) {
       setCustomPrices({});
       return;
     }
@@ -118,16 +118,16 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const activeCustomers = customers.filter((c) => c.is_active);
   const activeProducts  = products.filter((p) => p.is_active);
 
-  // Quick-add a customer straight from the order's customer picker — name only, defaults to a
-  // Regular Customer. Adds them to the list and selects them so the order can proceed without
+  // Quick-add a customer straight from the order's customer picker — name only, defaults to an
+  // Unassigned Customer. Adds them to the list and selects them so the order can proceed without
   // leaving the modal; phone/address/notes can be filled in later from the Customers page.
   const handleCreateCustomer = async (name) => {
     setCreatingCustomer(true);
     try {
-      const created = await api.post('/customers', { name, customer_type: 'regular' });
+      const created = await api.post('/customers', { name, customer_type: 'unassigned' });
       setCustomers((prev) => [...prev, created]);
       setCustomerId(String(created.id));
-      addToast(`${created.name} added as a Regular Customer.`, 'success');
+      addToast(`${created.name} added as Unassigned Customer.`, 'success');
     } catch (err) {
       addToast(err.message || 'Failed to create customer.', 'error');
     } finally {
@@ -379,7 +379,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(priceSavePrompt?.orderId); };
 
   const acceptFirstPrompt = () => {
-    if (priceSavePrompt.customer.customer_type === 'wholesaler') {
+    if (['wholesaler', 'discounted', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
       persistPriceSave(false);
     } else {
       setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
@@ -512,7 +512,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                   renderCreate={(name) => (
                     <>
                       <span className="text-lg leading-none">＋</span>
-                      <span>Create <span className="font-bold">“{name}”</span> as a new Regular Customer</span>
+                      <span>Create <span className="font-bold">“{name}”</span> as a new Customer</span>
                     </>
                   )}
                   placeholder="Search or type a new customer name…"
@@ -531,6 +531,16 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                           Wholesaler
                         </span>
                       )}
+                      {c.customer_type === 'discounted' && (
+                        <span className="text-xs font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full border border-blue-300 shrink-0">
+                          Discounted
+                        </span>
+                      )}
+                      {c.customer_type === 'unassigned' && (
+                        <span className="text-xs font-semibold text-yellow-800 bg-yellow-100 px-2 py-0.5 rounded-full border border-yellow-300 shrink-0">
+                          Unassigned
+                        </span>
+                      )}
                     </>
                   )}
                 />
@@ -540,8 +550,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border
                         ${selectedCustomer.customer_type === 'wholesaler'
                           ? 'bg-amber-100 text-amber-800 border-amber-300'
+                          : selectedCustomer.customer_type === 'discounted'
+                          ? 'bg-blue-100 text-blue-800 border-blue-300'
+                          : selectedCustomer.customer_type === 'unassigned'
+                          ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
                           : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                        {selectedCustomer.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : 'Regular Customer'}
+                        {selectedCustomer.customer_type === 'wholesaler'
+                          ? 'Wholesaler — custom pricing applied'
+                          : selectedCustomer.customer_type === 'discounted'
+                          ? 'Discounted — custom pricing applied'
+                          : selectedCustomer.customer_type === 'unassigned'
+                          ? 'Unassigned — custom pricing applied'
+                          : 'Regular Customer'}
                       </span>
                     </div>
                     {selectedCustomer.phone && (

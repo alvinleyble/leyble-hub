@@ -123,7 +123,7 @@ export default function CustomersV2Page() {
               aria-pressed={typeFilter === 'all'}
               className={pill(typeFilter === 'all')}
             >
-              All Customers ({customers.length})
+              All ({customers.length})
             </button>
             <button
               type="button"
@@ -135,11 +135,27 @@ export default function CustomersV2Page() {
             </button>
             <button
               type="button"
+              onClick={() => setTypeFilter('discounted')}
+              aria-pressed={typeFilter === 'discounted'}
+              className={pill(typeFilter === 'discounted')}
+            >
+              Discounted ({customers.filter((c) => c.customer_type === 'discounted').length})
+            </button>
+            <button
+              type="button"
               onClick={() => setTypeFilter('regular')}
               aria-pressed={typeFilter === 'regular'}
               className={pill(typeFilter === 'regular')}
             >
               Regular Customers ({customers.filter((c) => c.customer_type === 'regular').length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter('unassigned')}
+              aria-pressed={typeFilter === 'unassigned'}
+              className={pill(typeFilter === 'unassigned')}
+            >
+              Unassigned ({customers.filter((c) => c.customer_type === 'unassigned').length})
             </button>
           </div>
         )}
@@ -185,6 +201,14 @@ export default function CustomersV2Page() {
                       {c.customer_type === 'wholesaler' ? (
                         <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-sm font-semibold text-amber-300">
                           Wholesaler
+                        </span>
+                      ) : c.customer_type === 'discounted' ? (
+                        <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-1 text-sm font-semibold text-blue-300">
+                          Discounted
+                        </span>
+                      ) : c.customer_type === 'unassigned' ? (
+                        <span className="inline-flex items-center rounded-full border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-1 text-sm font-semibold text-yellow-300">
+                          Unassigned
                         </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-bg px-2.5 py-1 text-sm font-semibold text-v2-muted">

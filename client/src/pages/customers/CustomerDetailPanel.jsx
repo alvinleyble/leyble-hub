@@ -25,7 +25,16 @@ const ORDER_STATUS = {
 
 const TYPE_BADGE = {
   regular:    'bg-slate-100 text-slate-600 border-slate-200',
+  discounted: 'bg-blue-100 text-blue-800 border-blue-300',
   wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
+  unassigned: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+};
+
+const TYPE_LABEL = {
+  regular:    'Regular Customer',
+  discounted: 'Discounted Customer',
+  wholesaler: 'Wholesaler',
+  unassigned: 'Unassigned',
 };
 
 const DEFAULT_PRICE_FORM = {
@@ -70,7 +79,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (data.customer_type === 'wholesaler') {
+        if (['wholesaler', 'discounted', 'unassigned'].includes(data.customer_type)) {
           const prices = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`).catch(() => []);
           setCustomPrices(prices);
         } else {
@@ -194,8 +203,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
             {/* ── Summary bar ──────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[customer.customer_type]}`}>
-                {customer.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[customer.customer_type] || TYPE_BADGE.regular}`}>
+                {TYPE_LABEL[customer.customer_type] || customer.customer_type}
               </span>
               {!customer.is_active && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-300">
@@ -219,8 +228,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
                   <FormField label="Customer Type" required className="sm:col-span-2">
                     <select value={form.customer_type} onChange={set('customer_type')} className={INPUT}>
-                      <option value="regular">Regular Customer — Without Custom Prices</option>
-                      <option value="wholesaler">Wholesalers — With Custom Prices</option>
+                      <option value="regular">Regular Customer</option>
+                      <option value="discounted">Discounted Customer</option>
+                      <option value="wholesaler">Wholesaler</option>
+                      <option value="unassigned">Unassigned</option>
                     </select>
                   </FormField>
 
@@ -254,11 +265,11 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               </div>
             </form>
 
-            {/* ── Wholesaler Custom Pricing ────────────────────── */}
-            {customer.customer_type === 'wholesaler' && (
+            {/* ── Custom Pricing ────────────────────────────────── */}
+            {['wholesaler', 'discounted', 'unassigned'].includes(customer.customer_type) && (
               <div className="px-6 py-5 border-b border-slate-400">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Wholesaler Custom Prices</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Prices</p>
                   {!pricingOpen && (
                     <Button size="sm" variant="secondary" onClick={openPricingForm}>
                       + Set Price

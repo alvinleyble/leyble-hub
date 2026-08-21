@@ -46,8 +46,8 @@ export default function POSCustomerSearch({
     if (!trimmed || creating) return;
     setCreating(true);
     try {
-      const created = await api.post('/customers', { name: trimmed, customer_type: 'regular' });
-      addToast(`${created.name} added as a Regular Customer.`, 'success');
+      const created = await api.post('/customers', { name: trimmed, customer_type: 'unassigned' });
+      addToast(`${created.name} added as Unassigned Customer.`, 'success');
       pick(created);
     } catch (err) {
       addToast(err.message || 'Failed to create customer.', 'error');
@@ -92,7 +92,7 @@ export default function POSCustomerSearch({
           <div className="min-w-0 flex-1">
             <p className="truncate text-xl font-bold text-v2-text">{selected.name}</p>
             <p className="truncate text-base text-v2-muted">
-              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : 'Regular customer'}
+              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : selected.customer_type === 'discounted' ? 'Discounted — custom pricing applied' : selected.customer_type === 'unassigned' ? 'Unassigned — custom pricing applied' : 'Regular customer'}
               {selected.address ? ` · ${selected.address}` : ''}
             </p>
           </div>
@@ -152,7 +152,7 @@ export default function POSCustomerSearch({
                     <>
                       <span className="text-xl leading-none">＋</span>
                       <span className="truncate">
-                        Create <span className="text-v2-text">“{query.trim()}”</span> as Regular Customer
+                        Create <span className="text-v2-text">“{query.trim()}”</span> as Unassigned Customer
                       </span>
                     </>
                   )}
@@ -180,6 +180,18 @@ export default function POSCustomerSearch({
                     <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-400/10 px-2 py-0.5
                                      text-xs font-bold uppercase text-amber-300">
                       Wholesaler
+                    </span>
+                  )}
+                  {c.customer_type === 'discounted' && (
+                    <span className="shrink-0 rounded-full border border-blue-400/50 bg-blue-400/10 px-2 py-0.5
+                                     text-xs font-bold uppercase text-blue-300">
+                      Discounted
+                    </span>
+                  )}
+                  {c.customer_type === 'unassigned' && (
+                    <span className="shrink-0 rounded-full border border-yellow-400/50 bg-yellow-400/10 px-2 py-0.5
+                                     text-xs font-bold uppercase text-yellow-300">
+                      Unassigned
                     </span>
                   )}
                 </button>
