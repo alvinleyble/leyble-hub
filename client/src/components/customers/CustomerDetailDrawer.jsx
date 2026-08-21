@@ -7,6 +7,7 @@ import { productMatches } from '../../utils/productSearch';
 import OrderViewModal from '../pos/OrderViewModal';
 import POSConfirm from '../pos/POSConfirm';
 import { usePrintReceipt } from '../../pages/orders/usePrintReceipt';
+import CustomerMergeModal from './CustomerMergeModal';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -197,6 +198,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   };
 
   // Danger zone
+  const [mergeOpen, setMergeOpen]               = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting]                 = useState(false);
 
@@ -850,15 +852,26 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
               <p className="mb-3 text-xs font-bold uppercase tracking-widest text-red-400">Danger Zone</p>
 
               {!confirmingDelete ? (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingDelete(true)}
-                  className="flex min-h-tablet items-center justify-center rounded-xl bg-red-700 px-5 text-base
-                             font-bold text-white hover:bg-red-600
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-                >
-                  Delete customer
-                </button>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setMergeOpen(true)}
+                    className="flex min-h-tablet items-center justify-center rounded-xl border border-amber-500/40 bg-amber-500/10 px-5 text-base
+                               font-bold text-amber-300 hover:bg-amber-500/20
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                  >
+                    🔀 Merge customer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDelete(true)}
+                    className="flex min-h-tablet items-center justify-center rounded-xl bg-red-700 px-5 text-base
+                               font-bold text-white hover:bg-red-600
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                  >
+                    Delete customer
+                  </button>
+                </div>
               ) : (
                 <div className="rounded-xl border border-red-500/30 bg-red-950/20 p-4">
                   <p className="mb-1 text-base font-semibold text-red-200">Delete this customer?</p>
@@ -895,6 +908,19 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           </div>
         )}
       </div>
+
+      {mergeOpen && customer && (
+        <CustomerMergeModal
+          customer={customer}
+          orderCount={orders.length}
+          onClose={() => setMergeOpen(false)}
+          onMerged={() => {
+            setMergeOpen(false);
+            onClose();
+            onSaved?.();
+          }}
+        />
+      )}
 
       {previewOrder && (
         <OrderViewModal

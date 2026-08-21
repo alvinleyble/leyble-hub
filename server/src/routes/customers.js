@@ -215,6 +215,97 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
+// POST /api/v1/customers/:id/merge — merge source customer into target customer
+router.post('/:id/merge', async (req, res, next) => {
+  const { target_customer_id } = req.body;
+  const sourceId = Number(req.params.id);
+  const targetId = Number(target_customer_id);
+
+  if (!target_customer_id || isNaN(targetId)) {
+    return res.status(400).json({ error: 'target_customer_id is required' });
+  }
+
+  if (isNaN(sourceId)) {
+    return res.status(400).json({ error: 'Invalid source customer id' });
+  }
+
+  if (sourceId === targetId) {
+    return res.status(400).json({ error: 'Source and target customer cannot be the same' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [source] } = await client.query(
+      'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
+      [sourceId]
+    );
+    if (!source) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Source customer not found' });
+    }
+
+    const { rows: [target] } = await client.query(
+      'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
+      [targetId]
+    );
+    if (!target) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Target customer not found' });
+    }
+
+    // 1. Count orders belonging to source
+    const { rows: [{ count }] } = await client.query(
+      'SELECT COUNT(*) AS count FROM orders WHERE customer_id = $1',
+      [sourceId]
+    );
+    const orderCount = Number(count);
+
+    // 2. Reassign all orders
+    await client.query(
+      'UPDATE orders SET customer_id = $1 WHERE customer_id = $2',
+      [targetId, sourceId]
+    );
+
+    // 3. Clean up custom price entries for source
+    await client.query(
+      'DELETE FROM customer_product_prices WHERE customer_id = $1',
+      [sourceId]
+    );
+
+    // 4. Permanently delete the source customer
+    await client.query(
+      'DELETE FROM customers WHERE id = $1',
+      [sourceId]
+    );
+
+    // 5. Log activity in activity_logs
+    await logActivity(client, {
+      entityType: 'customer',
+      entityId: target.id,
+      action: 'merge',
+      summary: `Merged customer '${source.name}' (#${source.id}) into '${target.name}' (#${target.id})`,
+      performedBy: req.user.id,
+    });
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Customer merged successfully',
+      source_customer_id: source.id,
+      target_customer_id: target.id,
+      orders_transferred: orderCount,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 // GET /api/v1/customers/:id/prices — most recent custom price per product, filtered by order_type
 router.get('/:id/prices', async (req, res, next) => {
   try {
