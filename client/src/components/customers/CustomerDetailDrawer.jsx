@@ -446,15 +446,15 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
             <div className="flex flex-wrap items-center gap-3 border-b border-v2-border bg-v2-bg px-6 py-4">
               {customer.customer_type === 'wholesaler' ? (
                 <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-sm font-semibold text-amber-300">
-                  Wholesaler (Suki Pricing)
+                  Wholesaler
                 </span>
               ) : customer.customer_type === 'discounted' ? (
                 <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1 text-sm font-semibold text-blue-300">
-                  Discounted Customer
+                  Discounted
                 </span>
               ) : customer.customer_type === 'markup' ? (
                 <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-sm font-semibold text-purple-300">
-                  Markup Customer
+                  Markup
                 </span>
               ) : customer.customer_type === 'unassigned' ? (
                 <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-sm font-semibold text-red-400">
@@ -462,7 +462,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                 </span>
               ) : (
                 <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-raised px-3 py-1 text-sm font-semibold text-v2-muted">
-                  Regular Customer
+                  Regular
                 </span>
               )}
 
@@ -503,10 +503,10 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       onChange={set('customer_type')}
                       className={FIELD}
                     >
-                      <option value="regular">Regular Customer</option>
-                      <option value="discounted">Discounted Customer</option>
+                      <option value="regular">Regular</option>
+                      <option value="discounted">Discounted</option>
                       <option value="wholesaler">Wholesaler</option>
-                      <option value="markup">Markup Customer</option>
+                      <option value="markup">Markup</option>
                       <option value="unassigned">Unassigned</option>
                     </select>
                   </div>

@@ -70,10 +70,10 @@ export default function CustomerFormModal({ onClose, onSaved }) {
 
           <FormField label="Customer Type" required className="sm:col-span-2">
             <select value={form.customer_type} onChange={set('customer_type')} className={FIELD}>
-              <option value="regular">Regular Customer</option>
-              <option value="discounted">Discounted Customer</option>
+              <option value="regular">Regular</option>
+              <option value="discounted">Discounted</option>
               <option value="wholesaler">Wholesaler</option>
-              <option value="markup">Markup Customer</option>
+              <option value="markup">Markup</option>
               <option value="unassigned">Unassigned</option>
             </select>
           </FormField>

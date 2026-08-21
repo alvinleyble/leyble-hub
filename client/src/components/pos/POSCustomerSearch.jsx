@@ -92,7 +92,7 @@ export default function POSCustomerSearch({
           <div className="min-w-0 flex-1">
             <p className="truncate text-xl font-bold text-v2-text">{selected.name}</p>
             <p className="truncate text-base text-v2-muted">
-              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : selected.customer_type === 'discounted' ? 'Discounted — custom pricing applied' : selected.customer_type === 'markup' ? 'Markup — custom pricing applied' : selected.customer_type === 'unassigned' ? 'Unassigned — custom pricing applied' : 'Regular customer'}
+              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : selected.customer_type === 'discounted' ? 'Discounted — custom pricing applied' : selected.customer_type === 'markup' ? 'Markup — custom pricing applied' : selected.customer_type === 'unassigned' ? 'Unassigned — custom pricing applied' : 'Regular'}
               {selected.address ? ` · ${selected.address}` : ''}
             </p>
           </div>
