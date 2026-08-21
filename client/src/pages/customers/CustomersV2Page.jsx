@@ -28,15 +28,17 @@ export default function CustomersV2Page() {
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (showInactive) params.set('include_inactive', 'true');
 
     api.get(`/customers?${params}`)
       .then(setCustomers)
       .catch(() => addToast('Failed to load customers.', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -252,7 +254,7 @@ export default function CustomersV2Page() {
           onClose={() => setCreating(false)}
           onSaved={(created) => {
             setCreating(false);
-            load();
+            load(true);
             if (created?.id) setSelectedId(created.id);
           }}
         />
@@ -262,7 +264,7 @@ export default function CustomersV2Page() {
         <CustomerDetailDrawer
           customerId={selectedId}
           onClose={() => setSelectedId(null)}
-          onSaved={load}
+          onSaved={() => load(true)}
         />
       )}
 
