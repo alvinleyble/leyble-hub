@@ -39,7 +39,10 @@ function InlinePriceCell({ product, onCommitted }) {
 
     setSaving(true);
     try {
-      const updated = await api.patch(`/products/${product.id}`, { base_wholesale_price: num });
+      const updated = await api.patch(`/products/${product.id}`, {
+        base_wholesale_price: num,
+        reason: 'Inline price edit (Inventory)',
+      });
       onCommitted(updated);
     } catch (err) {
       addToast(err.message || 'Failed to update price.', 'error');
@@ -82,6 +85,7 @@ function DepositToggle({ product, onCommitted }) {
     try {
       const updated = await api.patch(`/products/${product.id}`, {
         requires_bottle_return: !withDep,
+        reason: 'Deposit flag toggled (Inventory)',
       });
       onCommitted(updated);
     } catch (err) {

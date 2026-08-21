@@ -197,11 +197,9 @@ router.patch('/:id', async (req, res, next) => {
       current_stock !== undefined &&
       Number(current_stock) !== Number(existing.current_stock);
 
-    // Invariant: only returnable-bottle products carry a deposit fee. Coerce against
-    // the effective bottle-return flag so unchecking it also zeroes any existing deposit.
     const effectiveRBR = requires_bottle_return !== undefined
       ? requires_bottle_return : existing.requires_bottle_return;
-    const depositFee = effectiveRBR ? (deposit_fee ?? existing.deposit_fee) : 0;
+    const depositFee = deposit_fee !== undefined ? deposit_fee : existing.deposit_fee;
 
     // Master-data fields tracked in activity_logs (stock/price/deposit go to
     // inventory_audit_logs only — see auditQueue below — to avoid double-logging)

@@ -340,46 +340,95 @@ describe('V2 accuracy audit', () => {
 
   // ── Products / inventory ────────────────────────────────────────────────────
   describe('Inventory PATCH side effects', () => {
-    it('an inline price edit silently zeroes a legacy deposit_fee on a non-returnable product', async () => {
+    it('an inline price edit preserves existing deposit_fee and logs audit reason', async () => {
       // Pre-migration-023 shape: a deposit exists but requires_bottle_return defaulted FALSE.
       const p = await mkProduct('AUD_LEGACY_DEP', 10, 100);
       await db.query('UPDATE products SET deposit_fee = 7.50, requires_bottle_return = FALSE WHERE id = $1', [p.id]);
 
-      // InventoryV2Page InlinePriceCell sends the price and nothing else.
+      // InventoryV2Page InlinePriceCell sends the price with reason: 'Inline price edit (Inventory)'
       const { body: updated } = await json(await api(`/products/${p.id}`, {
-        method: 'PATCH', body: JSON.stringify({ base_wholesale_price: 111 }) }));
+        method: 'PATCH',
+        body: JSON.stringify({
+          base_wholesale_price: 111,
+          reason: 'Inline price edit (Inventory)',
+        }),
+      }));
       assert.equal(Number(updated.base_wholesale_price), 111);
-      assert.equal(Number(updated.deposit_fee), 0, 'deposit silently coerced to 0');
+      assert.equal(Number(updated.deposit_fee), 7.5, 'deposit_fee is preserved');
 
       const { rows } = await db.query(
         `SELECT field_changed, reason FROM inventory_audit_logs WHERE product_id=$1 ORDER BY id`, [p.id]);
       const depRow = rows.find((r) => r.field_changed === 'deposit_fee');
-      assert.ok(depRow, 'the coercion is audit-logged');
-      assert.equal(depRow.reason, null, 'with no reason, because the inline cell sends none');
+      assert.equal(depRow, undefined, 'no deposit_fee change logged since it was preserved');
       const priceRow = rows.find((r) => r.field_changed === 'base_wholesale_price');
-      assert.equal(priceRow.reason, null, 'inline price edits are audit-logged with reason NULL');
+      assert.ok(priceRow, 'inline price edit is audit-logged');
+      assert.equal(priceRow.reason, 'Inline price edit (Inventory)');
     });
 
-    it('toggling `w/ dep` off then on loses the deposit amount (documented, verified)', async () => {
+    it('toggling `w/ dep` off then on preserves the deposit amount and logs reason', async () => {
       const p = await mkProduct('AUD_DEP_TOGGLE', 10, 100, { deposit_fee: 6, requires_bottle_return: true });
-      await json(await api(`/products/${p.id}`, { method: 'PATCH', body: JSON.stringify({ requires_bottle_return: false }) }));
+      const { body: off } = await json(await api(`/products/${p.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          requires_bottle_return: false,
+          reason: 'Deposit flag toggled (Inventory)',
+        }),
+      }));
+      assert.equal(off.requires_bottle_return, false);
+      assert.equal(Number(off.deposit_fee), 6, 'deposit_fee is preserved when flag turned off');
+
       const { body: back } = await json(await api(`/products/${p.id}`, {
-        method: 'PATCH', body: JSON.stringify({ requires_bottle_return: true }) }));
-      assert.equal(Number(back.deposit_fee), 0);
+        method: 'PATCH',
+        body: JSON.stringify({
+          requires_bottle_return: true,
+          reason: 'Deposit flag toggled (Inventory)',
+        }),
+      }));
+      assert.equal(back.requires_bottle_return, true);
+      assert.equal(Number(back.deposit_fee), 6, 'deposit_fee is preserved when flag turned back on');
+
+      const { rows } = await db.query(
+        `SELECT action FROM activity_logs WHERE entity_type='product' AND entity_id=$1 ORDER BY id`, [p.id]);
+      assert.ok(rows.length >= 2, 'master data edits logged in activity_logs');
     });
 
-    it('the details-form Save Changes path writes stock with NO reason, bypassing the drawer gate', async () => {
+    it('details-form Save Changes omits current_stock so stock adjustments require a reason', async () => {
       const p = await mkProduct('AUD_STOCK_BACKDOOR', 10, 100);
-      await json(await api(`/products/${p.id}`, {
+      // ProductDetailDrawer.handleSaveDetails sends master data without current_stock
+      const { body: updated } = await json(await api(`/products/${p.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: p.name, unit: 'cs', base_wholesale_price: 100, deposit_fee: 0,
-          units_per_case: 24, current_stock: 99, is_active: true, requires_bottle_return: false }),
+        body: JSON.stringify({
+          name: 'AUD_STOCK_BACKDOOR_RENAMED',
+          unit: 'cs',
+          base_wholesale_price: 105,
+          deposit_fee: 0,
+          units_per_case: 24,
+          is_active: true,
+          requires_bottle_return: false,
+        }),
       }));
-      const { rows } = await db.query(
+      assert.equal(updated.name, 'AUD_STOCK_BACKDOOR_RENAMED');
+      assert.equal(Number(updated.current_stock), 10, 'stock remains unchanged');
+
+      const { rows: noStockAudit } = await db.query(
         `SELECT reason, delta FROM inventory_audit_logs WHERE product_id=$1 AND field_changed='current_stock'`, [p.id]);
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].reason, null);
-      assert.equal(Number(rows[0].delta), 89);
+      assert.equal(noStockAudit.length, 0, 'no stock audit row written by detail save');
+
+      // Adjusting stock via handleAdjust requires a reason and logs properly
+      const { body: adjusted } = await json(await api(`/products/${p.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          current_stock: 25,
+          reason: 'Delivery from supplier',
+        }),
+      }));
+      assert.equal(Number(adjusted.current_stock), 25);
+
+      const { rows: stockAudit } = await db.query(
+        `SELECT reason, delta FROM inventory_audit_logs WHERE product_id=$1 AND field_changed='current_stock'`, [p.id]);
+      assert.equal(stockAudit.length, 1);
+      assert.equal(stockAudit[0].reason, 'Delivery from supplier');
+      assert.equal(Number(stockAudit[0].delta), 15);
     });
 
     it('batch-price rejects negatives and duplicate ids, and skips no-op rows in the audit log', async () => {
