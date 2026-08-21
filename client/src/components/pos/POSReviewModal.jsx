@@ -62,8 +62,6 @@ export default function POSReviewModal({
     Boolean(item.is_price_overridden) ||
     (order.customer_type === 'wholesaler' && Boolean(customPrices[item.product_id]));
 
-  const isWholesaler = order.customer_type === 'wholesaler';
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-6"
@@ -86,9 +84,17 @@ export default function POSReviewModal({
               <span className="text-sm font-black uppercase tracking-wider text-v2-accent">
                 {order.id ? `📝 Draft #${order.id}` : '📝 Order Review'}
               </span>
-              {isWholesaler ? (
+              {order.customer_type === 'wholesaler' ? (
                 <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-300">
                   Wholesaler
+                </span>
+              ) : order.customer_type === 'discounted' ? (
+                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-0.5 text-xs font-bold text-blue-300">
+                  Discounted
+                </span>
+              ) : order.customer_type === 'unassigned' ? (
+                <span className="inline-flex items-center rounded-full border border-yellow-500/40 bg-yellow-500/10 px-2.5 py-0.5 text-xs font-bold text-yellow-300">
+                  Unassigned
                 </span>
               ) : (
                 <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-raised px-2.5 py-0.5 text-xs font-bold text-v2-muted">

@@ -235,7 +235,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (data.customer_type === 'wholesaler') {
+        if (['wholesaler', 'discounted', 'unassigned'].includes(data.customer_type)) {
           await loadCustomPrices('delivery');
         } else {
           setCustomPrices([]);
@@ -441,6 +441,14 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                 <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-sm font-semibold text-amber-300">
                   Wholesaler (Suki Pricing)
                 </span>
+              ) : customer.customer_type === 'discounted' ? (
+                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1 text-sm font-semibold text-blue-300">
+                  Discounted Customer
+                </span>
+              ) : customer.customer_type === 'unassigned' ? (
+                <span className="inline-flex items-center rounded-full border border-yellow-500/40 bg-yellow-500/10 px-3 py-1 text-sm font-semibold text-yellow-300">
+                  Unassigned
+                </span>
               ) : (
                 <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-raised px-3 py-1 text-sm font-semibold text-v2-muted">
                   Regular Customer
@@ -484,8 +492,10 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       onChange={set('customer_type')}
                       className={FIELD}
                     >
-                      <option value="regular">Regular Customer — Without Custom Prices</option>
-                      <option value="wholesaler">Wholesalers — With Custom Prices</option>
+                      <option value="regular">Regular Customer</option>
+                      <option value="discounted">Discounted Customer</option>
+                      <option value="wholesaler">Wholesaler</option>
+                      <option value="unassigned">Unassigned</option>
                     </select>
                   </div>
 
@@ -552,8 +562,8 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
               </div>
             </form>
 
-            {/* ── Wholesaler Custom Pricing Matrix ───────────────────── */}
-            {customer.customer_type === 'wholesaler' && (
+            {/* ── Custom Pricing Matrix ──────────────────────────────── */}
+            {['wholesaler', 'discounted', 'unassigned'].includes(customer.customer_type) && (
               <div className="border-b border-v2-border px-6 py-5">
                 <div className="mb-4 flex items-center justify-between">
                   <div>

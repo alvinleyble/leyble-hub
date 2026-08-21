@@ -159,7 +159,7 @@ export function customerListEscPos(customers) {
     b(ESC, 0x45, 0x01);
     for (const l of wrap(c.name)) ln(l);
     b(ESC, 0x45, 0x00);
-    ln(`  ${c.customer_type === 'wholesaler' ? 'Wholesaler' : 'Regular'}`);
+    ln(`  ${c.customer_type === 'wholesaler' ? 'Wholesaler' : c.customer_type === 'discounted' ? 'Discounted' : c.customer_type === 'unassigned' ? 'Unassigned' : 'Regular'}`);
     if (c.address) for (const l of wrap(`  ${c.address}`)) ln(l);
     ln();
   }

@@ -12,7 +12,16 @@ import { customerListEscPos } from '../shared/listEscPos';
 
 const TYPE_BADGE = {
   regular:    'bg-slate-100 text-slate-600 border-slate-200',
+  discounted: 'bg-blue-100 text-blue-800 border-blue-300',
   wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
+  unassigned: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+};
+
+const TYPE_LABEL = {
+  regular:    'Regular Customer',
+  discounted: 'Discounted',
+  wholesaler: 'Wholesaler',
+  unassigned: 'Unassigned',
 };
 
 export default function CustomersPage() {
@@ -121,8 +130,8 @@ export default function CustomersPage() {
                     </p>
                   </td>
                   <td className="px-5 py-4 hidden sm:table-cell">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[c.customer_type]}`}>
-                      {c.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[c.customer_type] || TYPE_BADGE.regular}`}>
+                      {TYPE_LABEL[c.customer_type] || c.customer_type}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-slate-500 hidden md:table-cell">
