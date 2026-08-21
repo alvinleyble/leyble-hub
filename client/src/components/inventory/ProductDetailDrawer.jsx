@@ -84,7 +84,6 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
     if (!form.unit.trim())                errs.unit = 'Required.';
     if (form.base_wholesale_price === '') errs.base_wholesale_price = 'Required.';
     if (Number(form.units_per_case) < 1)  errs.units_per_case = 'Must be at least 1.';
-    if (form.current_stock === '' || Number(form.current_stock) < 0) errs.current_stock = 'Must be 0 or more.';
     if (Object.keys(errs).length) { setFormErrors(errs); return; }
 
     setSaving(true);
@@ -95,9 +94,8 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
         unit:                 form.unit.trim(),
         sku:                  form.sku.trim() || null,
         base_wholesale_price: Number(form.base_wholesale_price),
-        deposit_fee:          form.requires_bottle_return ? Number(form.deposit_fee) : 0,
+        deposit_fee:          Number(form.deposit_fee),
         units_per_case:       Number(form.units_per_case),
-        current_stock:        Number(form.current_stock),
         is_active:            form.is_active,
         requires_bottle_return: form.requires_bottle_return,
       });
@@ -353,10 +351,17 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
                   </div>
 
                   <div>
-                    <label className={LABEL} htmlFor="pd-stock">Current Stock (cases, 0.5 = half case) *</label>
-                    <input id="pd-stock" type="number" min="0" step="0.5" value={form.current_stock}
-                      onChange={set('current_stock')} className={FIELD} />
-                    {formErrors.current_stock && <p role="alert" className="mt-1 text-sm font-semibold text-red-400">{formErrors.current_stock}</p>}
+                    <label className={LABEL} htmlFor="pd-stock">Current Stock</label>
+                    <input
+                      id="pd-stock"
+                      type="text"
+                      readOnly
+                      value={`${form.current_stock} ${form.unit || 'cases'}`}
+                      className={`${FIELD} cursor-not-allowed bg-v2-raised text-v2-muted`}
+                    />
+                    <p className="mt-1 text-xs text-v2-muted">
+                      Use ⚡ Adjust Stock &amp; Audit above to update inventory count.
+                    </p>
                   </div>
 
                   <label className="flex min-h-[48px] cursor-pointer select-none items-center gap-3 sm:col-span-2">
@@ -396,7 +401,6 @@ export default function ProductDetailDrawer({ productId, onClose, onSaved }) {
                     onChange={(e) => setForm((f) => ({
                       ...f,
                       requires_bottle_return: e.target.checked,
-                      deposit_fee: e.target.checked ? f.deposit_fee : '0',
                     }))}
                     className="h-6 w-6 accent-v2-accent-strong"
                   />

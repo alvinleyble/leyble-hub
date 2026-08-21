@@ -200,27 +200,26 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting]                 = useState(false);
 
-  const loadCustomPrices = useCallback(async (orderType = priceTab) => {
+  const loadCustomPrices = useCallback(async (orderType = 'delivery') => {
     try {
       const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`);
       setCustomPrices(prices);
     } catch {
       setCustomPrices([]);
     }
-  }, [customerId, priceTab]);
+  }, [customerId]);
 
   const loadProducts = useCallback(async () => {
-    if (products.length > 0) return products;
     try {
       const prods = await api.get('/products');
-      const active = prods.filter((p) => p.is_active);
+      const active = (prods || []).filter((p) => p.is_active);
       setProducts(active);
       return active;
     } catch {
       addToast('Failed to load products list.', 'error');
       return [];
     }
-  }, [products, addToast]);
+  }, [addToast]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -237,18 +236,18 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           is_active:     data.is_active,
         });
         if (data.customer_type === 'wholesaler') {
-          await loadCustomPrices(priceTab);
+          await loadCustomPrices('delivery');
         } else {
           setCustomPrices([]);
         }
       })
       .catch(() => addToast('Failed to load customer details.', 'error'))
       .finally(() => setLoading(false));
-  }, [customerId, priceTab, loadCustomPrices, addToast]);
+  }, [customerId, loadCustomPrices, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Preload products for price matrix comparison
+  // Preload products for price matrix comparison on mount
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);

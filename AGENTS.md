@@ -146,13 +146,14 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   where it stays visible as 🚫 Cancelled. Leaving Edit Mode restores whatever was parked,
   print buffer included. The debounced draft save also parks the adjustment (its own
   endpoint), and neither the POS nor `insertItems` accepts a negative price.
-  Both top-bar buttons carry count badges; "not printed" (badge, History filter, and the bulk
-  mark-as-printed) is always scoped to **today**, since every pre-V2 pending order is unprinted.
+  Both top-bar buttons carry count badges; the "not printed" badge tracks all-time unprinted
+  pending orders, and the History modal supports date filtering presets (Today, Yesterday,
+  Last 7 Days, All Time) with a bulk mark-as-printed action.
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes
   `order_personnel`; Amber Edit Mode cannot change customer or order type (backend accepts those
   on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via
-  `options.copies` / `options.autoTag`, and the deposit on a pending receipt via
-  `overrides.showDeposit` — V1's prompts and receipts are unchanged.
+  `options.copies` / `options.autoTag` (receipts derive deposit display from status: goods-only
+  for pending, deposit shown on completed/done) — V1's prompts and receipts are unchanged.
 - **Inventory (Slice 2, done):** [client/src/pages/inventory/InventoryV2Page.jsx](client/src/pages/inventory/InventoryV2Page.jsx)
   plus `client/src/components/inventory/`. Ships with zero backend changes — batch price edit
   (`InventoryBatchPriceModal.jsx`, reason required client-side), in-line price edit and the
@@ -236,7 +237,7 @@ WHERE op.order_id = $1
 - Implementation: receipt HTML built in [client/src/pages/orders/receiptTemplate.js](client/src/pages/orders/receiptTemplate.js),
   printed via `usePrintReceipt()` (used by OrderDetailPage and ReviewQueueModal)
 - Uses `@page { size: 80mm auto; margin: 0 }`, body width 72mm — no external CSS needed
-- Item layout: product name on line 1, `qty unit × price → amount` on line 2
+- Item layout: SKU on line 1 (with product name fallback), `qty unit × price → amount` on line 2
 - Shows **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on `order.order_type`
 - Footer: terms text (left) + "Received the above merchandise…" + `By:` signature line (right)
 - Business name on receipt: **LEYBLE GENERAL MERCHANDISE** (not "Leyble Hub")
