@@ -7,6 +7,7 @@ import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
 import Combobox from '../../components/ui/Combobox';
+import CustomerMergeModal from '../../components/customers/CustomerMergeModal';
 import { productMatches } from '../../utils/productSearch';
 
 const PHP = (n) =>
@@ -51,6 +52,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [form, setForm]             = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving]         = useState(false);
+  const [mergeOpen, setMergeOpen]   = useState(false);
 
   const [customPrices, setCustomPrices]     = useState([]);
   const [priceTab, setPriceTab]             = useState('delivery');
@@ -437,6 +439,18 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               )}
             </div>
 
+            {/* ── Merge Customer (Housekeeping) ─────────────────── */}
+            <div className="px-6 py-5 border-t border-slate-400">
+              <p className="text-xs font-bold text-amber-600 uppercase tracking-widest mb-3">Merge & Housekeeping</p>
+              <Button
+                variant="secondary"
+                onClick={() => setMergeOpen(true)}
+                className="border-amber-400 text-amber-800 hover:bg-amber-50"
+              >
+                🔀 Merge customer
+              </Button>
+            </div>
+
             {/* ── Danger Zone ───────────────────────────────────── */}
             <DangerZoneDelete
               endpoint={`/customers/${customerId}`}
@@ -447,6 +461,19 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           </div>
         )}
       </div>
+
+      {mergeOpen && customer && (
+        <CustomerMergeModal
+          customer={customer}
+          orderCount={orders.length}
+          onClose={() => setMergeOpen(false)}
+          onMerged={() => {
+            setMergeOpen(false);
+            onClose();
+            onSaved?.();
+          }}
+        />
+      )}
     </>
   );
 }
