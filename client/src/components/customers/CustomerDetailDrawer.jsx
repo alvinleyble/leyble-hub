@@ -781,7 +781,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                           </p>
                         </div>
                         <p className="font-bold tabular-nums text-v2-text text-base">
-                          {PHP(o.total_amount)}
+                          {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                         </p>
                       </li>
                     );

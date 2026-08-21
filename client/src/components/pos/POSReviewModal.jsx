@@ -58,17 +58,9 @@ export default function POSReviewModal({
   const adjustmentVal = Number(order.adjustment) || 0;
   const totals = orderTotals(items, adjustmentVal);
 
-  const isCustomPrice = (item) => {
-    if (item.is_price_overridden) return true;
-    if (customPrices && customPrices[item.product_id]) return true;
-    if (products && products.length > 0) {
-      const prod = products.find((p) => String(p.id) === String(item.product_id));
-      if (prod && Number(item.unit_price) !== Number(prod.base_wholesale_price)) {
-        return true;
-      }
-    }
-    return false;
-  };
+  const isCustomPrice = (item) =>
+    Boolean(item.is_price_overridden) ||
+    (order.customer_type === 'wholesaler' && Boolean(customPrices[item.product_id]));
 
   const isWholesaler = order.customer_type === 'wholesaler';
 

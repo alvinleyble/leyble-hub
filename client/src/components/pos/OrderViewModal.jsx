@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { lineTotal, orderTotals, totalCases } from './posMath';
+import { lineTotal, round2, totalCases } from './posMath';
+import { breakdownForItem } from '../../pages/orders/OrderCloseForm';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -55,18 +56,14 @@ export default function OrderViewModal({
 
   const items = order.items || [];
   const adjustmentVal = Number(order.adjustment) || 0;
-  const totals = orderTotals(items, adjustmentVal);
+  const isClosed = order.status === 'done';
+  const goods = round2(items.reduce((s, i) => s + lineTotal(i), 0));
+  const deposit = isClosed
+    ? round2(items.reduce((s, i) => s + breakdownForItem(i, {}).depositOwed, 0))
+    : 0;
+  const total = round2(goods + deposit + adjustmentVal);
 
-  const isCustomPrice = (item) => {
-    if (item.is_price_overridden) return true;
-    if (products && products.length > 0) {
-      const prod = products.find((p) => String(p.id) === String(item.product_id));
-      if (prod && Number(item.unit_price) !== Number(prod.base_wholesale_price)) {
-        return true;
-      }
-    }
-    return false;
-  };
+  const isCustomPrice = (item) => Boolean(item.is_price_overridden);
 
   // Only a live order can be edited, reprinted or cancelled — matching the row buttons
   // in POS History, which grey out on anything already cancelled.
@@ -238,15 +235,23 @@ export default function OrderViewModal({
               </div>
               <div className="flex justify-between sm:justify-start sm:gap-4">
                 <span>Goods Subtotal:</span>
-                <span className="font-bold text-v2-text tabular-nums">{PHP(totals.goods)}</span>
+                <span className="font-bold text-v2-text tabular-nums">{PHP(goods)}</span>
               </div>
-              {totals.adjustment !== 0 && (
+              {isClosed && deposit !== 0 && (
+                <div className="flex justify-between sm:justify-start sm:gap-4">
+                  <span>Bottle deposit:</span>
+                  <span className="font-bold text-v2-text tabular-nums">
+                    {deposit > 0 ? '+' : ''}{PHP(deposit)}
+                  </span>
+                </div>
+              )}
+              {adjustmentVal !== 0 && (
                 <div className="flex justify-between sm:justify-start sm:gap-4 text-amber-300">
                   <span>
                     Adjustment{order.adjustment_reason ? ` (${order.adjustment_reason})` : ''}:
                   </span>
                   <span className="font-bold tabular-nums">
-                    {totals.adjustment > 0 ? '+' : ''}{PHP(totals.adjustment)}
+                    {adjustmentVal > 0 ? '+' : ''}{PHP(adjustmentVal)}
                   </span>
                 </div>
               )}
@@ -255,7 +260,7 @@ export default function OrderViewModal({
             <div className="flex flex-col items-end justify-center rounded-xl bg-v2-surface border border-v2-border p-3">
               <span className="text-xs font-black uppercase tracking-wider text-v2-muted">Order Total</span>
               <span className="text-3xl sm:text-4xl font-black tabular-nums text-v2-text">
-                {PHP(totals.total)}
+                {PHP(total)}
               </span>
             </div>
           </div>

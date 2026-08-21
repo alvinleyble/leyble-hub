@@ -72,7 +72,7 @@ router.get('/:id', async (req, res, next) => {
 
     const { rows: orders } = await db.query(
       `SELECT
-         o.id, o.status, o.total_amount, o.created_at,
+         o.id, o.status, o.total_amount, o.adjustment, o.adjustment_reason, o.created_at,
          o.dispatched_at, o.delivered_at, o.closed_at,
          (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
           FROM order_personnel op JOIN personnel per ON per.id = op.personnel_id

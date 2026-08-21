@@ -481,5 +481,282 @@ describe('V2 accuracy audit', () => {
         method: 'PATCH', body: JSON.stringify({ adjustment: -20, adjustment_reason: 'discount' }) }));
       assert.equal(adjStatus, 200);
     });
+=======
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-key-32-chars-minimum!!';
+
+const db = require('../src/db');
+const customerRoutes = require('../src/routes/customers');
+const orderRoutes = require('../src/routes/orders');
+const { errorHandler } = require('../src/middleware/errorHandler');
+
+describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
+  let server;
+  let baseUrl;
+  let authToken;
+  let testUserId;
+  let testCustomerId;
+  let testProductId;
+
+  before(async () => {
+    // Admin user
+    let { rows: [user] } = await db.query(
+      `SELECT id, email, full_name, role FROM users WHERE role = 'admin' LIMIT 1`
+    );
+    if (!user) {
+      const { rows: [created] } = await db.query(
+        `INSERT INTO users (email, password_hash, full_name, role)
+         VALUES ('test-audit@leyblestore.com', 'dummyhash', 'Audit Tester', 'admin')
+         RETURNING id, email, full_name, role`
+      );
+      user = created;
+    }
+    testUserId = user.id;
+
+    authToken = jwt.sign(
+      { id: user.id, email: user.email, role: user.role, full_name: user.full_name },
+      process.env.JWT_SECRET
+    );
+
+    // Test customer
+    const { rows: [customer] } = await db.query(
+      `INSERT INTO customers (name, customer_type, address, phone)
+       VALUES ('Audit Test Customer', 'regular', '789 Audit Way', '09112223334')
+       RETURNING id`
+    );
+    testCustomerId = customer.id;
+
+    // Test product with returnable bottle deposit
+    const sku = `SKU_AUDIT_${Date.now()}`;
+    const { rows: [product] } = await db.query(
+      `INSERT INTO products (name, category, unit, sku, base_wholesale_price, deposit_fee, units_per_case, requires_bottle_return, current_stock, is_active)
+       VALUES ('TEST_PROD_AUDIT_BEER', 'Beer', 'case', $1, 100.00, 2.50, 24, TRUE, 100, TRUE)
+       RETURNING *`,
+      [sku]
+    );
+    testProductId = product.id;
+
+    // Express app setup
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use('/api/v1/customers', customerRoutes);
+    app.use('/api/v1/orders', orderRoutes);
+    app.use(errorHandler);
+
+    server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    baseUrl = `http://localhost:${server.address().port}/api/v1`;
+  });
+
+  after(async () => {
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+    if (testCustomerId) {
+      await db.query(`
+        DELETE FROM inventory_audit_logs
+        WHERE product_id = $1
+           OR (related_order_id IS NOT NULL AND related_order_id IN (SELECT id FROM orders WHERE customer_id = $2))
+      `, [testProductId, testCustomerId]);
+
+      await db.query('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)', [testCustomerId]);
+      await db.query('DELETE FROM order_personnel WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)', [testCustomerId]);
+      await db.query('DELETE FROM activity_logs WHERE entity_id IN (SELECT id FROM orders WHERE customer_id = $1) AND entity_type = \'order\'', [testCustomerId]);
+      await db.query('DELETE FROM orders WHERE customer_id = $1', [testCustomerId]);
+      await db.query('DELETE FROM customers WHERE id = $1', [testCustomerId]);
+    }
+    if (testProductId) {
+      await db.query('DELETE FROM products WHERE id = $1', [testProductId]);
+    }
+  });
+
+  function api(endpoint, options = {}) {
+    return fetch(`${baseUrl}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+        ...(options.headers || {}),
+      },
+    });
+  }
+
+  it('F4 — GET /customers/:id includes adjustment and adjustment_reason in order history', async () => {
+    // Create an order
+    const orderRes = await api('/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        customer_id: testCustomerId,
+        order_type: 'delivery',
+        status: 'pending',
+        items: [
+          {
+            product_id: testProductId,
+            quantity: 2,
+            unit_price: 100.00,
+            unit_deposit_fee: 2.50,
+            units_per_case: 24,
+          },
+        ],
+      }),
+    });
+    assert.equal(orderRes.status, 201);
+    const order = await orderRes.json();
+
+    // Set adjustment
+    const adjRes = await api(`/orders/${order.id}/adjustment`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        adjustment: -25.00,
+        adjustment_reason: 'Audit Suki Discount',
+      }),
+    });
+    assert.equal(adjRes.status, 200);
+
+    // Call GET /customers/:id
+    const custRes = await api(`/customers/${testCustomerId}`);
+    assert.equal(custRes.status, 200);
+    const customerData = await custRes.json();
+
+    const foundOrder = customerData.orders.find((o) => o.id === order.id);
+    assert.ok(foundOrder, 'Order should be present in customer order history');
+    assert.equal(Number(foundOrder.adjustment), -25.00, 'Adjustment should match');
+    assert.equal(foundOrder.adjustment_reason, 'Audit Suki Discount', 'Adjustment reason should match');
+
+    // Customer drawer row total computation verification:
+    const rowTotal = Number(foundOrder.total_amount) + Number(foundOrder.adjustment || 0);
+    // Goods total is 2 * 100 = 200, adjustment is -25 -> rowTotal is 175
+    assert.equal(rowTotal, 175.00);
+  });
+
+  it('F4 — Closed order includes bottle deposit in totals while completed/pending stay goods-only', async () => {
+    // Create pending order: 2 cases @ 100/cs = 200 goods, deposit_fee 2.50, units_per_case 24 (48 bottles = 120 deposit)
+    const createRes = await api('/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        customer_id: testCustomerId,
+        order_type: 'delivery',
+        status: 'pending',
+        items: [
+          {
+            product_id: testProductId,
+            quantity: 2,
+            unit_price: 100.00,
+            unit_deposit_fee: 2.50,
+            units_per_case: 24,
+          },
+        ],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const pendingOrder = await createRes.json();
+
+    // Set adjustment
+    await api(`/orders/${pendingOrder.id}/adjustment`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        adjustment: 10.00,
+        adjustment_reason: 'Handling fee',
+      }),
+    });
+
+    // While pending: total_amount in DB is 200.00 (goods-only)
+    const { rows: [pendingRow] } = await db.query('SELECT total_amount FROM orders WHERE id = $1', [pendingOrder.id]);
+    assert.equal(Number(pendingRow.total_amount), 200.00);
+
+    // Advance pending -> in_transit -> completed
+    const transitRes = await api(`/orders/${pendingOrder.id}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'in_transit' }),
+    });
+    assert.equal(transitRes.status, 200);
+
+    const completeRes = await api(`/orders/${pendingOrder.id}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'completed' }),
+    });
+    assert.equal(completeRes.status, 200);
+    const completedOrder = await completeRes.json();
+
+    // While completed: total_amount in DB is still 200.00 (goods-only)
+    assert.equal(Number(completedOrder.total_amount), 200.00);
+
+    // Modal calculation logic for completed order:
+    // Goods: 200.00, Deposit: 0.00 (open/completed), Adjustment: 10.00 -> Total: 210.00
+    const isCompletedClosed = completedOrder.status === 'done';
+    assert.equal(isCompletedClosed, false);
+    const completedGoods = completedOrder.items.reduce((s, i) => s + (Number(i.quantity) * Number(i.unit_price)), 0);
+    const completedDeposit = isCompletedClosed
+      ? completedOrder.items.reduce((s, i) => s + ((Number(i.quantity) * Number(i.units_per_case) - Number(i.bottles_returned)) * Number(i.unit_deposit_fee)), 0)
+      : 0;
+    const completedTotal = completedGoods + completedDeposit + Number(completedOrder.adjustment || 0);
+    assert.equal(completedGoods, 200.00);
+    assert.equal(completedDeposit, 0.00);
+    assert.equal(completedTotal, 210.00);
+
+    // Close order (0 bottles returned -> deposit owed = 48 * 2.50 = 120.00)
+    const closeRes = await api(`/orders/${pendingOrder.id}/close`, {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [
+          { id: pendingOrder.items[0].id, bottles_returned: 0 },
+        ],
+      }),
+    });
+    assert.equal(closeRes.status, 200);
+    const closedOrder = await closeRes.json();
+
+    // Closed order status is 'done' and total_amount in DB is 320.00 (goods 200 + deposit 120)
+    assert.equal(closedOrder.status, 'done');
+    assert.equal(Number(closedOrder.total_amount), 320.00);
+
+    // Modal calculation logic for closed order:
+    // Goods: 200.00, Deposit: 120.00, Adjustment: 10.00 -> Total: 330.00
+    const items = closedOrder.items;
+    const isClosed = closedOrder.status === 'done';
+    assert.equal(isClosed, true);
+    const goods = items.reduce((s, i) => s + (Number(i.quantity) * Number(i.unit_price)), 0);
+    const deposit = isClosed
+      ? items.reduce((s, i) => s + ((Number(i.quantity) * Number(i.units_per_case) - Number(i.bottles_returned)) * Number(i.unit_deposit_fee)), 0)
+      : 0;
+    const total = goods + deposit + Number(closedOrder.adjustment || 0);
+
+    assert.equal(goods, 200.00);
+    assert.equal(deposit, 120.00);
+    assert.equal(total, 330.00);
+
+    // Over-return scenario (e.g. 58 bottles returned for 48 ordered -> -10 unreturned -> -25 deposit credit)
+    const overReturnedItems = [{ ...closedOrder.items[0], bottles_returned: 58 }];
+    const overDeposit = overReturnedItems.reduce((s, i) => s + ((Number(i.quantity) * Number(i.units_per_case) - Number(i.bottles_returned)) * Number(i.unit_deposit_fee)), 0);
+    const overTotal = goods + overDeposit + Number(closedOrder.adjustment || 0);
+    assert.equal(overDeposit, -25.00);
+    assert.equal(overTotal, 185.00);
+  });
+
+  it('F10 — Custom price detection only flags explicit overrides and wholesaler matrix', () => {
+    // POSReviewModal logic
+    const posCustomPrice = (item, order, customPrices = {}) =>
+      Boolean(item.is_price_overridden) ||
+      (order.customer_type === 'wholesaler' && Boolean(customPrices[item.product_id]));
+
+    // CustomerOrderDetailModal logic
+    const detailModalCustomPrice = (item) => Boolean(item.is_price_overridden);
+
+    // Case 1: Regular customer with regular price (even if catalogue base price changed later)
+    const itemNormal = { product_id: 1, unit_price: 90, is_price_overridden: false };
+    const regularOrder = { customer_type: 'regular' };
+    assert.equal(posCustomPrice(itemNormal, regularOrder, {}), false);
+    assert.equal(detailModalCustomPrice(itemNormal), false);
+
+    // Case 2: Regular customer with overridden price
+    const itemOverridden = { product_id: 1, unit_price: 85, is_price_overridden: true };
+    assert.equal(posCustomPrice(itemOverridden, regularOrder, {}), true);
+    assert.equal(detailModalCustomPrice(itemOverridden), true);
+
+    // Case 3: Wholesaler with custom price in matrix
+    const wholesalerOrder = { customer_type: 'wholesaler' };
+    assert.equal(posCustomPrice(itemNormal, wholesalerOrder, { 1: 90 }), true);
+    assert.equal(posCustomPrice(itemNormal, wholesalerOrder, {}), false);
+>>>>>>> 02a8e95 (feat(v2): fix customer drawer totals (F4) and custom price badge inference (F10))
   });
 });
