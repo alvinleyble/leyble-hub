@@ -43,7 +43,24 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
 
   const load = () => {
     setLoading(true);
-    Promise.all([api.get('/orders?status=pending'), api.get('/orders?status=cancelled')])
+    let dateParams = '';
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const startOf7DaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+
+    if (dateFilter === 'today') {
+      dateParams = `&from_date=${encodeURIComponent(startOfToday.toISOString())}`;
+    } else if (dateFilter === 'yesterday') {
+      dateParams = `&from_date=${encodeURIComponent(startOfYesterday.toISOString())}&to_date=${encodeURIComponent(startOfToday.toISOString())}`;
+    } else if (dateFilter === '7d' || dateFilter === 'week') {
+      dateParams = `&from_date=${encodeURIComponent(startOf7DaysAgo.toISOString())}`;
+    }
+
+    Promise.all([
+      api.get(`/orders?status=pending${dateParams}`),
+      api.get(`/orders?status=cancelled${dateParams}`),
+    ])
       .then(([created, cancelled]) =>
         setOrders([...created, ...cancelled].sort(
           (a, b) => new Date(b.created_at) - new Date(a.created_at)
@@ -53,7 +70,9 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load();
+  }, [dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -69,7 +88,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
         if (createdAt < startOfToday) return false;
       } else if (dateFilter === 'yesterday') {
         if (createdAt < startOfYesterday || createdAt >= startOfToday) return false;
-      } else if (dateFilter === '7d') {
+      } else if (dateFilter === '7d' || dateFilter === 'week') {
         if (createdAt < startOf7DaysAgo) return false;
       }
 
@@ -193,7 +212,18 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
         }
         loading={loading}
         isEmpty={visible.length === 0}
-        footnote="Totals here are the saved goods total plus any adjustment — the same goods-only figure the order panel and the receipt show."
+        footnote={
+          <div className="space-y-1">
+            {orders.length >= 200 && (
+              <p className="text-amber-300">
+                Showing the 200 most recent — narrow the date range or search to see older orders.
+              </p>
+            )}
+            <p>
+              Totals here are the saved goods total plus any adjustment — the same goods-only figure the order panel and the receipt show.
+            </p>
+          </div>
+        }
         onClose={onClose}
       >
         {visible.map((o) => {
