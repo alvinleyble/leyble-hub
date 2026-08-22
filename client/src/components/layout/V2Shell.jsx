@@ -3,6 +3,10 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
 import { usePrinter } from '../../context/PrinterContext';
+import { useToast } from '../ui/Toast';
+
+const PREFERRED_KEY = 'preferred_ui';
+const LONG_PRESS_MS = 3000;
 
 // V2 exposes exactly three top-level destinations.
 const NAV_ITEMS = [
@@ -63,9 +67,14 @@ export default function V2Shell() {
     }
   });
   const longPressTimerRef = useRef(null);
+  const progressIntervalRef = useRef(null);
+  const holdStartRef = useRef(null);
+  const [holding, setHolding] = useState(false);
+  const [progress, setProgress] = useState(0);
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
   const { openPicker: openPrinterPicker } = usePrinter();
+  const { addToast } = useToast();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -78,9 +87,8 @@ export default function V2Shell() {
 
   useEffect(() => {
     return () => {
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current);
-      }
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
     };
   }, []);
 
@@ -97,13 +105,27 @@ export default function V2Shell() {
     } catch {}
   };
 
-  // 3-second long-press on "Leyble Hub" navigates directly to V1 Outgoing Orders
+  // 3-second long-press on "Leyble Hub" navigates to V1 Admin Portal with feedback + toast
   const startLongPress = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
     clearTimeout(longPressTimerRef.current);
+    clearInterval(progressIntervalRef.current);
+    setHolding(true);
+    setProgress(0);
+    holdStartRef.current = Date.now();
+    progressIntervalRef.current = setInterval(() => {
+      const elapsed = Date.now() - holdStartRef.current;
+      setProgress(Math.min(100, (elapsed / LONG_PRESS_MS) * 100));
+    }, 32);
     longPressTimerRef.current = setTimeout(() => {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+      setHolding(false);
+      setProgress(0);
+      try { localStorage.setItem(PREFERRED_KEY, 'v1'); } catch {}
+      addToast('Switched to V1 Admin Portal', 'success');
       navigate('/orders');
-    }, 3000);
+    }, LONG_PRESS_MS);
   };
 
   const cancelLongPress = () => {
@@ -111,6 +133,12 @@ export default function V2Shell() {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+    setHolding(false);
+    setProgress(0);
   };
 
   return (
@@ -127,10 +155,14 @@ export default function V2Shell() {
           onPointerLeave={cancelLongPress}
           onPointerCancel={cancelLongPress}
           onContextMenu={(e) => e.preventDefault()}
-          className="px-2 text-xl font-bold tracking-tight select-none shrink-0 flex items-center gap-2.5 bg-transparent border-0 text-left focus:outline-none cursor-default"
-          aria-label="Leyble Hub"
+          className={`relative overflow-hidden px-2 text-xl font-bold tracking-tight select-none shrink-0 flex items-center gap-2.5 bg-transparent border-0 text-left focus:outline-none cursor-default rounded-lg transition-opacity duration-150 ${holding ? 'opacity-90 ring-1 ring-v2-accent/30' : 'opacity-100'}`}
+          style={{
+            background: holding ? `linear-gradient(to right, rgba(244,63,94,0.18) ${progress}%, transparent ${progress}%)` : undefined,
+            touchAction: 'none',
+          }}
+          aria-label="Leyble Hub — hold 3 seconds to switch to V1 Admin Portal"
         >
-          <span className="h-2.5 w-2.5 rounded-full bg-red-600 shadow-[0_0_8px_rgba(220,38,38,0.6)]" aria-hidden="true" />
+          <span className={`h-2.5 w-2.5 rounded-full bg-red-600 shrink-0 ${holding ? 'animate-pulse shadow-[0_0_10px_rgba(220,38,38,0.85)]' : 'shadow-[0_0_8px_rgba(220,38,38,0.6)]'}`} aria-hidden="true" />
           Leyble Hub
         </button>
 
