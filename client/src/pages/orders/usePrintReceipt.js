@@ -4,11 +4,13 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import { generateReceiptHtml, printPhaseForStatus } from './receiptTemplate';
 import { generateEscPos } from './escposReceipt';
+import { V25_OFFLINE_CORE } from '../../config/features.js';
+import { queueReceiptPrinted } from '../../offline/index.js';
 
 const Printer = registerPlugin('Printer');
 
 // Helper to determine if an argument is a valid order object vs an event object
-const isOrderObject = (val) => Boolean(val && typeof val === 'object' && val.id && (val.status || val.items));
+const isOrderObject = (val) => Boolean(val && typeof val === 'object' && (val.id || val.receipt_number) && (val.status || val.items));
 
 // Shared print flow for OrderDetailPage, ReviewQueueModal and the V2 POS.
 // On native Android: direct Bluetooth ESC/POS (no dialog, no PrintHand).
@@ -42,20 +44,27 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
 
   // ── After a successful print: tag the order, or ask first ───────────────────
 
-  const tagPrinted = useCallback(async (orderId, phase) => {
+  const tagPrinted = useCallback(async (orderId, phase, targetOrder = null) => {
     try {
-      const updated = await api.post(`/orders/${orderId}/receipt-printed`, { phase });
-      onTagged?.(updated);
+      if (V25_OFFLINE_CORE) {
+        const active = targetOrder || (isOrderObject(orderId) ? orderId : order);
+        await queueReceiptPrinted({ order: active || { id: orderId }, phase });
+        onTagged?.(active || { id: orderId });
+      } else {
+        const id = isOrderObject(orderId) ? orderId.id : orderId;
+        const updated = await api.post(`/orders/${id}/receipt-printed`, { phase });
+        onTagged?.(updated);
+      }
     } catch (err) {
       addToast(err.message || 'Failed to tag order as printed.', 'error');
     }
-  }, [onTagged, addToast]);
+  }, [onTagged, addToast, order]);
 
   const finishPrint = useCallback((phase, targetOrder = order) => {
     const active = isOrderObject(targetOrder) ? targetOrder : order;
     if (!phase || !active) return;
-    if (autoTag) tagPrinted(active.id, phase);
-    else setPrintPrompt({ orderId: active.id, phase });
+    if (autoTag) tagPrinted(active.id || active.receipt_number, phase, active);
+    else setPrintPrompt({ orderId: active.id || active.receipt_number, phase, order: active });
   }, [order, autoTag, tagPrinted]);
 
   // ── Core Bluetooth send ─────────────────────────────────────────────────────
@@ -232,7 +241,7 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
   const confirmPrintTag = useCallback(async () => {
     if (!printPrompt) return;
     setTaggingPrint(true);
-    await tagPrinted(printPrompt.orderId, printPrompt.phase);
+    await tagPrinted(printPrompt.orderId, printPrompt.phase, printPrompt.order);
     setTaggingPrint(false);
     setPrintPrompt(null);
   }, [printPrompt, tagPrinted]);

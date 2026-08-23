@@ -320,4 +320,67 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.equal(by[two.id], luis.id);
     });
   });
+
+  // ── Piece 2: atomic adjustment on insert & resolveOrderId by receipt number ─
+
+  describe('Piece 2 — atomic adjustment and resolveOrderId by receipt number', () => {
+    it('POST /orders accepts adjustment and adjustment_reason atomically', async () => {
+      const receipt = `1-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const res = await call('/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderBody({
+          receipt_number: receipt,
+          adjustment: -50,
+          adjustment_reason: 'Suki discount',
+        })),
+      });
+      assert.equal(res.status, 201);
+      const order = await res.json();
+      assert.equal(order.receipt_number, receipt);
+      assert.equal(Number(order.adjustment), -50);
+      assert.equal(order.adjustment_reason, 'Suki discount');
+    });
+
+    it('GET, PATCH, receipt-printed, and status routes accept receipt number in :id parameter', async () => {
+      const receipt = `1-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const createdRes = await call('/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderBody({ receipt_number: receipt })),
+      });
+      assert.equal(createdRes.status, 201);
+
+      // GET /orders/:receipt_number
+      const getRes = await call(`/orders/${receipt}`);
+      assert.equal(getRes.status, 200);
+      const getOrder = await getRes.json();
+      assert.equal(getOrder.receipt_number, receipt);
+
+      // POST /orders/:receipt_number/receipt-printed
+      const printedRes = await call(`/orders/${receipt}/receipt-printed`, {
+        method: 'POST',
+        body: JSON.stringify({ phase: 'pending' }),
+      });
+      assert.equal(printedRes.status, 200);
+      const printedOrder = await printedRes.json();
+      assert.ok(printedOrder.pending_receipt_printed_at);
+
+      // PATCH /orders/:receipt_number/adjustment
+      const adjRes = await call(`/orders/${receipt}/adjustment`, {
+        method: 'PATCH',
+        body: JSON.stringify({ adjustment: 25, adjustment_reason: 'Delivery fee' }),
+      });
+      assert.equal(adjRes.status, 200);
+      const adjOrder = await adjRes.json();
+      assert.equal(Number(adjOrder.adjustment), 25);
+
+      // POST /orders/:receipt_number/status
+      const cancelRes = await call(`/orders/${receipt}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
+      assert.equal(cancelRes.status, 200);
+      const cancelledOrder = await cancelRes.json();
+      assert.equal(cancelledOrder.status, 'cancelled');
+    });
+  });
 });
