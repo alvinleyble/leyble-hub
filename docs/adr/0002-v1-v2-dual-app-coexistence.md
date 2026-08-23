@@ -1,8 +1,8 @@
 # V1 and V2 Dual-App Coexistence on User Devices
 
-**Status:** Locked (2026-08-20)  
+**Status:** Superseded (2026-08-22 by V2.0 Slice 5 in PR #26)  
 **Origin:** Captain directive (2026-08-20)  
-**See also:** [docs/product/proposals/v2-tablet-pos-overhaul.md](../product/proposals/v2-tablet-pos-overhaul.md)
+**See also:** [docs/product/proposals/v2-tablet-pos-overhaul.md](../product/proposals/v2-tablet-pos-overhaul.md) (Section 7: Unified App Distribution & V1/V2 Bridge)
 
 ## Context
 
