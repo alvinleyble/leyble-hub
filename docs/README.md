@@ -14,12 +14,22 @@ Antipolo, Philippines. This folder is the single home for project documentation.
 ### Product
 - [product/PRD.md](product/PRD.md) — what the app is, who uses it, goals, modules, business rules.
 - [product/glossary.md](product/glossary.md) — domain & codebase terms.
+- [product/proposals/v2-5-offline-accessibility.md](product/proposals/v2-5-offline-accessibility.md) — V2.5 offline / local-first POS, all eighteen settled decisions.
 
 ### Architecture & technical
 - [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) — stack, topology, auth, layout.
-- [architecture/DATABASE.md](architecture/DATABASE.md) — current schema (reconciled to migrations 001–029).
+- [architecture/DATABASE.md](architecture/DATABASE.md) — current schema (reconciled to migrations 001–033).
 - [architecture/API.md](architecture/API.md) — REST endpoint reference.
 - [architecture/order-lifecycle.md](architecture/order-lifecycle.md) — order status, stock, deposit/bottle-return math.
+
+### Decision records (ADRs)
+- [adr/](adr/) — one file per settled architectural decision. V2.5 offline core:
+  [0003](adr/0003-device-issued-receipt-numbers.md) device-issued receipt numbers,
+  [0004](adr/0004-local-first-pos.md) local-first POS,
+  [0005](adr/0005-offline-scope-by-operation.md) offline scope by operation,
+  [0006](adr/0006-receipt-number-as-idempotency-key.md) the receipt number as the anti-duplicate key,
+  [0007](adr/0007-native-storage-for-device-state.md) native storage for device state,
+  [0008](adr/0008-release-switch-for-the-offline-core.md) the release switch.
 
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally.

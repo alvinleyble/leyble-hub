@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../ui/Toast';
 import POSConfirm from './POSConfirm';
 import POSListModal, { LIST_ACTION_BTN, LIST_ROW, listDateTime } from './POSListModal';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -122,7 +123,7 @@ export default function POSDraftsModal({ onClose, onResume, onChanged }) {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-lg font-bold text-v2-text">
-                  #{o.id} · {o.customer_name}
+                  {orderRef(o)} · {o.customer_name}
                 </p>
                 <p className="text-base text-v2-muted">
                   Started {listDateTime(o.created_at)} · {o.order_type === 'pickup' ? '🏪 Pickup' : '🚚 Delivery'}

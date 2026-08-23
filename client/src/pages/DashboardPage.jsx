@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/ui/Badge';
 import Spinner from '../components/ui/Spinner';
+import { orderRef } from '../utils/orderRef';
 
 const PHP = (amount) =>
   `₱${Number(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -124,7 +125,7 @@ export default function DashboardPage() {
                           className="font-mono font-semibold text-blue-700 hover:underline
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
                         >
-                          #{order.id}
+                          {orderRef(order)}
                         </Link>
                       </td>
                       <td className="px-5 py-4 font-medium text-slate-900">{order.customer_name}</td>

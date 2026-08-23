@@ -3,6 +3,12 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, hasDeductedStock } = require('../lib/inventory');
+const { parseReceiptNumber } = require('../lib/receiptNumbers');
+const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
+
+// Name of the partial unique index from migration 033. Used to tell a genuine
+// duplicate receipt number apart from any other unique violation.
+const RECEIPT_NUMBER_INDEX = 'orders_receipt_number_uniq';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -27,6 +33,14 @@ function getAllowedTransitions(status, orderType) {
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+// D1 — how an order is named to a human. The row id stays an internal detail; an order
+// that carries a device-issued receipt number is referred to by it, in the activity log
+// as everywhere else. Historical orders (and every order created while the V2.5 client
+// switch is off) have no receipt number and keep reading as '#<id>', exactly as today.
+function orderLabel(order) {
+  return order?.receipt_number ? order.receipt_number : `#${order?.id}`;
+}
 
 async function recomputeTotal(client, orderId) {
   const { rows: [ord] } = await client.query('SELECT status FROM orders WHERE id = $1', [orderId]);
@@ -206,7 +220,8 @@ async function restoreStock(client, items, orderId, userId, reason) {
 // Reconcile stock after editing an order with deducted stock.
 // oldItems: DB rows before replacement. newItems: req.body items array.
 // Per-product delta = oldQty − newQty (positive = restore, negative = deduct more).
-async function reconcileStock(client, oldItems, newItems, orderId, userId) {
+async function reconcileStock(client, oldItems, newItems, order, userId) {
+  const orderId = order.id;
   const deltas = {};
   for (const item of oldItems) {
     if (!item.product_id) continue;
@@ -218,7 +233,7 @@ async function reconcileStock(client, oldItems, newItems, orderId, userId) {
   }
   await applyDeltaMap(client, deltas, {
     actionType: 'order_edit',
-    reason: `Order #${orderId} items edited`,
+    reason: `Order ${orderLabel(order)} items edited`,
     userId,
     orderId,
   });
@@ -278,8 +293,21 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/v1/orders — creates a Pending order; no stock check
+//
+// Two optional fields carry the device's version of the truth when the order was
+// created locally (V2.5, D1/D5/D13). Both are absent for an order created straight
+// from a connected client, which behaves exactly as before:
+//   receipt_number  '<station>-<sequence>' issued on the device at Save. It is the
+//                   record's identity, so a resend of a number already stored is
+//                   answered with the stored order and a 200 rather than a second row.
+//   created_at      the device's clock at Save — the sale time printed on the paper
+//                   the customer is holding, not the moment the outbox drained. Same
+//                   pattern as supplier_deliveries.received_at. No clock policing.
 router.post('/', async (req, res, next) => {
-  const { customer_id, notes, items = [], personnel = [], order_type = 'delivery', status } = req.body;
+  const {
+    customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
+    receipt_number, created_at,
+  } = req.body;
   const isDraft = status === 'draft';
 
   // Validate input before opening a connection/transaction — an early return after
@@ -287,6 +315,22 @@ router.post('/', async (req, res, next) => {
   if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
   // A finalized order needs at least one item; a draft may be parked while still empty.
   if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
+
+  let receipt = null;
+  if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
+    try {
+      receipt = parseReceiptNumber(receipt_number);
+    } catch (err) {
+      return next(err);
+    }
+    // The ordinary resend: the first attempt committed and only the response was lost.
+    try {
+      const existingId = await findByReceiptNumber(db, 'orders', receipt);
+      if (existingId) return res.json(await getFullOrder(existingId));
+    } catch (err) {
+      return next(err);
+    }
+  }
 
   const client = await db.connect();
   try {
@@ -302,10 +346,12 @@ router.post('/', async (req, res, next) => {
     }
 
     const { rows: [order] } = await client.query(
-      `INSERT INTO orders (customer_id, notes, total_amount, order_type, status)
-       VALUES ($1, $2, 0, $3, $4)
+      `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
+                           receipt_station, receipt_sequence, created_at)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()))
        RETURNING *`,
-      [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending']
+      [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
+       receipt?.station ?? null, receipt?.sequence ?? null, created_at || null]
     );
 
     await insertItems(client, order.id, customer_id, order_type, items, req.user.id, isDraft);
@@ -319,12 +365,12 @@ router.post('/', async (req, res, next) => {
         'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
         [order.id]
       );
-      await deductStock(client, insertedItems, order.id, req.user.id, `Order #${order.id} created`);
+      await deductStock(client, insertedItems, order.id, req.user.id, `Order ${orderLabel(order)} created`);
       await logActivity(client, {
         entityType: 'order',
         entityId:   order.id,
         action:     'created',
-        summary:    `Order #${order.id} created for ${customer.name} (${order_type})`,
+        summary:    `Order ${orderLabel(order)} created for ${customer.name} (${order_type})`,
         performedBy: req.user.id,
       });
     }
@@ -333,6 +379,17 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(await getFullOrder(order.id));
   } catch (err) {
     await client.query('ROLLBACK');
+    // Two drain attempts overlapping: both looked, neither found, both inserted. The
+    // partial unique index caught this one, so answer it with the row the winner
+    // wrote — a success, so the device clears it from the outbox and stops retrying.
+    if (receipt && isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX)) {
+      try {
+        const existingId = await findByReceiptNumber(db, 'orders', receipt);
+        if (existingId) return res.json(await getFullOrder(existingId));
+      } catch (lookupErr) {
+        return next(lookupErr);
+      }
+    }
     next(err);
   } finally {
     client.release();
@@ -429,7 +486,7 @@ router.patch('/:id', async (req, res, next) => {
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
 
       if (!isDraft && order.status !== 'cancelled' && await hasDeductedStock(client, order.id)) {
-        await reconcileStock(client, oldItems, items, order.id, req.user.id);
+        await reconcileStock(client, oldItems, items, order, req.user.id);
       }
     }
 
@@ -444,7 +501,7 @@ router.patch('/:id', async (req, res, next) => {
         entityType: 'order',
         entityId:   order.id,
         action:     'edited',
-        summary:    `Order #${order.id}: ${changeNotes.join('; ')}`,
+        summary:    `Order ${orderLabel(order)}: ${changeNotes.join('; ')}`,
         performedBy: req.user.id,
       });
     }
@@ -502,13 +559,13 @@ router.post('/:id/finalize', async (req, res, next) => {
       'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
       [order.id]
     );
-    await deductStock(client, items, order.id, req.user.id, `Order #${order.id} finalized`);
+    await deductStock(client, items, order.id, req.user.id, `Order ${orderLabel(order)} finalized`);
 
     await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
       action:     'created',
-      summary:    `Order #${order.id} created for ${customer?.name || 'customer'} (${order.order_type})`,
+      summary:    `Order ${orderLabel(order)} created for ${customer?.name || 'customer'} (${order.order_type})`,
       performedBy: req.user.id,
     });
 
@@ -568,7 +625,9 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       return res.status(400).json({ error: 'adjustment_reason is required when adjustment is non-zero' });
     }
 
-    const { rows: [order] } = await db.query('SELECT id FROM orders WHERE id = $1', [req.params.id]);
+    const { rows: [order] } = await db.query(
+      'SELECT id, receipt_number FROM orders WHERE id = $1', [req.params.id]
+    );
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     await db.query(
@@ -581,8 +640,8 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       entityId:   order.id,
       action:     'adjusted',
       summary:    adjNum !== 0
-        ? `Order #${order.id} adjustment set to ₱${adjNum.toFixed(2)} (reason: ${adjustment_reason.trim()})`
-        : `Order #${order.id} adjustment cleared`,
+        ? `Order ${orderLabel(order)} adjustment set to ₱${adjNum.toFixed(2)} (reason: ${adjustment_reason.trim()})`
+        : `Order ${orderLabel(order)} adjustment cleared`,
       performedBy: req.user.id,
     });
 
@@ -601,7 +660,9 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
     }
 
-    const { rows: [order] } = await db.query('SELECT id FROM orders WHERE id = $1', [req.params.id]);
+    const { rows: [order] } = await db.query(
+      'SELECT id, receipt_number FROM orders WHERE id = $1', [req.params.id]
+    );
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const column = phase === 'pending' ? 'pending_receipt_printed' : 'delivered_receipt_printed';
@@ -614,7 +675,7 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       entityType: 'order',
       entityId:   order.id,
       action:     'receipt_printed',
-      summary:    `Order #${order.id} receipt printed (${phase} phase)`,
+      summary:    `Order ${orderLabel(order)} receipt printed (${phase} phase)`,
       performedBy: req.user.id,
     });
 
@@ -659,7 +720,7 @@ router.post('/:id/status', async (req, res, next) => {
     if (newStatus === 'cancelled') {
       const stockDeducted = await hasDeductedStock(client, order.id);
       if (stockDeducted) {
-        await restoreStock(client, items, order.id, req.user.id, `Order #${order.id} cancelled`);
+        await restoreStock(client, items, order.id, req.user.id, `Order ${orderLabel(order)} cancelled`);
       }
     }
 
@@ -692,7 +753,7 @@ router.post('/:id/status', async (req, res, next) => {
       entityType: 'order',
       entityId:   order.id,
       action:     'status_changed',
-      summary:    `Order #${order.id} status changed from '${order.status}' to '${newStatus}'`,
+      summary:    `Order ${orderLabel(order)} status changed from '${order.status}' to '${newStatus}'`,
       performedBy: req.user.id,
     });
 
@@ -746,7 +807,7 @@ router.post('/:id/close', async (req, res, next) => {
       entityType: 'order',
       entityId:   order.id,
       action:     'closed',
-      summary:    `Order #${order.id} closed; bottle returns recorded for ${items.length} item${items.length === 1 ? '' : 's'}`,
+      summary:    `Order ${orderLabel(order)} closed; bottle returns recorded for ${items.length} item${items.length === 1 ? '' : 's'}`,
       performedBy: req.user.id,
     });
 

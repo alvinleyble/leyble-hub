@@ -8,6 +8,7 @@ import OrderViewModal from '../pos/OrderViewModal';
 import POSConfirm from '../pos/POSConfirm';
 import { usePrintReceipt } from '../../pages/orders/usePrintReceipt';
 import CustomerMergeModal from './CustomerMergeModal';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -165,7 +166,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
     printOrder,
     {},
     () => {
-      addToast(`Order #${printOrder?.id} receipt sent to printer.`, 'success');
+      addToast(`Order ${orderRef(printOrder)} receipt sent to printer.`, 'success');
       setPrintOrder(null);
     },
     {},
@@ -188,7 +189,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
     setCancelling(true);
     try {
       await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
-      addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
+      addToast(`Order ${orderRef(cancelTarget)} cancelled — stock restored.`, 'success');
       setCancelTarget(null);
       setPreviewOrder(null);
       await load(true);
@@ -835,7 +836,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-v2-text">Order #{o.id}</span>
+                            <span className="font-bold text-v2-text">Order {orderRef(o)}</span>
                             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${st.color}`}>
                               {st.label}
                             </span>

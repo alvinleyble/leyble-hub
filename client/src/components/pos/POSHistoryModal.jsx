@@ -4,6 +4,7 @@ import { useToast } from '../ui/Toast';
 import POSConfirm from './POSConfirm';
 import POSListModal, { LIST_ACTION_BTN, LIST_ROW, listDateTime } from './POSListModal';
 import OrderViewModal from './OrderViewModal';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -147,7 +148,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
     setCancelling(true);
     try {
       await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
-      addToast(`Order #${cancelTarget.id} cancelled — stock restored.`, 'success');
+      addToast(`Order ${orderRef(cancelTarget)} cancelled — stock restored.`, 'success');
       setCancelTarget(null);
       setViewOrder(null);   // back to the list, which reloads with the new status
       load();
@@ -234,7 +235,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-lg font-bold text-v2-text">
-                    #{o.id} · {o.customer_name}
+                    {orderRef(o)} · {o.customer_name}
                   </p>
                   <p className="text-base text-v2-muted">
                     {listDateTime(o.created_at)} · {o.order_type === 'pickup' ? '🏪 Pickup' : '🚚 Delivery'}
