@@ -18,7 +18,7 @@ they still appear in migrations and the archived spec.)
 | **`bottles_returned`** | Bottles returned for an order line, recorded at close. Deposit is charged only on bottles *not* returned. |
 | **Deposit (refundable)** | Charged on un-returned bottles. Excluded from the order total while open; folded in only when the order is **done**. |
 | **Order type** | `delivery` or `pickup`. Affects status flow and which custom price applies. |
-| **Draft order** | `status = 'draft'`. A parked, possibly-incomplete order. Reserves no stock; hidden except the Drafts tab. Finalizing → `pending`. |
+| **Draft order** | `status = 'draft'`. A parked, possibly-incomplete order. Reserves no stock; hidden except the Drafts popup. In V2.0+ it syncs to the server when online (shared across devices); during offline outages, parked drafts remain device-local until connectivity returns. Finalizing → `pending`. |
 | **Order status** | `draft → pending → in_transit → completed → done` (+ `cancelled`). Pickup skips `in_transit`. See [order-lifecycle](../architecture/order-lifecycle.md). |
 | **Batch review / Review Deliveries** | UI queues for reviewing/editing/closing multiple orders at once (incl. counting bottle returns at close). |
 | **Adjustment** | Manual ± correction on an order (`adjustment` + `adjustment_reason`) — e.g. a discount. |
@@ -28,5 +28,11 @@ they still appear in migrations and the archived spec.)
 | **Activity log** | Append-only `activity_logs` — cross-entity change log (orders/customers/products/personnel/tickets). API: `GET /api/v1/audit/activity`. |
 | **Void (delivery)** | Soft-delete of a supplier delivery (migration 029): reverses the restock and hides it, but keeps the row because audit logs reference it. |
 | **Receipt** | 80mm thermal printout; **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on order type. |
+| **Receipt number** | Formatted identifier (e.g. `1-00042`) issued locally by a device at save time, decoupling the customer-facing receipt identifier from internal PostgreSQL `orders.id` database row IDs. |
+| **Station** | A registered device number (1, 2, …) assigned once at install time by the server to a tablet or phone, serving as the unique prefix for device-issued receipt numbers. |
+| **Waiting receipts / Outbox** | Locally stored orders and records created on a device that have not yet synced to the cloud backend. |
+| **Offline mode** | In Leyble Hub, not a distinct UI toggle or separate code path, but the normal state of the local-first outbox when network connectivity is absent or pending sync. |
+| **Attention list** | A queue of offline-created receipts or records that could not be automatically applied on the server during sync (e.g. due to a merged customer or deactivated entity) requiring manual operator assignment. |
+| **Possible duplicate** | A record (e.g. customer created offline with the same name on two devices, or an order printed on both devices from a stale parked draft) flagged for human review and merge rather than being automatically overwritten or joined. |
 
 See also: [PRD](PRD.md) · [Database Reference](../architecture/DATABASE.md).

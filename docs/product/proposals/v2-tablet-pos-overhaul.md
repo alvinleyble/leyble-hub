@@ -100,7 +100,7 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 
 ## 3. Implementation Slices & Architecture
 
-| Slice # | Status | Slice Name | Scope Summary |
+| **Slice #** | **Status** | **Slice Name** | **Scope Summary** |
 | :--- | :--- | :--- | :--- |
 | **V2.0 Slice 0** | ✅ **Done** | **V2 Shell & Navigation** | Dark slate design tokens (`#020617` / `#0f172a`), tablet shell layout, streamlined 3-screen POS-first nav (POS, Inventory, Customers) **plus a "Back Office" drawer entry** exposing Personnel, Incoming Supplies, Tickets, and Audit Log — all four kept in their existing V1 UI, no V2 rework — without breaking underlying routes. |
 | **V2.0 Slice 1** | ✅ **Done** | **POS, History & Receipt** | 0.5 tap/hold steppers, in-line price edit, blank customer search, 3-row category matrix, preemptive deposit totaling, 2-stage Save ➔ Print buffer, History popup with Edit/Reprint/Cancel, Amber Edit Mode. |
@@ -108,8 +108,8 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | **V2.0 Slice 3** | ✅ **Done** | **Customers & Suki Pricing** | Directory filters, slide-over profile drawer with 100% V1 fields, delivery vs pickup custom pricing matrix with live discount math, live sync with POS, and "Save custom price?" prompt. |
 | **V2.0 Slice 6** | ✅ **Done** | **Coca-Cola Color Palette Overhaul** | Overhauled V2 theme tokens (`tailwind.config.js`) to the iconic Coca-Cola beverage distributor palette: Coca-Cola Red primary branding (`#F40009` / `#E41E2B`), deep carbonated charcoal surfaces (`#0F0F10`, `#1A1A1C`, `#262629`), crisp white text, high-contrast focus rings, and matching POS/Inventory/Customer CTAs. |
 | **V2.0 Slice 7** | ✅ **Done** | **Pre-Print Order Review Modal & Edit ⇄ Review Loop** | Large high-contrast tablet order review modal (`POSReviewModal.jsx`) before thermal printing, itemized bill breakdown with case counts, suki custom pricing badges, goods total & adjustments, and a frictionless Edit ⇄ Review loop allowing operators to jump seamlessly between modifying items and reviewing order totals. |
-| **V2.0 Slice 5** | ⬜ Not started | **Android Sync & Dual-App Verification** | Capacitor Android sync, `com.leyble.hub.pos` dual-app ID configuration, production Gradle build, `Pixel_Tablet` emulator headed verification. Concluding slice of V2.0. |
-| **V2.5 Slice 1** | ⏳ **Queued (Grill)** | **Offline Accessibility** | Offline order creation, local IndexedDB/SQLite cache, background reconnect sync, and conflict resolution policies. |
+| **V2.0 Slice 5** | ✅ **Done** | **Unified Android App Bridge & Route Persistence** | Single APK `com.leyble.hub` (no `.pos` split), default landing on `/v2/pos` with `preferred_ui` persistence via `PreferenceSync`, 3-second long-press bridge between V1 and V2 with visual feedback and toast notifications, `sensorLandscape` orientation lock, and production Gradle build (PR #26, merged 2026-08-22). |
+| **V2.5 Slice 1** | ✅ **Designed** | **Offline Accessibility** | Local-first POS architecture, device-issued receipt numbers, outbox background sync, shared parked orders with offline degradation, duplicate surfacing, attention list, and advisory toasts. See proposal: [v2-5-offline-accessibility.md](v2-5-offline-accessibility.md). |
 | **V3.0 Slice 1** | ⏳ **Queued** | **Voice AI (OpenAI API)** | OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing (re-allocated from earlier V2 draft). |
 
 ### Slice 1 — what shipped
@@ -220,6 +220,19 @@ seamless Edit ⇄ Review loop.
 | Saved Mode Panel Edit Trigger | `POSOrderPanel.jsx` — saved mode offers `🖨️ Print Receipt`, `✏️ Edit Order` and `＋ New order`. (A `📝 Review Order` button existed briefly; it was dropped once the review modal became draft-only — reading a finished order is History's read-only `👁️ View`.) |
 | Save Custom Price Coordination | `POSSavePriceModal.jsx` (`z-[60]`) overlays cleanly on top of `POSReviewModal` (`z-50`) when dirty prices are detected at submit |
 
+### Slice 5 — what shipped
+
+Landed on `dev` in PR #26 (merged 2026-08-22) providing a unified single-APK distribution (`com.leyble.hub`), route landing and persistence, and a 3-second long-press bridge connecting the V1 Admin Portal and V2 Tablet POS interfaces.
+
+| Locked rule | Where it lives |
+| :--- | :--- |
+| Single APK package (`com.leyble.hub`, no `.pos` split) | `capacitor.config.json` — stays `appId: com.leyble.hub`, `appName: Leyble Hub`, `androidScheme: https` |
+| Default landing on `/v2/pos` for fresh installs | `client/src/App.jsx` — `/` redirects to `/v2/pos`, respecting stored `localStorage.preferred_ui` (`v1` → `/dashboard`) |
+| Route persistence via `PreferenceSync` | `client/src/components/layout/PreferenceSync.jsx` — any `/v2/*` navigation writes `v2`; any authenticated V1 route writes `v1` |
+| 3-second long-press brand bridge with feedback & toast | `client/src/components/layout/Sidebar.jsx` (V1 brand 3s hold → `/v2/pos`, toast *Switched to V2 Tablet POS*) and `client/src/components/layout/V2Shell.jsx` (V2 brand 3s hold → `/orders`, toast *Switched to V1 Admin Portal*) with progress fill & ring pulse animations |
+| Tablet landscape lock | `android/app/src/main/AndroidManifest.xml` — `MainActivity` configured with `android:screenOrientation="sensorLandscape"` |
+| Verified Android build | Production Gradle assemble (`app-debug.apk`, 5.6 MB) and 33 green tests including `slice5-bridge.test.mjs` |
+
 ### Build Order & Release Roadmap
 
 Dependency + value order; each step lands as one fully-serial PR before the next starts.
@@ -232,13 +245,13 @@ Dependency + value order; each step lands as one fully-serial PR before the next
 4. **Slice 3 — Customers & Suki Pricing** — ✅ Done (PR #5).
 5. **Slice 6 — Coca-Cola Color Palette Overhaul** — ✅ Done (PR #6).
 6. **Slice 7 — Pre-Print Order Review Modal & Edit ⇄ Review Loop** — ✅ Done (PR #7). Large high-contrast review modal before printing, itemized breakdown with case counts & suki badges, goods totals, and seamless POS Edit ⇄ Review loop.
-7. **Slice 5 — Android Build & Dual-App Verification** — ⬜ Next up (Concluding slice of V2.0: Capacitor sync, `com.leyble.hub.pos` profile, Gradle build, emulator pass, final V2.0 production APK).
+7. **Slice 5 — Unified Android App Bridge & Route Persistence** — ✅ Done (PR #26). Single APK `com.leyble.hub`, default landing on `/v2/pos`, `preferred_ui` persistence via `PreferenceSync`, 3s long-press bridge between V1 Sidebar and V2 Shell brand with visual feedback and toast, `sensorLandscape` orientation lock, and verified build.
 
 ---
 
 #### **Future Releases on Roadmap**
 * **V2.5 (Offline Operations):**
-  * **Slice 1 — Offline Accessibility (Queued for Grilling):** Local storage / IndexedDB offline caching, offline order creation on POS, background synchronization upon network reconnection, and conflict resolution rules during store internet drops.
+  * **Slice 1 — Offline Accessibility (Designed):** Settled local-first POS design, device-issued receipt numbers, waiting receipts outbox, shared parked orders with offline fallback, duplicate surfacing, attention list, and advisory toasts. See proposal: [docs/product/proposals/v2-5-offline-accessibility.md](v2-5-offline-accessibility.md).
 * **V3.0 (AI-Powered Operations):**
   * **Slice 1 — Voice AI (Taglish Parsing):** OpenAI API integration for Taglish voice order creation and catalog queries across POS, Inventory, and Customers.
 
@@ -285,13 +298,15 @@ client/src/
 
 ---
 
-## 7. Dual-App Coexistence & Android Package Identity (Locked 2026-08-20)
+## 7. Unified App Distribution & V1/V2 Bridge (Updated 2026-08-22)
 
-* **Coexistence Model:** V1 and V2 co-exist concurrently on user devices as two independent Android applications connecting to the exact same backend API and PostgreSQL database. See [ADR 0002](../../adr/0002-v1-v2-dual-app-coexistence.md).
-* **Package Profiles:**
-  * **V1 App ("Leyble Hub Classic"):** `appId: com.leyble.hub`, `appName: "Leyble Hub"`, landing on `/dashboard`. Retains all V1 back-office modules and desktop flows.
-  * **V2 App ("Leyble Hub POS"):** `appId: com.leyble.hub.pos`, `appName: "Leyble Hub POS"`, landing on `/v2/pos`. Fast 2-tap POS, Price/Stock management, and Suki customer profiles.
-* **Shared Real-Time State:**
-  * All database records are unified. Orders saved in V2 POS immediately deduct inventory stock and appear in V1 order history and audit logs.
-  * Suki custom pricing configured in either version applies across both apps.
-* **Slice 5 Scope:** Slice 5 will configure the Capacitor build artifacts for `com.leyble.hub.pos` so installing the V2 APK installs cleanly alongside V1 on the Honor Pad X8B tablet without overwriting the existing installation.
+* **Consolidated Single-APK Model:** While [ADR 0002](../../adr/0002-v1-v2-dual-app-coexistence.md) originally explored two separate installed Android package IDs (`com.leyble.hub` vs `com.leyble.hub.pos`), Slice 5 consolidated distribution into a single unified APK (`com.leyble.hub`) on user devices. This eliminates dual-app installation overhead and sync drift while fulfilling the requirement for seamless concurrent access to both V1 and V2 shells.
+* **Landing & Navigation Persistence:**
+  * Fresh installs land directly on the V2 Tablet POS (`/v2/pos`).
+  * The active interface choice is persisted in `localStorage.preferred_ui` (`v1` or `v2`) via `PreferenceSync`, ensuring operators always return to their last-used environment across app launches.
+* **3-Second Long-Press Bridge:**
+  * Operators seamlessly switch shells via a 3-second long-press on the brand header (V1 Sidebar brand → switches to `/v2/pos`; V2 Shell header brand → switches to `/orders`), featuring real-time visual hold progress feedback and a confirmation toast.
+* **Android Native Configuration:**
+  * Application ID remains `com.leyble.hub` in `capacitor.config.json`.
+  * `AndroidManifest.xml` locks `MainActivity` to `android:screenOrientation="sensorLandscape"` for optimal tablet ergonomics on the Honor Pad X8B.
+
