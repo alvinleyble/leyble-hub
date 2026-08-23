@@ -13,7 +13,7 @@
 ### Operating Reality in Antipolo
 Leyble General Merchandise operates in Antipolo, Philippines, where the physical store faces infrastructure realities that dictate software requirements:
 
-1. **Frequent Network & Power Outages:** Internet connectivity drops roughly **weekly**, with outage durations ranging from **several hours to multiple days** during severe weather or grid failures.
+1. **Frequent Network Outages:** Internet connectivity drops roughly **weekly**, for a random duration ranging from **hours to days at worst**.
 2. **Current Failure Mode:** Leyble Hub V1 and V2.0 are entirely cloud-dependent. When an outage occurs, the app becomes unusable. Store owners currently fall back to a physical, pre-numbered paper receipt booklet.
 3. **Prevalence of Hand-Written Paper Receipts:** Even during normal online operations, **approximately 25% of daily transactions are hand-written on paper** and never entered into Leyble Hub. Physical booklet numbering operates independently and will not collide with app receipt numbering (accepted by the product owner).
 4. **Stock Accuracy is Approximate by Design:** Because ~25% of sales bypass the app entirely on paper, inventory stock figures in the database are already approximate by business reality. Therefore, offline software must **never introduce complex blocking machinery to defend theoretical stock precision** (e.g. no offline stock locking, no negative-stock transaction blocks).
@@ -50,7 +50,7 @@ graph TD
 * **Per-Device Station Number Spaces:** `receipt_number` becomes a first-class domain concept issued locally by the device at the moment of Save, executing the exact same code path online and offline.
 * **Format:** `<station>-<sequence>`, e.g., `1-00042`, `2-00042`.
 * **Row ID Stays Internal:** PostgreSQL `orders.id` integer primary key remains an internal database identifier. The user interface, order history, and thermal receipts display `receipt_number` everywhere `#<id>` was previously shown.
-* **One-Time Station Registration:** A device registers with the cloud server once upon initial app installation (`POST /api/v1/stations/register`), receives the next sequential station number (1, 2, ...), and permanently stores it in native storage (`@capacitor/preferences`). Scales to $N$ devices.
+* **One-Time Station Registration:** A device registers with the cloud server once upon initial app installation (`POST /api/v1/stations/register`), receives the next sequential station number (1, 2, ...), and permanently stores it in native storage (`@capacitor/preferences`). Scales to N devices.
 * **Station Numbering Invariant:** A wiped or reinstalled device receives a NEW station number upon re-registration, never reclaiming its old station number. Station numbers only creep upward.
 * **Existing Orders Backlog:** Approximately 1,300 pre-existing orders retain their plain numeric sequence IDs without a station prefix. This one-time step in numbering is accepted.
 * **Offline Installation Edge Case:** A brand-new device installed during an active outage cannot issue receipts until it connects to the internet once to register. Store paper receipt booklets cover this corner case.
@@ -89,7 +89,7 @@ When two disconnected devices create customers with identical or similar names o
 ### D6 — Parked Orders Stay Shared Across Devices with Offline Fallback [SETTLED]
 * **Online Behavior (Unchanged):** Parked drafts sync to the cloud server and remain visible and resumable across both devices.
 * **Offline Degradation:** During an outage, parked orders degrade quietly to device-local storage. A parked draft created offline stays on that tablet until the connection returns.
-* **Accepted Double-Print Risk:** Tablet A parks an order $\rightarrow$ Tablet B picks it up online and prints it $\rightarrow$ connection drops while Tablet A still holds its stale local draft $\rightarrow$ Tablet A resumes and prints it offline. The customer receives two receipts with two distinct receipt numbers.
+* **Accepted Double-Print Risk:** Tablet A parks an order → Tablet B picks it up online and prints it → connection drops while Tablet A still holds its stale local draft → Tablet A resumes and prints it offline. The customer receives two receipts with two distinct receipt numbers.
 * **Handling:** No distributed locks or blocking guards are built. When connectivity restores and both orders sync, the system flags the matching items as a potential double order using the D4 duplicate surfacing pattern.
 
 ### D7 — Outbox Status Marker: Shown Only When There is Something to Say [SETTLED]
@@ -190,7 +190,7 @@ leyble_local_db
 ### Outbox Sync Engine Protocol
 1. **Queue Insertion:** When an order or customer is saved, it is written to `outbox_queue` with status `'queued'` and assigned a client UUID.
 2. **Dependency Sequencing:** The outbox worker drains records in strict FIFO order respecting entity dependencies:
-   $$\text{Customer Quick-Create} \longrightarrow \text{Custom Price Overrides} \longrightarrow \text{Order Creation}$$
+   Customer Quick-Create → Custom Price Overrides → Order Creation
 3. **Execution:**
    - Worker attempts `POST /api/v1/orders` passing client-generated `receipt_number` and `created_at`.
    - On `201 Created`: Record status flips to `'synced'`, local cache updates, and item is pruned from outbox.

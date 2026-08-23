@@ -18,7 +18,7 @@ they still appear in migrations and the archived spec.)
 | **`bottles_returned`** | Bottles returned for an order line, recorded at close. Deposit is charged only on bottles *not* returned. |
 | **Deposit (refundable)** | Charged on un-returned bottles. Excluded from the order total while open; folded in only when the order is **done**. |
 | **Order type** | `delivery` or `pickup`. Affects status flow and which custom price applies. |
-| **Draft order** | `status = 'draft'`. A parked, possibly-incomplete order. Reserves no stock; hidden except the Drafts popup. In V2.0+ it syncs to the server when online (shared across devices); during offline outages, parked drafts remain device-local until connectivity returns. Finalizing → `pending`. |
+| **Draft order** | `status = 'draft'`. A parked, possibly-incomplete order. Reserves no stock; hidden except the Drafts popup. In V2.0+ it syncs to the server and is shared across devices; offline degradation to device-local drafts is planned for V2.5 (see [proposal](proposals/v2-5-offline-accessibility.md)). Finalizing → `pending`. |
 | **Order status** | `draft → pending → in_transit → completed → done` (+ `cancelled`). Pickup skips `in_transit`. See [order-lifecycle](../architecture/order-lifecycle.md). |
 | **Batch review / Review Deliveries** | UI queues for reviewing/editing/closing multiple orders at once (incl. counting bottle returns at close). |
 | **Adjustment** | Manual ± correction on an order (`adjustment` + `adjustment_reason`) — e.g. a discount. |
