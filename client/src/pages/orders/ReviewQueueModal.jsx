@@ -9,6 +9,7 @@ import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
+import { orderRef } from '../../utils/orderRef';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -213,7 +214,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     setCancelling(true);
     try {
       const updated = await api.post(`/orders/${order.id}/status`, { status: 'cancelled' });
-      addToast(`Order #${order.id} cancelled.`, 'success');
+      addToast(`Order ${orderRef(order)} cancelled.`, 'success');
       setConfirmingCancel(false);
       handleClosed(updated);
     } catch (err) {
@@ -281,7 +282,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                 <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order #{order.id}</p>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order {orderRef(order)}</p>
                       <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
                       {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
                     </div>
@@ -516,7 +517,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
           confirmLabel="Yes, tag as printed"
           loading={taggingPrint}
         >
-          Do you want to tag Order #{printPrompt.orderId} as printed
+          Do you want to tag Order {orderRef(orders[printPrompt.orderId] || { id: printPrompt.orderId })} as printed
           ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
         </Modal>
       )}
@@ -533,7 +534,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
       {/* Confirm cancelling the active order */}
       {confirmingCancel && order && (
         <Modal
-          title={`Cancel Order #${order.id}?`}
+          title={`Cancel Order ${orderRef(order)}?`}
           onClose={() => setConfirmingCancel(false)}
           onConfirm={handleCancelOrder}
           confirmLabel="Yes, cancel order"

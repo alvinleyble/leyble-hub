@@ -21,6 +21,7 @@ import AuditPage from './pages/audit/AuditPage';
 import POSPage from './pages/pos/POSPage';
 import InventoryV2Page from './pages/inventory/InventoryV2Page';
 import CustomersV2Page from './pages/customers/CustomersV2Page';
+import { startOfflineCore, stopOfflineCore } from './offline';
 
 const PREFERRED_KEY = 'preferred_ui';
 
@@ -87,6 +88,15 @@ function ProtectedLayout() {
 // no profile has been chosen yet — the app is never hidden behind a separate screen for it.
 function ProfileGate() {
   const { needsPick, loading } = useProfile();
+
+  // V2.5 (D1) — claim this device's station number once, then keep the outbox
+  // draining in the background. A no-op unless the release switch is on (D18), and it
+  // runs after sign-in because registration is an authenticated call.
+  useEffect(() => {
+    startOfflineCore();
+    return stopOfflineCore;
+  }, []);
+
   return (
     <>
       <Outlet />

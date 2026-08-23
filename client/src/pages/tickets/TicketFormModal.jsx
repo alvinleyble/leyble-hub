@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Combobox from '../../components/ui/Combobox';
+import { orderRef } from '../../utils/orderRef';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -146,14 +147,14 @@ export default function TicketFormModal({ onClose, onSaved }) {
                     items={orders}
                     match={orderMatches}
                     value={orders.find((o) => String(o.id) === relatedOrderId) ?? null}
-                    displayValue={(o) => `#${o.id} — ${o.customer_name || 'Order'}`}
+                    displayValue={(o) => `${orderRef(o)} — ${o.customer_name || 'Order'}`}
                     onSelect={(o) => setRelatedOrderId(String(o.id))}
                     onQueryChange={() => setRelatedOrderId('')}
                     placeholder="Search by order # or customer…"
                     emptyText="No orders match."
                     renderRow={(o) => (
                       <>
-                        <span className="font-medium text-slate-800 shrink-0">#{o.id}</span>
+                        <span className="font-medium text-slate-800 shrink-0">{orderRef(o)}</span>
                         <span className="text-sm text-slate-500 truncate ml-auto">{o.customer_name}</span>
                       </>
                     )}

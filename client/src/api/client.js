@@ -41,20 +41,31 @@ async function setActiveProfile(profileKey) {
   else await Preferences.remove({ key: PROFILE_KEY });
 }
 
+// `options.profileKey` overrides the currently active profile for this one call.
+// D14: a record queued in the outbox carries the profile that was active when it was
+// SAVED, and the drain replays that profile per record. Without this override every
+// receipt from a Tuesday outage would be filed under whoever happens to be holding the
+// tablet when the line comes back — Josie credited with Luis's day, in the activity log
+// and in the stock movements alike.
 async function request(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  const { profileKey, ...fetchOptions } = options;
+  const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
   const token = await getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const activeProfile = await getActiveProfile();
+  const activeProfile = profileKey ?? (await getActiveProfile());
   if (activeProfile) headers['X-Active-Profile'] = activeProfile;
 
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    ...options,
+    ...fetchOptions,
     headers,
   });
 
   if (res.status === 401) {
+    // Clears session state by name only. D15: the device's station number, its waiting
+    // receipts and its local receipt history live under the `v25.` prefix and are
+    // device state, not session state — they must survive logout and re-login, so this
+    // must never become a prefix sweep of native storage.
     await setToken(null);
     await setActiveProfile(null);
     if (window.location.pathname !== '/login') {
@@ -84,10 +95,13 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  get:   (path)       => request(path),
-  post:  (path, body) => request(path, { method: 'POST',  body: JSON.stringify(body) }),
-  patch: (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) }),
-  del:   (path)       => request(path, { method: 'DELETE' }),
+  get:   (path,       opts) => request(path, { ...opts }),
+  post:  (path, body, opts) => request(path, { ...opts, method: 'POST',  body: JSON.stringify(body) }),
+  patch: (path, body, opts) => request(path, { ...opts, method: 'PATCH', body: JSON.stringify(body) }),
+  del:   (path,       opts) => request(path, { ...opts, method: 'DELETE' }),
+  // The outbox drain builds its own request (method, body and per-record profile all
+  // come off the queued record), so it needs the raw form.
+  request,
   getActiveProfile,
   setActiveProfile,
 };

@@ -99,3 +99,21 @@ test('receipt: generateEscPos/generateReceiptHtml expose NO overrides.showDeposi
   assert.equal(forced.includes('Deposit fee'), false,
     'overrides.showDeposit is documented in CLAUDE.md but is not implemented');
 });
+
+// V2.5 D1 — the paper carries the device-issued receipt number once a device is
+// issuing them, and the row id (as before) for every order that predates them.
+test('receipts print the device-issued receipt number when the order has one', () => {
+  const html = generateReceiptHtml(baseOrder({ receipt_number: '2-00042', items: [item()] }));
+  assert.match(html, /No: 2-00042/);
+  assert.match(html, /<title>Receipt 2-00042<\/title>/);
+
+  const escpos = dec(generateEscPos(baseOrder({ receipt_number: '2-00042', items: [item()] })));
+  assert.match(escpos, /No: 2-00042/);
+});
+
+test('an order with no receipt number prints its padded row id, exactly as before', () => {
+  const html = generateReceiptHtml(baseOrder({ items: [item()] }));
+  assert.match(html, /No: 00042/);
+  const escpos = dec(generateEscPos(baseOrder({ items: [item()] })));
+  assert.match(escpos, /No: 00042/);
+});

@@ -14,6 +14,7 @@ import POSSavePriceModal from '../../components/pos/POSSavePriceModal';
 import { roundQty } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintReceipt } from '../orders/usePrintReceipt';
+import { orderRef } from '../../utils/orderRef';
 
 const TOP_BTN = `flex h-14 items-center gap-2 rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
                  hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
@@ -377,7 +378,7 @@ export default function POSPage() {
       setDraftStatus('idle');
       creatingDraftRef.current = false;
       draftPromiseRef.current = null;
-      addToast(`Order #${target.id} created.`, 'success');
+      addToast(`Order ${orderRef(full)} created.`, 'success');
 
       setReviewOpen(false);
       setReviewOrder(null);
@@ -428,7 +429,7 @@ export default function POSPage() {
       const { customer_id, order_type, ...editable } = finalPayload();
       await api.patch(`/orders/${editOrder.id}`, editable);
       await syncAdjustment(editOrder.id, editOrder);
-      addToast(`Order #${editOrder.id} updated.`, 'success');
+      addToast(`Order ${orderRef(editOrder)} updated.`, 'success');
       const editedOrderId = editOrder.id;
       const updatedFull = await api.get(`/orders/${editedOrderId}`);
       setSavedOrder(updatedFull);
@@ -690,11 +691,12 @@ export default function POSPage() {
     }
   };
 
-  const cancelOrder = async (orderId) => {
+  const cancelOrder = async (order) => {
+    const orderId = order.id;
     setConfirmBusy(true);
     try {
       await api.post(`/orders/${orderId}/status`, { status: 'cancelled' });
-      addToast(`Order #${orderId} cancelled — stock restored.`, 'success');
+      addToast(`Order ${orderRef(order)} cancelled — stock restored.`, 'success');
       setConfirm(null);
       if (editOrder?.id === orderId) exitEditMode({ dropOrderId: orderId });
       if (savedOrder?.id === orderId) startNewOrder();
@@ -730,7 +732,7 @@ export default function POSPage() {
           History and the print alert ride along the search row (headerActions). */}
       {mode === 'edit' && (
         <div className="shrink-0">
-          <AmberEditHeader orderId={editOrder.id} />
+          <AmberEditHeader order={editOrder} />
         </div>
       )}
 
@@ -865,7 +867,7 @@ export default function POSPage() {
           cancelLabel="Keep it"
           danger
           loading={confirmBusy}
-          onConfirm={() => cancelOrder(confirm.order.id)}
+          onConfirm={() => cancelOrder(confirm.order)}
           onClose={() => setConfirm(null)}
         >
           This voids the order for <strong className="text-v2-text">{confirm.order.customer_name}</strong> and

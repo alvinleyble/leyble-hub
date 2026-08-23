@@ -17,7 +17,10 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   const dateStr = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
   const docHours = docDate.getHours();
   const timeStr = `${docHours % 12 || 12}:${String(docDate.getMinutes()).padStart(2, '0')} ${docHours < 12 ? 'AM' : 'PM'}`;
-  const receiptNo = String(order.id).padStart(5, '0');
+  // D1 — the number the customer's copy is filed under. A device-issued receipt
+  // number ('1-00042') when the order has one; otherwise the row id, zero-padded, as
+  // every receipt printed before V2.5 was.
+  const receiptNo = order.receipt_number || String(order.id).padStart(5, '0');
   const isPickupOrder = order.order_type === 'pickup';
   // Deposit only appears on the closing receipt (status = completed/delivered).
   // Pending receipts assume full bottle return — no deposit charged.
@@ -129,7 +132,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 <html>
 <head>
 <meta charset="utf-8">
-<title>Receipt #${order.id}</title>
+<title>Receipt ${receiptNo}</title>
 <style>
   @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; margin: 0; padding: 0; }

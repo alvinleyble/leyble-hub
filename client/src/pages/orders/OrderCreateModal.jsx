@@ -8,6 +8,7 @@ import Stepper from '../../components/ui/Stepper';
 import Combobox from '../../components/ui/Combobox';
 import ProductSearchBar from '../../components/ui/ProductSearchBar';
 import Modal from '../../components/ui/Modal';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -441,7 +442,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <div className="min-w-0">
             <h2 id="order-modal-title" className="text-xl font-bold text-slate-900">
-              {isRealEdit ? `Edit Order #${editOrder.id}` : isDraftResume ? `Draft #${editOrder.id}` : 'New Order'}
+              {isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? `Draft ${orderRef(editOrder)}` : 'New Order'}
             </h2>
             {isDraftMode && draftId && (
               <p className="text-xs font-medium mt-0.5 text-slate-400">

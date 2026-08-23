@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -393,7 +394,7 @@ export default function OrdersPage() {
                       </label>
                     </td>
                   )}
-                  <td className="px-5 py-4 font-mono text-slate-500 text-sm">#{o.id}</td>
+                  <td className="px-5 py-4 font-mono text-slate-500 text-sm">{orderRef(o)}</td>
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>

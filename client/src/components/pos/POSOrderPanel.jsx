@@ -2,6 +2,7 @@ import React from 'react';
 import CaseStepper from './CaseStepper';
 import POSCustomerSearch from './POSCustomerSearch';
 import { lineTotal, orderTotals, totalCases } from './posMath';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -315,7 +316,7 @@ export default function POSOrderPanel({
               }`}
               aria-live="polite"
             >
-              ✅ Order #{savedOrder.id} created — {printed ? '🖨️ receipt printed' : '⚠️ NOT PRINTED yet'}
+              ✅ Order {orderRef(savedOrder)} created — {printed ? '🖨️ receipt printed' : '⚠️ NOT PRINTED yet'}
             </p>
             <button
               type="button"

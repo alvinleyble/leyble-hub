@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { lineTotal, round2, totalCases } from './posMath';
 import { breakdownForItem } from '../../pages/orders/OrderCloseForm';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -94,7 +95,7 @@ export default function OrderViewModal({
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-black uppercase tracking-wider text-v2-accent">
-                Order #{order.id}
+                Order {orderRef(order)}
               </span>
               <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${st.color}`}>
                 {st.label}

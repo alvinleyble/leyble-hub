@@ -163,6 +163,42 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   V1's price-list print — blank `Counted:` line per item instead of the system count. No per-row
   `−1`/`+1` steppers (V1 had none in its table either).
 
+### V2.5 offline core (in build — see [docs/product/proposals/v2-5-offline-accessibility.md](docs/product/proposals/v2-5-offline-accessibility.md))
+
+The POS becomes local-first every day: the device saves locally, issues its own receipt
+number, prints, and a background outbox drains when the line is up. Design is closed
+(18 decisions, all in that proposal); ADRs 0003–0008 hold the load-bearing ones.
+Release 1 lands as four pieces, all dark, switched on together.
+
+- **The off switch is `V25_OFFLINE_CORE`** in `client/src/config/features.js` — build-time
+  (`VITE_V25_OFFLINE_CORE=on`), off by default, reused by every piece. Off must be
+  indistinguishable from today. **Migrations are NOT behind it** (Render runs
+  `server/db/migrate.js` on every deploy to the one production environment), so every
+  V2.5 migration must be additive and correct standing alone. The server needs no flag:
+  its new behaviour is reachable only when a request carries a `receipt_number` or a
+  device `created_at`, which only a switched-on client sends.
+- **Receipt numbers are device-issued** (`<station>-<sequence>`, e.g. `1-00042`) at Save,
+  with no server round trip. `client/src/offline/station.js` issues them; display goes
+  through `orderRef()` in `client/src/utils/orderRef.js` — use it anywhere an order was
+  shown as `#<id>`. The row id stays internal. Pre-V2.5 orders have no receipt number and
+  are never backfilled.
+- **The receipt number is also the anti-duplicate key.** `POST /orders` answers a
+  receipt number it already holds with the stored order and a `200` — never an error,
+  never a second row, so the device can clear its outbox. Mechanism is table-agnostic in
+  `server/src/lib/idempotency.js`; Release 2's deliveries adopt it by adding the same
+  column pair + partial unique index.
+- **Device state lives in native storage only** — `@capacitor/preferences`, **one key per
+  record**, all under the `v25.` prefix, via `client/src/offline/nativeStore.js`. Never
+  `localStorage`, never IndexedDB (Android evicts them; "clear data" wipes them). It must
+  survive logout: the 401 path clears `authToken`/`activeProfile` **by name** and must
+  never become a prefix sweep. Browser dev falls back to memory, never to WebView storage.
+- **A queued record carries the profile that made it.** `enqueue()` requires a
+  `profileKey` captured at Save, and the drain replays it as `X-Active-Profile` per
+  record — otherwise the whole outage gets credited to whoever is holding the tablet when
+  the line returns.
+- **An order's `created_at` is the device's sale time**, passed explicitly (same pattern
+  as `supplier_deliveries.received_at`). No clock-skew detection — deliberately.
+
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
 - 16px+ fonts
@@ -211,6 +247,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | `order_items.line_total = quantity*(unit_price+unit_deposit_fee)` | **Reformulated** (migration 023) to `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee`; still a `GENERATED ... STORED` column. Defaults (`units_per_case=1, bottles_returned=0`) reproduce the old result |
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
+| no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |
 
 ### `order_personnel` join table (migration 016)
 ```sql

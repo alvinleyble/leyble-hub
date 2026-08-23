@@ -10,6 +10,7 @@ import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
+import { orderRef } from '../../utils/orderRef';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -260,7 +261,7 @@ export default function OrderDetailPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order</p>
-            <h1 className="text-2xl font-bold text-slate-900">#{order.id}</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{orderRef(order)}</h1>
             <p className="text-sm text-slate-500 mt-1">{fmtDate(order.created_at)}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -689,7 +690,7 @@ export default function OrderDetailPage() {
           confirmLabel="Yes, tag as printed"
           loading={taggingPrint}
         >
-          Do you want to tag Order #{printPrompt.orderId} as printed
+          Do you want to tag Order {orderRef(order)} as printed
           ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
         </Modal>
       )}

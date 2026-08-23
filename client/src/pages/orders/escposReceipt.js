@@ -55,7 +55,8 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   const dateStr  = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
   const docHours = docDate.getHours();
   const timeStr  = `${docHours % 12 || 12}:${String(docDate.getMinutes()).padStart(2, '0')} ${docHours < 12 ? 'AM' : 'PM'}`;
-  const receiptNo = String(order.id).padStart(5, '0');
+  // D1 — see receiptTemplate.js; the two receipts must always agree.
+  const receiptNo = order.receipt_number || String(order.id).padStart(5, '0');
 
   const printAdj       = Number(overrides.adjustment !== undefined ? overrides.adjustment : (order.adjustment || 0)) || 0;
   const printAdjReason = overrides.adjustment_reason !== undefined ? overrides.adjustment_reason : order.adjustment_reason;
