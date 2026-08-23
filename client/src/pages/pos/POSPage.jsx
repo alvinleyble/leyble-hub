@@ -437,7 +437,7 @@ export default function POSPage() {
     setSaving(true);
     try {
       if (V25_OFFLINE_CORE) {
-        const activeProfileKey = (await api.getActiveProfile()) || 'admin';
+        const activeProfileKey = await api.getActiveProfile();
         const saved = await saveOrderLocalFirst({
           customer: selectedCustomer,
           orderType,

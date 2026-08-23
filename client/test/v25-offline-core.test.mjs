@@ -344,6 +344,18 @@ test('saveOrderLocalFirst writes order locally, numbers it, stores in history, a
   assert.equal(records[0].payload.adjustment_reason, 'Friend discount');
 });
 
+test('saveOrderLocalFirst fails loudly when no active profile is captured (D14)', async () => {
+  await registerStation(1);
+  await assert.rejects(
+    () => saveOrderLocalFirst({
+      customer: { id: 1, name: 'Customer' },
+      items: [{ product_id: 1, quantity: 1, unit_price: 100 }],
+      profileKey: null,
+    }),
+    /profileKey is required/
+  );
+});
+
 test('saveOrderLocalFirst with mid-order quick-created customer sets dependency and reference', async () => {
   await registerStation(1);
 

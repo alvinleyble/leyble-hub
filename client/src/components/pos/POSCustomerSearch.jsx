@@ -49,7 +49,7 @@ export default function POSCustomerSearch({
     setCreating(true);
     try {
       if (V25_OFFLINE_CORE) {
-        const profileKey = (await api.getActiveProfile()) || 'admin';
+        const profileKey = await api.getActiveProfile();
         const rec = await enqueue({
           entityType: 'customer',
           endpoint: '/customers',
