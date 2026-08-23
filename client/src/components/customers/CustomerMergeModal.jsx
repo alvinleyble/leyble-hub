@@ -30,16 +30,22 @@ const TYPE_LABEL = {
 // - All order history is transferred to the TO customer.
 // - The FROM profile is permanently deleted.
 // - TO customer retains all profile info and pricing matrix.
-export default function CustomerMergeModal({ customer, orderCount = 0, onClose, onMerged }) {
+export default function CustomerMergeModal({ customer, initialTargetCustomer = null, orderCount = 0, onClose, onMerged }) {
   const { addToast } = useToast();
 
   const [customers, setCustomers]             = useState([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
-  const [targetCustomer, setTargetCustomer]   = useState(null);
+  const [targetCustomer, setTargetCustomer]   = useState(initialTargetCustomer);
   const [query, setQuery]                     = useState('');
   const [open, setOpen]                       = useState(false);
   const [merging, setMerging]                 = useState(false);
   const blurTimer = useRef(null);
+
+  useEffect(() => {
+    if (initialTargetCustomer) {
+      setTargetCustomer(initialTargetCustomer);
+    }
+  }, [initialTargetCustomer]);
 
   // Load active customers excluding the current source customer
   useEffect(() => {

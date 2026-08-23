@@ -1,9 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
 import { usePrinter } from '../../context/PrinterContext';
 import { useToast } from '../ui/Toast';
+import { V25_OFFLINE_CORE } from '../../config/features';
+import OfflineMarker from './OfflineMarker';
+import { registerToastHandler } from '../../offline/drainNotifier';
+import { countDuplicateCustomers } from '../../utils/duplicateCustomers';
 
 const PREFERRED_KEY = 'preferred_ui';
 const LONG_PRESS_MS = 3000;
@@ -76,6 +81,32 @@ export default function V2Shell() {
   const { openPicker: openPrinterPicker } = usePrinter();
   const { addToast } = useToast();
   const navigate = useNavigate();
+
+  const [duplicateCount, setDuplicateCount] = useState(0);
+  const [dupDismissed, setDupDismissed] = useState(false);
+
+  useEffect(() => {
+    return registerToastHandler(addToast);
+  }, [addToast]);
+
+  useEffect(() => {
+    if (!V25_OFFLINE_CORE) return;
+    let mounted = true;
+    const checkDuplicates = async () => {
+      try {
+        const data = await api.get('/customers');
+        if (mounted && Array.isArray(data)) {
+          setDuplicateCount(countDuplicateCustomers(data));
+        }
+      } catch {}
+    };
+    checkDuplicates();
+    const interval = setInterval(checkDuplicates, 30_000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -167,28 +198,55 @@ export default function V2Shell() {
         </button>
 
         <nav className="flex items-center gap-2 min-w-0" aria-label="Main navigation">
-          {NAV_ITEMS.map(({ path, label }) => (
-            <NavLink
-              key={path}
-              to={path}
-              className={({ isActive }) =>
-                `flex items-center justify-center gap-2 min-h-tablet px-6 rounded-xl text-lg font-semibold
-                 transition-colors duration-100
-                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
-                 ${isActive
-                   ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
-                   : 'text-v2-muted hover:bg-v2-raised hover:text-v2-text'}`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  {isActive && <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" aria-hidden="true" />}
-                  {label}
-                </>
-              )}
-            </NavLink>
-          ))}
+          {NAV_ITEMS.map(({ path, label }) => {
+            const isCustomers = path === '/v2/customers';
+            const showDupBadge = V25_OFFLINE_CORE && isCustomers && duplicateCount > 0 && !dupDismissed;
+            return (
+              <NavLink
+                key={path}
+                to={path}
+                className={({ isActive }) =>
+                  `flex items-center justify-center gap-2 min-h-tablet px-6 rounded-xl text-lg font-semibold
+                   transition-colors duration-100
+                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+                   ${isActive
+                     ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
+                     : 'text-v2-muted hover:bg-v2-raised hover:text-v2-text'}`
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    {isActive && <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" aria-hidden="true" />}
+                    {label}
+                    {showDupBadge && (
+                      <span
+                        className="inline-flex h-7 min-w-[1.75rem] items-center justify-center rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 px-1.5 text-sm font-black tabular-nums gap-1 ml-1"
+                        title={`${duplicateCount} potential duplicate customers`}
+                      >
+                        <span>{duplicateCount}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDupDismissed(true);
+                          }}
+                          className="hover:text-amber-100 font-bold ml-0.5 text-xs focus:outline-none"
+                          aria-label="Dismiss duplicate customer notification badge"
+                          title="Dismiss badge"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
+
+        <OfflineMarker />
 
         <div className="ml-auto flex items-center gap-2 shrink-0">
           <button

@@ -10,6 +10,9 @@ export * from './station';
 export * from './outbox';
 export * from './receiptHistory';
 export * from './receiptNumbers';
+export * from './advisory';
+export * from './status';
+export * from './drainNotifier';
 export { nativeStore } from './nativeStore';
 
 const DRAIN_INTERVAL_MS = 30_000;
@@ -35,6 +38,16 @@ export async function startOfflineCore({ label } = {}) {
   }
   await pruneReceipts().catch(() => {});
 
+  async function runDrainPass() {
+    try {
+      const res = await drainOutbox();
+      if (res && res.sent > 0) {
+        resetOfflineAdvisory();
+        handleDrainCompletion(res).catch(() => {});
+      }
+    } catch {}
+  }
+
   if (!timer && typeof setInterval === 'function') {
     timer = setInterval(() => {
       // Registration is retried here too: a device that installed during an outage
@@ -42,7 +55,7 @@ export async function startOfflineCore({ label } = {}) {
       isRegistered()
         .then((ok) => (ok ? null : ensureStationRegistered({ label })))
         .catch(() => {})
-        .then(() => drainOutbox())
+        .then(runDrainPass)
         .catch(() => {});
     }, DRAIN_INTERVAL_MS);
   }
@@ -51,7 +64,7 @@ export async function startOfflineCore({ label } = {}) {
   // waiting out the interval.
   if (typeof window !== 'undefined' && !startOfflineCore.listening) {
     startOfflineCore.listening = true;
-    window.addEventListener('online', () => { drainOutbox().catch(() => {}); });
+    window.addEventListener('online', () => { runDrainPass(); });
   }
 
   return { enabled: true, waiting: await waitingCount() };

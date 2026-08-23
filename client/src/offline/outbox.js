@@ -67,6 +67,7 @@ export async function enqueue({
     created_at: createdAt || new Date().toISOString(),
   };
   await nativeStore.setJson(outboxKey(id), record);
+  notifyOutboxListeners({ type: 'enqueue', record });
   return record;
 }
 
@@ -235,10 +236,57 @@ export async function drainOutbox() {
 
     const remaining = await listRecords();
     await pruneRefs(remaining);
-    return { sent, failed, waiting: remaining.filter((r) => r.status === QUEUED).length };
+    const waiting = remaining.filter((r) => r.status === QUEUED).length;
+    notifyOutboxListeners({ type: 'drain', sent, failed, waiting });
+    return { sent, failed, waiting };
   } finally {
     draining = false;
   }
+}
+
+// ── Observers & Re-pointing (D8) ─────────────────────────────────────────────
+
+const listeners = new Set();
+
+export function subscribeOutbox(listener) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+export function notifyOutboxListeners(event = {}) {
+  for (const listener of listeners) {
+    try {
+      listener(event);
+    } catch {}
+  }
+}
+
+/**
+ * Re-points a refused outbox record (in the needs-attention list) to a new customer
+ * (or applies payload fixes) and re-queues it for the next drain pass (D8).
+ *
+ * @param {number} id Record id
+ * @param {object} [updates]
+ * @param {number|string} [updates.customerId] Destination customer id
+ * @param {object} [updates.payloadUpdates] Any extra fields on record.payload
+ */
+export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!record) throw new Error(`Outbox record ${id} not found`);
+
+  if (customerId !== undefined && record.payload) {
+    record.payload.customer_id = Number(customerId) || customerId;
+  }
+  if (payloadUpdates && record.payload) {
+    Object.assign(record.payload, payloadUpdates);
+  }
+
+  record.status = QUEUED;
+  record.last_error = null;
+  record.attempts = 0;
+  await saveRecord(record);
+  notifyOutboxListeners({ type: 'repoint', record });
+  return record;
 }
 
 // Test seam.
@@ -246,4 +294,5 @@ export async function __clearOutbox() {
   for (const key of await nativeStore.keysWithPrefix(OUTBOX_PREFIX)) await nativeStore.remove(key);
   for (const key of await nativeStore.keysWithPrefix(REF_PREFIX)) await nativeStore.remove(key);
   draining = false;
+  notifyOutboxListeners({ type: 'clear' });
 }
