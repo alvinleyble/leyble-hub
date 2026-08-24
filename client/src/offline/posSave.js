@@ -8,6 +8,7 @@ import { orderTotals } from '../components/pos/posMath.js';
 import { V25_OFFLINE_CORE } from '../config/features.js';
 import { checkIsOnline, probeReachability } from './status.js';
 import { triggerOfflineAdvisory, triggerOfflineAdvisoryWith } from './advisory.js';
+import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
 
 // D2 — The POS is local-first, always.
 // Every save goes to the device first, online or offline, every day. Save writes the
@@ -150,15 +151,23 @@ export async function saveOrderLocalFirst({
  * Drafts forever, never finalized and never deleted, growing the Drafts badge on
  * every sale.
  *
- * Queued through the outbox (D13) rather than a direct fire-and-forget request, so a
- * blind print still cleans up once the line returns, and a repeat arrival is
- * harmless — a 404 on a queued DELETE counts as done (see outbox.js).
+ * `draftRef` is whatever POSPage was tracking that draft as — either a real server
+ * row id (the pre-2.5 early-draft POST, unchanged by D6) or a receipt-number string
+ * (a draft that was itself parked locally — see parkedOrders.js). Still-local is
+ * resolved for free, no network needed; anything else is queued through the outbox
+ * (D13) so a blind print still cleans up once the line returns, and a repeat arrival
+ * is harmless (a 404 on a queued DELETE counts as done — see outbox.js).
  */
 export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {}) {
   if (draftRef === null || draftRef === undefined || draftRef === '') return;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
     throw new Error('cleanupOrphanedDraft: profileKey is required — capture the profile at Save (D14)');
+  }
+
+  if (typeof draftRef === 'string' && (await isDraftUnsynced(draftRef))) {
+    await discardLocalDraft(draftRef);
+    return;
   }
 
   await queueOrderDeletion({ orderRef: draftRef, profileKey: activeProfileKey });

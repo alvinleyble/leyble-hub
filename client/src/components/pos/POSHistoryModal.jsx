@@ -10,6 +10,7 @@ import {
   listReceipts, putReceipt, getReceipt, pruneReceipts, queueReceiptPrinted,
   isOrderUnsynced, discardLocalOrder,
 } from '../../offline/index.js';
+import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -153,6 +154,13 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
       );
     });
   }, [orders, query, unprintedOnly, dateFilter]);
+
+  // D6 — the accepted double-print risk, surfaced: same shape D4 already established
+  // for possible-duplicate customers (utils/duplicateOrders.js).
+  const possibleDoubleIds = useMemo(
+    () => (V25_OFFLINE_CORE ? getPossibleDoubleOrderIds(orders) : new Set()),
+    [orders]
+  );
 
   const withFullOrder = async (orderOrId, run) => {
     const isObj = typeof orderOrId === 'object' && orderOrId !== null;
@@ -349,6 +357,16 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
                         : 'bg-amber-500/15 text-amber-200'}`}>
                         {printed ? '🖨️ Printed' : '⚠️ NOT PRINTED'}
                       </span>
+                    )}
+                    {!cancelled && possibleDoubleIds.has(o.id) && (
+                      <button
+                        type="button"
+                        onClick={() => withFullOrder(o, setViewOrder)}
+                        className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/20 px-2.5 py-0.5 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                        title="Same customer, channel and total as another order — possibly the same sale printed twice. Click to review."
+                      >
+                        ⚠️ possible double
+                      </button>
                     )}
                   </div>
                 </div>

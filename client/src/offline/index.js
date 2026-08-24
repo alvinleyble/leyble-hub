@@ -13,6 +13,8 @@ export * from './outbox.js';
 export * from './receiptHistory.js';
 export * from './receiptNumbers.js';
 export * from './posSave.js';
+export * from './parkedOrders.js';
+export * from './catalogue.js';
 export * from './advisory.js';
 export * from './status.js';
 export * from './drainNotifier.js';

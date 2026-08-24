@@ -25,7 +25,16 @@ import {
   checkIsOnline,
   triggerOfflineAdvisory,
   cleanupOrphanedDraft,
+  parkOrderLocalFirst,
+  listLocalParkedOrders,
+  mergeParkedOrders,
+  isDraftUnsynced,
+  updateLocalDraft,
+  discardLocalDraft,
+  queueOrderDeletion,
+  loadCatalogue,
 } from '../../offline/index.js';
+import { countPossibleDoubleOrders } from '../../utils/duplicateOrders.js';
 
 const TOP_BTN = `flex h-14 items-center gap-2 rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
                  hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
@@ -81,6 +90,7 @@ export default function POSPage() {
   // receipt was never confirmed printed.
   const [draftCount, setDraftCount]         = useState(0);
   const [unprintedCount, setUnprintedCount] = useState(0);
+  const [doubleCount, setDoubleCount]       = useState(0); // D6 — possible double parked orders
   const [confirm, setConfirm]         = useState(null); // { kind, ... }
   const [confirmBusy, setConfirmBusy] = useState(false);
   // Save custom price prompt on submit (proposal §4 & save-custom-price-prompt.md)
@@ -118,18 +128,73 @@ export default function POSPage() {
   // ── Data load ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    Promise.all([api.get('/products'), api.get('/customers')])
-      .then(([prods, custs]) => {
-        setProducts(prods.filter((p) => p.is_active));
-        setCustomers(custs.filter((c) => c.is_active));
-      })
-      .catch(() => addToast('Failed to load the catalogue.', 'error'))
-      .finally(() => setLoading(false));
+    // D16 — the tablet sells only what it already holds. With the switch on,
+    // loadCatalogue() tries the server first (and quietly refreshes the held copy on
+    // success) and silently falls back to that held copy when the server cannot be
+    // reached — no staleness warning, nothing shown. With the switch off this is
+    // unchanged: the same direct fetch as always.
+    if (V25_OFFLINE_CORE) {
+      loadCatalogue()
+        .then(({ products, customers }) => {
+          setProducts(products.filter((p) => p.is_active));
+          setCustomers(customers.filter((c) => c.is_active));
+        })
+        .catch(() => addToast('Failed to load the catalogue.', 'error'))
+        .finally(() => setLoading(false));
+    } else {
+      Promise.all([api.get('/products'), api.get('/customers')])
+        .then(([prods, custs]) => {
+          setProducts(prods.filter((p) => p.is_active));
+          setCustomers(custs.filter((c) => c.is_active));
+        })
+        .catch(() => addToast('Failed to load the catalogue.', 'error'))
+        .finally(() => setLoading(false));
+    }
     refreshCounts();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Quiet background refresh of the held catalogue (D16) while the POS stays open —
+  // no loading state, no error surfaced, just a newer copy to sell from next time.
+  useEffect(() => {
+    if (!V25_OFFLINE_CORE) return;
+    const interval = setInterval(() => {
+      loadCatalogue()
+        .then(({ products, customers, fromCache }) => {
+          if (fromCache) return; // still blind — nothing newer to adopt
+          setProducts(products.filter((p) => p.is_active));
+          setCustomers((prev) => {
+            const pendingLocal = prev.filter((c) => String(c.id).startsWith('local-'));
+            const fresh = customers.filter((c) => c.is_active);
+            const freshIds = new Set(fresh.map((c) => String(c.id)));
+            return [...fresh, ...pendingLocal.filter((c) => !freshIds.has(String(c.id)))];
+          });
+        })
+        .catch(() => {});
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // D6 — possible-double parked orders (same customer/channel/goods total, both still
+  // pending, more than one receipt number): count only, so the History chip (which
+  // does the actual flagging) has something to point the History button's badge at.
+  useEffect(() => {
+    if (!V25_OFFLINE_CORE) return;
+    let mounted = true;
+    const check = () => {
+      api.get('/orders?status=pending')
+        .then((rows) => { if (mounted) setDoubleCount(countPossibleDoubleOrders(rows)); })
+        .catch(() => {});
+    };
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
   // Badge counts. Unprinted count covers all pending orders whose receipt was
-  // never confirmed printed, matching History's default All Time view.
+  // never confirmed printed, matching History's default All Time view. Draft count
+  // is the D6 union: the server's drafts plus this device's own not-yet-synced
+  // local parks, minus any local one that has since synced (matched by receipt
+  // number, same dedup shape POSHistoryModal already uses for local receipts).
   function refreshCounts() {
     if (V25_OFFLINE_CORE) {
       listReceipts()
@@ -140,11 +205,20 @@ export default function POSPage() {
           setUnprintedCount(unprinted);
         })
         .catch(() => {});
+
+      listLocalParkedOrders()
+        .then((localDrafts) => {
+          api.get('/orders?status=draft')
+            .then((serverDrafts) => setDraftCount(mergeParkedOrders(serverDrafts, localDrafts).length))
+            .catch(() => setDraftCount(localDrafts.length)); // blind: local count only
+        })
+        .catch(() => {});
+    } else {
+      api.get('/orders?status=draft')
+        .then((rows) => setDraftCount(rows.length))
+        .catch(() => {});
     }
 
-    api.get('/orders?status=draft')
-      .then((rows) => setDraftCount(rows.length))
-      .catch(() => {});
     api.get('/orders?status=pending')
       .then((rows) => {
         if (!V25_OFFLINE_CORE) {
@@ -264,7 +338,14 @@ export default function POSPage() {
     return body;
   };
 
-  // Draft starts the moment a customer is chosen.
+  // Draft starts the moment a customer is chosen. Online: unchanged (D6) — the exact
+  // same early POST the app has always made. Blind, with the switch on, that POST
+  // cannot reach the server, so the draft parks locally instead (D6) — the outbox and
+  // local store the receipts already use (D17), not a second mechanism. `draftId`
+  // then holds either a real row id (online) or the receipt number issued for the
+  // local park (offline) — every order route already resolves both forms
+  // (resolveOrderId in server/src/routes/orders.js), so nothing downstream needs to
+  // know which kind it is looking at.
   useEffect(() => {
     if (mode !== 'build' || !customerId || draftId || creatingDraftRef.current) return;
     creatingDraftRef.current = true;
@@ -273,7 +354,25 @@ export default function POSPage() {
     draftPromiseRef.current = creating;
     creating
       .then((created) => { setDraftId(created.id); setDraftStatus('saved'); refreshCounts(); })
-      .catch(() => { creatingDraftRef.current = false; draftPromiseRef.current = null; setDraftStatus('idle'); });
+      .catch(async (err) => {
+        if (V25_OFFLINE_CORE && !err?.status) {
+          // A genuine network failure, not a validation error — park locally.
+          try {
+            const activeProfileKey = await api.getActiveProfile();
+            const { receipt_number } = await parkOrderLocalFirst({
+              customer: selectedCustomer, orderType, notes, adjustment, items,
+              profileKey: activeProfileKey,
+            });
+            setDraftId(receipt_number);
+            setDraftStatus('saved');
+            refreshCounts();
+            return;
+          } catch (_) { /* fall through to idle below */ }
+        }
+        creatingDraftRef.current = false;
+        draftPromiseRef.current = null;
+        setDraftStatus('idle');
+      });
   }, [mode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The draft payload carries no adjustment — it lives on its own endpoint — so park it
@@ -289,13 +388,34 @@ export default function POSPage() {
 
   // Debounced auto-save of the live order onto the draft. Paused while the review
   // modal is up, so no stray PATCH can race the finalize behind it.
+  //
+  // A string draftId is a locally parked draft (D6, see the effect above). While it
+  // is still only local, the edit updates the outbox record in place — no network
+  // needed. Once it has synced (isDraftUnsynced turns false, because drainOutbox
+  // removed the record), later edits PATCH the real row the same way any other order
+  // is addressed once it exists — by its receipt number. A numeric draftId is the
+  // pre-2.5 online path and is untouched; a mid-edit connectivity loss on THAT path
+  // behaves exactly as it always has (silently retried on the next debounce tick),
+  // since the local-first Confirm & Print always succeeds regardless (D2).
   useEffect(() => {
     if (mode !== 'build' || !draftId || saving || reviewOpen) return;
     setDraftStatus('saving');
     const t = setTimeout(async () => {
       try {
-        await api.patch(`/orders/${draftId}`, orderBody());
-        await saveDraftAdjustment(draftId);
+        if (V25_OFFLINE_CORE && typeof draftId === 'string' && (await isDraftUnsynced(draftId))) {
+          const activeProfileKey = await api.getActiveProfile();
+          await updateLocalDraft({
+            receiptNumber: draftId, orderType, notes, items, adjustment,
+            profileKey: activeProfileKey,
+          });
+          lastSavedAdjRef.current = {
+            value: Number(adjustment.value) || 0,
+            reason: adjustment.reason.trim(),
+          };
+        } else {
+          await api.patch(`/orders/${draftId}`, orderBody());
+          await saveDraftAdjustment(draftId);
+        }
         setDraftStatus('saved');
       } catch (_) {
         setDraftStatus('idle');
@@ -359,6 +479,9 @@ export default function POSPage() {
 
       const reviewObj = {
         id: draftId || null,
+        // A local park (D6) identifies itself by receipt number, not a row id — see
+        // orderRef() and POSReviewModal's header.
+        receipt_number: typeof draftId === 'string' ? draftId : null,
         customer_id: selectedCustomer?.id && !String(selectedCustomer.id).startsWith('local-') ? Number(selectedCustomer.id) : selectedCustomer?.id,
         customer_name: selectedCustomer?.name || 'Customer',
         customer_address: selectedCustomer?.address || null,
@@ -441,9 +564,10 @@ export default function POSPage() {
     try {
       if (V25_OFFLINE_CORE) {
         const activeProfileKey = await api.getActiveProfile();
-        // The draft this same POS flow created earlier (the early-draft effect above)
-        // — a real server row. The local-first save below makes it a second, orphaned
-        // copy of this order (regression fix): it must not survive as a draft.
+        // The draft this same POS flow created earlier (see the early-draft effect
+        // above) — either a real server row (online) or a locally parked one (D6).
+        // The local-first save below makes it a second, orphaned copy of this order
+        // (piece 3 regression fix): it must not survive as a draft.
         const orphanedDraftRef = draftId;
         const saved = await saveOrderLocalFirst({
           customer: selectedCustomer,
@@ -675,7 +799,19 @@ export default function POSPage() {
     const id = draftId;
     blankOrder();
     if (id) {
-      try { await api.del(`/orders/${id}`); } catch (_) { /* draft already gone — nothing to clean up */ }
+      try {
+        if (V25_OFFLINE_CORE && typeof id === 'string' && (await isDraftUnsynced(id))) {
+          await discardLocalDraft(id);
+        } else {
+          await api.del(`/orders/${id}`).catch(async (err) => {
+            if (V25_OFFLINE_CORE && !err?.status) {
+              // Blind, and this draft already exists on the server (or might) —
+              // queue the delete so it still lands once the line returns (D6/D13).
+              await queueOrderDeletion({ orderRef: id, profileKey: await api.getActiveProfile() });
+            }
+          });
+        }
+      } catch (_) { /* draft already gone — nothing to clean up */ }
       refreshCounts();
     }
   };
@@ -749,12 +885,25 @@ export default function POSPage() {
 
   // "Discard" — the draft never deducted stock and was never a business event, so it is
   // genuinely deleted, exactly like V1's Discard draft (OrderCreateModal handleDiscard).
+  // target.id is draftId either way (see handleReview's V25_OFFLINE_CORE branch), so it
+  // may be a receipt-number string (a locally parked draft, D6) rather than a row id.
   const discardReviewedDraft = async () => {
     const target = reviewOrder;
     if (!target) return;
+    const ref = target.id ?? draftId;
     setConfirmBusy(true);
     try {
-      await api.del(`/orders/${target.id}`);
+      if (V25_OFFLINE_CORE && typeof ref === 'string' && (await isDraftUnsynced(ref))) {
+        await discardLocalDraft(ref);
+      } else if (ref) {
+        await api.del(`/orders/${ref}`).catch(async (err) => {
+          if (V25_OFFLINE_CORE && !err?.status) {
+            await queueOrderDeletion({ orderRef: ref, profileKey: await api.getActiveProfile() });
+          } else {
+            throw err;
+          }
+        });
+      }
       addToast('Draft discarded.', 'success');
     } catch (err) {
       addToast(err.message || 'Failed to discard the draft.', 'error');
@@ -770,6 +919,11 @@ export default function POSPage() {
   // Resume a parked draft: it goes back on the POS in build mode with its draft id, so
   // the debounced auto-save keeps updating that same draft and Save Order finalizes it.
   // Any draft already on screen simply stays a draft — it reappears in the Drafts popup.
+  //
+  // A locally parked draft (D6, order._outboxId set) only ever carried the bare item
+  // shape its outbox payload needs (product_id/quantity/unit_price/…) — no display
+  // fields, since nothing else read them until now. Hydrate name/sku/unit from the
+  // held catalogue (D16) the same way the cart already prices every line.
   const resumeDraft = (order) => {
     setSavedOrder(null);
     setPrintOrder(null);
@@ -782,19 +936,24 @@ export default function POSPage() {
       value:  Number(order.adjustment) ? String(order.adjustment) : '',
       reason: order.adjustment_reason ?? '',
     });
-    setItems(order.items.map((i) => ({
-      _key:             `${i.id}`,
-      product_id:       String(i.product_id),
-      product_name:     i.product_name,
-      sku:              i.sku || '',
-      unit:             i.unit,
-      quantity:         Number(i.quantity),
-      unit_price:       String(Number(i.unit_price)),
-      unit_deposit_fee: Number(i.unit_deposit_fee) || 0,
-      units_per_case:   Number(i.units_per_case) || 1,
-      _priceEdited:     true,   // keep the prices the draft was saved with
-    })));
-    setDraftId(order.id);
+    setItems(order.items.map((i, idx) => {
+      const product = order._outboxId
+        ? products.find((p) => String(p.id) === String(i.product_id))
+        : null;
+      return {
+        _key:             `${i.id || idx}`,
+        product_id:       String(i.product_id),
+        product_name:     product ? product.name : i.product_name,
+        sku:              (product ? product.sku : i.sku) || '',
+        unit:             (product ? product.unit : i.unit) || 'cs',
+        quantity:         Number(i.quantity),
+        unit_price:       String(Number(i.unit_price)),
+        unit_deposit_fee: Number(i.unit_deposit_fee) || 0,
+        units_per_case:   Number(i.units_per_case) || 1,
+        _priceEdited:     true,   // keep the prices the draft was saved with
+      };
+    }));
+    setDraftId(order.receipt_number || order.id);
     setDraftStatus('saved');
     lastSavedAdjRef.current = {
       value:  Number(order.adjustment) || 0,
@@ -917,13 +1076,22 @@ export default function POSPage() {
               <button
                 type="button"
                 onClick={() => setHistoryOpen(true)}
-                aria-label={`History — ${unprintedCount} order${unprintedCount === 1 ? '' : 's'} not printed`}
+                aria-label={`History — ${unprintedCount} order${unprintedCount === 1 ? '' : 's'} not printed${doubleCount ? `, ${doubleCount} possibly doubled` : ''}`}
                 className={TOP_BTN}
               >
                 🕘 History
                 {unprintedCount > 0 && (
                   <span className={`${COUNT_BADGE} bg-amber-500 text-amber-950`} aria-hidden="true">
                     {unprintedCount}
+                  </span>
+                )}
+                {doubleCount > 0 && (
+                  <span
+                    className={`${COUNT_BADGE} bg-red-600 text-white`}
+                    aria-hidden="true"
+                    title={`${doubleCount} possibly doubled order${doubleCount === 1 ? '' : 's'}`}
+                  >
+                    ⚠️{doubleCount}
                   </span>
                 )}
               </button>
@@ -984,6 +1152,7 @@ export default function POSPage() {
 
       {draftsOpen && (
         <POSDraftsModal
+          customers={customers}
           onClose={() => { setDraftsOpen(false); refreshCounts(); }}
           onResume={resumeDraft}
           onChanged={refreshCounts}
