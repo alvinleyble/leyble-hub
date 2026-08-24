@@ -11,10 +11,18 @@ import POSProductGrid from '../../components/pos/POSProductGrid';
 import POSOrderPanel from '../../components/pos/POSOrderPanel';
 import POSReviewModal from '../../components/pos/POSReviewModal';
 import POSSavePriceModal from '../../components/pos/POSSavePriceModal';
-import { roundQty } from '../../components/pos/posMath';
+import { roundQty, orderTotals } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintReceipt } from '../orders/usePrintReceipt';
-import { orderRef } from '../../utils/orderRef';
+import { orderRef } from '../../utils/orderRef.js';
+import { V25_OFFLINE_CORE } from '../../config/features.js';
+import {
+  saveOrderLocalFirst,
+  isOrderUnsynced,
+  updateLocalOrder,
+  discardLocalOrder,
+  listReceipts,
+} from '../../offline/index.js';
 
 const TOP_BTN = `flex h-14 items-center gap-2 rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
                  hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
@@ -83,8 +91,16 @@ export default function POSPage() {
     printOrder,
     {},
     (updated) => {
-      setSavedOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
-      setPrintOrder((cur) => (cur && cur.id === updated.id ? updated : cur));
+      setSavedOrder((cur) => {
+        if (!cur) return cur;
+        const matches = (cur.receipt_number && cur.receipt_number === updated.receipt_number) || (cur.id && cur.id === updated.id);
+        return matches ? { ...cur, ...updated } : cur;
+      });
+      setPrintOrder((cur) => {
+        if (!cur) return cur;
+        const matches = (cur.receipt_number && cur.receipt_number === updated.receipt_number) || (cur.id && cur.id === updated.id);
+        return matches ? { ...cur, ...updated } : cur;
+      });
       refreshCounts();
     },
     {},
@@ -112,11 +128,26 @@ export default function POSPage() {
   // Badge counts. Unprinted count covers all pending orders whose receipt was
   // never confirmed printed, matching History's default All Time view.
   function refreshCounts() {
+    if (V25_OFFLINE_CORE) {
+      listReceipts()
+        .then((receipts) => {
+          const unprinted = receipts.filter(
+            (o) => o.status === 'pending' && !o.pending_receipt_printed_at
+          ).length;
+          setUnprintedCount(unprinted);
+        })
+        .catch(() => {});
+    }
+
     api.get('/orders?status=draft')
       .then((rows) => setDraftCount(rows.length))
       .catch(() => {});
     api.get('/orders?status=pending')
-      .then((rows) => setUnprintedCount(rows.filter((o) => !o.pending_receipt_printed_at).length))
+      .then((rows) => {
+        if (!V25_OFFLINE_CORE) {
+          setUnprintedCount(rows.filter((o) => !o.pending_receipt_printed_at).length);
+        }
+      })
       .catch(() => {});
   }
 
@@ -125,6 +156,10 @@ export default function POSPage() {
   // Custom prices for the picked customer + channel (wholesaler, discounted, markup, unassigned).
   useEffect(() => {
     if (!customerId || !['wholesaler', 'discounted', 'markup', 'unassigned'].includes(selectedCustomer?.customer_type)) {
+      setCustomPrices({});
+      return;
+    }
+    if (String(customerId).startsWith('local-')) {
       setCustomPrices({});
       return;
     }
@@ -314,6 +349,41 @@ export default function POSPage() {
     setErrors(errs);
     if (Object.keys(errs).length) return;
 
+    if (V25_OFFLINE_CORE) {
+      const adjVal = Number(adjustment.value) || 0;
+      const adjReason = adjustment.reason?.trim() || '';
+      const totals = orderTotals(items, adjVal);
+
+      const reviewObj = {
+        id: draftId || null,
+        customer_id: selectedCustomer?.id && !String(selectedCustomer.id).startsWith('local-') ? Number(selectedCustomer.id) : selectedCustomer?.id,
+        customer_name: selectedCustomer?.name || 'Customer',
+        customer_address: selectedCustomer?.address || null,
+        customer_phone: selectedCustomer?.phone || null,
+        customer_type: selectedCustomer?.customer_type || 'regular',
+        order_type: orderType,
+        notes: notes.trim() || null,
+        adjustment: adjVal,
+        adjustment_reason: adjVal !== 0 ? adjReason : null,
+        items: items.map((i, idx) => ({
+          id: i.id || idx + 1,
+          product_id: Number(i.product_id),
+          product_name: i.product_name,
+          sku: i.sku || '',
+          unit: i.unit || 'cs',
+          quantity: Number(i.quantity),
+          unit_price: Number(i.unit_price),
+          unit_deposit_fee: Number(i.unit_deposit_fee) || 0,
+          units_per_case: Number(i.units_per_case) || 1,
+          is_price_overridden: Boolean(i._priceEdited),
+        })),
+        total_amount: totals.goods,
+      };
+      setReviewOrder(reviewObj);
+      setReviewOpen(true);
+      return;
+    }
+
     setSaving(true);
     try {
       // Tapping Save within the first second of picking a customer can land while the
@@ -366,6 +436,42 @@ export default function POSPage() {
 
     setSaving(true);
     try {
+      if (V25_OFFLINE_CORE) {
+        const activeProfileKey = await api.getActiveProfile();
+        const saved = await saveOrderLocalFirst({
+          customer: selectedCustomer,
+          orderType,
+          notes,
+          adjustment,
+          items,
+          profileKey: activeProfileKey,
+        });
+
+        setSavedOrder(saved);
+        setDraftId(null);
+        setDraftStatus('idle');
+        creatingDraftRef.current = false;
+        draftPromiseRef.current = null;
+        addToast(`Order ${orderRef(saved)} created.`, 'success');
+
+        setReviewOpen(false);
+        setReviewOrder(null);
+        requestPrint(saved);
+        refreshCounts();
+
+        if (dirtyItems.length && selectedCustomer && !String(selectedCustomer.id).startsWith('local-')) {
+          setPriceSavePrompt({
+            step: 'first',
+            orderId: saved.receipt_number,
+            customer: selectedCustomer,
+            orderType,
+            dirty: dirtyItems,
+            busy: false,
+          });
+        }
+        return;
+      }
+
       await api.post(`/orders/${target.id}/finalize`, {});
       await syncAdjustment(target.id, {
         adjustment:        lastSavedAdjRef.current.value,
@@ -426,11 +532,27 @@ export default function POSPage() {
 
     setSaving(true);
     try {
+      if (V25_OFFLINE_CORE && editOrder?.receipt_number && (await isOrderUnsynced(editOrder.receipt_number))) {
+        const updated = await updateLocalOrder({
+          order: editOrder,
+          items,
+          notes,
+          adjustment,
+          profileKey: await api.getActiveProfile(),
+        });
+        addToast(`Order ${orderRef(editOrder)} updated.`, 'success');
+        setSavedOrder(updated);
+        setEditOrder(null);
+        buildStash.current = null;
+        refreshCounts();
+        return;
+      }
+
       const { customer_id, order_type, ...editable } = finalPayload();
-      await api.patch(`/orders/${editOrder.id}`, editable);
-      await syncAdjustment(editOrder.id, editOrder);
+      await api.patch(`/orders/${editOrder.id || editOrder.receipt_number}`, editable);
+      await syncAdjustment(editOrder.id || editOrder.receipt_number, editOrder);
       addToast(`Order ${orderRef(editOrder)} updated.`, 'success');
-      const editedOrderId = editOrder.id;
+      const editedOrderId = editOrder.id || editOrder.receipt_number;
       const updatedFull = await api.get(`/orders/${editedOrderId}`);
       setSavedOrder(updatedFull);
       setEditOrder(null);
@@ -692,14 +814,32 @@ export default function POSPage() {
   };
 
   const cancelOrder = async (order) => {
-    const orderId = order.id;
+    const orderRefId = order.id || order.receipt_number;
     setConfirmBusy(true);
     try {
-      await api.post(`/orders/${orderId}/status`, { status: 'cancelled' });
+      if (V25_OFFLINE_CORE && order.receipt_number && (await isOrderUnsynced(order.receipt_number))) {
+        await discardLocalOrder(order.receipt_number);
+        addToast(`Order ${orderRef(order)} discarded.`, 'success');
+        setConfirm(null);
+        if (editOrder?.receipt_number === order.receipt_number || editOrder?.id === order.id) {
+          exitEditMode({ dropOrderId: orderRefId });
+        }
+        if (savedOrder?.receipt_number === order.receipt_number || savedOrder?.id === order.id) {
+          startNewOrder();
+        }
+        refreshCounts();
+        return;
+      }
+
+      await api.post(`/orders/${orderRefId}/status`, { status: 'cancelled' });
       addToast(`Order ${orderRef(order)} cancelled — stock restored.`, 'success');
       setConfirm(null);
-      if (editOrder?.id === orderId) exitEditMode({ dropOrderId: orderId });
-      if (savedOrder?.id === orderId) startNewOrder();
+      if (editOrder?.id === order.id || editOrder?.receipt_number === order.receipt_number) {
+        exitEditMode({ dropOrderId: orderRefId });
+      }
+      if (savedOrder?.id === order.id || savedOrder?.receipt_number === order.receipt_number) {
+        startNewOrder();
+      }
       refreshCounts();
     } catch (err) {
       addToast(err.message || 'Failed to cancel the order.', 'error');
@@ -795,7 +935,8 @@ export default function POSPage() {
           errors={errors}
           draftStatus={draftStatus}
           savedOrder={savedOrder}
-          editOrderId={editOrder?.id}
+          editOrderId={editOrder?.id || editOrder?.receipt_number}
+          editOrder={editOrder}
           saving={saving}
           printing={printer.printing}
           onSave={handleReview}

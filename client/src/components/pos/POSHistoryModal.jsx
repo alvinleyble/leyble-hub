@@ -5,6 +5,11 @@ import POSConfirm from './POSConfirm';
 import POSListModal, { LIST_ACTION_BTN, LIST_ROW, listDateTime } from './POSListModal';
 import OrderViewModal from './OrderViewModal';
 import { orderRef } from '../../utils/orderRef';
+import { V25_OFFLINE_CORE } from '../../config/features.js';
+import {
+  listReceipts, putReceipt, getReceipt, pruneReceipts, queueReceiptPrinted,
+  isOrderUnsynced, discardLocalOrder,
+} from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -42,7 +47,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
   const [bulkPrompt, setBulkPrompt]     = useState(false);
   const [bulkBusy, setBulkBusy]         = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
     let dateParams = '';
     const now = new Date();
@@ -58,17 +63,57 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
       dateParams = `&from_date=${encodeURIComponent(startOf7DaysAgo.toISOString())}`;
     }
 
-    Promise.all([
-      api.get(`/orders?status=pending${dateParams}`),
-      api.get(`/orders?status=cancelled${dateParams}`),
-    ])
-      .then(([created, cancelled]) =>
-        setOrders([...created, ...cancelled].sort(
-          (a, b) => new Date(b.created_at) - new Date(a.created_at)
-        ))
-      )
-      .catch((err) => addToast(err.message || 'Failed to load order history.', 'error'))
-      .finally(() => setLoading(false));
+    if (!V25_OFFLINE_CORE) {
+      Promise.all([
+        api.get(`/orders?status=pending${dateParams}`),
+        api.get(`/orders?status=cancelled${dateParams}`),
+      ])
+        .then(([created, cancelled]) =>
+          setOrders([...created, ...cancelled].sort(
+            (a, b) => new Date(b.created_at) - new Date(a.created_at)
+          ))
+        )
+        .catch((err) => addToast(err.message || 'Failed to load order history.', 'error'))
+        .finally(() => setLoading(false));
+      return;
+    }
+
+    // V2.5 Offline Core path: read local 30-day receipts first (D9)
+    const localReceipts = await listReceipts().catch(() => []);
+
+    try {
+      const [created, cancelled] = await Promise.all([
+        api.get(`/orders?status=pending${dateParams}`),
+        api.get(`/orders?status=cancelled${dateParams}`),
+      ]);
+      const serverOrders = [...created, ...cancelled];
+
+      for (const ord of serverOrders) {
+        if (ord.receipt_number) {
+          await putReceipt(ord).catch(() => {});
+        }
+      }
+      await pruneReceipts().catch(() => {});
+
+      const serverReceiptNums = new Set(serverOrders.map((o) => o.receipt_number).filter(Boolean));
+      const serverIds = new Set(serverOrders.map((o) => o.id).filter(Boolean));
+
+      const unsyncedLocals = localReceipts.filter((lr) => {
+        if (lr.receipt_number && serverReceiptNums.has(lr.receipt_number)) return false;
+        if (lr.id && serverIds.has(lr.id)) return false;
+        return true;
+      });
+
+      const merged = [...serverOrders, ...unsyncedLocals].sort(
+        (a, b) => new Date(b.created_at) - new Date(a.created_at)
+      );
+      setOrders(merged);
+    } catch (err) {
+      // Offline / blind: read from local 30-day history (D9)
+      setOrders(localReceipts);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -101,14 +146,49 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
       )) return false;
 
       if (!q) return true;
-      return (o.customer_name || '').toLowerCase().includes(q) || String(o.id).includes(q);
+      return (
+        (o.customer_name || '').toLowerCase().includes(q) ||
+        String(o.id || '').includes(q) ||
+        String(o.receipt_number || '').toLowerCase().includes(q)
+      );
     });
   }, [orders, query, unprintedOnly, dateFilter]);
 
-  const withFullOrder = async (id, run) => {
-    setBusyId(id);
+  const withFullOrder = async (orderOrId, run) => {
+    const isObj = typeof orderOrId === 'object' && orderOrId !== null;
+    const targetId = isObj ? (orderOrId.id || orderOrId.receipt_number) : orderOrId;
+    const targetReceiptNo = isObj ? orderOrId.receipt_number : (String(orderOrId).includes('-') ? String(orderOrId) : null);
+
+    setBusyId(targetId);
     try {
-      run(await api.get(`/orders/${id}`));
+      if (V25_OFFLINE_CORE) {
+        if (isObj && Array.isArray(orderOrId.items) && orderOrId.items.length > 0) {
+          run(orderOrId);
+          return;
+        }
+        if (targetReceiptNo) {
+          const local = await getReceipt(targetReceiptNo);
+          if (local && Array.isArray(local.items) && local.items.length > 0) {
+            run(local);
+            return;
+          }
+        }
+        try {
+          const full = await api.get(`/orders/${targetId}`);
+          if (full.receipt_number) await putReceipt(full).catch(() => {});
+          run(full);
+          return;
+        } catch (err) {
+          if (targetReceiptNo) {
+            const local = await getReceipt(targetReceiptNo);
+            if (local) { run(local); return; }
+          }
+          throw err;
+        }
+      } else {
+        const id = isObj ? orderOrId.id : orderOrId;
+        run(await api.get(`/orders/${id}`));
+      }
     } catch (err) {
       addToast(err.message || 'Failed to load the order.', 'error');
     } finally {
@@ -123,32 +203,49 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
     [visible]
   );
 
-  // Tag a whole filtered batch as printed in one go. Same write Reprint's auto-tag makes
-  // (POST /orders/:id/receipt-printed), just batched — nothing is sent to the printer.
+  // Tag a whole filtered batch as printed in one go (D14).
   const markAllPrinted = async () => {
     setBulkBusy(true);
-    const results = await Promise.allSettled(
-      unprintedVisible.map((o) => api.post(`/orders/${o.id}/receipt-printed`, { phase: 'pending' }))
-    );
-    const done   = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.length - done;
-    addToast(
-      failed
-        ? `Marked ${done} order${done === 1 ? '' : 's'} as printed, ${failed} failed.`
-        : `${done} order${done === 1 ? '' : 's'} marked as printed.`,
-      failed ? 'error' : 'success'
-    );
-    setBulkBusy(false);
-    setBulkPrompt(false);
-    load();
-    onChanged?.();
+    let done = 0;
+    let failed = 0;
+    try {
+      for (const o of unprintedVisible) {
+        try {
+          if (V25_OFFLINE_CORE) {
+            await queueReceiptPrinted({ order: o, phase: 'pending' });
+            done++;
+          } else {
+            await api.post(`/orders/${o.id}/receipt-printed`, { phase: 'pending' });
+            done++;
+          }
+        } catch (_) {
+          failed++;
+        }
+      }
+      addToast(
+        failed
+          ? `Marked ${done} order${done === 1 ? '' : 's'} as printed, ${failed} failed.`
+          : `${done} order${done === 1 ? '' : 's'} marked as printed.`,
+        failed ? 'error' : 'success'
+      );
+    } finally {
+      setBulkBusy(false);
+      setBulkPrompt(false);
+      load();
+      onChanged?.();
+    }
   };
 
   const confirmCancel = async () => {
     setCancelling(true);
     try {
-      await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
-      addToast(`Order ${orderRef(cancelTarget)} cancelled — stock restored.`, 'success');
+      if (V25_OFFLINE_CORE && cancelTarget?.receipt_number && (await isOrderUnsynced(cancelTarget.receipt_number))) {
+        await discardLocalOrder(cancelTarget.receipt_number);
+        addToast(`Order ${orderRef(cancelTarget)} discarded.`, 'success');
+      } else {
+        await api.post(`/orders/${cancelTarget.id || cancelTarget.receipt_number}/status`, { status: 'cancelled' });
+        addToast(`Order ${orderRef(cancelTarget)} cancelled — stock restored.`, 'success');
+      }
       setCancelTarget(null);
       setViewOrder(null);   // back to the list, which reloads with the new status
       load();
@@ -264,31 +361,31 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={busyId === o.id}
-                  onClick={() => withFullOrder(o.id, setViewOrder)}
+                  disabled={busyId === (o.id || o.receipt_number)}
+                  onClick={() => withFullOrder(o, setViewOrder)}
                   className={`${LIST_ACTION_BTN} bg-v2-raised text-v2-text hover:bg-v2-border`}
                 >
                   👁️ View
                 </button>
                 <button
                   type="button"
-                  disabled={cancelled || busyId === o.id}
-                  onClick={() => withFullOrder(o.id, onEdit)}
+                  disabled={cancelled || busyId === (o.id || o.receipt_number)}
+                  onClick={() => withFullOrder(o, onEdit)}
                   className={`${LIST_ACTION_BTN} bg-amber-500 text-amber-950 hover:bg-amber-400`}
                 >
                   ✏️ Edit
                 </button>
                 <button
                   type="button"
-                  disabled={cancelled || busyId === o.id}
-                  onClick={() => withFullOrder(o.id, onReprint)}
+                  disabled={cancelled || busyId === (o.id || o.receipt_number)}
+                  onClick={() => withFullOrder(o, onReprint)}
                   className={`${LIST_ACTION_BTN} bg-v2-accent-strong text-white hover:bg-v2-accent`}
                 >
                   🖨️ Reprint
                 </button>
                 <button
                   type="button"
-                  disabled={cancelled || busyId === o.id}
+                  disabled={cancelled || busyId === (o.id || o.receipt_number)}
                   onClick={() => setCancelTarget(o)}
                   className={`${LIST_ACTION_BTN} bg-red-700 text-white hover:bg-red-600`}
                 >

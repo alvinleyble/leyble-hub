@@ -108,6 +108,7 @@ export default function POSOrderPanel({
   draftStatus,
   savedOrder,
   editOrderId,
+  editOrder,
   saving,
   printing,
   onSave,
@@ -351,7 +352,7 @@ export default function POSOrderPanel({
               disabled={saving}
               className={`${BIG_BTN} bg-amber-500 text-amber-950 hover:bg-amber-400`}
             >
-              {saving ? 'Saving…' : `💾 Update Order (#${editOrderId})`}
+              {saving ? 'Saving…' : `💾 Update Order (${orderRef(editOrder || { id: editOrderId, receipt_number: editOrderId })})`}
             </button>
             <div className="flex gap-2">
               <button

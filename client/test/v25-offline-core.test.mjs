@@ -18,8 +18,11 @@ import {
   enqueue, drainOutbox, listRecords, waitingCount, listNeedsAttention, ref,
   __clearOutbox, NEEDS_ATTENTION,
 } from '../src/offline/outbox.js';
-import { putReceipt, listReceipts, pruneReceipts } from '../src/offline/receiptHistory.js';
+import { putReceipt, getReceipt, listReceipts, pruneReceipts } from '../src/offline/receiptHistory.js';
 import { formatReceiptNumber, parseReceiptNumber } from '../src/offline/receiptNumbers.js';
+import {
+  saveOrderLocalFirst, queueReceiptPrinted, isOrderUnsynced, updateLocalOrder, discardLocalOrder,
+} from '../src/offline/posSave.js';
 import { orderRef, orderRefWith } from '../src/utils/orderRef.js';
 import { V25_OFFLINE_CORE } from '../src/config/features.js';
 
@@ -293,4 +296,145 @@ test('with the switch on, an order reads by its receipt number — legacy orders
   // The ~1,300 orders that predate V2.5 are never backfilled (D1), so they keep the
   // only name they have.
   assert.equal(orderRefWith({ id: 42 }, true), '#42');
+});
+
+// ── Piece 2: POS Save path is local-first (D2, D3, D5, D9, D14) ────────────
+
+test('saveOrderLocalFirst writes order locally, numbers it, stores in history, and enqueues for drain', async () => {
+  await registerStation(1);
+  const now = new Date('2026-08-23T10:00:00.000Z').toISOString();
+
+  const customer = { id: 10, name: 'Tindahan ni Aling Josie', customer_type: 'regular' };
+  const items = [
+    { product_id: 101, product_name: 'Coke 1.5L', sku: 'COKE-1.5', unit: 'cs', quantity: 2, unit_price: 300, unit_deposit_fee: 50, units_per_case: 12 },
+  ];
+
+  const localOrder = await saveOrderLocalFirst({
+    customer,
+    orderType: 'delivery',
+    notes: 'Gate delivery',
+    adjustment: { value: -20, reason: 'Friend discount' },
+    items,
+    profileKey: 'luis',
+    createdAt: now,
+  });
+
+  assert.equal(localOrder.receipt_number, '1-00001');
+  assert.equal(localOrder.receipt_station, 1);
+  assert.equal(localOrder.receipt_sequence, 1);
+  assert.equal(localOrder.created_at, now);
+  assert.equal(localOrder.customer_id, 10);
+  assert.equal(localOrder.customer_name, 'Tindahan ni Aling Josie');
+  assert.equal(localOrder.total_amount, 600); // goods-only total (qty * price) while open
+  assert.equal(localOrder.adjustment, -20);
+
+  // Persisted in local receipt history (D9)
+  const inHistory = await getReceipt('1-00001');
+  assert.ok(inHistory, 'stored in local receipt history');
+  assert.equal(inHistory.receipt_number, '1-00001');
+  assert.equal(inHistory.items.length, 1);
+
+  // Queued in outbox (D13/D14)
+  const records = await listRecords();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].entity_type, 'order');
+  assert.equal(records[0].profile_key, 'luis');
+  assert.equal(records[0].receipt_number, '1-00001');
+  assert.equal(records[0].payload.adjustment, -20);
+  assert.equal(records[0].payload.adjustment_reason, 'Friend discount');
+});
+
+test('saveOrderLocalFirst fails loudly when no active profile is captured (D14)', async () => {
+  await registerStation(1);
+  await assert.rejects(
+    () => saveOrderLocalFirst({
+      customer: { id: 1, name: 'Customer' },
+      items: [{ product_id: 1, quantity: 1, unit_price: 100 }],
+      profileKey: null,
+    }),
+    /profileKey is required/
+  );
+});
+
+test('saveOrderLocalFirst with mid-order quick-created customer sets dependency and reference', async () => {
+  await registerStation(1);
+
+  const quickCreatedCust = {
+    id: 'local-1',
+    _outboxId: 1,
+    name: 'New Suki Corner',
+    customer_type: 'unassigned',
+  };
+
+  const localOrder = await saveOrderLocalFirst({
+    customer: quickCreatedCust,
+    orderType: 'pickup',
+    items: [{ product_id: 102, product_name: 'Sprite', quantity: 1, unit_price: 250 }],
+    profileKey: 'josie',
+  });
+
+  assert.equal(localOrder.receipt_number, '1-00001');
+  const records = await listRecords();
+  assert.equal(records.length, 1);
+  assert.deepEqual(records[0].depends_on, [1]);
+  assert.deepEqual(records[0].payload.customer_id, ref(1, 'id'));
+});
+
+test('queueReceiptPrinted marks receipt locally and enqueues printed event with profile attribution', async () => {
+  await registerStation(1);
+
+  const order = {
+    receipt_number: '1-00001',
+    status: 'pending',
+    items: [{ product_id: 1, quantity: 1, unit_price: 100 }],
+    total_amount: 100,
+    created_at: new Date().toISOString(),
+  };
+  await putReceipt(order);
+
+  await queueReceiptPrinted({ order, phase: 'pending', profileKey: 'luis' });
+
+  const updatedHistory = await getReceipt('1-00001');
+  assert.ok(updatedHistory.pending_receipt_printed_at, 'marked printed in local history');
+
+  const records = await listRecords();
+  const printedRec = records.find((r) => r.entity_type === 'receipt_printed');
+  assert.ok(printedRec);
+  assert.equal(printedRec.profile_key, 'luis');
+  assert.equal(printedRec.endpoint, '/orders/1-00001/receipt-printed');
+});
+
+test('unsynced order in outbox can be edited or discarded on device (D3)', async () => {
+  await registerStation(1);
+
+  const order = await saveOrderLocalFirst({
+    customer: { id: 5, name: 'Sari Sari', customer_type: 'regular' },
+    items: [{ product_id: 1, product_name: 'Beer', quantity: 1, unit_price: 100 }],
+    profileKey: 'luis',
+  });
+
+  assert.equal(await isOrderUnsynced(order.receipt_number), true);
+
+  // Edit on device
+  const updated = await updateLocalOrder({
+    order,
+    items: [{ product_id: 1, product_name: 'Beer', quantity: 3, unit_price: 100 }],
+    notes: 'Updated notes',
+    adjustment: { value: 0, reason: '' },
+    profileKey: 'luis',
+  });
+
+  assert.equal(updated.total_amount, 300);
+  const inHistory = await getReceipt(order.receipt_number);
+  assert.equal(inHistory.total_amount, 300);
+
+  const recordsAfterEdit = await listRecords();
+  assert.equal(recordsAfterEdit[0].payload.items[0].quantity, 3);
+  assert.equal(recordsAfterEdit[0].payload.notes, 'Updated notes');
+
+  // Discard on device
+  await discardLocalOrder(order.receipt_number);
+  assert.equal(await isOrderUnsynced(order.receipt_number), false);
+  assert.equal((await listRecords()).length, 0);
+  assert.equal(await getReceipt(order.receipt_number), null);
 });

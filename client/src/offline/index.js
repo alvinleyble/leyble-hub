@@ -1,19 +1,22 @@
-import { V25_OFFLINE_CORE } from '../config/features';
-import { ensureStationRegistered, isRegistered } from './station';
-import { drainOutbox, waitingCount } from './outbox';
-import { pruneReceipts } from './receiptHistory';
+import { V25_OFFLINE_CORE } from '../config/features.js';
+import { ensureStationRegistered, isRegistered } from './station.js';
+import { drainOutbox, waitingCount } from './outbox.js';
+import { pruneReceipts } from './receiptHistory.js';
+import { resetOfflineAdvisory } from './advisory.js';
+import { handleDrainCompletion } from './drainNotifier.js';
 
 // The V2.5 offline core's entry point. Everything here is a no-op unless the release
 // switch is on (D18), so with the switch off the app behaves exactly as it does today.
 
-export * from './station';
-export * from './outbox';
-export * from './receiptHistory';
-export * from './receiptNumbers';
-export * from './advisory';
-export * from './status';
-export * from './drainNotifier';
-export { nativeStore } from './nativeStore';
+export * from './station.js';
+export * from './outbox.js';
+export * from './receiptHistory.js';
+export * from './receiptNumbers.js';
+export * from './posSave.js';
+export * from './advisory.js';
+export * from './status.js';
+export * from './drainNotifier.js';
+export { nativeStore } from './nativeStore.js';
 
 const DRAIN_INTERVAL_MS = 30_000;
 

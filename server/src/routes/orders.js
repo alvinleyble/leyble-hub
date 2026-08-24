@@ -42,6 +42,23 @@ function orderLabel(order) {
   return order?.receipt_number ? order.receipt_number : `#${order?.id}`;
 }
 
+// Resolves an order identifier (either numeric DB id or '<station>-<sequence>' receipt number)
+// to the order row id.
+async function resolveOrderId(runner, param) {
+  if (param === undefined || param === null) return null;
+  const str = String(param).trim();
+  if (/^\d{1,9}-\d{1,9}$/.test(str)) {
+    const [station, sequence] = str.split('-').map(Number);
+    const { rows: [row] } = await runner.query(
+      'SELECT id FROM orders WHERE receipt_station = $1 AND receipt_sequence = $2',
+      [station, sequence]
+    );
+    return row ? row.id : null;
+  }
+  const num = Number(str);
+  return Number.isInteger(num) ? num : null;
+}
+
 async function recomputeTotal(client, orderId) {
   const { rows: [ord] } = await client.query('SELECT status FROM orders WHERE id = $1', [orderId]);
   const { rows: [{ total }] } = await client.query(
@@ -160,6 +177,9 @@ async function syncPersonnel(client, orderId, personnelList) {
 }
 
 async function getFullOrder(orderId) {
+  const resolvedId = await resolveOrderId(db, orderId);
+  if (!resolvedId) return null;
+
   const { rows: [order] } = await db.query(
     `SELECT o.*,
             c.name  AS customer_name, c.customer_type,
@@ -171,7 +191,7 @@ async function getFullOrder(orderId) {
      LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
      LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
      WHERE o.id = $1`,
-    [orderId]
+    [resolvedId]
   );
   if (!order) return null;
 
@@ -181,7 +201,7 @@ async function getFullOrder(orderId) {
      JOIN products p ON p.id = oi.product_id
      WHERE oi.order_id = $1
      ORDER BY oi.id`,
-    [orderId]
+    [resolvedId]
   );
 
   const { rows: personnel } = await db.query(
@@ -190,7 +210,7 @@ async function getFullOrder(orderId) {
      JOIN personnel p ON p.id = op.personnel_id
      WHERE op.order_id = $1
      ORDER BY op.id`,
-    [orderId]
+    [resolvedId]
   );
 
   return { ...order, items, personnel };
@@ -306,7 +326,7 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   const {
     customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
-    receipt_number, created_at,
+    receipt_number, created_at, adjustment = 0, adjustment_reason,
   } = req.body;
   const isDraft = status === 'draft';
 
@@ -345,13 +365,17 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'Customer not found' });
     }
 
+    const adjNum = Number(adjustment) || 0;
+    const adjReason = adjNum !== 0 && adjustment_reason ? adjustment_reason.trim() : null;
+
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
-                           receipt_station, receipt_sequence, created_at)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()))
+                           receipt_station, receipt_sequence, created_at, adjustment, adjustment_reason)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()), $8, $9)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
-       receipt?.station ?? null, receipt?.sequence ?? null, created_at || null]
+       receipt?.station ?? null, receipt?.sequence ?? null, created_at || null,
+       adjNum, adjReason]
     );
 
     await insertItems(client, order.id, customer_id, order_type, items, req.user.id, isDraft);
@@ -413,9 +437,15 @@ router.patch('/:id', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -522,9 +552,15 @@ router.post('/:id/finalize', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -585,9 +621,15 @@ router.delete('/:id', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT id, status FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -625,14 +667,17 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       return res.status(400).json({ error: 'adjustment_reason is required when adjustment is non-zero' });
     }
 
+    const orderId = await resolveOrderId(db, req.params.id);
+    if (!orderId) return res.status(404).json({ error: 'Order not found' });
+
     const { rows: [order] } = await db.query(
-      'SELECT id, receipt_number FROM orders WHERE id = $1', [req.params.id]
+      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
     );
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     await db.query(
       `UPDATE orders SET adjustment = $1, adjustment_reason = $2, updated_at = NOW() WHERE id = $3`,
-      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, req.params.id]
+      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, orderId]
     );
 
     await logActivity(db, {
@@ -645,7 +690,7 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       performedBy: req.user.id,
     });
 
-    res.json(await getFullOrder(req.params.id));
+    res.json(await getFullOrder(order.id));
   } catch (err) {
     next(err);
   }
@@ -660,8 +705,11 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
     }
 
+    const orderId = await resolveOrderId(db, req.params.id);
+    if (!orderId) return res.status(404).json({ error: 'Order not found' });
+
     const { rows: [order] } = await db.query(
-      'SELECT id, receipt_number FROM orders WHERE id = $1', [req.params.id]
+      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
     );
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
@@ -691,9 +739,15 @@ router.post('/:id/status', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -713,7 +767,7 @@ router.post('/:id/status', async (req, res, next) => {
 
     const { rows: items } = await client.query(
       'SELECT * FROM order_items WHERE order_id = $1',
-      [req.params.id]
+      [order.id]
     );
 
     // Stock restoration on cancellation if stock was deducted for this order
@@ -773,9 +827,15 @@ router.post('/:id/close', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
