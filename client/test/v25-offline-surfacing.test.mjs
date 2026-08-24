@@ -7,7 +7,8 @@
 // 4. Duplicate-customer surfacing (D4): name AND address matching, post-drain toast, prefilled merge.
 // 5. Attention list for refused receipts (D8): plain-language reason, re-pointing, no discard.
 // 6. Lost connection resilience (D15): network failure is not a 401, login screen unsent banner.
-// 7. Both sides of the switch (D18).
+// 7. Reachability probing: GET /health check, caching, navigator.onLine short-circuit, markOffline.
+// 8. Both sides of the switch (D18).
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +32,9 @@ import {
 import {
   findDuplicateCustomerGroups, getDuplicateCustomerIds, countDuplicateCustomers, getDuplicateCandidatesFor,
 } from '../src/utils/duplicateCustomers.js';
-import { checkIsOnline } from '../src/offline/status.js';
+import {
+  checkIsOnline, probeReachability, markOffline, markOnline, __resetStatusState,
+} from '../src/offline/status.js';
 import { saveOrderLocalFirst } from '../src/offline/posSave.js';
 
 let savedApi;
@@ -41,6 +44,7 @@ beforeEach(async () => {
   __resetIssuance();
   await __resetAdvisoryState();
   __resetDrainNotifierState();
+  __resetStatusState();
   await __clearOutbox();
   setSimulatedOffline(false);
   savedApi = { post: api.post, request: api.request, get: api.get, getActiveProfile: api.getActiveProfile };
@@ -53,6 +57,7 @@ afterEach(async () => {
   api.getActiveProfile = savedApi.getActiveProfile;
   setSimulatedOffline(false);
   await __resetAdvisoryState();
+  __resetStatusState();
 });
 
 // ── D11: Advisory toast (Station-dependent wording & once-per-outage rule) ──
@@ -66,7 +71,7 @@ test('advisory toast fires Station 1 wording on the main tablet', async () => {
   assert.equal(toasts.length, 1);
   assert.equal(
     toasts[0].msg,
-    'You are offline. Keep creating orders on this tablet only — do not use the other device until the connection returns.'
+    'You are offline. Keep creating orders on this tablet only — do not use non-tablet device until connection is back.'
   );
   assert.equal(await hasOfflineAdvisoryFired(), true);
 });
@@ -80,7 +85,7 @@ test('advisory toast fires Station 2 wording on the secondary device', async () 
   assert.equal(toasts.length, 1);
   assert.equal(
     toasts[0].msg,
-    'You are offline. Create orders on the main tablet only — do not use this device until the connection returns.'
+    'You are offline. Create orders on the main tablet only — do not use non-tablet device until connection is back.'
   );
 });
 
@@ -112,7 +117,6 @@ test('advisory toast fires ONCE per outage and persists in nativeStore across re
 });
 
 test('advisory toast fires from the real saveOrderLocalFirst code path when saving while offline', async () => {
-  // Ensure station registered
   api.post = async () => ({ station_number: 1 });
   await ensureStationRegistered();
 
@@ -134,7 +138,10 @@ test('advisory toast fires from the real saveOrderLocalFirst code path when savi
 
   assert.ok(order);
   assert.equal(toasts.length, 1);
-  assert.match(toasts[0].msg, /You are offline\. Keep creating orders on this tablet only/);
+  assert.equal(
+    toasts[0].msg,
+    'You are offline. Keep creating orders on this tablet only — do not use non-tablet device until connection is back.'
+  );
 
   // Second save while still offline does not re-fire the advisory toast
   await saveOrderLocalFirst({
@@ -170,17 +177,14 @@ test('duplicate customer detection requires BOTH name AND address to match', () 
   ];
 
   const groups = findDuplicateCustomerGroups(customers);
-  // alingnena:::123mainstantipolo matches 1 and 2
   const nenaKey = 'alingnena:::123mainstantipolo';
   assert.ok(groups[nenaKey], 'alingnena matching address group found');
   assert.equal(groups[nenaKey].length, 2);
 
-  // smmart:::km23ortigasext matches 6 and 7
   const smKey = 'smmart:::km23ortigasext';
   assert.ok(groups[smKey], 'smmart matching address group found');
   assert.equal(groups[smKey].length, 2);
 
-  // mang juan with blank address is NOT grouped
   assert.equal(groups['mangjuan:::'], undefined);
   assert.equal(Object.keys(groups).length, 2);
 
@@ -333,6 +337,102 @@ test('a network failure throws a network error and does NOT clear session or red
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// ── Reachability probing (Captain review round 2) ─────────────────────────────
+
+test('probeReachability: successful GET /health marks online', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchedUrl = null;
+  globalThis.fetch = async (url) => {
+    fetchedUrl = url;
+    return { ok: true, json: async () => ({ status: 'ok' }) };
+  };
+
+  try {
+    const reachable = await probeReachability({ force: true, enabled: true });
+    assert.equal(reachable, true);
+    assert.match(fetchedUrl, /\/health/);
+    assert.equal(checkIsOnline(true), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('probeReachability: failed GET /health (network error or !ok) marks offline', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError('Failed to fetch (dead upstream link)');
+  };
+
+  try {
+    const reachable = await probeReachability({ force: true, enabled: true });
+    assert.equal(reachable, false);
+    assert.equal(checkIsOnline(true), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('probeReachability: navigator.onLine === false short-circuits without probing', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return { ok: true };
+  };
+
+  // Mock navigator.onLine = false
+  const originalNavigator = globalThis.navigator;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { onLine: false },
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    const reachable = await probeReachability({ force: true, enabled: true });
+    assert.equal(reachable, false);
+    assert.equal(fetchCalled, false, 'must not fetch when navigator is offline');
+    assert.equal(checkIsOnline(true), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'navigator', {
+      value: originalNavigator,
+      configurable: true,
+      writable: true,
+    });
+  }
+});
+
+test('probeReachability: result is cached within 30s TTL rather than hammering every call', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount++;
+    return { ok: true };
+  };
+
+  try {
+    __resetStatusState();
+    // First call probes
+    await probeReachability({ enabled: true });
+    assert.equal(fetchCount, 1);
+
+    // Second call within TTL reuses cached result
+    await probeReachability({ enabled: true });
+    assert.equal(fetchCount, 1, 'must reuse cached result without re-probing');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('markOffline: marks offline immediately without waiting for next probe', () => {
+  markOnline();
+  assert.equal(checkIsOnline(true), true);
+
+  markOffline();
+  assert.equal(checkIsOnline(true), false);
 });
 
 // ── D7 & D10: Online status check & simulated offline ─────────────────────────

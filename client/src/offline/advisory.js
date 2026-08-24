@@ -72,8 +72,8 @@ export async function triggerOfflineAdvisoryWith({ addToast, stationNumber } = {
   }
 
   const message = (station === 1)
-    ? 'You are offline. Keep creating orders on this tablet only — do not use the other device until the connection returns.'
-    : 'You are offline. Create orders on the main tablet only — do not use this device until the connection returns.';
+    ? 'You are offline. Keep creating orders on this tablet only — do not use non-tablet device until connection is back.'
+    : 'You are offline. Create orders on the main tablet only — do not use non-tablet device until connection is back.';
 
   memAdvisoryFired = true;
   await nativeStore.setJson(ADVISORY_KEY, true).catch(() => {});

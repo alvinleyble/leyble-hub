@@ -6,7 +6,7 @@ import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
 import { orderTotals } from '../components/pos/posMath.js';
 import { V25_OFFLINE_CORE } from '../config/features.js';
-import { checkIsOnline } from './status.js';
+import { checkIsOnline, probeReachability } from './status.js';
 import { triggerOfflineAdvisory, triggerOfflineAdvisoryWith } from './advisory.js';
 
 // D2 — The POS is local-first, always.
@@ -125,6 +125,7 @@ export async function saveOrderLocalFirst({
   localOrder._outboxId = outboxRecord.id;
 
   // 3. Attempt drain in background and trigger advisory toast if saving while offline (D11)
+  await probeReachability({ force: true }).catch(() => {});
   if (!checkIsOnline()) {
     await triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
   } else {

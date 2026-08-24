@@ -2,6 +2,7 @@ import { api } from '../api/client';
 import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
+import { markOffline } from './status';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -224,6 +225,7 @@ export async function drainOutbox() {
         if (isNetworkFailure(err) || err.status >= 500) {
           await saveRecord(record);
           blocked.add(record.id);
+          markOffline();
           break; // the line is down or the server is unwell; stop the pass
         }
 
