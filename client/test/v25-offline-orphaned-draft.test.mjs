@@ -15,8 +15,10 @@ import './render.mjs'; // jsdom globals
 import { api } from '../src/api/client.js';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import {
-  enqueue, drainOutbox, listRecords, listNeedsAttention, __clearOutbox, QUEUED,
+  enqueue, drainOutbox, listRecords, listNeedsAttention, pendingDeletionRefs,
+  __clearOutbox, QUEUED,
 } from '../src/offline/outbox.js';
+import { mergeParkedOrders } from '../src/offline/parkedOrders.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import { saveOrderLocalFirst, cleanupOrphanedDraft } from '../src/offline/posSave.js';
 
@@ -147,4 +149,71 @@ test('a repeated arrival of the cleanup is harmless — a 404 on retry counts as
   assert.equal(result.failed, 0);
   assert.equal((await listRecords()).length, 0, 'the record must clear from the outbox, not sit as an orphaned retry forever');
   assert.equal((await listNeedsAttention()).length, 0, 'nobody should have to act on a cleanup that already succeeded');
+});
+
+// ── Captain review round 1, item 1 ──────────────────────────────────────────────
+//
+// Live reproduction (localhost:5173, V25_OFFLINE_CORE on, simulated offline): the
+// early-draft POST is a raw fetch, unaffected by the simulated-offline switch, so it
+// reaches the real (still-running) dev server and creates a genuine numeric draft row
+// — exactly the captain's setup. Confirm & Print's local-first save then makes that
+// row orphaned, and cleanupOrphanedDraft correctly queues its deletion — but while
+// genuinely offline, drainOutbox() (also gated on the same switch) never sends it.
+// GET /orders?status=draft is a raw fetch too, so it keeps returning the row until
+// the queued DELETE actually drains, which is exactly what the captain saw: the
+// badge stuck on 1 through "Confirm & Print" and even after going back online, since
+// nothing re-ran refreshCounts() once the drain finally emptied the outbox.
+//
+// The fix has two parts: a list built off the server's response must exclude a row
+// this device already queued a deletion for (mergeParkedOrders + pendingDeletionRefs
+// below), and POSPage.jsx now re-runs refreshCounts() on every outbox event via
+// subscribeOutbox, so a background drain updates the badge with nobody watching.
+test('REGRESSION (review round 1): a queued-but-undrained deletion is excluded from the merged list, not just from the outbox', async () => {
+  await registerStation(2);
+
+  // Genuinely offline: the queued deletion cannot drain yet.
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
+
+  // Confirm & Print orphaned the early server-side draft (captain's #1412).
+  await cleanupOrphanedDraft({ draftRef: 1412, profileKey: 'josie' });
+  await flushMicrotasks();
+
+  const pending = await pendingDeletionRefs();
+  assert.ok(pending.has('1412'), 'the queued deletion must be discoverable by its target ref');
+
+  // The server has not processed the DELETE yet — its own list response still
+  // includes the row, exactly what the captain's browser kept fetching.
+  const serverDrafts = [
+    { id: 1412, receipt_number: null, customer_id: 5, created_at: '2026-08-24T10:00:00Z' },
+  ];
+
+  const merged = mergeParkedOrders(serverDrafts, [], pending);
+  assert.deepEqual(merged, [], 'a draft already queued for deletion must not still be counted or listed');
+});
+
+test('a deletion queued against a receipt-number ref (a synced local park) is excluded the same way', async () => {
+  await registerStation(1);
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
+
+  await cleanupOrphanedDraft({ draftRef: '1-00007', profileKey: 'luis' });
+  await flushMicrotasks();
+
+  const pending = await pendingDeletionRefs();
+  assert.ok(pending.has('1-00007'));
+
+  const serverDrafts = [
+    { id: 88, receipt_number: '1-00007', customer_id: 2, created_at: '2026-08-24T09:00:00Z' },
+  ];
+  assert.deepEqual(mergeParkedOrders(serverDrafts, [], pending), []);
+});
+
+test('pendingDeletionRefs ignores a deletion that has already drained', async () => {
+  await enqueue({
+    entityType: 'order_delete', endpoint: '/orders/500', method: 'DELETE',
+    payload: { orderRef: 500 }, profileKey: 'josie',
+  });
+  api.request = async () => null; // succeeds — the DELETE actually lands
+  await drainOutbox();
+
+  assert.equal((await pendingDeletionRefs()).size, 0, 'a drained deletion must not keep hiding anything');
 });

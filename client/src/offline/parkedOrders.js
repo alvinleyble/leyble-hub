@@ -123,10 +123,20 @@ export async function listLocalParkedOrders() {
 // parks, with a local one dropped the moment its receipt number shows up server-side
 // — the one dedup rule POSHistoryModal already uses for local receipts, applied here
 // to drafts. Sorted newest first, matching every other list in the POS.
-export function mergeParkedOrders(serverDrafts, localDrafts) {
-  const serverNums = new Set(serverDrafts.map((d) => d.receipt_number).filter(Boolean));
+//
+// `pendingDeletionRefs` (outbox.js) excludes a server draft this device has already
+// queued a DELETE for — see cleanupOrphanedDraft in posSave.js. Without this, a
+// draft superseded by Confirm & Print's local-first save keeps showing (and
+// counting) until the queued DELETE actually reaches the server, which a genuinely
+// offline device may not do for hours: the owner already sees a completed sale, not
+// a phantom draft waiting on a network call they cannot see.
+export function mergeParkedOrders(serverDrafts, localDrafts, pendingDeletionRefs = new Set()) {
+  const live = pendingDeletionRefs.size
+    ? serverDrafts.filter((d) => !pendingDeletionRefs.has(String(d.id)) && !pendingDeletionRefs.has(String(d.receipt_number)))
+    : serverDrafts;
+  const serverNums = new Set(live.map((d) => d.receipt_number).filter(Boolean));
   const unsynced = localDrafts.filter((d) => !serverNums.has(d.receipt_number));
-  return [...serverDrafts, ...unsynced].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return [...live, ...unsynced].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
 
 function findQueuedDraftRecord(records, receiptNumber) {

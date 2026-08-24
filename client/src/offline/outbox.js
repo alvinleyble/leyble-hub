@@ -307,6 +307,12 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
  * early draft that Confirm & Print's local-first save (D2) leaves behind (piece 3),
  * and discarding a parked order that only this device knows is gone (D6). A repeat
  * arrival is harmless: a 404 on a queued DELETE is treated as success above.
+ *
+ * The target ref rides in the payload (not just the endpoint string) so a caller can
+ * cheaply ask "is this row already headed for deletion?" via pendingDeletionRefs()
+ * without parsing endpoints — a genuinely offline device still returns the row from
+ * GET /orders?status=draft until the DELETE actually drains, and a list built off
+ * that response alone would show a draft the owner already disposed of.
  */
 export async function queueOrderDeletion({ orderRef, profileKey } = {}) {
   if (!orderRef) return null;
@@ -317,11 +323,25 @@ export async function queueOrderDeletion({ orderRef, profileKey } = {}) {
     entityType: 'order_delete',
     endpoint: `/orders/${orderRef}`,
     method: 'DELETE',
-    payload: {},
+    payload: { orderRef },
     profileKey,
   });
   drainOutbox().catch(() => {});
   return record;
+}
+
+// Order refs (row ids or receipt-number strings, compared as strings) with a queued
+// DELETE not yet drained. A caller merging in a server-sourced list should exclude
+// these — see queueOrderDeletion's doc comment for why.
+export async function pendingDeletionRefs() {
+  const records = await listRecords();
+  const refs = new Set();
+  for (const r of records) {
+    if (r.entity_type === 'order_delete' && r.status === QUEUED && r.payload?.orderRef !== undefined) {
+      refs.add(String(r.payload.orderRef));
+    }
+  }
+  return refs;
 }
 
 // Test seam.

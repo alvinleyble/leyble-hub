@@ -7,6 +7,7 @@ import { orderRef } from '../../utils/orderRef';
 import { V25_OFFLINE_CORE } from '../../config/features.js';
 import {
   listLocalParkedOrders, mergeParkedOrders, isDraftUnsynced, discardLocalDraft, queueOrderDeletion,
+  pendingDeletionRefs, subscribeOutbox,
 } from '../../offline/index.js';
 
 const PHP = (n) =>
@@ -48,10 +49,13 @@ export default function POSDraftsModal({ onClose, onResume, onChanged, customers
       return;
     }
 
-    const localDrafts = await listLocalParkedOrders().catch(() => []);
+    const [localDrafts, pendingDeletions] = await Promise.all([
+      listLocalParkedOrders().catch(() => []),
+      pendingDeletionRefs().catch(() => new Set()),
+    ]);
     try {
       const serverDrafts = await api.get('/orders?status=draft');
-      setDrafts(mergeParkedOrders(serverDrafts, localDrafts));
+      setDrafts(mergeParkedOrders(serverDrafts, localDrafts, pendingDeletions));
     } catch {
       // Blind — the server's own drafts are unreachable, so only this tablet's local
       // parks show, exactly as D6 describes.
@@ -62,6 +66,14 @@ export default function POSDraftsModal({ onClose, onResume, onChanged, customers
   };
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Same reasoning as POSPage.jsx: reload if the outbox changes while this list is
+  // open (a queued cleanup lands, or a drain finishes) rather than showing a stale
+  // list until the modal is closed and reopened.
+  useEffect(() => {
+    if (!V25_OFFLINE_CORE) return;
+    return subscribeOutbox(() => { load(); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();

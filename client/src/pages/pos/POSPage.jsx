@@ -32,6 +32,8 @@ import {
   updateLocalDraft,
   discardLocalDraft,
   queueOrderDeletion,
+  pendingDeletionRefs,
+  subscribeOutbox,
   loadCatalogue,
 } from '../../offline/index.js';
 import { countPossibleDoubleOrders } from '../../utils/duplicateOrders.js';
@@ -174,6 +176,17 @@ export default function POSPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Keep the badges live across a drain that happens with nobody watching: the line
+  // returns, the outbox empties in the background (the periodic loop in
+  // offline/index.js, or the browser's 'online' event), and nothing else re-renders
+  // this page to pick up the new counts. drainOutbox() already notifies on every
+  // completed pass (and enqueue/repoint/clear do too) via the outbox's own
+  // subscription mechanism — reuse it rather than a second polling timer.
+  useEffect(() => {
+    if (!V25_OFFLINE_CORE) return;
+    return subscribeOutbox(() => { refreshCounts(); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // D6 — possible-double parked orders (same customer/channel/goods total, both still
   // pending, more than one receipt number): count only, so the History chip (which
   // does the actual flagging) has something to point the History button's badge at.
@@ -206,10 +219,10 @@ export default function POSPage() {
         })
         .catch(() => {});
 
-      listLocalParkedOrders()
-        .then((localDrafts) => {
+      Promise.all([listLocalParkedOrders(), pendingDeletionRefs()])
+        .then(([localDrafts, pendingDeletions]) => {
           api.get('/orders?status=draft')
-            .then((serverDrafts) => setDraftCount(mergeParkedOrders(serverDrafts, localDrafts).length))
+            .then((serverDrafts) => setDraftCount(mergeParkedOrders(serverDrafts, localDrafts, pendingDeletions).length))
             .catch(() => setDraftCount(localDrafts.length)); // blind: local count only
         })
         .catch(() => {});
@@ -586,13 +599,18 @@ export default function POSPage() {
         draftPromiseRef.current = null;
         addToast(`Order ${orderRef(saved)} created.`, 'success');
 
-        if (orphanedDraftRef !== null && orphanedDraftRef !== undefined) {
-          cleanupOrphanedDraft({ draftRef: orphanedDraftRef, profileKey: activeProfileKey }).catch(() => {});
-        }
-
         setReviewOpen(false);
         setReviewOrder(null);
         requestPrint(saved);
+
+        // Awaited (not fire-and-forget) so the very next refreshCounts() already
+        // reflects it — either the still-local draft is already gone, or the queued
+        // DELETE is already recorded and pendingDeletionRefs() will hide the
+        // server's not-yet-updated copy. Print above is never held up by this: it is
+        // reconciliation, not part of the print path.
+        if (orphanedDraftRef !== null && orphanedDraftRef !== undefined) {
+          await cleanupOrphanedDraft({ draftRef: orphanedDraftRef, profileKey: activeProfileKey }).catch(() => {});
+        }
         refreshCounts();
 
         if (dirtyItems.length && selectedCustomer && !String(selectedCustomer.id).startsWith('local-')) {
