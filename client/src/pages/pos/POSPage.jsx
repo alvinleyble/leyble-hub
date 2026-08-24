@@ -24,6 +24,7 @@ import {
   listReceipts,
   checkIsOnline,
   triggerOfflineAdvisory,
+  cleanupOrphanedDraft,
 } from '../../offline/index.js';
 
 const TOP_BTN = `flex h-14 items-center gap-2 rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
@@ -440,6 +441,10 @@ export default function POSPage() {
     try {
       if (V25_OFFLINE_CORE) {
         const activeProfileKey = await api.getActiveProfile();
+        // The draft this same POS flow created earlier (the early-draft effect above)
+        // — a real server row. The local-first save below makes it a second, orphaned
+        // copy of this order (regression fix): it must not survive as a draft.
+        const orphanedDraftRef = draftId;
         const saved = await saveOrderLocalFirst({
           customer: selectedCustomer,
           orderType,
@@ -456,6 +461,10 @@ export default function POSPage() {
         creatingDraftRef.current = false;
         draftPromiseRef.current = null;
         addToast(`Order ${orderRef(saved)} created.`, 'success');
+
+        if (orphanedDraftRef !== null && orphanedDraftRef !== undefined) {
+          cleanupOrphanedDraft({ draftRef: orphanedDraftRef, profileKey: activeProfileKey }).catch(() => {});
+        }
 
         setReviewOpen(false);
         setReviewOrder(null);

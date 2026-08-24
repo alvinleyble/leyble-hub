@@ -1,6 +1,6 @@
 import { issueReceiptNumber } from './station.js';
 import { putReceipt, getReceipt, removeReceipt } from './receiptHistory.js';
-import { enqueue, drainOutbox, listRecords, ref } from './outbox.js';
+import { enqueue, drainOutbox, listRecords, ref, queueOrderDeletion } from './outbox.js';
 import { outboxKey } from './keys.js';
 import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
@@ -141,6 +141,27 @@ export async function saveOrderLocalFirst({
   }
 
   return localOrder;
+}
+
+/**
+ * Cleans up the server-side draft the same POS flow created before Confirm & Print
+ * (POSPage.jsx handleConfirmPrint) went local-first. The local order this function's
+ * caller just saved is now the authority (D2); the draft would otherwise sit in
+ * Drafts forever, never finalized and never deleted, growing the Drafts badge on
+ * every sale.
+ *
+ * Queued through the outbox (D13) rather than a direct fire-and-forget request, so a
+ * blind print still cleans up once the line returns, and a repeat arrival is
+ * harmless — a 404 on a queued DELETE counts as done (see outbox.js).
+ */
+export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {}) {
+  if (draftRef === null || draftRef === undefined || draftRef === '') return;
+  const activeProfileKey = profileKey || (await api.getActiveProfile());
+  if (!activeProfileKey) {
+    throw new Error('cleanupOrphanedDraft: profileKey is required — capture the profile at Save (D14)');
+  }
+
+  await queueOrderDeletion({ orderRef: draftRef, profileKey: activeProfileKey });
 }
 
 /**
