@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../ui/Toast';
 import { customerMatches } from '../../utils/customerSearch';
+import { V25_OFFLINE_CORE } from '../../config/features.js';
+import { enqueue, drainOutbox } from '../../offline/index.js';
 
 // Customer picker for the V2 POS order panel. Same searchable-combobox mechanics the rest
 // of the app uses (see client/src/components/ui/Combobox.jsx): filter on keystroke,
@@ -46,9 +48,30 @@ export default function POSCustomerSearch({
     if (!trimmed || creating) return;
     setCreating(true);
     try {
-      const created = await api.post('/customers', { name: trimmed, customer_type: 'unassigned' });
-      addToast(`${created.name} added as Unassigned Customer.`, 'success');
-      pick(created);
+      if (V25_OFFLINE_CORE) {
+        const profileKey = await api.getActiveProfile();
+        const rec = await enqueue({
+          entityType: 'customer',
+          endpoint: '/customers',
+          method: 'POST',
+          payload: { name: trimmed, customer_type: 'unassigned' },
+          profileKey,
+        });
+        const localCustomer = {
+          id: `local-${rec.id}`,
+          _outboxId: rec.id,
+          name: trimmed,
+          customer_type: 'unassigned',
+          is_active: true,
+        };
+        addToast(`${localCustomer.name} added as Unassigned Customer.`, 'success');
+        pick(localCustomer);
+        drainOutbox().catch(() => {});
+      } else {
+        const created = await api.post('/customers', { name: trimmed, customer_type: 'unassigned' });
+        addToast(`${created.name} added as Unassigned Customer.`, 'success');
+        pick(created);
+      }
     } catch (err) {
       addToast(err.message || 'Failed to create customer.', 'error');
     } finally {
