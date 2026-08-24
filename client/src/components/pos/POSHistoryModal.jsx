@@ -41,6 +41,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
   const [query, setQuery]         = useState('');
   const [dateFilter, setDateFilter] = useState('all');
   const [unprintedOnly, setUnprintedOnly] = useState(false);
+  const [doubleOnly, setDoubleOnly] = useState(false); // review round 1, item 4
   const [busyId, setBusyId]       = useState(null);
   const [viewOrder, setViewOrder]       = useState(null);   // read-only 👁️ View
   const [cancelTarget, setCancelTarget] = useState(null);
@@ -121,6 +122,15 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
     load();
   }, [dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // D6 — the accepted double-print risk, surfaced: same shape D4 already established
+  // for possible-duplicate customers (utils/duplicateOrders.js). This is the one
+  // flag both the row chip and the "Possible double only" toggle read — no second
+  // notion of "possible double" (review round 1, item 4).
+  const possibleDoubleIds = useMemo(
+    () => (V25_OFFLINE_CORE ? getPossibleDoubleOrderIds(orders) : new Set()),
+    [orders]
+  );
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const now = new Date();
@@ -139,12 +149,16 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
         if (createdAt < startOf7DaysAgo) return false;
       }
 
-      // "Not printed" filter composes with whichever date preset is active
-      // (Today, Yesterday, Last 7 Days, or All Time).
+      // "Not printed" and "Possible double" compose independently with each other,
+      // the date preset and the search box — every filter in this modal is AND-ed
+      // together, and there is no reason a doubled order that also happens to be
+      // unprinted should be hidden from either toggle.
       if (unprintedOnly && (
         o.status !== 'pending' ||
         o.pending_receipt_printed_at
       )) return false;
+
+      if (doubleOnly && !possibleDoubleIds.has(o.id)) return false;
 
       if (!q) return true;
       return (
@@ -153,14 +167,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
         String(o.receipt_number || '').toLowerCase().includes(q)
       );
     });
-  }, [orders, query, unprintedOnly, dateFilter]);
-
-  // D6 — the accepted double-print risk, surfaced: same shape D4 already established
-  // for possible-duplicate customers (utils/duplicateOrders.js).
-  const possibleDoubleIds = useMemo(
-    () => (V25_OFFLINE_CORE ? getPossibleDoubleOrderIds(orders) : new Set()),
-    [orders]
-  );
+  }, [orders, query, unprintedOnly, doubleOnly, possibleDoubleIds, dateFilter]);
 
   const withFullOrder = async (orderOrId, run) => {
     const isObj = typeof orderOrId === 'object' && orderOrId !== null;
@@ -304,6 +311,18 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
               >
                 ⚠️ Not printed only
               </button>
+              {V25_OFFLINE_CORE && (
+                <button
+                  type="button"
+                  onClick={() => setDoubleOnly((v) => !v)}
+                  aria-pressed={doubleOnly}
+                  className={`${LIST_ACTION_BTN} ${doubleOnly
+                    ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
+                    : 'bg-v2-raised text-v2-text hover:bg-v2-border'}`}
+                >
+                  ⚠️ Possible double only
+                </button>
+              )}
               {unprintedOnly && unprintedVisible.length > 0 && (
                 <button
                   type="button"

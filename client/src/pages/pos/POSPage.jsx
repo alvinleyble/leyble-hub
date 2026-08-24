@@ -603,6 +603,16 @@ export default function POSPage() {
         setReviewOrder(null);
         requestPrint(saved);
 
+        // The sale is fully recorded by this point — local-first history, the
+        // outbox, and the print already launched above, all keyed off `saved`
+        // captured by value — so clearing the panel here cannot lose it. Reuse
+        // "+ New order"'s own reset rather than a second one (review item 2):
+        // the owner can start the next sale immediately instead of tapping
+        // + New order themselves. usePrintReceipt captured `saved` by reference
+        // when requestPrint ran, so resetting printOrder here does not touch the
+        // print already in flight.
+        startNewOrder();
+
         // Awaited (not fire-and-forget) so the very next refreshCounts() already
         // reflects it — either the still-local draft is already gone, or the queued
         // DELETE is already recorded and pendingDeletionRefs() will hide the
@@ -613,6 +623,9 @@ export default function POSPage() {
         }
         refreshCounts();
 
+        // selectedCustomer/orderType/dirtyItems were resolved above, before
+        // startNewOrder() reset the panel's state for the next order, so this still
+        // reads the order that was just confirmed, not the blank one now on screen.
         if (dirtyItems.length && selectedCustomer && !String(selectedCustomer.id).startsWith('local-')) {
           setPriceSavePrompt({
             step: 'first',

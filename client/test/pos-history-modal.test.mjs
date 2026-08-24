@@ -148,6 +148,30 @@ test('F12: 200-row cap warning footnote renders when exactly 200 orders are retu
   r50.unmount();
 });
 
+// Review round 1, item 4 — "Possible double only" filter beside "Not printed only".
+test('review 1 item 4: with the switch off, the "Possible double only" toggle does not render at all', async () => {
+  api.get = async (path) => {
+    if (path.includes('status=pending')) return [makeOrder(1), makeOrder(2)];
+    if (path.includes('status=cancelled')) return [];
+    return [];
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(POSHistoryModal, { onClose: () => {} })
+    )
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  const notPrintedBtn = r.all('button').find((b) => b.textContent.trim() === '⚠️ Not printed only');
+  assert.ok(notPrintedBtn, 'the existing toggle must still render (switch-off path untouched)');
+
+  const doubleBtn = r.all('button').find((b) => b.textContent.trim() === '⚠️ Possible double only');
+  assert.equal(doubleBtn, undefined, 'the flag it filters on does not exist with the switch off, so the toggle must not appear');
+
+  r.unmount();
+});
+
 test('F2: POSPage header badge reflects all pending unprinted orders and sets updated aria-label', async () => {
   const getCalls = [];
   const pendingOrders = [

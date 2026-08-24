@@ -176,15 +176,24 @@ export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {})
 /**
  * Records that a receipt was printed (D14).
  * Updates the local receipt in history (D9) and enqueues a `receipt_printed` event.
+ *
+ * Returns the updated record (review round 1, item 3): `getReceipt` hands back a
+ * fresh object deserialized from storage, not the caller's `order` reference, so the
+ * `pending_receipt_printed_at` timestamp set below lived only on that local copy —
+ * the caller's own order object, and anything downstream reading it (POSPage's
+ * savedOrder, the "NOT PRINTED yet" line in POSOrderPanel.jsx), never saw it change,
+ * even after a genuinely successful print. usePrintReceipt.js now hands this return
+ * value to onTagged instead of the stale object it was passed.
  */
 export async function queueReceiptPrinted({ order, phase = 'pending', profileKey = null }) {
-  if (!order) return;
+  if (!order) return null;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
     throw new Error('queueReceiptPrinted: profileKey is required — capture the profile at Save (D14)');
   }
 
   const printedAt = new Date().toISOString();
+  let updatedOrder = order;
   if (order.receipt_number) {
     const local = (await getReceipt(order.receipt_number)) || order;
     if (phase === 'pending') {
@@ -193,6 +202,7 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
       local.delivered_receipt_printed_at = printedAt;
     }
     await putReceipt(local);
+    updatedOrder = local;
   }
 
   const targetId = order.receipt_number || order.id;
@@ -206,6 +216,7 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
   });
 
   drainOutbox().catch(() => {});
+  return updatedOrder;
 }
 
 /**
