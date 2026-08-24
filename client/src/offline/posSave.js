@@ -1,6 +1,6 @@
 import { issueReceiptNumber } from './station.js';
 import { putReceipt, getReceipt, removeReceipt } from './receiptHistory.js';
-import { enqueue, drainOutbox, listRecords, ref } from './outbox.js';
+import { enqueue, drainOutbox, listRecords, ref, queueOrderDeletion } from './outbox.js';
 import { outboxKey } from './keys.js';
 import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
@@ -8,6 +8,7 @@ import { orderTotals } from '../components/pos/posMath.js';
 import { V25_OFFLINE_CORE } from '../config/features.js';
 import { checkIsOnline, probeReachability } from './status.js';
 import { triggerOfflineAdvisory, triggerOfflineAdvisoryWith } from './advisory.js';
+import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
 
 // D2 — The POS is local-first, always.
 // Every save goes to the device first, online or offline, every day. Save writes the
@@ -144,17 +145,55 @@ export async function saveOrderLocalFirst({
 }
 
 /**
+ * Cleans up the server-side draft the same POS flow created before Confirm & Print
+ * (POSPage.jsx handleConfirmPrint) went local-first. The local order this function's
+ * caller just saved is now the authority (D2); the draft would otherwise sit in
+ * Drafts forever, never finalized and never deleted, growing the Drafts badge on
+ * every sale.
+ *
+ * `draftRef` is whatever POSPage was tracking that draft as — either a real server
+ * row id (the pre-2.5 early-draft POST, unchanged by D6) or a receipt-number string
+ * (a draft that was itself parked locally — see parkedOrders.js). Still-local is
+ * resolved for free, no network needed; anything else is queued through the outbox
+ * (D13) so a blind print still cleans up once the line returns, and a repeat arrival
+ * is harmless (a 404 on a queued DELETE counts as done — see outbox.js).
+ */
+export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {}) {
+  if (draftRef === null || draftRef === undefined || draftRef === '') return;
+  const activeProfileKey = profileKey || (await api.getActiveProfile());
+  if (!activeProfileKey) {
+    throw new Error('cleanupOrphanedDraft: profileKey is required — capture the profile at Save (D14)');
+  }
+
+  if (typeof draftRef === 'string' && (await isDraftUnsynced(draftRef))) {
+    await discardLocalDraft(draftRef);
+    return;
+  }
+
+  await queueOrderDeletion({ orderRef: draftRef, profileKey: activeProfileKey });
+}
+
+/**
  * Records that a receipt was printed (D14).
  * Updates the local receipt in history (D9) and enqueues a `receipt_printed` event.
+ *
+ * Returns the updated record (review round 1, item 3): `getReceipt` hands back a
+ * fresh object deserialized from storage, not the caller's `order` reference, so the
+ * `pending_receipt_printed_at` timestamp set below lived only on that local copy —
+ * the caller's own order object, and anything downstream reading it (POSPage's
+ * savedOrder, the "NOT PRINTED yet" line in POSOrderPanel.jsx), never saw it change,
+ * even after a genuinely successful print. usePrintReceipt.js now hands this return
+ * value to onTagged instead of the stale object it was passed.
  */
 export async function queueReceiptPrinted({ order, phase = 'pending', profileKey = null }) {
-  if (!order) return;
+  if (!order) return null;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
     throw new Error('queueReceiptPrinted: profileKey is required — capture the profile at Save (D14)');
   }
 
   const printedAt = new Date().toISOString();
+  let updatedOrder = order;
   if (order.receipt_number) {
     const local = (await getReceipt(order.receipt_number)) || order;
     if (phase === 'pending') {
@@ -163,6 +202,7 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
       local.delivered_receipt_printed_at = printedAt;
     }
     await putReceipt(local);
+    updatedOrder = local;
   }
 
   const targetId = order.receipt_number || order.id;
@@ -176,6 +216,7 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
   });
 
   drainOutbox().catch(() => {});
+  return updatedOrder;
 }
 
 /**

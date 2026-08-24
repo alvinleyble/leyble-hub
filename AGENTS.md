@@ -198,6 +198,40 @@ Release 1 lands as four pieces, all dark, switched on together.
   the line returns.
 - **An order's `created_at` is the device's sale time**, passed explicitly (same pattern
   as `supplier_deliveries.received_at`). No clock-skew detection — deliberately.
+- **Parked orders (piece 3, `client/src/offline/parkedOrders.js`):** online, unchanged —
+  the pre-2.5 early-draft POST + debounced PATCH. Blind, a draft parks as an ordinary
+  queued `order` outbox record (`payload.status: 'draft'`), given its own device-issued
+  receipt number purely as a local identity and anti-duplicate key — `server/src/lib/
+  idempotency.js` is table-agnostic over any orders row, drafts included, so this reuses
+  the existing mechanism rather than adding one. `POSPage.jsx`'s `draftId` holds either a
+  real row id (online) or that receipt number (local park); every order route already
+  resolves both (`resolveOrderId` in `server/src/routes/orders.js`). The parked-order list
+  is the union of the server's drafts and this device's still-queued local ones
+  (`mergeParkedOrders`), deduped by receipt number — a synced local draft simply
+  disappears from the local half once the server's copy shows up. The accepted double-
+  print risk (two tablets independently finalize the same parked order) is flagged, never
+  guarded against, via `client/src/utils/duplicateOrders.js` + the D4 post-drain toast
+  pattern (`drainNotifier.js`) and a chip in `POSHistoryModal.jsx` that opens the existing
+  order-view flow.
+- **The orphaned-draft trap:** any local-first save (`saveOrderLocalFirst` /
+  `parkOrderLocalFirst`) creates an independent order row with its own receipt number —
+  it never reuses or finalizes a pre-existing draft row. Whoever calls it MUST separately
+  reconcile the draft that led to it (see `cleanupOrphanedDraft` in `posSave.js`, called
+  from `POSPage.jsx handleConfirmPrint`) or that draft sits in Drafts forever. A queued
+  `DELETE` that 404s (already gone) is treated as success, not a needs-attention item
+  (`outbox.js drainOutbox`) — the same retry-safety D13 gives receipt numbers, extended to
+  deletes via `queueOrderDeletion`.
+- **The catalogue (piece 3, `client/src/offline/catalogue.js`):** products/customers cache
+  as two whole-value keys (not one-per-record — it's server-replaced reference data, not
+  built up locally), refreshed quietly on every reachable load and a 60s background tick
+  in `POSPage.jsx`. No staleness UI, ever (D16). `loadCatalogue()` never throws — an
+  unreachable server with an empty first-run cache just returns `[]`.
+- **Testing the switch-on path:** `import.meta.env` is stubbed to `{}` for every test file
+  (`client/test/jsx-register.mjs`), so `V25_OFFLINE_CORE` always reads `false` there —
+  component-render tests can only exercise the switch-OFF path. Functions that need
+  switch-on coverage take an explicit `enabled`/`offlineCoreEnabled` override parameter and
+  are unit-tested directly (see `notifyDrainCompleteWith`, `saveOrderLocalFirst`,
+  `triggerOfflineAdvisoryWith`) — that is the established pattern, not a gap to fix.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets

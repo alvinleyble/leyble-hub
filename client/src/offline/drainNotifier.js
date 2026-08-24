@@ -1,6 +1,7 @@
 import { V25_OFFLINE_CORE } from '../config/features';
 import { api } from '../api/client';
 import { countDuplicateCustomers } from '../utils/duplicateCustomers';
+import { countPossibleDoubleOrders } from '../utils/duplicateOrders';
 
 // D4 — Post-drain notification after an outage.
 //
@@ -8,6 +9,10 @@ import { countDuplicateCustomers } from '../utils/duplicateCustomers';
 // after an outage:
 //   "14 receipts synced · 2 customers may be duplicates"
 // Once per outage recovery, never repeated.
+//
+// D6 reuses this exact pattern for a possibly-doubled parked order — same toast,
+// same once-per-outage rule, one more clause appended when there is something to
+// say: "14 receipts synced · 2 customers may be duplicates · 2 orders may be doubled".
 
 let drainToastFired = false;
 let globalToastHandler = null;
@@ -38,7 +43,7 @@ export function notifyDrainComplete(opts = {}) {
  * Core implementation with explicit enabled flag (for testing both sides of D18).
  */
 export function notifyDrainCompleteWith(
-  { sent = 0, waiting = 0, customers = [], addToast = globalToastHandler } = {},
+  { sent = 0, waiting = 0, customers = [], orders = [], addToast = globalToastHandler } = {},
   enabled = V25_OFFLINE_CORE
 ) {
   if (!enabled) return false;
@@ -46,12 +51,16 @@ export function notifyDrainCompleteWith(
   if (drainToastFired) return false;
 
   const duplicates = countDuplicateCustomers(customers);
+  const doubles = countPossibleDoubleOrders(orders);
   const receiptsStr = `${sent} ${sent === 1 ? 'receipt' : 'receipts'} synced`;
   const duplicatesStr = duplicates > 0
     ? ` · ${duplicates} ${duplicates === 1 ? 'customer' : 'customers'} may be duplicates`
     : '';
+  const doublesStr = doubles > 0
+    ? ` · ${doubles} ${doubles === 1 ? 'order' : 'orders'} may be doubled`
+    : '';
 
-  const message = `${receiptsStr}${duplicatesStr}`;
+  const message = `${receiptsStr}${duplicatesStr}${doublesStr}`;
 
   drainToastFired = true;
 
@@ -59,7 +68,7 @@ export function notifyDrainCompleteWith(
     addToast(message, 'info');
   }
 
-  return { message, sent, duplicates };
+  return { message, sent, duplicates, doubles };
 }
 
 /**
@@ -85,7 +94,15 @@ export async function handleDrainCompletionWith(
     // Network or parse issue; evaluate with empty customer list
   }
 
-  return notifyDrainCompleteWith({ sent, waiting, customers, addToast }, enabled);
+  let orders = [];
+  try {
+    const data = await api.get('/orders?status=pending');
+    if (Array.isArray(data)) orders = data;
+  } catch {
+    // Network or parse issue; evaluate with empty order list
+  }
+
+  return notifyDrainCompleteWith({ sent, waiting, customers, orders, addToast }, enabled);
 }
 
 export function __resetDrainNotifierState() {

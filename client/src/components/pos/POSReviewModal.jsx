@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { lineTotal, orderTotals, totalCases } from './posMath';
+import { orderRef } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -82,7 +83,7 @@ export default function POSReviewModal({
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-black uppercase tracking-wider text-v2-accent">
-                {order.id ? `📝 Draft #${order.id}` : '📝 Order Review'}
+                {order.id ? `📝 Draft ${orderRef(order)}` : '📝 Order Review'}
               </span>
               {order.customer_type === 'wholesaler' ? (
                 <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-300">

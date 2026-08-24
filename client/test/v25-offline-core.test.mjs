@@ -392,16 +392,46 @@ test('queueReceiptPrinted marks receipt locally and enqueues printed event with 
   };
   await putReceipt(order);
 
-  await queueReceiptPrinted({ order, phase: 'pending', profileKey: 'luis' });
+  const returned = await queueReceiptPrinted({ order, phase: 'pending', profileKey: 'luis' });
 
   const updatedHistory = await getReceipt('1-00001');
   assert.ok(updatedHistory.pending_receipt_printed_at, 'marked printed in local history');
+  assert.ok(returned.pending_receipt_printed_at, 'the return value itself must carry the flipped flag');
+  assert.equal(returned.receipt_number, '1-00001');
 
   const records = await listRecords();
   const printedRec = records.find((r) => r.entity_type === 'receipt_printed');
   assert.ok(printedRec);
   assert.equal(printedRec.profile_key, 'luis');
   assert.equal(printedRec.endpoint, '/orders/1-00001/receipt-printed');
+});
+
+// ── Captain review round 1, item 3 ──────────────────────────────────────────────
+//
+// The "NOT PRINTED yet" line in POSOrderPanel.jsx reads savedOrder.pending_receipt_
+// printed_at. getReceipt() hands back a fresh object deserialized from storage, not
+// the caller's own order reference, so queueReceiptPrinted was flipping the flag
+// only on that fresh copy — the caller's object (usePrintReceipt.js's `active`,
+// threaded through to POSPage's setSavedOrder via onTagged) never changed, so the
+// warning never cleared even after a genuinely successful print. This test fails on
+// the code before queueReceiptPrinted returned the updated record.
+test('REGRESSION: queueReceiptPrinted does not mutate the caller\'s order reference — the caller must use the return value', async () => {
+  await registerStation(1);
+
+  const order = {
+    receipt_number: '1-00002',
+    status: 'pending',
+    items: [{ product_id: 1, quantity: 1, unit_price: 100 }],
+    total_amount: 100,
+    created_at: new Date().toISOString(),
+    pending_receipt_printed_at: null,
+  };
+  await putReceipt({ ...order }); // a separately-stored copy, as saveOrderLocalFirst leaves behind
+
+  const returned = await queueReceiptPrinted({ order, phase: 'pending', profileKey: 'josie' });
+
+  assert.equal(order.pending_receipt_printed_at, null, 'the object the caller already holds a reference to is untouched');
+  assert.ok(returned.pending_receipt_printed_at, 'the caller must be handed the updated record instead');
 });
 
 test('unsynced order in outbox can be edited or discarded on device (D3)', async () => {

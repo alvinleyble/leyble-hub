@@ -48,8 +48,11 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
     try {
       if (V25_OFFLINE_CORE) {
         const active = targetOrder || (isOrderObject(orderId) ? orderId : order);
-        await queueReceiptPrinted({ order: active || { id: orderId }, phase });
-        onTagged?.(active || { id: orderId });
+        // queueReceiptPrinted's own return carries the flipped
+        // pending_receipt_printed_at / delivered_receipt_printed_at — `active` itself
+        // is never mutated (review round 1, item 3), so pass the returned record on.
+        const updated = await queueReceiptPrinted({ order: active || { id: orderId }, phase });
+        onTagged?.(updated || active || { id: orderId });
       } else {
         const id = isOrderObject(orderId) ? orderId.id : orderId;
         const updated = await api.post(`/orders/${id}/receipt-printed`, { phase });
