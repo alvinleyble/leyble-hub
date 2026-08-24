@@ -1,8 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
 import { useToast } from '../ui/Toast';
+import { V25_OFFLINE_CORE } from '../../config/features';
+import { countDuplicateCustomers } from '../../utils/duplicateCustomers';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Dashboard' },
@@ -28,6 +31,27 @@ export default function Sidebar({ onClose }) {
   const holdStartRef = useRef(null);
   const [holding, setHolding] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [duplicateCount, setDuplicateCount] = useState(0);
+  const [dupDismissed, setDupDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!V25_OFFLINE_CORE) return;
+    let mounted = true;
+    const checkDuplicates = async () => {
+      try {
+        const data = await api.get('/customers');
+        if (mounted && Array.isArray(data)) {
+          setDuplicateCount(countDuplicateCustomers(data));
+        }
+      } catch {}
+    };
+    checkDuplicates();
+    const interval = setInterval(checkDuplicates, 30_000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -128,23 +152,48 @@ export default function Sidebar({ onClose }) {
 
       {/* Navigation links — each row is at least 48px tall */}
       <nav className="flex-1 py-2 overflow-y-auto">
-        {NAV_ITEMS.map(({ path, label }) => (
-          <NavLink
-            key={path}
-            to={path}
-            onClick={onClose}
-            className={({ isActive }) =>
-              `flex items-center min-h-[48px] px-5 text-base font-medium transition-colors duration-100
-               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400
-               ${isActive
-                 ? 'bg-blue-700 text-white'
-                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-               }`
-            }
-          >
-            {label}
-          </NavLink>
-        ))}
+        {NAV_ITEMS.map(({ path, label }) => {
+          const isCustomers = path === '/customers';
+          const showDupBadge = V25_OFFLINE_CORE && isCustomers && duplicateCount > 0 && !dupDismissed;
+          return (
+            <NavLink
+              key={path}
+              to={path}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `flex items-center justify-between min-h-[48px] px-5 text-base font-medium transition-colors duration-100
+                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400
+                 ${isActive
+                   ? 'bg-blue-700 text-white'
+                   : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                 }`
+              }
+            >
+              <span>{label}</span>
+              {showDupBadge && (
+                <span
+                  className="inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 px-1.5 text-xs font-black tabular-nums gap-1"
+                  title={`${duplicateCount} potential duplicate customers`}
+                >
+                  <span>{duplicateCount}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDupDismissed(true);
+                    }}
+                    className="hover:text-amber-100 font-bold ml-0.5 text-xs focus:outline-none"
+                    aria-label="Dismiss duplicate customer notification badge"
+                    title="Dismiss badge"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+            </NavLink>
+          );
+        })}
       </nav>
 
       {/* Way back into the V2 tablet shell */}

@@ -11,8 +11,28 @@ export function AuthProvider({ children }) {
     try {
       const me = await api.get('/auth/me');
       setUser(me);
-    } catch {
-      setUser(null);
+      try {
+        if (me) localStorage.setItem('cached_user', JSON.stringify(me));
+      } catch {}
+    } catch (err) {
+      if (err?.status === 401) {
+        // Genuine 401 from server: clear user session
+        setUser(null);
+        try { localStorage.removeItem('cached_user'); } catch {}
+      } else {
+        // D15: A network failure, timeout, or DNS error must NEVER log the tablet out.
+        // Recover cached user session if available.
+        try {
+          const raw = localStorage.getItem('cached_user');
+          if (raw) {
+            setUser(JSON.parse(raw));
+          } else {
+            setUser(null);
+          }
+        } catch {
+          setUser(null);
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -23,12 +43,16 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     const me = await api.post('/auth/login', { email, password });
     setUser(me);
+    try {
+      if (me) localStorage.setItem('cached_user', JSON.stringify(me));
+    } catch {}
     return me;
   };
 
   const logout = async () => {
     try { await api.post('/auth/logout'); } catch { /* ignore */ }
     setUser(null);
+    try { localStorage.removeItem('cached_user'); } catch {}
   };
 
   return (

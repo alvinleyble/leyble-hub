@@ -2,6 +2,8 @@ import { V25_OFFLINE_CORE } from '../config/features.js';
 import { ensureStationRegistered, isRegistered } from './station.js';
 import { drainOutbox, waitingCount } from './outbox.js';
 import { pruneReceipts } from './receiptHistory.js';
+import { resetOfflineAdvisory } from './advisory.js';
+import { handleDrainCompletion } from './drainNotifier.js';
 
 // The V2.5 offline core's entry point. Everything here is a no-op unless the release
 // switch is on (D18), so with the switch off the app behaves exactly as it does today.
@@ -11,6 +13,9 @@ export * from './outbox.js';
 export * from './receiptHistory.js';
 export * from './receiptNumbers.js';
 export * from './posSave.js';
+export * from './advisory.js';
+export * from './status.js';
+export * from './drainNotifier.js';
 export { nativeStore } from './nativeStore.js';
 
 const DRAIN_INTERVAL_MS = 30_000;
@@ -36,6 +41,16 @@ export async function startOfflineCore({ label } = {}) {
   }
   await pruneReceipts().catch(() => {});
 
+  async function runDrainPass() {
+    try {
+      const res = await drainOutbox();
+      if (res && res.sent > 0) {
+        resetOfflineAdvisory();
+        handleDrainCompletion(res).catch(() => {});
+      }
+    } catch {}
+  }
+
   if (!timer && typeof setInterval === 'function') {
     timer = setInterval(() => {
       // Registration is retried here too: a device that installed during an outage
@@ -43,7 +58,7 @@ export async function startOfflineCore({ label } = {}) {
       isRegistered()
         .then((ok) => (ok ? null : ensureStationRegistered({ label })))
         .catch(() => {})
-        .then(() => drainOutbox())
+        .then(runDrainPass)
         .catch(() => {});
     }, DRAIN_INTERVAL_MS);
   }
@@ -52,7 +67,7 @@ export async function startOfflineCore({ label } = {}) {
   // waiting out the interval.
   if (typeof window !== 'undefined' && !startOfflineCore.listening) {
     startOfflineCore.listening = true;
-    window.addEventListener('online', () => { drainOutbox().catch(() => {}); });
+    window.addEventListener('online', () => { runDrainPass(); });
   }
 
   return { enabled: true, waiting: await waitingCount() };

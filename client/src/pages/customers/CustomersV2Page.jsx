@@ -4,11 +4,14 @@ import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
 import CustomerCreateModal from '../../components/customers/CustomerCreateModal';
 import CustomerDetailDrawer from '../../components/customers/CustomerDetailDrawer';
+import CustomerMergeModal from '../../components/customers/CustomerMergeModal';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
 import { customerMatches } from '../../utils/customerSearch';
+import { V25_OFFLINE_CORE } from '../../config/features';
+import { findDuplicateCustomerGroups, getDuplicateCustomerIds, getDuplicateCandidatesFor } from '../../utils/duplicateCustomers';
 
 const TOP_BTN = `flex h-12 items-center gap-1.5 rounded-xl bg-v2-raised px-4 text-base font-bold text-v2-text
                  hover:bg-v2-border transition-colors duration-100 disabled:opacity-40
@@ -27,6 +30,7 @@ export default function CustomersV2Page() {
   const [typeFilter, setTypeFilter]     = useState('all'); // 'all' | 'wholesaler' | 'regular'
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+  const [mergeCandidate, setMergeCandidate] = useState(null);
 
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
@@ -42,6 +46,23 @@ export default function CustomersV2Page() {
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const duplicateGroups = useMemo(() => {
+    return V25_OFFLINE_CORE ? findDuplicateCustomerGroups(customers) : {};
+  }, [customers]);
+
+  const duplicateIds = useMemo(() => {
+    return V25_OFFLINE_CORE ? getDuplicateCustomerIds(customers) : new Set();
+  }, [customers]);
+
+  const handleOpenDuplicateMerge = (e, customer) => {
+    e.stopPropagation();
+    const candidates = getDuplicateCandidatesFor(customer, customers);
+    setMergeCandidate({
+      from: customer,
+      to: candidates[0] || null,
+    });
+  };
 
   const {
     printList, printing,
@@ -199,9 +220,21 @@ export default function CustomersV2Page() {
                     className="cursor-pointer border-t border-v2-border transition-colors hover:bg-v2-raised"
                   >
                     <td className="px-5 py-4">
-                      <p className={`font-semibold text-lg ${c.is_active ? 'text-v2-text' : 'text-v2-muted line-through'}`}>
-                        {c.name}
-                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className={`font-semibold text-lg ${c.is_active ? 'text-v2-text' : 'text-v2-muted line-through'}`}>
+                          {c.name}
+                        </p>
+                        {V25_OFFLINE_CORE && duplicateIds.has(c.id) && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenDuplicateMerge(e, c)}
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/20 px-2.5 py-0.5 text-xs font-bold text-amber-300 hover:bg-amber-500/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                            title="Possible duplicate customer — click to review and merge"
+                          >
+                            ⚠️ possible duplicate
+                          </button>
+                        )}
+                      </div>
                       {c.notes && (
                         <p className="mt-0.5 max-w-sm truncate text-xs italic text-v2-muted">{c.notes}</p>
                       )}
@@ -277,6 +310,18 @@ export default function CustomersV2Page() {
           customerId={selectedId}
           onClose={() => setSelectedId(null)}
           onSaved={() => load(true)}
+        />
+      )}
+
+      {mergeCandidate && (
+        <CustomerMergeModal
+          customer={mergeCandidate.from}
+          initialTargetCustomer={mergeCandidate.to}
+          onClose={() => setMergeCandidate(null)}
+          onMerged={() => {
+            setMergeCandidate(null);
+            load(true);
+          }}
         />
       )}
 
