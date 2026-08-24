@@ -22,6 +22,8 @@ import {
   updateLocalOrder,
   discardLocalOrder,
   listReceipts,
+  checkIsOnline,
+  triggerOfflineAdvisory,
 } from '../../offline/index.js';
 
 const TOP_BTN = `flex h-14 items-center gap-2 rounded-xl bg-v2-raised px-5 text-lg font-bold text-v2-text
@@ -445,6 +447,7 @@ export default function POSPage() {
           adjustment,
           items,
           profileKey: activeProfileKey,
+          addToast,
         });
 
         setSavedOrder(saved);
@@ -503,6 +506,9 @@ export default function POSPage() {
         });
       }
     } catch (err) {
+      if (!checkIsOnline()) {
+        triggerOfflineAdvisory({ addToast }).catch(() => {});
+      }
       addToast(err.message || 'Failed to create the order.', 'error');
     } finally {
       setSaving(false);

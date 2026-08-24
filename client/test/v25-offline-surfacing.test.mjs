@@ -1,12 +1,13 @@
 // V2.5 Release 1, piece 4 — what the owners actually see about being offline.
 //
 // Covers the human surface:
-// 1. The offline marker (D7): "Offline · 12 waiting", nothing when normal.
-// 2. The advisory toast (D11): once per outage, station 1 vs second device wording.
-// 3. Duplicate-customer surfacing (D4): post-drain toast, navigation badge, prefilled merge.
-// 4. Attention list for refused receipts (D8): plain-language reason, re-pointing, no discard.
-// 5. Lost connection resilience (D15): network failure is not a 401, login screen unsent banner.
-// 6. Both sides of the switch (D18).
+// 1. The offline marker (D7): permanent indicator, "Online", "Offline · 12 waiting", etc.
+// 2. The advisory toast (D11): once per outage, station 1 vs second device wording, nativeStore latch.
+// 3. Real code path integration: active save triggers advisory when offline.
+// 4. Duplicate-customer surfacing (D4): name AND address matching, post-drain toast, prefilled merge.
+// 5. Attention list for refused receipts (D8): plain-language reason, re-pointing, no discard.
+// 6. Lost connection resilience (D15): network failure is not a 401, login screen unsent banner.
+// 7. Both sides of the switch (D18).
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ import {
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import {
   triggerOfflineAdvisory, triggerOfflineAdvisoryWith, resetOfflineAdvisory,
-  hasOfflineAdvisoryFired, __resetAdvisoryState,
+  hasOfflineAdvisoryFired, __resetAdvisoryState, ADVISORY_KEY,
 } from '../src/offline/advisory.js';
 import {
   notifyDrainComplete, notifyDrainCompleteWith, resetDrainToastLatch, __resetDrainNotifierState,
@@ -31,24 +32,27 @@ import {
   findDuplicateCustomerGroups, getDuplicateCustomerIds, countDuplicateCustomers, getDuplicateCandidatesFor,
 } from '../src/utils/duplicateCustomers.js';
 import { checkIsOnline } from '../src/offline/status.js';
+import { saveOrderLocalFirst } from '../src/offline/posSave.js';
 
 let savedApi;
 
 beforeEach(async () => {
   __resetMemoryBackend();
   __resetIssuance();
-  __resetAdvisoryState();
+  await __resetAdvisoryState();
   __resetDrainNotifierState();
   await __clearOutbox();
   setSimulatedOffline(false);
-  savedApi = { post: api.post, request: api.request, get: api.get };
+  savedApi = { post: api.post, request: api.request, get: api.get, getActiveProfile: api.getActiveProfile };
 });
 
-afterEach(() => {
+afterEach(async () => {
   api.post = savedApi.post;
   api.request = savedApi.request;
   api.get = savedApi.get;
+  api.getActiveProfile = savedApi.getActiveProfile;
   setSimulatedOffline(false);
+  await __resetAdvisoryState();
 });
 
 // ── D11: Advisory toast (Station-dependent wording & once-per-outage rule) ──
@@ -62,9 +66,9 @@ test('advisory toast fires Station 1 wording on the main tablet', async () => {
   assert.equal(toasts.length, 1);
   assert.equal(
     toasts[0].msg,
-    'You are offline. Keep working here, and leave the other device alone until the connection returns.'
+    'You are offline. Keep creating orders on this tablet only — do not use the other device until the connection returns.'
   );
-  assert.equal(hasOfflineAdvisoryFired(), true);
+  assert.equal(await hasOfflineAdvisoryFired(), true);
 });
 
 test('advisory toast fires Station 2 wording on the secondary device', async () => {
@@ -76,11 +80,11 @@ test('advisory toast fires Station 2 wording on the secondary device', async () 
   assert.equal(toasts.length, 1);
   assert.equal(
     toasts[0].msg,
-    'You are offline. Use the main tablet if you can.'
+    'You are offline. Create orders on the main tablet only — do not use this device until the connection returns.'
   );
 });
 
-test('advisory toast fires ONCE per outage and never repeats on subsequent save failures', async () => {
+test('advisory toast fires ONCE per outage and persists in nativeStore across restarts', async () => {
   const toasts = [];
   const addToast = (msg, type) => toasts.push({ msg, type });
 
@@ -88,14 +92,18 @@ test('advisory toast fires ONCE per outage and never repeats on subsequent save 
   assert.equal(first, true);
   assert.equal(toasts.length, 1);
 
+  // Stored in nativeStore
+  assert.equal(await nativeStore.getJson(ADVISORY_KEY), true);
+
   // Second failed save during the same outage: ignored
   const second = await triggerOfflineAdvisoryWith({ addToast, stationNumber: 1 }, true);
   assert.equal(second, false);
   assert.equal(toasts.length, 1, 'no second toast during the same outage');
 
   // Connection returns: reset latch
-  resetOfflineAdvisory();
-  assert.equal(hasOfflineAdvisoryFired(), false);
+  await resetOfflineAdvisory();
+  assert.equal(await hasOfflineAdvisoryFired(), false);
+  assert.equal(await nativeStore.getJson(ADVISORY_KEY), null);
 
   // Next outage fires again
   const nextOutage = await triggerOfflineAdvisoryWith({ addToast, stationNumber: 1 }, true);
@@ -103,52 +111,102 @@ test('advisory toast fires ONCE per outage and never repeats on subsequent save 
   assert.equal(toasts.length, 2);
 });
 
-// ── D4: Duplicate customer normalization & detection ─────────────────────────
+test('advisory toast fires from the real saveOrderLocalFirst code path when saving while offline', async () => {
+  // Ensure station registered
+  api.post = async () => ({ station_number: 1 });
+  await ensureStationRegistered();
 
-test('duplicate customer detection uses punctuation-insensitive normalization', () => {
+  const toasts = [];
+  const addToast = (msg, type) => toasts.push({ msg, type });
+
+  // Simulate offline
+  setSimulatedOffline(true);
+
+  // Active save while offline
+  const order = await saveOrderLocalFirst({
+    customer: { id: 1, name: 'Josie' },
+    orderType: 'delivery',
+    items: [{ product_id: 1, quantity: 1, unit_price: 100 }],
+    profileKey: 'josie',
+    addToast,
+    offlineCoreEnabled: true,
+  });
+
+  assert.ok(order);
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0].msg, /You are offline\. Keep creating orders on this tablet only/);
+
+  // Second save while still offline does not re-fire the advisory toast
+  await saveOrderLocalFirst({
+    customer: { id: 1, name: 'Josie' },
+    orderType: 'delivery',
+    items: [{ product_id: 1, quantity: 2, unit_price: 100 }],
+    profileKey: 'josie',
+    addToast,
+    offlineCoreEnabled: true,
+  });
+
+  assert.equal(toasts.length, 1, 'advisory toast fires only once per outage');
+});
+
+// ── D4: Duplicate customer normalization (Name AND Address matching) ─────────
+
+test('duplicate customer detection requires BOTH name AND address to match', () => {
   const customers = [
-    { id: 1, name: 'Aling Nena', is_active: true },
-    { id: 2, name: 'aling nena', is_active: true },
-    { id: 3, name: 'S.M. Mart', is_active: true },
-    { id: 4, name: 'SM Mart', is_active: true },
-    { id: 5, name: '7-Eleven', is_active: true },
-    { id: 6, name: '7 Eleven', is_active: true },
-    { id: 7, name: 'Mang Inasal', is_active: true },
-    { id: 8, name: 'Inactive Duplicate', is_active: false },
-    { id: 9, name: 'Inactive Duplicate', is_active: true },
+    // Duplicate pair 1: same name, matching address with minor punctuation differences
+    { id: 1, name: 'Aling Nena', address: '123 Main St, Antipolo', is_active: true },
+    { id: 2, name: 'aling nena', address: '123 Main St. Antipolo', is_active: true },
+    // Customer 3: same name as 1 & 2, but DIFFERENT address -> NOT a duplicate
+    { id: 3, name: 'Aling Nena', address: '456 Side Street, Antipolo', is_active: true },
+    // Customer 4 & 5: same name, but missing/blank address -> NOT a duplicate
+    { id: 4, name: 'Mang Juan', address: '', is_active: true },
+    { id: 5, name: 'Mang Juan', address: null, is_active: true },
+    // Duplicate pair 2: S.M. Mart vs SM Mart with matching address
+    { id: 6, name: 'S.M. Mart', address: 'Km 23 Ortigas Ext', is_active: true },
+    { id: 7, name: 'SM Mart', address: 'km 23 ortigas ext.', is_active: true },
+    // Inactive duplicate: excluded
+    { id: 8, name: 'Inactive One', address: 'Test Address', is_active: false },
+    { id: 9, name: 'Inactive One', address: 'Test Address', is_active: true },
   ];
 
   const groups = findDuplicateCustomerGroups(customers);
-  assert.ok(groups['alingnena'], 'alingnena group found');
-  assert.equal(groups['alingnena'].length, 2);
+  // alingnena:::123mainstantipolo matches 1 and 2
+  const nenaKey = 'alingnena:::123mainstantipolo';
+  assert.ok(groups[nenaKey], 'alingnena matching address group found');
+  assert.equal(groups[nenaKey].length, 2);
 
-  assert.ok(groups['smmart'], 'smmart group found');
-  assert.equal(groups['smmart'].length, 2);
+  // smmart:::km23ortigasext matches 6 and 7
+  const smKey = 'smmart:::km23ortigasext';
+  assert.ok(groups[smKey], 'smmart matching address group found');
+  assert.equal(groups[smKey].length, 2);
 
-  assert.ok(groups['7eleven'], '7eleven group found');
-  assert.equal(groups['7eleven'].length, 2);
-
-  assert.equal(groups['manginasal'], undefined, 'single customer has no duplicate group');
-  assert.equal(groups['inactiveduplicate'], undefined, 'inactive customer is excluded from duplicate groups');
+  // mang juan with blank address is NOT grouped
+  assert.equal(groups['mangjuan:::'], undefined);
+  assert.equal(Object.keys(groups).length, 2);
 
   const duplicateIds = getDuplicateCustomerIds(customers);
   assert.deepEqual(
     [...duplicateIds].sort((a, b) => a - b),
-    [1, 2, 3, 4, 5, 6]
+    [1, 2, 6, 7]
   );
-  assert.equal(countDuplicateCustomers(customers), 6);
+  assert.equal(countDuplicateCustomers(customers), 4);
 
-  const candidates = getDuplicateCandidatesFor({ id: 1, name: 'Aling Nena' }, customers);
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].id, 2);
+  const candidates1 = getDuplicateCandidatesFor({ id: 1, name: 'Aling Nena', address: '123 Main St, Antipolo' }, customers);
+  assert.equal(candidates1.length, 1);
+  assert.equal(candidates1[0].id, 2);
+
+  const candidates3 = getDuplicateCandidatesFor({ id: 3, name: 'Aling Nena', address: '456 Side Street, Antipolo' }, customers);
+  assert.equal(candidates3.length, 0, 'different address has 0 duplicate candidates');
+
+  const candidates4 = getDuplicateCandidatesFor({ id: 4, name: 'Mang Juan', address: '' }, customers);
+  assert.equal(candidates4.length, 0, 'blank address has 0 duplicate candidates');
 });
 
 test('duplicate customers are never auto-merged — they stay separate rows', () => {
   const customers = [
-    { id: 101, name: 'Aling Nena', is_active: true },
-    { id: 102, name: 'Aling Nena', is_active: true },
+    { id: 101, name: 'Aling Nena', address: '123 Main St', is_active: true },
+    { id: 102, name: 'Aling Nena', address: '123 Main St', is_active: true },
   ];
-  // Detection reports them as duplicates without modifying the array
   const count = countDuplicateCustomers(customers);
   assert.equal(count, 2);
   assert.equal(customers.length, 2);
@@ -163,8 +221,8 @@ test('post-drain notification reports receipts synced and duplicate count once p
   const addToast = (msg, type) => toasts.push({ msg, type });
 
   const customers = [
-    { id: 1, name: 'Aling Nena', is_active: true },
-    { id: 2, name: 'Aling Nena', is_active: true },
+    { id: 1, name: 'Aling Nena', address: '123 Main St', is_active: true },
+    { id: 2, name: 'Aling Nena', address: '123 Main St', is_active: true },
   ];
 
   const res = notifyDrainCompleteWith({ sent: 14, waiting: 0, customers, addToast }, true);
@@ -188,7 +246,6 @@ test('post-drain notification reports receipts synced and duplicate count once p
 // ── D8: Attention list and re-pointing ────────────────────────────────────────
 
 test('a refused record enters attention list and can be re-pointed to an active customer', async () => {
-  // Simulate outbox record rejected with 400
   api.request = async () => {
     const err = new Error('Customer Aling Nena was deactivated');
     err.status = 400;
@@ -259,7 +316,6 @@ test('refused receipts are NEVER auto-discarded or silently resolved', async () 
 // ── D15: Network failure is NOT a 401 ─────────────────────────────────────────
 
 test('a network failure throws a network error and does NOT clear session or redirect to /login', async () => {
-  // Mock global fetch to reject with network failure
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {
     throw new TypeError('Failed to fetch (network offline)');
@@ -295,18 +351,15 @@ test('checkIsOnline respects simulated offline mode (D10)', () => {
 // ── D18: Off-switch behavior ─────────────────────────────────────────────────
 
 test('with V25_OFFLINE_CORE off, advisory toasts and drain toasts are suppressed', async () => {
-  // When switch is off (tested by asserting default behavior)
   assert.equal(V25_OFFLINE_CORE, false);
 
   const toasts = [];
   const addToast = (msg, type) => toasts.push({ msg, type });
 
-  // triggerOfflineAdvisory returns false when V25_OFFLINE_CORE is false
   const advisoryRes = await triggerOfflineAdvisory({ addToast, stationNumber: 1 });
   assert.equal(advisoryRes, false);
   assert.equal(toasts.length, 0);
 
-  // notifyDrainComplete returns false when V25_OFFLINE_CORE is false
   const drainRes = notifyDrainComplete({ sent: 5, waiting: 0, customers: [], addToast });
   assert.equal(drainRes, false);
   assert.equal(toasts.length, 0);

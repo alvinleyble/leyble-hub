@@ -5,6 +5,9 @@ import { outboxKey } from './keys.js';
 import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
 import { orderTotals } from '../components/pos/posMath.js';
+import { V25_OFFLINE_CORE } from '../config/features.js';
+import { checkIsOnline } from './status.js';
+import { triggerOfflineAdvisory, triggerOfflineAdvisoryWith } from './advisory.js';
 
 // D2 — The POS is local-first, always.
 // Every save goes to the device first, online or offline, every day. Save writes the
@@ -23,6 +26,7 @@ import { orderTotals } from '../components/pos/posMath.js';
  * @param {Array}  params.items
  * @param {string} [params.profileKey]
  * @param {string} [params.createdAt]
+ * @param {Function} [params.addToast]
  * @returns {Promise<object>} The local order object
  */
 export async function saveOrderLocalFirst({
@@ -33,6 +37,8 @@ export async function saveOrderLocalFirst({
   items = [],
   profileKey = null,
   createdAt = null,
+  addToast = null,
+  offlineCoreEnabled = V25_OFFLINE_CORE,
 }) {
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
@@ -118,8 +124,20 @@ export async function saveOrderLocalFirst({
 
   localOrder._outboxId = outboxRecord.id;
 
-  // 3. Attempt drain in background
-  drainOutbox().catch(() => {});
+  // 3. Attempt drain in background and trigger advisory toast if saving while offline (D11)
+  if (!checkIsOnline()) {
+    await triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
+  } else {
+    drainOutbox()
+      .then((res) => {
+        if (res && res.failed > 0 && !checkIsOnline()) {
+          triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
+        }
+      })
+      .catch(() => {
+        triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
+      });
+  }
 
   return localOrder;
 }
