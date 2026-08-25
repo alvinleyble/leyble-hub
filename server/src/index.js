@@ -22,8 +22,10 @@ const app = express();
 // origin is required. http://localhost:5173 is for local browser dev only.
 const allowedOrigins = [
   'http://localhost:5173',
+  'http://localhost:5174',
   'https://localhost',
   'capacitor://localhost',
+  'http://100.96.45.91:5173'
 ];
 app.use(
   cors({
