@@ -73,6 +73,23 @@ than treating a passing run as "all correct".
   demotes the previous one to Helper) + validated in `syncPersonnel` in
   [server/src/routes/orders.js](server/src/routes/orders.js) (400 on >1 Driver).
 
+### Pricing and stock — the two rules that are invisible on screen
+
+**Saved prices are the pricing source** ([ADR 0009](docs/adr/0009-custom-pricing-derived-from-saved-prices.md)).
+A customer gets custom pricing when `customer_product_prices` has rows for them on that
+`order_type` — never because of what `customer_type` says. `customer_type`
+(`regular`/`wholesaler`/`discounted`/`markup`) is a **label the owners read**, nothing else.
+Ask [`client/src/utils/customerTypes.js`](client/src/utils/customerTypes.js) (`hasCustomPricing`,
+`customerTypeLabel`, `customerTypeBadge`, `normalizeCustomerType`) rather than testing the string
+in a new screen — the old per-screen type lists are exactly how agreed prices went unread for 35
+live accounts. Saving a price never re-tags the customer.
+
+**Stock deducts at dispatch, not at save** ([ADR 0012](docs/adr/0012-stock-deducts-at-dispatch-not-at-save.md)):
+`pending → in_transit` for a delivery, `pending → completed` for a pickup. Creating, finalizing
+and draining an order move nothing, which is what keeps inventory out of the offline path. Every
+stock decision is gated on `isStockOut()` (net audit-log delta), not on the status name — see
+[docs/architecture/order-lifecycle.md](docs/architecture/order-lifecycle.md#stock-movement).
+
 ### Frontend patterns (follow these exactly — consistency matters)
 
 **Searchable combobox** (product pickers everywhere):
@@ -181,7 +198,10 @@ Release 1 lands as four pieces, all dark, switched on together.
   with no server round trip. `client/src/offline/station.js` issues them; display goes
   through `orderRef()` in `client/src/utils/orderRef.js` — use it anywhere an order was
   shown as `#<id>`. The row id stays internal. Pre-V2.5 orders have no receipt number and
-  are never backfilled.
+  are never backfilled. Screens that hold only an id (audit entries, a ticket's related
+  order, a review-queue tab) use `orderRefFromId(id, receiptNumber)` and get the receipt
+  number from a `LEFT JOIN orders` their query now carries — the id alone is never the
+  display name ([ADR 0010](docs/adr/0010-receipt-number-addresses-order-across-sync-boundary.md)).
 - **The receipt number is also the anti-duplicate key.** `POST /orders` answers a
   receipt number it already holds with the stored order and a `200` — never an error,
   never a second row, so the device can clear its outbox. Mechanism is table-agnostic in
@@ -268,7 +288,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | `products` has no case-size field | `units_per_case INT NOT NULL DEFAULT 1` added (migration 012) |
 | `order_items.quantity INT` | **`NUMERIC(10,2)`** (migration 013) — supports partial cases |
 | `inventory_audit_logs.delta INT` | **`NUMERIC`** (migration 014) |
-| `customers.customer_type IN ('retail','wholesale','suki')` | **`IN ('regular','wholesaler','discounted','markup','unassigned')`** (migrations 015, 025, 031, 032); default `'regular'` |
+| `customers.customer_type IN ('retail','wholesale','suki')` | **`IN ('regular','wholesaler','discounted','markup')`** (migrations 015, 025, 031, 032, 034); default `'regular'`. It is a **descriptive tag only** — it carries no pricing logic ([ADR 0009](docs/adr/0009-custom-pricing-derived-from-saved-prices.md)) |
 | `orders.driver_id`, `orders.helper_id` FK columns | **Dropped** (migration 016); replaced by `order_personnel` join table |
 | `personnel.role_label VARCHAR(100)` | **Renamed to `remarks TEXT`** (migration 017) |
 | `orders` has no `order_type` | `order_type VARCHAR(20) IN ('delivery','pickup') DEFAULT 'delivery'` (migration 018) |

@@ -12,6 +12,7 @@ import { customerListEscPos } from '../shared/listEscPos';
 import { customerMatches } from '../../utils/customerSearch';
 import { V25_OFFLINE_CORE } from '../../config/features';
 import { findDuplicateCustomerGroups, getDuplicateCustomerIds, getDuplicateCandidatesFor } from '../../utils/duplicateCustomers';
+import { customerTypeBadge, customerTypeLabel, normalizeCustomerType } from '../../utils/customerTypes';
 
 const TOP_BTN = `flex h-12 items-center gap-1.5 rounded-xl bg-v2-raised px-4 text-base font-bold text-v2-text
                  hover:bg-v2-border transition-colors duration-100 disabled:opacity-40
@@ -27,7 +28,7 @@ export default function CustomersV2Page() {
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState('');
   const [showInactive, setShowInactive] = useState(false);
-  const [typeFilter, setTypeFilter]     = useState('all'); // 'all' | 'wholesaler' | 'regular'
+  const [typeFilter, setTypeFilter]     = useState('all'); // 'all' or any CUSTOMER_TYPES value
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
   const [mergeCandidate, setMergeCandidate] = useState(null);
@@ -75,7 +76,7 @@ export default function CustomersV2Page() {
   const filtered = useMemo(() => {
     return customers.filter((c) => {
       const matchSearch = customerMatches(c, search) || (c.phone && c.phone.toLowerCase().includes(search.toLowerCase()));
-      const matchType = typeFilter === 'all' || c.customer_type === typeFilter;
+      const matchType = typeFilter === 'all' || normalizeCustomerType(c.customer_type) === typeFilter;
       return matchSearch && matchType;
     });
   }, [customers, search, typeFilter]);
@@ -178,15 +179,7 @@ export default function CustomersV2Page() {
               aria-pressed={typeFilter === 'regular'}
               className={pill(typeFilter === 'regular')}
             >
-              Regular ({customers.filter((c) => c.customer_type === 'regular').length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setTypeFilter('unassigned')}
-              aria-pressed={typeFilter === 'unassigned'}
-              className={pill(typeFilter === 'unassigned')}
-            >
-              Unassigned ({customers.filter((c) => c.customer_type === 'unassigned').length})
+              Regular ({customers.filter((c) => normalizeCustomerType(c.customer_type) === 'regular').length})
             </button>
           </div>
         )}
@@ -241,27 +234,9 @@ export default function CustomersV2Page() {
                     </td>
 
                     <td className="hidden px-5 py-4 sm:table-cell">
-                      {c.customer_type === 'wholesaler' ? (
-                        <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-sm font-semibold text-amber-300">
-                          Wholesaler
-                        </span>
-                      ) : c.customer_type === 'discounted' ? (
-                        <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-1 text-sm font-semibold text-blue-300">
-                          Discounted
-                        </span>
-                      ) : c.customer_type === 'markup' ? (
-                        <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-2.5 py-1 text-sm font-semibold text-purple-300">
-                          Markup
-                        </span>
-                      ) : c.customer_type === 'unassigned' ? (
-                        <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-sm font-semibold text-red-400">
-                          Unassigned
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-bg px-2.5 py-1 text-sm font-semibold text-v2-muted">
-                          Regular
-                        </span>
-                      )}
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-sm font-semibold ${customerTypeBadge(c.customer_type, 'dark')}`}>
+                        {customerTypeLabel(c.customer_type)}
+                      </span>
                     </td>
 
                     <td className="hidden px-5 py-4 font-mono text-sm text-v2-muted md:table-cell">

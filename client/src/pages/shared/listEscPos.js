@@ -1,6 +1,8 @@
 // ESC/POS generators for the Product price list and Customer list (80mm, 48 chars/line).
 // Sent directly to a Bluetooth thermal printer on Android — mirrors orders/escposReceipt.js.
 
+import { customerTypeLabel } from '../../utils/customerTypes';
+
 const W   = 48;
 const ESC = 0x1B;
 const GS  = 0x1D;
@@ -159,7 +161,7 @@ export function customerListEscPos(customers) {
     b(ESC, 0x45, 0x01);
     for (const l of wrap(c.name)) ln(l);
     b(ESC, 0x45, 0x00);
-    ln(`  ${c.customer_type === 'wholesaler' ? 'Wholesaler' : c.customer_type === 'discounted' ? 'Discounted' : c.customer_type === 'markup' ? 'Markup' : c.customer_type === 'unassigned' ? 'Unassigned' : 'Regular'}`);
+    ln(`  ${customerTypeLabel(c.customer_type)}`);
     if (c.address) for (const l of wrap(`  ${c.address}`)) ln(l);
     ln();
   }

@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { lineTotal, round2, totalCases } from './posMath';
 import { breakdownForItem } from '../../pages/orders/OrderCloseForm';
 import { orderRef } from '../../utils/orderRef';
+import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -69,7 +70,6 @@ export default function OrderViewModal({
   // Only a live order can be edited, reprinted or cancelled — matching the row buttons
   // in POS History, which grey out on anything already cancelled.
   const canAct = order.status === 'pending';
-  const isWholesaler = ['wholesaler', 'discounted', 'markup', 'unassigned'].includes(order.customer_type);
   const st = ORDER_STATUS[order.status] ?? {
     label: order.status,
     color: 'border-v2-border bg-v2-raised text-v2-muted',
@@ -100,27 +100,9 @@ export default function OrderViewModal({
               <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${st.color}`}>
                 {st.label}
               </span>
-              {order.customer_type === 'wholesaler' ? (
-                <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-300">
-                  Wholesaler
-                </span>
-              ) : order.customer_type === 'discounted' ? (
-                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-0.5 text-xs font-bold text-blue-300">
-                  Discounted
-                </span>
-              ) : order.customer_type === 'markup' ? (
-                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-2.5 py-0.5 text-xs font-bold text-purple-300">
-                  Markup
-                </span>
-              ) : order.customer_type === 'unassigned' ? (
-                <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-0.5 text-xs font-bold text-red-400">
-                  Unassigned
-                </span>
-              ) : (
-                <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-raised px-2.5 py-0.5 text-xs font-bold text-v2-muted">
-                  Regular
-                </span>
-              )}
+              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${customerTypeBadge(order.customer_type, 'dark')}`}>
+                {customerTypeLabel(order.customer_type)}
+              </span>
               <span className="inline-flex items-center rounded-full border border-v2-pill-border bg-v2-pill-active px-2.5 py-0.5 text-xs font-bold text-v2-pill-text">
                 {order.order_type === 'pickup' ? '🏪 Pickup' : '🚚 Delivery'}
               </span>

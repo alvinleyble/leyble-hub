@@ -16,7 +16,7 @@ state. Pickup orders skip `in_transit`.
 - **in_transit** — out for delivery (delivery orders only).
 - **completed** — delivered / picked up, deposit not yet reconciled.
 - **done** — closed; bottle returns counted, deposit folded into the total.
-- **cancelled** — voided; any deducted stock is restored.
+- **cancelled** — voided; stock is restored only if it had actually been dispatched.
 
 ## Allowed transitions
 
@@ -45,15 +45,25 @@ timestamps; `done`/`cancelled` set `closed_at`.
 Stock changes only through `applyDeltaMap` (`lib/inventory.js`), inside a transaction, and always
 write an `inventory_audit_logs` row.
 
-- **Deduct** on finalize: when an order transitions `draft → pending` (or is created directly as
-  `pending`), ordered quantities are deducted from `products.current_stock`.
-- **Restore** on `→ cancelled`: when a `pending` (or previously deducted) order is cancelled,
-  deducted stock is restored. Legacy pre-cutover `pending` orders that never had stock deducted
-  safely skip stock restoration on cancel.
-- **Reconcile** on item edits (`PATCH /:id`): for orders with deducted stock, the diff between old
-  and new item quantities (`oldQty − newQty`) is applied as deltas. Legacy pre-cutover `pending`
-  orders safely skip stock reconciliation on edit.
+**Stock moves at dispatch, not at save** ([ADR 0012](../adr/0012-stock-deducts-at-dispatch-not-at-save.md)).
+V2 briefly deducted at creation; that made stock an offline-affected quantity (an order saved
+blind at 2pm moved inventory when the outbox drained at 5pm) and it bypassed the batch-review
+queues. Creating, finalizing and parking an order now move nothing.
+
+- **Deduct** on the dispatch transition: `pending → in_transit` for a delivery,
+  `pending → completed` for a pickup.
+- **Restore** on `→ cancelled`, and on stepping back behind that boundary
+  (`in_transit`/`completed` → `pending`).
+- **Reconcile** on item edits (`PATCH /:id`) while the goods are out: the diff between old and new
+  quantities (`oldQty − newQty`) is applied as deltas.
 - **Drafts never touch stock.**
+
+All three are gated on `isStockOut(orderId)` — the running sum of the order's own audit-log
+deltas, i.e. *are the goods out right now* — rather than on the status name alone. That is what
+keeps the two populations of pre-existing rows correct: orders from before the V2 window were
+never deducted (cancelling one must restore nothing), and orders from inside it were deducted at
+save (dispatching one must not deduct a second time). It also makes re-dispatching after a step
+back deduct again, which "was it ever deducted" would have silently skipped.
 
 ## Totals, deposits & bottle returns
 

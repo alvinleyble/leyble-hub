@@ -44,8 +44,8 @@ script (not run automatically by `migrate.js`/`seed.js`). See
 | `is_active` | BOOLEAN | soft-delete flag |
 
 ### `customers` (003, altered by 015, 025, 031, 032)
-`customer_type` ∈ **`('regular','wholesaler','discounted','markup','unassigned')`** default `'regular'`. (History: started as
-`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032).) In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`. Fields: `name`, `address`, `phone`, `notes`, `is_active`.
+`customer_type` ∈ **`('regular','wholesaler','discounted','markup')`** default `'regular'`. (History: started as
+`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032) → `unassigned` collapsed into `regular` (034).) In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`. Fields: `name`, `address`, `phone`, `notes`, `is_active`.
 
 ### `customer_product_prices` (004, altered by 020, 026) — **append-only**
 Custom price history. Every save inserts a new row. The **most recent row** per

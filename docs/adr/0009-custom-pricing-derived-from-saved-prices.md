@@ -61,3 +61,9 @@ This is a correction rather than a new pricing policy: operators previously had 
 - The "Save custom price?" flow saves prices cleanly without triggering background customer conversions.
 - The 35 `discounted` and `markup` customers' agreed prices apply automatically on order creation.
 
+## Implementation notes (V3.0 Slice 2)
+
+- Migration `034_collapse_unassigned_customer_type.sql` relabels any `unassigned` row to `regular` and narrows the check constraint to the four surviving types.
+- The read rule lives in one place client-side: `hasCustomPricing()` in [`client/src/utils/customerTypes.js`](../../client/src/utils/customerTypes.js), alongside the shared labels/badges and `normalizeCustomerType()` (which keeps any pre-034 payload reading as `Regular`). The repeated `['wholesaler','discounted','markup','unassigned'].includes(...)` checks — the exact fragility this ADR names — are gone from every screen.
+- The "Save custom price?" prompt is one step everywhere (V1 `OrderCreateModal`, V2 `POSSavePriceModal`); the second "Select Customer Type" step and its `PATCH /customers/:id` conversion call are removed.
+

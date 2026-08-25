@@ -3,27 +3,12 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
 import { customerMatches } from '../../utils/customerSearch';
+import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
 
 const FIELD = `w-full h-12 rounded-lg border border-v2-border bg-v2-bg px-4 text-base text-v2-text
                placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
 
 const LABEL = 'block text-sm font-bold uppercase tracking-wide text-v2-muted mb-1';
-
-const TYPE_BADGE = {
-  regular:    'border border-v2-border bg-v2-raised text-v2-muted',
-  discounted: 'border border-blue-500/30 bg-blue-500/20 text-blue-300',
-  wholesaler: 'border border-amber-500/30 bg-amber-500/20 text-amber-300',
-  markup:     'border border-purple-500/30 bg-purple-500/20 text-purple-300',
-  unassigned: 'border border-red-500/30 bg-red-500/20 text-red-400',
-};
-
-const TYPE_LABEL = {
-  regular:    'Regular',
-  discounted: 'Discounted',
-  wholesaler: 'Wholesaler',
-  markup:     'Markup',
-  unassigned: 'Unassigned',
-};
 
 // Customer Merge Modal (Housekeeping)
 // Safely merges duplicate customer profiles into a single target customer:
@@ -153,8 +138,8 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-v2-text">{targetCustomer.name}</span>
                     <span className="font-mono text-xs text-v2-muted">#{targetCustomer.id}</span>
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${TYPE_BADGE[targetCustomer.customer_type] || TYPE_BADGE.regular}`}>
-                      {TYPE_LABEL[targetCustomer.customer_type] || targetCustomer.customer_type}
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${customerTypeBadge(targetCustomer.customer_type, 'dark')}`}>
+                      {customerTypeLabel(targetCustomer.customer_type)}
                     </span>
                   </div>
                   {targetCustomer.address && (
@@ -215,8 +200,8 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
                                 <p className="truncate text-xs text-v2-muted">{c.address}</p>
                               )}
                             </div>
-                            <span className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${TYPE_BADGE[c.customer_type] || TYPE_BADGE.regular}`}>
-                              {TYPE_LABEL[c.customer_type] || c.customer_type}
+                            <span className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${customerTypeBadge(c.customer_type, 'dark')}`}>
+                              {customerTypeLabel(c.customer_type)}
                             </span>
                           </button>
                         </li>

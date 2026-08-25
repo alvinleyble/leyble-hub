@@ -39,3 +39,11 @@ We are reverting the stock deduction timing back to V1's **deduct-on-dispatch** 
 - Inventory movements accurately reflect physical goods leaving the premises.
 - Offline order creation carries zero stock calculation overhead and zero risk of inventory desynchronization during network outages.
 - Operational note: If an operator creates a pickup order but fails to mark it `completed`, stock will remain un-deducted until status advancement.
+
+## Implementation note (V3.0 Slice 2)
+
+Both directions are gated on `isStockOut(orderId)` in [`server/src/lib/inventory.js`](../../server/src/lib/inventory.js) — the running sum of the order's own `inventory_audit_logs` deltas, i.e. *are the goods out right now* — which replaces V2's `hasDeductedStock` ("was it ever"). Three cases need that distinction:
+
+1. Orders created inside the V2 window are `pending` with stock already deducted. Dispatching one must not deduct it a second time.
+2. Orders created before that window were never deducted. Cancelling one must not hand back stock that never left.
+3. An order can cross the boundary more than once (dispatch → step back to `pending` → dispatch again). "Was it ever" answers yes forever after the first crossing, which would make the second dispatch a silent no-op.

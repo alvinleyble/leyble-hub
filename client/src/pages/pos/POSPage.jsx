@@ -15,6 +15,7 @@ import { roundQty, orderTotals } from '../../components/pos/posMath';
 import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintReceipt } from '../orders/usePrintReceipt';
 import { orderRef } from '../../utils/orderRef.js';
+import { hasCustomPricing } from '../../utils/customerTypes.js';
 import { V25_OFFLINE_CORE } from '../../config/features.js';
 import {
   saveOrderLocalFirst,
@@ -243,9 +244,10 @@ export default function POSPage() {
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId)) ?? null;
 
-  // Custom prices for the picked customer + channel (wholesaler, discounted, markup, unassigned).
+  // Saved prices for the picked customer + channel. ADR 0009 — every customer is asked;
+  // whether custom pricing applies is decided by whether rows come back, not by the tag.
   useEffect(() => {
-    if (!customerId || !['wholesaler', 'discounted', 'markup', 'unassigned'].includes(selectedCustomer?.customer_type)) {
+    if (!customerId) {
       setCustomPrices({});
       return;
     }
@@ -754,30 +756,11 @@ export default function POSPage() {
     setPriceSavePrompt(null);
   };
 
-  const acceptFirstPrompt = () => {
-    if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
-      persistPriceSave(false);
-    } else {
-      setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
-    }
-  };
-
-  const persistPriceSave = async (targetType) => {
+  // ADR 0009 — saving a price writes to customer_product_prices and nothing else. The
+  // customer's type is a label; it is never mutated as a side effect of pricing.
+  const persistPriceSave = async () => {
     setPriceSavePrompt((p) => ({ ...p, busy: true }));
     try {
-      if (targetType) {
-        const newType = typeof targetType === 'string' ? targetType : 'unassigned';
-        await api.patch(`/customers/${priceSavePrompt.customer.id}`, {
-          customer_type:   newType,
-          conversion_note: `custom price saved from order #${priceSavePrompt.orderId}`,
-        });
-        setCustomers((prev) =>
-          prev.map((c) =>
-            c.id === priceSavePrompt.customer.id ? { ...c, customer_type: newType } : c
-          )
-        );
-      }
-
       await Promise.all(
         priceSavePrompt.dirty.map((d) =>
           api.post(`/customers/${priceSavePrompt.customer.id}/prices`, {
@@ -1037,7 +1020,7 @@ export default function POSPage() {
       }
 
       await api.post(`/orders/${orderRefId}/status`, { status: 'cancelled' });
-      addToast(`Order ${orderRef(order)} cancelled — stock restored.`, 'success');
+      addToast(`Order ${orderRef(order)} cancelled.`, 'success');
       setConfirm(null);
       if (editOrder?.id === order.id || editOrder?.receipt_number === order.receipt_number) {
         exitEditMode({ dropOrderId: orderRefId });
@@ -1134,6 +1117,7 @@ export default function POSPage() {
           mode={mode}
           customers={customers}
           selectedCustomer={selectedCustomer}
+          customerHasSavedPrices={hasCustomPricing(customPrices)}
           onSelectCustomer={handleSelectCustomer}
           onClearCustomer={() => setCustomerId('')}
           orderType={orderType}
@@ -1227,15 +1211,14 @@ export default function POSPage() {
           onClose={() => setConfirm(null)}
         >
           This voids the order for <strong className="text-v2-text">{confirm.order.customer_name}</strong> and
-          puts the stock back. It cannot be undone.
+          puts back any stock that was already deducted. It cannot be undone.
         </POSConfirm>
       )}
 
       {/* Save Custom Price prompt (proposal §4 & save-custom-price-prompt.md) */}
       <POSSavePriceModal
         prompt={priceSavePrompt}
-        onAcceptFirst={acceptFirstPrompt}
-        onConfirmConvert={(targetType) => persistPriceSave(targetType || 'unassigned')}
+        onAcceptFirst={persistPriceSave}
         onDecline={declinePriceSave}
       />
 

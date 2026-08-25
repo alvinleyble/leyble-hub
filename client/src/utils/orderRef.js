@@ -21,8 +21,11 @@ export function orderRefWith(order, offlineCoreEnabled) {
   return `#${order?.id ?? ''}`;
 }
 
-// For the places that hold only an id (a ticket's related order, an activity log
-// entry's entity_id). There is no receipt number to show, so these keep naming the row.
-export function orderRefFromId(id) {
-  return `#${id ?? ''}`;
+// For the places that reference an order they do not hold — a ticket's related order, an
+// activity log entry's entity_id, a review-queue tab that has not loaded its order yet.
+// ADR 0010 wants those named by receipt number too, so the queries behind them now select
+// the joined orders.receipt_number and pass it here; without one (a legacy order, or a row
+// the join could not resolve) this falls back to '#<id>' as before.
+export function orderRefFromId(id, receiptNumber) {
+  return orderRef({ id, receipt_number: receiptNumber });
 }

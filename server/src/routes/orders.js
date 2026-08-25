@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
-const { applyDeltaMap, hasDeductedStock } = require('../lib/inventory');
+const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber } = require('../lib/receiptNumbers');
 const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
 
@@ -437,13 +437,11 @@ router.post('/', async (req, res, next) => {
     await syncPersonnel(client, order.id, personnel);
 
     // Drafts are ephemeral — the activity log entry is written when the draft is finalized.
-    // Finalized pending orders deduct stock immediately at creation.
+    //
+    // No stock moves here. ADR 0012 puts deduction back on the dispatch transition
+    // (in_transit for deliveries, completed for pickups), so an order that was saved on a
+    // blind tablet at 2pm and drained at 5pm does not silently move inventory at 5pm.
     if (!isDraft) {
-      const { rows: insertedItems } = await client.query(
-        'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
-        [order.id]
-      );
-      await deductStock(client, insertedItems, order.id, req.user.id, `Order ${orderLabel(order)} created`);
       await logActivity(client, {
         entityType: 'order',
         entityId:   order.id,
@@ -569,7 +567,7 @@ router.patch('/:id', async (req, res, next) => {
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
 
-      if (!isDraft && order.status !== 'cancelled' && await hasDeductedStock(client, order.id)) {
+      if (!isDraft && order.status !== 'cancelled' && await isStockOut(client, order.id)) {
         await reconcileStock(client, oldItems, items, order, req.user.id);
       }
     }
@@ -645,12 +643,7 @@ router.post('/:id/finalize', async (req, res, next) => {
     );
     await recomputeTotal(client, order.id);
 
-    const { rows: items } = await client.query(
-      'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
-      [order.id]
-    );
-    await deductStock(client, items, order.id, req.user.id, `Order ${orderLabel(order)} finalized`);
-
+    // No stock moves here either — see the note on POST / above (ADR 0012).
     await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
@@ -824,12 +817,35 @@ router.post('/:id/status', async (req, res, next) => {
       [order.id]
     );
 
-    // Stock restoration on cancellation if stock was deducted for this order
-    if (newStatus === 'cancelled') {
-      const stockDeducted = await hasDeductedStock(client, order.id);
-      if (stockDeducted) {
-        await restoreStock(client, items, order.id, req.user.id, `Order ${orderLabel(order)} cancelled`);
-      }
+    // ADR 0012 — stock moves with the goods, not with the paperwork. A delivery deducts
+    // when it is dispatched (in_transit); a pickup when the customer takes it (completed).
+    //
+    // Both directions are guarded by isStockOut rather than by the transition alone,
+    // because the two are not equivalent for every row in the table. Orders created during
+    // the V2 window were deducted at save, so dispatching one now must not deduct it a
+    // second time; orders created before that window were never deducted at all, so
+    // cancelling one must not hand back stock that never left.
+    const stockDeducted = await isStockOut(client, order.id);
+
+    const isDeductTransition =
+      (order.order_type === 'delivery' && newStatus === 'in_transit') ||
+      (order.order_type === 'pickup'   && newStatus === 'completed' && order.status === 'pending');
+
+    if (isDeductTransition && !stockDeducted) {
+      await deductStock(client, items, order.id, req.user.id,
+        `Order ${orderLabel(order)} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
+    }
+
+    // Restore on cancellation, and on stepping back behind the deduction boundary.
+    const isRestoreTransition =
+      newStatus === 'cancelled' ||
+      (newStatus === 'pending' && ['in_transit', 'completed'].includes(order.status));
+
+    if (isRestoreTransition && stockDeducted) {
+      await restoreStock(client, items, order.id, req.user.id,
+        newStatus === 'cancelled'
+          ? `Order ${orderLabel(order)} cancelled`
+          : `Order ${orderLabel(order)} status reverted to pending`);
     }
 
     const STEP_BACK = new Set([

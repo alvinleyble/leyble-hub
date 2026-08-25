@@ -522,7 +522,7 @@ export default function OrdersPage() {
                     </label>
                   </th>
                 )}
-                <th className="text-left px-5 py-3 font-semibold w-28">#</th>
+                <th className="text-left px-5 py-3 font-semibold w-28">Receipt</th>
                 <th className="text-left px-5 py-3 font-semibold">Customer</th>
                 <th className="text-right px-5 py-3 font-semibold w-36">Total</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell w-36">Date</th>

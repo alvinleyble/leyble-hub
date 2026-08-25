@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
+import { CUSTOMER_TYPE_OPTIONS } from '../../utils/customerTypes';
 
 const FIELD = `w-full h-12 rounded-lg border border-v2-border bg-v2-bg px-4 text-base text-v2-text
                placeholder:text-v2-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent`;
@@ -98,11 +99,9 @@ export default function CustomerCreateModal({ onClose, onSaved }) {
                 onChange={set('customer_type')}
                 className={FIELD}
               >
-                <option value="regular">Regular</option>
-                <option value="discounted">Discounted</option>
-                <option value="wholesaler">Wholesaler</option>
-                <option value="markup">Markup</option>
-                <option value="unassigned">Unassigned</option>
+                {CUSTOMER_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
             </div>
 
