@@ -1,22 +1,22 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
-import Stepper from '../../components/ui/Stepper';
 import Combobox from '../../components/ui/Combobox';
-import ProductSearchBar from '../../components/ui/ProductSearchBar';
 import Modal from '../../components/ui/Modal';
 import { orderRef } from '../../utils/orderRef';
+import POSProductGrid from '../../components/pos/POSProductGrid';
+import CaseStepper from '../../components/pos/CaseStepper';
+import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
+const INPUT = `w-full h-11 px-3 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
-// Customer matcher for the shared Combobox — empty query shows the full list.
 const customerMatches = (c, q) => {
   const s = q.trim().toLowerCase();
   return s === '' ? true : c.name.toLowerCase().includes(s);
@@ -32,57 +32,53 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const isRealEdit    = isEdit && !isDraftResume;
   const isDraftMode   = !isRealEdit;
 
-  const [customers, setCustomers]         = useState([]);
-  const [products, setProducts]           = useState([]);
-  const [activePersonnel, setActivePersonnel] = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [saving, setSaving]               = useState(false);
+  const [customers, setCustomers]               = useState([]);
+  const [products, setProducts]                 = useState([]);
+  const [activePersonnel, setActivePersonnel]   = useState([]);
+  const [loading, setLoading]                   = useState(true);
+  const [saving, setSaving]                     = useState(false);
 
-  const [orderType, setOrderType]         = useState(editOrder?.order_type ?? 'delivery');
-  const [customerId, setCustomerId]       = useState(editOrder?.customer_id ?? '');
+  const [orderType, setOrderType]               = useState(editOrder?.order_type ?? 'delivery');
+  const [customerId, setCustomerId]             = useState(editOrder?.customer_id ? String(editOrder.customer_id) : '');
   const [creatingCustomer, setCreatingCustomer] = useState(false);
-  const [customPrices, setCustomPrices]   = useState({});
-  const [items, setItems]                 = useState(
+  const [customPrices, setCustomPrices]         = useState({});
+  const [items, setItems]                       = useState(
     editOrder?.items?.map((i) => ({
-      _key:                   Math.random(),
+      _key:                   i.id || Math.random(),
       requires_bottle_return: i.requires_bottle_return ?? false,
       product_id:             String(i.product_id),
       product_name:           i.product_name,
       sku:                    i.sku || '',
-      unit:                   i.unit,
-      quantity:               String(i.quantity),
+      unit:                   i.unit || 'cs',
+      quantity:               Number(i.quantity),
       unit_price:             String(i.unit_price),
-      unit_deposit_fee:       String(i.unit_deposit_fee),
-      units_per_case:         i.units_per_case ?? 1,
+      unit_deposit_fee:       Number(i.unit_deposit_fee) || 0,
+      units_per_case:         Number(i.units_per_case) || 1,
+      _priceEdited:           true,
     })) ?? []
   );
-  // _key of a line to briefly highlight after it's added or its qty is bumped.
-  const [flashKey, setFlashKey] = useState(null);
-  const flashTimer = useRef(null);
+
   const [assignedPersonnel, setAssignedPersonnel] = useState(
     editOrder?.personnel?.map((p) => ({ id: p.personnel_id, role: p.role })) ?? []
   );
-  const [notes, setNotes] = useState(editOrder?.notes ?? '');
-  const [errors, setErrors] = useState({});
-
-  // ── Save-custom-price prompt ─────────────────────────────────────────────
-  // Fires after a successful submit (create, draft finalize, or real-edit) when any line's
-  // typed unit_price differs from priceFor() — see docs/product/proposals/save-custom-price-prompt.md.
-  // { step: 'first' | 'second', orderId, customer, orderType, dirty: [...], busy }
-  const [priceSavePrompt, setPriceSavePrompt] = useState(null);
+  const [notes, setNotes]                         = useState(editOrder?.notes ?? '');
+  const [errors, setErrors]                       = useState({});
 
   // ── Adjustment ────────────────────────────────────────────────────────────
-  // Saved separately via PATCH /orders/:id/adjustment after the order itself is
-  // created/edited (the create/edit payload doesn't carry adjustment fields).
   const [adjExpanded, setAdjExpanded] = useState(isRealEdit && Number(editOrder?.adjustment) !== 0);
   const [adjValue, setAdjValue]       = useState(isRealEdit && Number(editOrder?.adjustment) ? String(editOrder.adjustment) : '');
   const [adjReason, setAdjReason]     = useState(isRealEdit ? (editOrder?.adjustment_reason ?? '') : '');
 
-  // ── Draft auto-save state ────────────────────────────────────────────────────
-  const [draftId, setDraftId]           = useState(isDraftResume ? editOrder.id : null);
-  const [draftStatus, setDraftStatus]   = useState('idle'); // 'idle' | 'saving' | 'saved'
+  // ── Draft auto-save state ──────────────────────────────────────────────────
+  const [draftId, setDraftId]                     = useState(isDraftResume ? editOrder.id : null);
+  const [draftStatus, setDraftStatus]             = useState('idle'); // 'idle' | 'saving' | 'saved'
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
-  const creatingDraftRef = useRef(false);
+  const [confirmingReset, setConfirmingReset]     = useState(false);
+  const creatingDraftRef                          = useRef(false);
+
+  // ── Save-custom-price prompt ───────────────────────────────────────────────
+  const [priceSavePrompt, setPriceSavePrompt] = useState(null);
+  const [convertTarget, setConvertTarget]     = useState('unassigned');
 
   useEffect(() => {
     Promise.all([
@@ -97,7 +93,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       })
       .catch(() => addToast('Failed to load form data.', 'error'))
       .finally(() => setLoading(false));
-  }, []); // eslint-disable-line
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId));
 
@@ -119,16 +115,14 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const activeCustomers = customers.filter((c) => c.is_active);
   const activeProducts  = products.filter((p) => p.is_active);
 
-  // Quick-add a customer straight from the order's customer picker — name only, defaults to an
-  // Unassigned Customer. Adds them to the list and selects them so the order can proceed without
-  // leaving the modal; phone/address/notes can be filled in later from the Customers page.
+  // Quick-add a customer straight from the order's customer picker
   const handleCreateCustomer = async (name) => {
     setCreatingCustomer(true);
     try {
       const created = await api.post('/customers', { name, customer_type: 'unassigned' });
       setCustomers((prev) => [...prev, created]);
       setCustomerId(String(created.id));
-      addToast(`${created.name} added as Unassigned Customer.`, 'success');
+      addToast(`${created.name} added as Customer.`, 'success');
     } catch (err) {
       addToast(err.message || 'Failed to create customer.', 'error');
     } finally {
@@ -136,92 +130,91 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     }
   };
 
-  // ── Line item helpers ──────────────────────────────────────────────────────
-
-  // Briefly highlight a line (after add / qty bump) so it's obvious where it landed.
-  const flash = (key) => {
-    setFlashKey(key);
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlashKey(null), 1000);
-  };
-
-  // Resolve the price that applies to a product (wholesaler custom price → base price).
+  // Resolve the price that applies to a product
   const priceFor = (product) => {
     const customEntry = customPrices[product.id];
     return customEntry ? Number(customEntry.custom_unit_price) : Number(product.base_wholesale_price);
   };
 
-  // Tapping a product in the search bar prepends a fully-populated line — newest on top so
-  // it's right under the bar with no scrolling on long orders.
+  // Re-price untouched lines when customer's custom prices arrive or orderType changes
+  useEffect(() => {
+    if (isRealEdit) return;
+    setItems((prev) => prev.map((i) => {
+      if (i._priceEdited) return i;
+      const product = products.find((p) => String(p.id) === i.product_id);
+      if (!product) return i;
+      const next = String(priceFor(product));
+      return next === i.unit_price ? i : { ...i, unit_price: next };
+    }));
+  }, [customPrices, orderType, products]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Map of quantities in order per product id
+  const orderQty = useMemo(() => {
+    const map = {};
+    items.forEach((i) => { map[i.product_id] = (map[i.product_id] || 0) + Number(i.quantity); });
+    return map;
+  }, [items]);
+
+  // Tapping a product card in the grid adds 0.5 cases (both for new and existing lines)
   const addProduct = (product) => {
-    const item = {
-      _key:                   Math.random(),
-      requires_bottle_return: product.requires_bottle_return || false,
-      product_id:             String(product.id),
-      product_name:           product.name,
-      sku:                    product.sku || '',
-      unit:                   product.unit,
-      quantity:               '1',
-      unit_price:             String(priceFor(product)),
-      unit_deposit_fee:       String(product.deposit_fee),
-      units_per_case:         product.units_per_case || 1,
-    };
-    setItems((prev) => [item, ...prev]);
-    flash(item._key);
-  };
-
-  // The + on the search-bar row (tap or hold) adds half a case. Functional update so press-and-
-  // hold repeats step correctly off the latest quantity.
-  const bumpProduct = (product) => {
-    setItems((prev) => prev.map((i) =>
-      i.product_id === String(product.id)
-        ? { ...i, quantity: String(Math.round(((Number(i.quantity) || 0) + 0.5) * 10) / 10) }
-        : i
-    ));
-  };
-
-  // The − drops half a case; the line is removed once it reaches 0 (never negative).
-  const subProduct = (product) => {
     setItems((prev) => {
-      const i = prev.find((x) => x.product_id === String(product.id));
-      if (!i) return prev;
-      const next = Math.round(((Number(i.quantity) || 0) - 0.5) * 10) / 10;
-      return next <= 0
-        ? prev.filter((x) => x._key !== i._key)
-        : prev.map((x) => (x._key === i._key ? { ...x, quantity: String(next) } : x));
+      const existing = prev.find((i) => i.product_id === String(product.id));
+      if (existing) {
+        return prev.map((i) =>
+          i._key === existing._key
+            ? { ...i, quantity: roundQty(Number(i.quantity) + 0.5) }
+            : i
+        );
+      }
+      return [
+        {
+          _key:                   `${product.id}-${Date.now()}`,
+          requires_bottle_return: product.requires_bottle_return || false,
+          product_id:             String(product.id),
+          product_name:           product.name,
+          sku:                    product.sku || '',
+          unit:                   product.unit || 'cs',
+          quantity:               0.5,
+          unit_price:             String(priceFor(product)),
+          unit_deposit_fee:       product.requires_bottle_return ? Number(product.deposit_fee) : 0,
+          units_per_case:         Number(product.units_per_case) || 1,
+          _priceEdited:           false,
+        },
+        ...prev,
+      ];
     });
+  };
+
+  const stepItem = (key, delta) => {
+    setItems((prev) => {
+      const item = prev.find((i) => i._key === key);
+      if (!item) return prev;
+      const next = roundQty(Number(item.quantity) + delta);
+      return next <= 0
+        ? prev.filter((i) => i._key !== key)
+        : prev.map((i) => (i._key === key ? { ...i, quantity: next } : i));
+    });
+  };
+
+  const updateItemPrice = (key, value) => {
+    setItems((prev) => prev.map((i) =>
+      i._key === key ? { ...i, unit_price: value, _priceEdited: true } : i
+    ));
   };
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
-  const updateItem = (key, field, value) =>
-    setItems((prev) => prev.map((i) => i._key === key ? { ...i, [field]: value } : i));
-
-  const lineTotal = (item) => {
-    const qty   = Number(item.quantity) || 0;
-    const price = Number(item.unit_price) || 0;
-    return qty * price;
-  };
-
-  const grandTotal = items.reduce((sum, i) => sum + lineTotal(i), 0);
-
-  // ── Personnel helpers ──────────────────────────────────────────────────────
-
-  const isAssigned = (id) => assignedPersonnel.some((p) => p.id === id);
-
+  // Personnel helpers
   const togglePersonnel = (person) => {
     setAssignedPersonnel((prev) => {
       if (prev.some((p) => p.id === person.id)) {
         return prev.filter((p) => p.id !== person.id);
       }
-      // Only one Driver per order — first assignee takes the spot, the rest start as Helpers.
       const hasDriver = prev.some((p) => p.role === 'Driver');
       return [...prev, { id: person.id, role: hasDriver ? 'Helper' : 'Driver' }];
     });
   };
 
-  // Making someone the Driver demotes the previous Driver to Helper (radio-button
-  // behaviour) so an order never has more than one Driver.
   const setPersonnelRole = (personId, role) =>
     setAssignedPersonnel((prev) =>
       prev.map((p) => {
@@ -231,11 +224,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       })
     );
 
-  // ── Draft auto-save ──────────────────────────────────────────────────────────
-
-  // Body for draft create/update. Only rows with a product chosen are sent; blank
-  // quantity/price are tolerated server-side (a draft can be incomplete). customer_id
-  // is omitted while the search box is mid-edit (transiently empty) so it's not wiped.
+  // ── Draft auto-save ────────────────────────────────────────────────────────
   const draftBody = () => {
     const body = {
       order_type: orderType,
@@ -256,17 +245,23 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     return body;
   };
 
-  // Create the draft the moment a customer is chosen (the "draft started" trigger).
+  // Create the draft the moment a customer is chosen
   useEffect(() => {
     if (!isDraftMode || !customerId || draftId || creatingDraftRef.current) return;
     creatingDraftRef.current = true;
     setDraftStatus('saving');
     api.post('/orders', { ...draftBody(), status: 'draft' })
-      .then((created) => { setDraftId(created.id); setDraftStatus('saved'); })
-      .catch(() => { creatingDraftRef.current = false; setDraftStatus('idle'); });
-  }, [isDraftMode, customerId, draftId]); // eslint-disable-line
+      .then((created) => {
+        setDraftId(created.id);
+        setDraftStatus('saved');
+      })
+      .catch(() => {
+        creatingDraftRef.current = false;
+        setDraftStatus('idle');
+      });
+  }, [isDraftMode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced auto-save on any change once the draft exists. Paused while finalizing/discarding.
+  // Debounced auto-save on any change once the draft exists
   useEffect(() => {
     if (!isDraftMode || !draftId || saving) return;
     setDraftStatus('saving');
@@ -276,17 +271,39 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         .catch(() => setDraftStatus('idle'));
     }, 800);
     return () => clearTimeout(t);
-  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel]); // eslint-disable-line
+  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Reset Button Handler (decisions.md G10) ────────────────────────────────
+  // Clears order lines, adjustment, and notes. Keeps customer, orderType, and draft alive.
+  // Confirm only when there are lines to lose; zero lines -> no dialog.
+  const handleReset = () => {
+    if (items.length > 0) {
+      setConfirmingReset(true);
+    } else {
+      executeReset();
+    }
+  };
+
+  const executeReset = () => {
+    setItems([]);
+    setAdjValue('');
+    setAdjReason('');
+    setAdjExpanded(false);
+    setNotes('');
+    setErrors({});
+    setConfirmingReset(false);
+    addToast('Order lines reset.', 'info');
+  };
 
   // ── Submit ─────────────────────────────────────────────────────────────────
-
   const validate = () => {
     const e = {};
     if (!customerId) e.customer = 'Select a customer.';
+    if (items.length === 0) e.items = 'Add at least one product.';
     if (items.some((i) => !i.product_id)) e.items = 'All items must have a product selected.';
     if (items.some((i) => !Number(i.quantity))) e.items = 'All quantities must be greater than 0.';
-    if (items.some((i) => i.unit_price === '')) e.items = 'All items must have a price.';
-    if (items.length === 0) e.items = 'Add at least one product.';
+    if (items.some((i) => i.unit_price === '' || Number.isNaN(Number(i.unit_price)))) e.items = 'All items must have a price.';
+    if (items.some((i) => Number(i.unit_price) < 0)) e.items = 'Item prices cannot be negative.';
     if (Number(adjValue) !== 0 && !adjReason.trim()) e.adjustment = 'Adjustment reason is required.';
     return e;
   };
@@ -295,8 +312,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
-    // Snapshot hand-edited ("dirty") lines against priceFor() before submitting — the
-    // comparison happens once, here, against whatever price the line would get by default.
     const dirtyItems = items.reduce((acc, i) => {
       const product = products.find((p) => String(p.id) === i.product_id);
       if (product && Number(i.unit_price) !== priceFor(product)) {
@@ -317,11 +332,11 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         order_type:  orderType,
         notes:       notes.trim() || null,
         items: items.map((i) => ({
-          product_id:       Number(i.product_id),
-          quantity:         Number(i.quantity),
-          unit_price:       Number(i.unit_price),
-          unit_deposit_fee: Number(i.unit_deposit_fee),
-          units_per_case:   Number(i.units_per_case) || 1,
+          product_id:          Number(i.product_id),
+          quantity:            Number(i.quantity),
+          unit_price:          Number(i.unit_price),
+          unit_deposit_fee:    Number(i.unit_deposit_fee) || 0,
+          units_per_case:      Number(i.units_per_case) || 1,
           is_price_overridden: false,
         })),
         personnel: assignedPersonnel,
@@ -333,20 +348,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         orderId = editOrder.id;
         addToast('Order updated.', 'success');
       } else if (draftId) {
-        // Draft → save the validated final state, then promote it to a Pending order.
         await api.patch(`/orders/${draftId}`, payload);
         await api.post(`/orders/${draftId}/finalize`, {});
         orderId = draftId;
         addToast('Order created.', 'success');
       } else {
-        // No draft was created yet (e.g. created instantly) — fall back to a direct create.
         const created = await api.post('/orders', payload);
         orderId = created.id;
         addToast('Order created.', 'success');
       }
 
-      const adjNum           = Number(adjValue) || 0;
-      const existingAdjNum   = isRealEdit ? (Number(editOrder.adjustment) || 0) : 0;
+      const adjNum            = Number(adjValue) || 0;
+      const existingAdjNum    = isRealEdit ? (Number(editOrder.adjustment) || 0) : 0;
       const existingAdjReason = isRealEdit ? (editOrder.adjustment_reason || '') : '';
       if (adjNum !== existingAdjNum || adjReason.trim() !== existingAdjReason) {
         await api.patch(`/orders/${orderId}/adjustment`, {
@@ -355,15 +368,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         });
       }
 
-      // The order is committed at this point — a "No" anywhere in the prompt below has
-      // nothing left to roll back, it just means the price isn't remembered for next time.
       if (dirtyItems.length && selectedCustomer) {
         setPriceSavePrompt({
           step: 'first', orderId, customer: selectedCustomer, orderType,
           dirty: dirtyItems, busy: false,
         });
       } else {
-        // orderId lets create-flow callers redirect to the new order; edit-flow callers ignore it.
         onSaved(orderId);
       }
     } catch (err) {
@@ -373,13 +383,11 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     }
   };
 
-  // ── Save-custom-price prompt handlers ────────────────────────────────────
-
-  const [convertTarget, setConvertTarget] = useState('unassigned');
-
-  // Declining (either step) or dismissing without an answer both just close the order flow —
-  // the order itself was already committed above, so there's nothing to undo.
-  const declinePriceSave = () => { setPriceSavePrompt(null); onSaved(priceSavePrompt?.orderId); };
+  // ── Save custom price prompt handlers ──────────────────────────────────────
+  const declinePriceSave = () => {
+    setPriceSavePrompt(null);
+    onSaved(priceSavePrompt?.orderId);
+  };
 
   const acceptFirstPrompt = () => {
     if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
@@ -416,517 +424,529 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     }
   };
 
+  // Discard draft completely (distinct from Reset)
   const handleDiscard = async () => {
     if (!draftId) { onClose(); return; }
     setSaving(true);
     try {
       await api.del(`/orders/${draftId}`);
       addToast('Draft discarded.', 'success');
-      onSaved(); // no orderId — the draft no longer exists, stay on the list
+      onSaved(); // no orderId -> returns to list
     } catch (err) {
       addToast(err.message || 'Failed to discard draft.', 'error');
       setSaving(false);
     }
   };
 
+  const totals = orderTotals(items, Number(adjValue) || 0);
+
   return (
     <>
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50"
-      role="dialog" aria-modal="true" aria-labelledby="order-modal-title"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-white w-full sm:rounded-xl sm:max-w-2xl h-[95vh] sm:h-auto sm:max-h-[95vh] flex flex-col shadow-2xl">
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
-          <div className="min-w-0">
-            <h2 id="order-modal-title" className="text-xl font-bold text-slate-900">
-              {isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? `Draft ${orderRef(editOrder)}` : 'New Order'}
-            </h2>
-            {isDraftMode && draftId && (
-              <p className="text-xs font-medium mt-0.5 text-slate-400">
-                {draftStatus === 'saving'
-                  ? '● Saving draft…'
-                  : '✓ Draft saved automatically'}
-              </p>
-            )}
-          </div>
-          <button onClick={onClose} aria-label="Close"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                       hover:text-slate-700 hover:bg-slate-100
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
-            ✕
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
-        ) : (
-          <>
-            <div className="flex-1 overflow-y-auto">
-
-              {/* ── Dispatched warning ──────────────────────────────── */}
-              {isEdit && ['in_transit', 'completed', 'done'].includes(editOrder?.status) && (
-                <div className="mx-6 mt-5 p-3 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-800">
-                  ⚠ This order has been dispatched — changing items will automatically adjust inventory.
-                </div>
-              )}
-
-              {/* ── Order Type ──────────────────────────────────────── */}
-              {!isEdit && (
-                <div className="px-6 py-5 border-b border-slate-400">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Order Type</p>
-                  <div className="flex gap-2">
-                    {['delivery', 'pickup'].map((type) => (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => setOrderType(type)}
-                        className={`flex-1 h-11 rounded-lg text-sm font-semibold border transition-colors
-                          ${orderType === type
-                            ? type === 'delivery'
-                              ? 'bg-slate-800 text-white border-slate-800'
-                              : 'bg-blue-700 text-white border-blue-700'
-                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
-                      >
-                        {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* ── Customer ────────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Customer</p>
-                <Combobox
-                  items={activeCustomers}
-                  match={customerMatches}
-                  value={selectedCustomer ?? null}
-                  displayValue={(c) => c.name}
-                  onSelect={(c) => setCustomerId(String(c.id))}
-                  onQueryChange={() => setCustomerId('')}
-                  onCreate={handleCreateCustomer}
-                  creating={creatingCustomer}
-                  renderCreate={(name) => (
-                    <>
-                      <span className="text-lg leading-none">＋</span>
-                      <span>Create <span className="font-bold">“{name}”</span> as a new Customer</span>
-                    </>
-                  )}
-                  placeholder="Search or type a new customer name…"
-                  emptyText="No customers match."
-                  aria-label="Customer"
-                  renderRow={(c) => (
-                    <>
-                      <span className="min-w-0 truncate">
-                        <span className="font-medium text-slate-800">{c.name}</span>
-                        {c.address && (
-                          <span className="italic text-slate-400"> - {c.address}</span>
-                        )}
-                      </span>
-                      {c.customer_type === 'wholesaler' && (
-                        <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 shrink-0">
-                          Wholesaler
-                        </span>
-                      )}
-                      {c.customer_type === 'discounted' && (
-                        <span className="text-xs font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full border border-blue-300 shrink-0">
-                          Discounted
-                        </span>
-                      )}
-                      {c.customer_type === 'markup' && (
-                        <span className="text-xs font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-300 shrink-0">
-                          Markup
-                        </span>
-                      )}
-                      {c.customer_type === 'unassigned' && (
-                        <span className="text-xs font-semibold text-red-800 bg-red-100 px-2 py-0.5 rounded-full border border-red-300 shrink-0">
-                          Unassigned
-                        </span>
-                      )}
-                    </>
-                  )}
-                />
-                {selectedCustomer && (
-                  <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border
-                        ${selectedCustomer.customer_type === 'wholesaler'
-                          ? 'bg-amber-100 text-amber-800 border-amber-300'
-                          : selectedCustomer.customer_type === 'discounted'
-                          ? 'bg-blue-100 text-blue-800 border-blue-300'
-                          : selectedCustomer.customer_type === 'markup'
-                          ? 'bg-purple-100 text-purple-800 border-purple-300'
-                          : selectedCustomer.customer_type === 'unassigned'
-                          ? 'bg-red-100 text-red-800 border-red-300'
-                          : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                        {selectedCustomer.customer_type === 'wholesaler'
-                          ? 'Wholesaler — custom pricing applied'
-                          : selectedCustomer.customer_type === 'discounted'
-                          ? 'Discounted — custom pricing applied'
-                          : selectedCustomer.customer_type === 'markup'
-                          ? 'Markup — custom pricing applied'
-                          : selectedCustomer.customer_type === 'unassigned'
-                          ? 'Unassigned — custom pricing applied'
-                          : 'Regular'}
-                      </span>
-                    </div>
-                    {selectedCustomer.phone && (
-                      <p className="text-sm text-slate-600">
-                        <span className="font-medium text-slate-500">Phone:</span> {selectedCustomer.phone}
-                      </p>
-                    )}
-                    {selectedCustomer.address && (
-                      <p className="text-sm text-slate-600">
-                        <span className="font-medium text-slate-500">Address:</span> {selectedCustomer.address}
-                      </p>
-                    )}
-                    {selectedCustomer.notes && (
-                      <p className="text-sm text-slate-600">
-                        <span className="font-medium text-slate-500">Notes:</span> {selectedCustomer.notes}
-                      </p>
-                    )}
-                  </div>
-                )}
-                {errors.customer && (
-                  <p className="text-sm text-red-600 mt-2">{errors.customer}</p>
-                )}
-              </div>
-
-              {/* ── Line Items ──────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-400">
-                <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products</p>
-                  <p className="text-sm text-slate-500">
-                    Total{' '}
-                    <span className="text-base font-bold text-slate-900 tabular-nums">{PHP(grandTotal)}</span>
-                  </p>
-                </div>
-
-                <ProductSearchBar
-                  products={activeProducts}
-                  quantityFor={(p) => {
-                    const it = items.find((i) => i.product_id === String(p.id));
-                    return it ? Number(it.quantity) || 0 : 0;
-                  }}
-                  onAdd={addProduct}
-                  onBump={bumpProduct}
-                  onSub={subProduct}
-                  renderMeta={(p) => PHP(priceFor(p))}
-                />
-
-                {errors.items && (
-                  <p className="text-sm text-red-600 mt-3">{errors.items}</p>
-                )}
-
-                {items.length === 0 ? (
-                  <p className="mt-4 text-sm text-slate-400 text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-200">
-                    Search above and tap products to add them to this order.
-                  </p>
-                ) : (
-                  <div className="space-y-3 mt-4">
-                    {items.map((item) => (
-                      <div
-                        key={item._key}
-                        className={`p-3 rounded-lg border transition-colors
-                          ${flashKey === item._key ? 'bg-blue-50 border-blue-300' : 'bg-slate-50 border-slate-200'}`}
-                      >
-                        {/* Line 1: product + line total + remove */}
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-slate-800 truncate" title={item.product_name}>
-                              {item.sku || item.product_name}
-                            </p>
-                            {item.sku && (
-                              <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
-                            )}
-                          </div>
-                          <p className="text-base font-bold text-slate-900 tabular-nums shrink-0">
-                            {PHP(lineTotal(item))}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => removeItem(item._key)}
-                            aria-label={`Remove ${item.sku || item.product_name}`}
-                            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                                       hover:text-red-600 hover:bg-red-50 shrink-0"
-                          >
-                            ✕
-                          </button>
-                        </div>
-
-                        {/* Line 2: qty stepper + price */}
-                        <div className="grid grid-cols-2 gap-2">
-                          <FormField label="Qty (cases)">
-                            <Stepper
-                              value={item.quantity}
-                              onChange={(v) => updateItem(item._key, 'quantity', v)}
-                              step={0.5}
-                              min={0.5}
-                              label={`Quantity in cases for ${item.sku || item.product_name}`}
-                            />
-                          </FormField>
-                          <FormField label="Price / case (₱)">
-                            <input type="number" min="0" step="0.01"
-                              value={item.unit_price}
-                              onChange={(e) => updateItem(item._key, 'unit_price', e.target.value)}
-                              className={INPUT} />
-                          </FormField>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="mt-4 flex justify-end">
-                  <div className="text-right">
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Order Total</p>
-                    <p className="text-2xl font-bold text-slate-900 tabular-nums">{PHP(grandTotal)}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Personnel ───────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-                  Assigned Personnel <span className="text-slate-300 font-normal normal-case">(optional)</span>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="order-modal-title"
+        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      >
+        <div className="bg-white w-full max-w-7xl h-[95vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden border border-slate-200">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-200 shrink-0 bg-white">
+            <div className="min-w-0">
+              <h2 id="order-modal-title" className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? `Draft ${orderRef(editOrder)}` : 'New Order'}</span>
+              </h2>
+              {isDraftMode && draftId && (
+                <p className="text-xs font-medium mt-0.5 text-slate-500">
+                  {draftStatus === 'saving' ? '● Saving draft…' : '✓ Draft saved automatically'}
                 </p>
-
-                {activePersonnel.length === 0 ? (
-                  <p className="text-sm text-slate-400">No active personnel. Add personnel first.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {activePersonnel.map((person) => {
-                      const assigned = assignedPersonnel.find((p) => p.id === person.id);
-                      return (
-                        <div key={person.id}
-                          className={`flex items-center gap-3 p-3 rounded-lg border transition-colors
-                            ${assigned
-                              ? 'bg-blue-50 border-blue-300'
-                              : 'bg-white border-slate-200 hover:bg-slate-50'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            id={`pers-${person.id}`}
-                            checked={Boolean(assigned)}
-                            onChange={() => togglePersonnel(person)}
-                            className="w-6 h-6 accent-blue-700 shrink-0"
-                          />
-                          <label htmlFor={`pers-${person.id}`}
-                            className="flex-1 cursor-pointer min-w-0">
-                            <span className="font-semibold text-slate-800 truncate block">{person.full_name}</span>
-                          </label>
-
-                          {assigned && (
-                            <div className="flex gap-1 shrink-0">
-                              {['Driver', 'Helper'].map((role) => (
-                                <button
-                                  key={role}
-                                  type="button"
-                                  onClick={() => setPersonnelRole(person.id, role)}
-                                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
-                                    ${assigned.role === role
-                                      ? 'bg-blue-700 text-white border-blue-700'
-                                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
-                                >
-                                  {role}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* ── Adjustment ──────────────────────────────────────── */}
-              <div className="px-6 py-5 border-b border-slate-400">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Adjustment</p>
-                    {!adjExpanded && (
-                      <p className="text-sm text-slate-500 mt-1">
-                        {Number(adjValue) !== 0
-                          ? <span className={Number(adjValue) > 0 ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}>
-                              {Number(adjValue) > 0 ? '+' : ''}{PHP(adjValue)}
-                              {adjReason && ` — ${adjReason}`}
-                            </span>
-                          : 'None'}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAdjExpanded((v) => !v)}
-                    className="text-sm text-blue-700 hover:text-blue-900 font-medium
-                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
-                  >
-                    {adjExpanded ? 'Cancel' : Number(adjValue) !== 0 ? 'Edit' : '+ Add Adjustment'}
-                  </button>
-                </div>
-
-                {adjExpanded && (
-                  <div className="mt-4 space-y-3">
-                    <FormField label="Amount (₱) — use negative for discount">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={adjValue}
-                        onChange={(e) => setAdjValue(e.target.value)}
-                        className={INPUT}
-                        placeholder="e.g. -50 for discount, 200 for surcharge"
-                      />
-                    </FormField>
-                    <FormField label={`Reason${Number(adjValue) !== 0 ? ' *' : ''}`}>
-                      <textarea
-                        value={adjReason}
-                        onChange={(e) => setAdjReason(e.target.value)}
-                        rows={2}
-                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
-                                   focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-                        placeholder="e.g. Customer rejected 2 cases, negotiated price"
-                      />
-                    </FormField>
-                    {errors.adjustment && (
-                      <p className="text-sm text-red-600">{errors.adjustment}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* ── Notes ───────────────────────────────────────────── */}
-              <div className="px-6 py-5">
-                <FormField label="Notes" hint="Optional">
-                  <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg text-base text-slate-900
-                               focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
-                    placeholder={orderType === 'pickup' ? 'Any special instructions for this pickup…' : 'Any special instructions for this delivery…'}
-                  />
-                </FormField>
-              </div>
-
-            </div>
-
-            {/* Footer */}
-            <div className="flex gap-3 items-center px-6 py-4 border-t border-slate-400 shrink-0 bg-white">
-              {confirmingDiscard ? (
-                <>
-                  <span className="text-sm text-slate-600 mr-auto">Discard this draft? It can't be undone.</span>
-                  <Button variant="secondary" onClick={() => setConfirmingDiscard(false)} disabled={saving}>Keep</Button>
-                  <Button variant="danger" onClick={handleDiscard} loading={saving}>Discard</Button>
-                </>
-              ) : (
-                <>
-                  {isDraftMode && draftId && (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmingDiscard(true)}
-                      disabled={saving}
-                      className="text-sm font-semibold text-red-600 hover:text-red-700 hover:underline mr-auto
-                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded px-1
-                                 disabled:opacity-50 disabled:no-underline"
-                    >
-                      Discard draft
-                    </button>
-                  )}
-                  <Button
-                    variant="secondary"
-                    onClick={onClose}
-                    disabled={saving}
-                    className={isDraftMode && draftId ? '' : 'ml-auto'}
-                  >
-                    {isDraftMode && draftId ? 'Close' : 'Cancel'}
-                  </Button>
-                  <Button onClick={handleSubmit} loading={saving}>
-                    {isRealEdit ? 'Save Changes' : 'Create Order'}
-                  </Button>
-                </>
               )}
             </div>
-          </>
-        )}
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
+                         hover:text-slate-700 hover:bg-slate-100 transition-colors
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              ✕
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+          ) : (
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] divide-y lg:divide-y-0 lg:divide-x divide-slate-200 overflow-hidden">
+              
+              {/* ── LEFT COLUMN: Product Catalogue ──────────────────── */}
+              <div className="flex flex-col min-h-0 h-full p-4 sm:p-5 overflow-hidden bg-slate-50/40">
+                <POSProductGrid
+                  products={activeProducts}
+                  orderQty={orderQty}
+                  onAdd={addProduct}
+                  priceFor={priceFor}
+                />
+              </div>
+
+              {/* ── RIGHT COLUMN: Order Panel ───────────────────────── */}
+              <div className="flex flex-col min-h-0 h-full overflow-hidden bg-white">
+                
+                {/* Order Header: Customer & Order Type */}
+                <div className="p-4 border-b border-slate-200 shrink-0 space-y-3 bg-white">
+                  <div>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Customer</p>
+                    <Combobox
+                      items={activeCustomers}
+                      match={customerMatches}
+                      value={selectedCustomer ?? null}
+                      displayValue={(c) => c.name}
+                      onSelect={(c) => setCustomerId(String(c.id))}
+                      onQueryChange={() => setCustomerId('')}
+                      onCreate={handleCreateCustomer}
+                      creating={creatingCustomer}
+                      renderCreate={(name) => (
+                        <>
+                          <span className="text-lg leading-none">＋</span>
+                          <span>Create <span className="font-bold">“{name}”</span> as a new Customer</span>
+                        </>
+                      )}
+                      placeholder="Search or type a new customer name…"
+                      emptyText="No customers match."
+                      aria-label="Customer"
+                      renderRow={(c) => (
+                        <>
+                          <span className="min-w-0 truncate">
+                            <span className="font-medium text-slate-800">{c.name}</span>
+                            {c.address && (
+                              <span className="italic text-slate-400"> - {c.address}</span>
+                            )}
+                          </span>
+                          {c.customer_type === 'wholesaler' && (
+                            <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 shrink-0">
+                              Wholesaler
+                            </span>
+                          )}
+                          {c.customer_type === 'discounted' && (
+                            <span className="text-xs font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full border border-blue-300 shrink-0">
+                              Discounted
+                            </span>
+                          )}
+                          {c.customer_type === 'markup' && (
+                            <span className="text-xs font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-300 shrink-0">
+                              Markup
+                            </span>
+                          )}
+                          {c.customer_type === 'unassigned' && (
+                            <span className="text-xs font-semibold text-red-800 bg-red-100 px-2 py-0.5 rounded-full border border-red-300 shrink-0">
+                              Unassigned
+                            </span>
+                          )}
+                        </>
+                      )}
+                    />
+                    {selectedCustomer && (
+                      <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1">
+                        <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900">{selectedCustomer.name}</span>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full font-semibold border bg-slate-100 text-slate-700 border-slate-200">
+                            {selectedCustomer.customer_type ? selectedCustomer.customer_type.toUpperCase() : 'REGULAR'}
+                          </span>
+                        </div>
+                        {selectedCustomer.address && (
+                          <p className="text-slate-600 truncate"><span className="font-medium text-slate-500">Address:</span> {selectedCustomer.address}</p>
+                        )}
+                        {selectedCustomer.phone && (
+                          <p className="text-slate-600"><span className="font-medium text-slate-500">Phone:</span> {selectedCustomer.phone}</p>
+                        )}
+                      </div>
+                    )}
+                    {errors.customer && <p className="text-xs text-red-600 mt-1 font-medium">{errors.customer}</p>}
+                  </div>
+
+                  {!isEdit && (
+                    <div>
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Order Type</p>
+                      <div className="flex gap-2" role="group" aria-label="Order type">
+                        {['delivery', 'pickup'].map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setOrderType(type)}
+                            aria-pressed={orderType === type}
+                            className={`flex-1 h-10 rounded-xl text-sm font-semibold border transition-colors
+                              ${orderType === type
+                                ? type === 'delivery'
+                                  ? 'bg-slate-800 text-white border-slate-800 shadow-sm'
+                                  : 'bg-blue-700 text-white border-blue-700 shadow-sm'
+                                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                          >
+                            {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Scrollable Order Items & Sections */}
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+                  {isEdit && ['in_transit', 'completed', 'done'].includes(editOrder?.status) && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800">
+                      ⚠ This order has been dispatched — changing items will automatically adjust inventory.
+                    </div>
+                  )}
+
+                  {/* Line Items List */}
+                  <div>
+                    {errors.items && <p className="text-xs text-red-600 mb-2 font-medium">{errors.items}</p>}
+
+                    {items.length === 0 ? (
+                      <div className="py-12 text-center text-sm text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                        Tap a product on the left to start the order.
+                      </div>
+                    ) : (
+                      <ul className="space-y-2.5">
+                        {items.map((item) => (
+                          <li
+                            key={item._key}
+                            className="p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-bold text-slate-900 truncate" title={item.product_name}>
+                                  {item.sku || item.product_name}
+                                </p>
+                                {item.sku && (
+                                  <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeItem(item._key)}
+                                aria-label={`Remove ${item.product_name}`}
+                                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400
+                                           hover:text-red-600 hover:bg-red-50 shrink-0 transition-colors"
+                              >
+                                ✕
+                              </button>
+                            </div>
+
+                            <div className="mt-2.5 flex items-end justify-between gap-2">
+                              <CaseStepper
+                                quantity={item.quantity}
+                                label={item.product_name}
+                                onStep={(delta) => stepItem(item._key, delta)}
+                              />
+
+                              <div className="w-28">
+                                <label
+                                  htmlFor={`price-${item._key}`}
+                                  className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1"
+                                >
+                                  Price /cs
+                                </label>
+                                <input
+                                  id={`price-${item._key}`}
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={item.unit_price}
+                                  onChange={(e) => updateItemPrice(item._key, e.target.value)}
+                                  className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                />
+                              </div>
+
+                              <div className="text-right">
+                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Total</p>
+                                <p className="text-base font-bold text-slate-900 tabular-nums">
+                                  {PHP(lineTotal(item))}
+                                </p>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/* Adjustment Section */}
+                  <div className="pt-2 border-t border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Adjustment</p>
+                        {!adjExpanded && Number(adjValue) !== 0 && (
+                          <p className="text-xs font-semibold text-blue-800 mt-0.5">
+                            {Number(adjValue) > 0 ? '+' : ''}{PHP(adjValue)}
+                            {adjReason && ` — ${adjReason}`}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAdjExpanded((v) => !v)}
+                        className="text-xs text-blue-700 hover:text-blue-900 font-semibold focus-visible:outline-none"
+                      >
+                        {adjExpanded ? 'Close' : Number(adjValue) !== 0 ? 'Edit' : '+ Add Adjustment'}
+                      </button>
+                    </div>
+
+                    {adjExpanded && (
+                      <div className="mt-2.5 space-y-2">
+                        <FormField label="Amount (₱) — negative for discount">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={adjValue}
+                            onChange={(e) => setAdjValue(e.target.value)}
+                            className={INPUT}
+                            placeholder="e.g. -50 for discount, 200 for surcharge"
+                          />
+                        </FormField>
+                        <FormField label={`Reason${Number(adjValue) !== 0 ? ' *' : ''}`}>
+                          <input
+                            type="text"
+                            value={adjReason}
+                            onChange={(e) => setAdjReason(e.target.value)}
+                            className={INPUT}
+                            placeholder="e.g. Suki discount"
+                          />
+                        </FormField>
+                        {errors.adjustment && <p className="text-xs text-red-600">{errors.adjustment}</p>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes Section */}
+                  <div className="pt-2 border-t border-slate-200">
+                    <FormField label="Notes" hint="Optional">
+                      <input
+                        type="text"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        className={INPUT}
+                        placeholder={orderType === 'pickup' ? 'Instructions for pickup…' : 'Instructions for delivery…'}
+                      />
+                    </FormField>
+                  </div>
+
+                  {/* Assigned Personnel */}
+                  {activePersonnel.length > 0 && (
+                    <div className="pt-2 border-t border-slate-200">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                        Personnel <span className="font-normal text-slate-400">(optional)</span>
+                      </p>
+                      <div className="space-y-1.5">
+                        {activePersonnel.map((person) => {
+                          const assigned = assignedPersonnel.find((p) => p.id === person.id);
+                          return (
+                            <div
+                              key={person.id}
+                              className={`flex items-center gap-2 p-2 rounded-lg border text-xs transition-colors
+                                ${assigned ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}
+                            >
+                              <input
+                                type="checkbox"
+                                id={`pers-${person.id}`}
+                                checked={Boolean(assigned)}
+                                onChange={() => togglePersonnel(person)}
+                                className="w-4 h-4 accent-blue-700 shrink-0"
+                              />
+                              <label htmlFor={`pers-${person.id}`} className="flex-1 cursor-pointer font-medium text-slate-800 truncate">
+                                {person.full_name}
+                              </label>
+                              {assigned && (
+                                <div className="flex gap-1 shrink-0">
+                                  {['Driver', 'Helper'].map((role) => (
+                                    <button
+                                      key={role}
+                                      type="button"
+                                      onClick={() => setPersonnelRole(person.id, role)}
+                                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border
+                                        ${assigned.role === role
+                                          ? 'bg-blue-700 text-white border-blue-700'
+                                          : 'bg-white text-slate-600 border-slate-300'}`}
+                                    >
+                                      {role}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer: Running Totals & Action Row */}
+                <div className="p-4 border-t border-slate-200 bg-slate-50/50 shrink-0 space-y-3">
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Items ({totalCases(items)} cs)</span>
+                      <span className="tabular-nums font-medium text-slate-900">{PHP(totals.goods)}</span>
+                    </div>
+                    {totals.adjustment !== 0 && (
+                      <div className="flex justify-between text-slate-600 text-xs">
+                        <span>Adjustment{adjReason ? ` (${adjReason})` : ''}</span>
+                        <span className={`tabular-nums font-semibold ${totals.adjustment > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                          {totals.adjustment > 0 ? '+' : ''}{PHP(totals.adjustment)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-baseline justify-between pt-1 border-t border-slate-200">
+                      <span className="text-base font-bold uppercase tracking-wider text-slate-900">Total Due</span>
+                      <span className="text-2xl font-black tabular-nums text-slate-900">{PHP(totals.total)}</span>
+                    </div>
+                  </div>
+
+                  {confirmingDiscard ? (
+                    <div className="flex items-center justify-between gap-2 p-2 bg-red-50 border border-red-200 rounded-xl">
+                      <span className="text-xs font-medium text-red-800">Discard draft?</span>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => setConfirmingDiscard(false)} disabled={saving}>Keep</Button>
+                        <Button size="sm" variant="danger" onClick={handleDiscard} loading={saving}>Discard</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      {/* G10 Reset Button */}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={handleReset}
+                        disabled={saving || (items.length === 0 && !adjValue && !notes)}
+                        className="text-slate-700"
+                        title="Reset order items and notes while keeping customer"
+                      >
+                        🔄 Reset
+                      </Button>
+
+                      {isDraftMode && draftId && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingDiscard(true)}
+                          disabled={saving}
+                          className="text-xs font-semibold text-red-600 hover:text-red-700 hover:underline px-2 py-1 disabled:opacity-50"
+                        >
+                          Discard
+                        </button>
+                      )}
+
+                      <div className="flex-1" />
+
+                      <Button
+                        variant="secondary"
+                        onClick={onClose}
+                        disabled={saving}
+                      >
+                        {isDraftMode && draftId ? 'Close' : 'Cancel'}
+                      </Button>
+
+                      <Button
+                        onClick={handleSubmit}
+                        loading={saving}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                      >
+                        {isRealEdit ? 'Save Changes' : '💾 Create Order'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-    </div>
+      {/* ── G10 Reset Confirm Modal ────────────────────────────────────── */}
+      {confirmingReset && (
+        <Modal
+          title="Reset order lines?"
+          onClose={() => setConfirmingReset(false)}
+          onConfirm={executeReset}
+          confirmLabel="Yes, Reset"
+          confirmVariant="warning"
+        >
+          <p className="text-slate-600">
+            This will clear all item lines, adjustment, and notes{selectedCustomer ? ` for ${selectedCustomer.name}` : ''}.
+            The selected customer and order type will be kept.
+          </p>
+        </Modal>
+      )}
 
-    {/* ── Save custom price? (step 1 — every customer type) ────────────── */}
-    {priceSavePrompt?.step === 'first' && (
-      <Modal
-        title="Save Custom Price?"
-        onClose={declinePriceSave}
-        onConfirm={acceptFirstPrompt}
-        confirmLabel="Yes, Save"
-        cancelLabel="No"
-        loading={priceSavePrompt.busy}
-      >
-        <p>
-          Save the custom price{priceSavePrompt.dirty.length > 1 ? 's' : ''} for{' '}
-          <strong>{priceSavePrompt.customer.name}</strong> on future{' '}
-          <strong>{priceSavePrompt.orderType}</strong> orders?
-        </p>
-        <ul className="mt-3 space-y-1.5 text-sm">
-          {priceSavePrompt.dirty.map((d) => (
-            <li key={d.product_id} className="flex items-center justify-between border-b border-slate-300 pb-1.5">
-              <span className="text-slate-700">{d.sku || d.product_name}</span>
-              <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
-            </li>
-          ))}
-        </ul>
-      </Modal>
-    )}
+      {/* ── Save custom price? (step 1) ────────────────────────────────── */}
+      {priceSavePrompt?.step === 'first' && (
+        <Modal
+          title="Save Custom Price?"
+          onClose={declinePriceSave}
+          onConfirm={acceptFirstPrompt}
+          confirmLabel="Yes, Save"
+          cancelLabel="No"
+          loading={priceSavePrompt.busy}
+        >
+          <p className="text-slate-700">
+            Save the custom price{priceSavePrompt.dirty.length > 1 ? 's' : ''} for{' '}
+            <strong>{priceSavePrompt.customer.name}</strong> on future{' '}
+            <strong>{priceSavePrompt.orderType}</strong> orders?
+          </p>
+          <ul className="mt-3 space-y-1.5 text-sm">
+            {priceSavePrompt.dirty.map((d) => (
+              <li key={d.product_id} className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                <span className="text-slate-700">{d.sku || d.product_name}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
 
-    {/* ── Customer type selection (step 2 — regular customers only) ─ */}
-    {priceSavePrompt?.step === 'second' && (
-      <Modal
-        title="Select Customer Type"
-        onClose={declinePriceSave}
-        onConfirm={() => persistPriceSave(convertTarget || 'unassigned')}
-        confirmLabel="Yes, Save Price"
-        cancelLabel="Cancel"
-        loading={priceSavePrompt.busy}
-      >
-        <p className="text-slate-600 mb-3">
-          Saving custom prices for <strong>{priceSavePrompt.customer.name}</strong> requires assigning a customer type:
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { value: 'unassigned', label: 'Unassigned', desc: 'Default category' },
-            { value: 'wholesaler', label: 'Wholesaler', desc: 'Bulk pricing tier' },
-            { value: 'discounted', label: 'Discounted', desc: 'Reduced rate tier' },
-            { value: 'markup',     label: 'Markup',     desc: 'Surcharge tier' },
-          ].map((opt) => (
-            <label
-              key={opt.value}
-              className={`flex cursor-pointer flex-col rounded-lg border p-2.5 text-sm transition ${
-                convertTarget === opt.value
-                  ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
-                  : 'border-slate-200 hover:border-slate-300'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-slate-800">{opt.label}</span>
-                <input
-                  type="radio"
-                  name="convertTarget"
-                  value={opt.value}
-                  checked={convertTarget === opt.value}
-                  onChange={() => setConvertTarget(opt.value)}
-                  className="text-blue-600 focus:ring-blue-500"
-                />
-              </div>
-              <span className="text-xs text-slate-500 mt-0.5">{opt.desc}</span>
-            </label>
-          ))}
-        </div>
-      </Modal>
-    )}
+      {/* ── Customer type selection (step 2) ───────────────────────────── */}
+      {priceSavePrompt?.step === 'second' && (
+        <Modal
+          title="Select Customer Type"
+          onClose={declinePriceSave}
+          onConfirm={() => persistPriceSave(convertTarget || 'unassigned')}
+          confirmLabel="Yes, Save Price"
+          cancelLabel="Cancel"
+          loading={priceSavePrompt.busy}
+        >
+          <p className="text-slate-600 mb-3">
+            Saving custom prices for <strong>{priceSavePrompt.customer.name}</strong> requires assigning a customer type:
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { value: 'unassigned', label: 'Unassigned', desc: 'Default category' },
+              { value: 'wholesaler', label: 'Wholesaler', desc: 'Bulk pricing tier' },
+              { value: 'discounted', label: 'Discounted', desc: 'Reduced rate tier' },
+              { value: 'markup',     label: 'Markup',     desc: 'Surcharge tier' },
+            ].map((opt) => (
+              <label
+                key={opt.value}
+                className={`flex cursor-pointer flex-col rounded-lg border p-2.5 text-sm transition ${
+                  convertTarget === opt.value
+                    ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-800">{opt.label}</span>
+                  <input
+                    type="radio"
+                    name="convertTarget"
+                    value={opt.value}
+                    checked={convertTarget === opt.value}
+                    onChange={() => setConvertTarget(opt.value)}
+                    className="text-blue-600 focus:ring-blue-500"
+                  />
+                </div>
+                <span className="text-xs text-slate-500 mt-0.5">{opt.desc}</span>
+              </label>
+            ))}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
