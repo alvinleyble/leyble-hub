@@ -75,6 +75,10 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [confirmingReset, setConfirmingReset]     = useState(false);
   const creatingDraftRef                          = useRef(false);
+  // Ref copies for synchronous access in handleSubmit (avoids stale-closure issues with state)
+  const draftIdRef         = useRef(isDraftResume ? editOrder.id : null);
+  const draftPromiseRef    = useRef(null); // in-flight draft creation promise
+  const autoSaveTimerRef   = useRef(null); // handle for the debounced PATCH timer
 
   // ── Save-custom-price prompt ───────────────────────────────────────────────
   const [priceSavePrompt, setPriceSavePrompt] = useState(null);
@@ -247,18 +251,25 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   // Create the draft the moment a customer is chosen
   useEffect(() => {
-    if (!isDraftMode || !customerId || draftId || creatingDraftRef.current) return;
+    if (!isDraftMode || !customerId || draftIdRef.current || creatingDraftRef.current) return;
     creatingDraftRef.current = true;
     setDraftStatus('saving');
-    api.post('/orders', { ...draftBody(), status: 'draft' })
+    const promise = api.post('/orders', { ...draftBody(), status: 'draft' })
       .then((created) => {
+        draftIdRef.current = created.id;
         setDraftId(created.id);
         setDraftStatus('saved');
+        return created.id;
       })
       .catch(() => {
         creatingDraftRef.current = false;
         setDraftStatus('idle');
+      })
+      .finally(() => {
+        // Clear the in-flight reference once settled so handleSubmit won't wait again
+        if (draftPromiseRef.current === promise) draftPromiseRef.current = null;
       });
+    draftPromiseRef.current = promise;
   }, [isDraftMode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced auto-save on any change once the draft exists
@@ -266,11 +277,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     if (!isDraftMode || !draftId || saving) return;
     setDraftStatus('saving');
     const t = setTimeout(() => {
+      autoSaveTimerRef.current = null;
       api.patch(`/orders/${draftId}`, draftBody())
         .then(() => setDraftStatus('saved'))
         .catch(() => setDraftStatus('idle'));
     }, 800);
-    return () => clearTimeout(t);
+    autoSaveTimerRef.current = t;
+    return () => { clearTimeout(t); if (autoSaveTimerRef.current === t) autoSaveTimerRef.current = null; };
   }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reset Button Handler (decisions.md G10) ────────────────────────────────
@@ -326,6 +339,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     }, []);
 
     setSaving(true);
+
+    // Cancel any pending debounced auto-save so it can't race with our explicit PATCH below.
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
     try {
       const payload = {
         customer_id: Number(customerId),
@@ -347,14 +367,22 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         await api.patch(`/orders/${editOrder.id}`, payload);
         orderId = editOrder.id;
         addToast('Order updated.', 'success');
-      } else if (draftId) {
-        await api.patch(`/orders/${draftId}`, payload);
-        await api.post(`/orders/${draftId}/finalize`, {});
-        orderId = draftId;
-        addToast('Order created.', 'success');
       } else {
-        const created = await api.post('/orders', payload);
-        orderId = created.id;
+        // If a draft creation is still in-flight, wait for it to resolve so we have the draft id.
+        if (draftPromiseRef.current) {
+          await draftPromiseRef.current;
+        }
+        // Re-read ref after awaiting (state may not have updated yet due to batching).
+        const resolvedDraftId = draftIdRef.current;
+        if (resolvedDraftId) {
+          await api.patch(`/orders/${resolvedDraftId}`, payload);
+          await api.post(`/orders/${resolvedDraftId}/finalize`, {});
+          orderId = resolvedDraftId;
+        } else {
+          // No draft was ever created (e.g. draft creation failed) — fall back to a fresh POST.
+          const created = await api.post('/orders', payload);
+          orderId = created.id;
+        }
         addToast('Order created.', 'success');
       }
 

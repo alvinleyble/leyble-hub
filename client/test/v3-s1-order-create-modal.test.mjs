@@ -322,3 +322,67 @@ test('OrderCreateModal: Customer Combobox does NOT show dropdown upon focus when
   r.unmount();
 });
 
+test('OrderCreateModal regression: submit before draftId state updates awaits in-flight draft creation and does NOT create a duplicate POST /orders', async () => {
+  const postCalls = [];
+  const patchCalls = [];
+  let draftResolve;
+
+  // Draft creation intentionally delayed to simulate the race window
+  api.post = async (path, body) => {
+    postCalls.push(path);
+    if (path === '/orders' && body?.status === 'draft') {
+      await new Promise((res) => { draftResolve = res; });
+      return { id: 999 };
+    }
+    if (path.includes('/finalize')) return { id: 999, status: 'pending' };
+    return { id: 999 };
+  };
+  api.patch = async (path) => {
+    patchCalls.push(path);
+    return { id: 999 };
+  };
+
+  let savedOrderId = null;
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrderCreateModal, {
+        onClose: () => {},
+        onSaved: (id) => { savedOrderId = id; },
+      })
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  // Select customer — triggers the in-flight draft creation (now deliberately delayed)
+  await selectFirstCustomer(r);
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  // Add a product
+  const cokeBtn = r.all('button').find((b) => b.getAttribute('aria-label')?.includes('Coke Sakto'));
+  r.click(cokeBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Click Create Order BEFORE the draft creation resolves — this is the race window
+  const submitBtn = r.all('button').find((b) => b.textContent.includes('Create Order'));
+  assert.ok(submitBtn, 'Create order button should exist');
+  act(() => { r.click(submitBtn); });
+
+  // Now resolve the draft creation — handleSubmit was waiting on draftPromiseRef
+  await act(async () => {
+    if (draftResolve) draftResolve();
+    await new Promise((res) => setTimeout(res, 150));
+  });
+
+  // Only ONE POST /orders call (the draft creation); no second POST /orders
+  const orderPostCalls = postCalls.filter((p) => p === '/orders');
+  assert.equal(orderPostCalls.length, 1, 'Should only POST /orders once (the draft), not a duplicate pending order');
+
+  // Should PATCH + finalize the draft instead of creating a new one
+  assert.ok(patchCalls.some((p) => p.includes('/orders/999')), 'Should PATCH the draft order');
+  assert.ok(postCalls.some((p) => p.includes('/finalize')), 'Should finalize the draft order');
+
+  assert.equal(savedOrderId, 999, "onSaved should be called with the draft's order id");
+
+  r.unmount();
+});
