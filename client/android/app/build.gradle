@@ -7,7 +7,8 @@ android {
         applicationId "com.leyble.hub"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
+        def runNum = System.getenv("GITHUB_RUN_NUMBER") ?: System.getenv("BUILD_NUMBER")
+        versionCode runNum ? (runNum.toInteger() + 1) : 4
         versionName "1.2.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -22,8 +23,9 @@ android {
             def ksPass = System.getenv("PLAY_KEYSTORE_PASSWORD")
             def alias = System.getenv("PLAY_KEY_ALIAS") ?: "upload"
             def keyPass = System.getenv("PLAY_KEY_PASSWORD") ?: ksPass
-            if (ksPass != null && file(ksPath).exists()) {
-                storeFile file(ksPath)
+            def ksFile = file(ksPath).exists() ? file(ksPath) : rootProject.file(ksPath)
+            if (ksPass != null && ksFile.exists()) {
+                storeFile ksFile
                 storePassword ksPass
                 keyAlias alias
                 keyPassword keyPass
