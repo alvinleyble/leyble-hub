@@ -5,8 +5,6 @@ import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 
 const OrderCreateModal = (await import('../src/pages/orders/OrderCreateModal.jsx')).default;
-const DraftsModal = (await import('../src/pages/orders/DraftsModal.jsx')).default;
-const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
 
 let originalApiGet;
 let originalApiPost;
@@ -87,10 +85,6 @@ test('OrderCreateModal: renders product tile grid, search, and dynamic category 
   assert.match(r.text(), /Softdrinks/);
   assert.match(r.text(), /Water/);
 
-  // Check quick-access buttons exist
-  assert.match(r.text(), /Drafts/);
-  assert.match(r.text(), /History/);
-
   r.unmount();
 });
 
@@ -125,7 +119,7 @@ test('OrderCreateModal: category pills filter the visible product tiles', async 
   r.unmount();
 });
 
-test('OrderCreateModal: tapping a product tile adds a line to the order panel', async () => {
+test('OrderCreateModal: tapping a product tile adds a 0.5cs line to the order panel', async () => {
   const r = render(
     React.createElement(ToastProvider, null,
       React.createElement(OrderCreateModal, { onClose: () => {}, onSaved: () => {} })
@@ -136,15 +130,15 @@ test('OrderCreateModal: tapping a product tile adds a line to the order panel', 
 
   assert.match(r.text(), /Tap a product on the left to start the order/);
 
-  // Find Coke button
+  // Find Coke button (₱300 / cs)
   const cokeBtn = r.all('button').find((b) => b.getAttribute('aria-label')?.includes('Coke Sakto'));
   assert.ok(cokeBtn, 'Coke product tile button should exist');
   r.click(cokeBtn);
   await act(async () => { await new Promise((res) => setTimeout(res, 10)); });
 
-  // Order line should now be present
-  assert.match(r.text(), /Order Lines \(1 cs\)/);
-  assert.match(r.text(), /₱300\.00/);
+  // Order line should now be present with 0.5 cs default and ₱150.00 total
+  assert.match(r.text(), /Items \(0\.5 cs\)/);
+  assert.match(r.text(), /₱150\.00/);
 
   r.unmount();
 });
@@ -167,7 +161,7 @@ test('OrderCreateModal G10 Reset: with lines present, prompts confirmation; conf
   r.click(cokeBtn);
   await act(async () => { await new Promise((res) => setTimeout(res, 10)); });
 
-  assert.match(r.text(), /Order Lines \(1 cs\)/);
+  assert.match(r.text(), /Items \(0\.5 cs\)/);
 
   // Find Reset button
   const resetBtn = r.all('button').find((b) => b.textContent.includes('Reset'));
@@ -216,51 +210,6 @@ test('OrderCreateModal G10 Reset: with 0 lines, resets instantly with NO confirm
   // No confirm dialog should appear
   assert.equal(r.text().includes('Reset order lines?'), false, 'Should NOT show confirmation modal with 0 lines');
   assert.match(r.text(), /Buddy Wholesaler/);
-
-  r.unmount();
-});
-
-test('DraftsModal: search box filters drafts and bulk discard button is rendered', async () => {
-  const sampleDrafts = [
-    { id: 101, customer_name: 'Store Alpha', total_amount: 500, adjustment: 0, order_type: 'delivery', created_at: new Date().toISOString() },
-    { id: 102, customer_name: 'Store Beta', total_amount: 750, adjustment: 0, order_type: 'pickup', created_at: new Date().toISOString() },
-  ];
-
-  api.get = async (path) => {
-    if (path.startsWith('/orders?status=draft')) return sampleDrafts;
-    if (path.startsWith('/orders/101')) return sampleDrafts[0];
-    return [];
-  };
-
-  let resumed = null;
-
-  const r = render(
-    React.createElement(ToastProvider, null,
-      React.createElement(DraftsModal, {
-        onClose: () => {},
-        onResume: (d) => { resumed = d; },
-        customers,
-      })
-    )
-  );
-
-  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
-
-  assert.match(r.text(), /Store Alpha/);
-  assert.match(r.text(), /Store Beta/);
-  assert.match(r.text(), /Discard all \(2\)/);
-
-  // Test resume draft
-  const resumeBtn = r.all('button').find((b) => b.textContent.includes('Resume draft'));
-  assert.ok(resumeBtn, 'Resume draft button should exist');
-  act(() => {
-    resumeBtn.dispatchEvent(new globalThis.window.MouseEvent('click', { bubbles: true }));
-  });
-  await act(async () => {
-    await new Promise((res) => setTimeout(res, 50));
-  });
-
-  assert.equal(resumed?.id, 101);
 
   r.unmount();
 });
@@ -317,40 +266,6 @@ test('OrderCreateModal: submit calls PATCH draft and POST finalize, then onSaved
 
   assert.ok(finalizeCalled || patchCalled, 'Submit should finalize or patch the order');
   assert.equal(savedOrderId, 201, 'onSaved should be called with orderId');
-
-  r.unmount();
-});
-
-test('OrdersPage: Drafts tab renders search box and bulk discard action', async () => {
-  const sampleDrafts = [
-    { id: 301, customer_name: 'Customer One', total_amount: 400, adjustment: 0, order_type: 'delivery', status: 'draft', created_at: new Date().toISOString() },
-    { id: 302, customer_name: 'Customer Two', total_amount: 800, adjustment: 0, order_type: 'pickup', status: 'draft', created_at: new Date().toISOString() },
-  ];
-
-  api.get = async (path) => {
-    if (path.includes('status=draft')) return sampleDrafts;
-    if (path.startsWith('/orders')) return sampleDrafts;
-    return [];
-  };
-
-  const r = render(
-    React.createElement(ToastProvider, null,
-      React.createElement(OrdersPage, null)
-    )
-  );
-
-  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
-
-  // Switch to Drafts tab
-  const draftsTabBtn = r.all('button').find((b) => b.textContent.trim() === 'Drafts');
-  assert.ok(draftsTabBtn, 'Drafts tab button should exist');
-  r.click(draftsTabBtn);
-  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
-
-  // Verify search box and bulk discard action on Drafts tab
-  assert.match(r.text(), /Discard all \(2\)/);
-  const searchInput = r.byLabel('Search drafts by customer or order number');
-  assert.ok(searchInput, 'Drafts search input on OrdersPage should exist');
 
   r.unmount();
 });

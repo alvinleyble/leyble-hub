@@ -116,7 +116,7 @@ export default function POSProductGrid({
 
   return (
     <section className="flex min-h-0 flex-col h-full" aria-label="Products">
-      {/* Search + category matrix. `headerActions` (Drafts, History) sits on top */}
+      {/* Search + category matrix. Optional headerActions slot */}
       <div className="shrink-0 space-y-2.5 pb-2">
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
@@ -161,24 +161,25 @@ export default function POSProductGrid({
         </div>
       </div>
 
-      {/* Cards */}
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      {/* Product Card Grid */}
+      <div className="min-h-0 flex-1 overflow-y-auto pt-2">
         {visible.length === 0 ? (
-          <p className="py-12 text-center text-base text-slate-400">No products match this search.</p>
+          <p className="py-12 text-center text-sm text-slate-400">
+            {products.length === 0 ? 'No products available.' : 'No matching products.'}
+          </p>
         ) : (
-          <ul className="grid grid-cols-2 gap-2.5 pb-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-            {visible.map((p) => (
-              <li key={p.id}>
-                <ProductCard
-                  product={p}
-                  quantity={orderQty[p.id] ?? 0}
-                  onAdd={onAdd}
-                  disabled={disabled}
-                  priceFor={priceFor}
-                />
-              </li>
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 pb-4">
+            {visible.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                quantity={orderQty[product.id] || 0}
+                onAdd={onAdd}
+                disabled={disabled}
+                priceFor={priceFor}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </section>

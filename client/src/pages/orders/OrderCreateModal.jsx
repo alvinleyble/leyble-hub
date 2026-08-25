@@ -10,8 +10,6 @@ import { orderRef } from '../../utils/orderRef';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import CaseStepper from '../../components/pos/CaseStepper';
 import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
-import DraftsModal from './DraftsModal';
-import OrderHistoryModal from './OrderHistoryModal';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -74,38 +72,24 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   // ── Draft auto-save state ──────────────────────────────────────────────────
   const [draftId, setDraftId]                     = useState(isDraftResume ? editOrder.id : null);
   const [draftStatus, setDraftStatus]             = useState('idle'); // 'idle' | 'saving' | 'saved'
-  const [draftCount, setDraftCount]               = useState(0);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [confirmingReset, setConfirmingReset]     = useState(false);
   const creatingDraftRef                          = useRef(false);
 
-  // ── Quick-access Modals ────────────────────────────────────────────────────
-  const [draftsOpen, setDraftsOpen]   = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-
   // ── Save-custom-price prompt ───────────────────────────────────────────────
   const [priceSavePrompt, setPriceSavePrompt] = useState(null);
   const [convertTarget, setConvertTarget]     = useState('unassigned');
-
-  // Load initial data
-  const refreshDraftCount = () => {
-    api.get('/orders?status=draft')
-      .then((rows) => setDraftCount(rows.length))
-      .catch(() => {});
-  };
 
   useEffect(() => {
     Promise.all([
       api.get('/customers'),
       api.get('/products'),
       api.get('/personnel'),
-      api.get('/orders?status=draft'),
     ])
-      .then(([custs, prods, pers, drafts]) => {
+      .then(([custs, prods, pers]) => {
         setCustomers(custs);
         setProducts(prods);
         setActivePersonnel(pers);
-        setDraftCount(drafts.length);
       })
       .catch(() => addToast('Failed to load form data.', 'error'))
       .finally(() => setLoading(false));
@@ -171,7 +155,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     return map;
   }, [items]);
 
-  // Tapping a product card in the grid adds half a case (or 1 case if first add)
+  // Tapping a product card in the grid adds 0.5 cases (both for new and existing lines)
   const addProduct = (product) => {
     setItems((prev) => {
       const existing = prev.find((i) => i.product_id === String(product.id));
@@ -190,7 +174,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
           product_name:           product.name,
           sku:                    product.sku || '',
           unit:                   product.unit || 'cs',
-          quantity:               1,
+          quantity:               0.5,
           unit_price:             String(priceFor(product)),
           unit_deposit_fee:       product.requires_bottle_return ? Number(product.deposit_fee) : 0,
           units_per_case:         Number(product.units_per_case) || 1,
@@ -270,7 +254,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       .then((created) => {
         setDraftId(created.id);
         setDraftStatus('saved');
-        refreshDraftCount();
       })
       .catch(() => {
         creatingDraftRef.current = false;
@@ -310,40 +293,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     setErrors({});
     setConfirmingReset(false);
     addToast('Order lines reset.', 'info');
-  };
-
-  // ── Resume a draft from DraftsModal ─────────────────────────────────────────
-  const handleResumeDraft = (draft) => {
-    setCustomerId(String(draft.customer_id));
-    setOrderType(draft.order_type || 'delivery');
-    setNotes(draft.notes ?? '');
-    setAdjValue(Number(draft.adjustment) ? String(draft.adjustment) : '');
-    setAdjReason(draft.adjustment_reason ?? '');
-    setAdjExpanded(Boolean(Number(draft.adjustment)));
-    setItems(
-      draft.items?.map((i) => ({
-        _key:                   i.id || Math.random(),
-        requires_bottle_return: i.requires_bottle_return ?? false,
-        product_id:             String(i.product_id),
-        product_name:           i.product_name,
-        sku:                    i.sku || '',
-        unit:                   i.unit || 'cs',
-        quantity:               Number(i.quantity),
-        unit_price:             String(i.unit_price),
-        unit_deposit_fee:       Number(i.unit_deposit_fee) || 0,
-        units_per_case:         Number(i.units_per_case) || 1,
-        _priceEdited:           true,
-      })) ?? []
-    );
-    setAssignedPersonnel(
-      draft.personnel?.map((p) => ({ id: p.personnel_id, role: p.role })) ?? []
-    );
-    setDraftId(draft.id);
-    setDraftStatus('saved');
-    creatingDraftRef.current = true;
-    setErrors({});
-    setDraftsOpen(false);
-    addToast(`Resumed draft for ${draft.customer_name || 'Customer'}.`, 'success');
   };
 
   // ── Submit ─────────────────────────────────────────────────────────────────
@@ -536,33 +485,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                   orderQty={orderQty}
                   onAdd={addProduct}
                   priceFor={priceFor}
-                  headerActions={
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setDraftsOpen(true)}
-                        aria-label={`Drafts — ${draftCount} parked`}
-                        className="flex h-11 items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700
-                                   hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 shadow-sm"
-                      >
-                        <span>📄 Drafts</span>
-                        {draftCount > 0 && (
-                          <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-blue-700 px-1.5 text-xs font-bold text-white">
-                            {draftCount}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setHistoryOpen(true)}
-                        aria-label="Order History"
-                        className="flex h-11 items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700
-                                   hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 shadow-sm"
-                      >
-                        <span>🕐 History</span>
-                      </button>
-                    </>
-                  }
                 />
               </div>
 
@@ -676,12 +598,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
                   {/* Line Items List */}
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        Order Lines ({totalCases(items)} cs)
-                      </p>
-                    </div>
-
                     {errors.items && <p className="text-xs text-red-600 mb-2 font-medium">{errors.items}</p>}
 
                     {items.length === 0 ? (
@@ -958,23 +874,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
             The selected customer and order type will be kept.
           </p>
         </Modal>
-      )}
-
-      {/* ── Quick Access Drafts Modal ──────────────────────────────────── */}
-      {draftsOpen && (
-        <DraftsModal
-          customers={customers}
-          onClose={() => { setDraftsOpen(false); refreshDraftCount(); }}
-          onResume={handleResumeDraft}
-          onChanged={refreshDraftCount}
-        />
-      )}
-
-      {/* ── Quick Access Order History Modal ───────────────────────────── */}
-      {historyOpen && (
-        <OrderHistoryModal
-          onClose={() => setHistoryOpen(false)}
-        />
       )}
 
       {/* ── Save custom price? (step 1) ────────────────────────────────── */}
