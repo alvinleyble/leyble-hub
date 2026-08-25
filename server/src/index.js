@@ -21,10 +21,17 @@ const app = express();
 // served web client. The native Capacitor WebView fetches cross-origin to the
 // Render API and sends Origin: https://localhost (androidScheme: https), so that
 // origin is required. http://localhost:5173 is for local browser dev only.
+// Additional dev-only origins (e.g. LAN/Tailscale IPs or alternate ports like 5174)
+// can be configured via DEV_CORS_EXTRA_ORIGINS (comma-separated).
+const devExtraOrigins = process.env.NODE_ENV !== 'production' && process.env.DEV_CORS_EXTRA_ORIGINS
+  ? process.env.DEV_CORS_EXTRA_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+  : [];
+
 const allowedOrigins = [
   'http://localhost:5173',
   'https://localhost',
   'capacitor://localhost',
+  ...devExtraOrigins,
 ];
 app.use(
   cors({
