@@ -102,7 +102,9 @@ export default function POSProductGrid({
       .filter((p) => category === ALL_CATEGORIES || p.category === category)
       .filter((p) => productMatches(p, query))
       .sort((a, b) =>
-        (a.category ?? '').localeCompare(b.category ?? '') || a.name.localeCompare(b.name)
+        (Number(b.order_count) || 0) - (Number(a.order_count) || 0)
+        || (a.category ?? '').localeCompare(b.category ?? '')
+        || a.name.localeCompare(b.name)
       ),
     [products, category, query]
   );
