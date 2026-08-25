@@ -61,10 +61,8 @@ export default function OrdersPage() {
   const [resumeDraft, setResumeDraft]           = useState(null);
   const [discardConfirm, setDiscardConfirm]     = useState(null);
   const [discarding, setDiscarding]             = useState(false);
-  const [discardAllConfirm, setDiscardAllConfirm] = useState(false);
-  const [discardingAll, setDiscardingAll]       = useState(false);
 
-  // Bulk selection + actions (only meaningful on pending/in_transit/completed tabs)
+  // Bulk selection + actions (uniform across draft, pending, in_transit, completed tabs)
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
   const [bulkConfirm, setBulkConfirm]     = useState(null);
   const [bulkRunning, setBulkRunning]     = useState(false);
@@ -72,7 +70,7 @@ export default function OrdersPage() {
   // { ids: number[], mode: 'pending' | 'in_transit' | 'delivered' } | null
   const [reviewQueue, setReviewQueue]     = useState(null);
 
-  const showCheckboxes = ['pending', 'in_transit', 'completed'].includes(statusTab);
+  const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -97,7 +95,7 @@ export default function OrdersPage() {
 
   useEffect(() => { setSelectedIds(new Set()); setBulkConfirm(null); }, [statusTab]);
 
-  // D6 / G21 — Possible double detection across loaded orders
+  // D6 / G21 — Possible duplicate detection across loaded orders
   const possibleDoubleIds = useMemo(
     () => getPossibleDoubleOrderIds(orders),
     [orders]
@@ -134,9 +132,6 @@ export default function OrdersPage() {
     });
   }, [orders, searchQuery, doubleOnly, possibleDoubleIds, printFilter]);
 
-  const currentDrafts = statusTab === 'draft' ? (orders.length > 0 ? orders : drafts) : drafts;
-  const draftsCount = currentDrafts.length;
-
   const openDraft = async (o) => {
     try {
       const full = await api.get(`/orders/${o.id}`);
@@ -159,22 +154,6 @@ export default function OrdersPage() {
       addToast(err.message || 'Failed to discard draft.', 'error');
     } finally {
       setDiscarding(false);
-    }
-  };
-
-  const confirmDiscardAllDrafts = async () => {
-    if (draftsCount === 0) return;
-    setDiscardingAll(true);
-    try {
-      await Promise.all(currentDrafts.map((d) => api.del(`/orders/${d.id}`)));
-      addToast(`All ${draftsCount} drafts discarded.`, 'success');
-      setDiscardAllConfirm(false);
-      load();
-      loadDrafts();
-    } catch (err) {
-      addToast(err.message || 'Failed to discard drafts.', 'error');
-    } finally {
-      setDiscardingAll(false);
     }
   };
 
@@ -222,6 +201,37 @@ export default function OrdersPage() {
     return succeeded;
   };
 
+  const confirmBulkDiscardDrafts = () => setBulkConfirm({
+    label: 'Discard Selected',
+    message: `The ${selectedIds.size} selected draft order(s) will be permanently removed. This cannot be undone.`,
+    onConfirm: async () => {
+      setBulkRunning(true);
+      const ids = Array.from(selectedIds);
+      const succeeded = [];
+      const failed = [];
+      for (const orderId of ids) {
+        try {
+          await api.del(`/orders/${orderId}`);
+          succeeded.push(orderId);
+        } catch (err) {
+          failed.push({ id: orderId, reason: err.message || 'failed' });
+        }
+      }
+      setBulkRunning(false);
+      setBulkConfirm(null);
+      setSelectedIds(new Set());
+      load();
+      loadDrafts();
+
+      if (failed.length === 0) {
+        addToast(`${succeeded.length} draft${succeeded.length === 1 ? '' : 's'} discarded.`, 'success');
+      } else {
+        const failMsg = failed.map((f) => `#${f.id} — ${f.reason}`).join(' · ');
+        addToast(`${succeeded.length} of ${ids.length} drafts discarded. Failed: ${failMsg}`, 'error');
+      }
+    },
+  });
+
   const confirmBulkDispatch = () => setBulkConfirm({
     label: 'Dispatch Selected',
     message: `Stock will be deducted from inventory for ${selectedIds.size} order(s). This cannot be undone without cancelling each order individually.`,
@@ -256,17 +266,7 @@ export default function OrdersPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Outgoing Orders</h1>
-        <div className="flex items-center gap-3">
-          {statusTab === 'draft' && draftsCount > 0 && (
-            <Button
-              variant="danger"
-              onClick={() => setDiscardAllConfirm(true)}
-            >
-              🗑 Discard all ({draftsCount})
-            </Button>
-          )}
-          <Button onClick={() => setCreating(true)}>+ New Order</Button>
-        </div>
+        <Button onClick={() => setCreating(true)}>+ New Order</Button>
       </div>
 
       {/* Parked-drafts banner — visible from any tab so an in-progress order is never lost */}
@@ -329,7 +329,7 @@ export default function OrdersPage() {
           )}
         </div>
 
-        {/* Possible double filter toggle pill (G21) */}
+        {/* Possible duplicate filter toggle pill (G21) */}
         <button
           type="button"
           onClick={() => setDoubleOnly((v) => !v)}
@@ -340,20 +340,8 @@ export default function OrdersPage() {
               : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
           }`}
         >
-          <span>⚠️</span> Possible double only
+          <span>⚠️</span> Possible duplicate only
         </button>
-
-        {/* Print status filter dropdown (G21) */}
-        <select
-          value={printFilter}
-          onChange={(e) => setPrintFilter(e.target.value)}
-          className="h-10 px-3 border border-slate-300 rounded-lg text-sm font-medium text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
-          aria-label="Filter by print status"
-        >
-          <option value="all">All Print Status</option>
-          <option value="printed">🖶 Printed</option>
-          <option value="unprinted">⚠️ Not Printed</option>
-        </select>
 
         {/* Date range filters */}
         <div className="flex gap-2 items-center">
@@ -400,7 +388,12 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" onClick={() => setBulkConfirm(null)} disabled={bulkRunning}>
                   Cancel
                 </Button>
-                <Button size="sm" onClick={bulkConfirm.onConfirm} loading={bulkRunning}>
+                <Button
+                  size="sm"
+                  variant={statusTab === 'draft' ? 'danger' : undefined}
+                  onClick={bulkConfirm.onConfirm}
+                  loading={bulkRunning}
+                >
                   {bulkConfirm.label}
                 </Button>
               </div>
@@ -414,6 +407,11 @@ export default function OrdersPage() {
                 <Button variant="secondary" size="sm" onClick={() => setSelectedIds(new Set())}>
                   Clear
                 </Button>
+                {statusTab === 'draft' && (
+                  <Button size="sm" variant="danger" onClick={confirmBulkDiscardDrafts}>
+                    Discard Selected
+                  </Button>
+                )}
                 {statusTab === 'pending' && selectionHasDeliveries && !selectionIsMixed && (
                   <Button size="sm" onClick={confirmBulkDispatch}>
                     Dispatch Selected →
@@ -486,23 +484,23 @@ export default function OrdersPage() {
                     </label>
                   </th>
                 )}
-                <th className="text-left px-5 py-3 font-semibold w-16">#</th>
+                <th className="text-left px-5 py-3 font-semibold w-28">#</th>
                 <th className="text-left px-5 py-3 font-semibold">Customer</th>
-                <th className="text-right px-5 py-3 font-semibold">Total</th>
-                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Date</th>
-                <th className="text-left px-5 py-3 font-semibold">
-                  <div className="flex items-center gap-2">
+                <th className="text-right px-5 py-3 font-semibold w-36">Total</th>
+                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell w-36">Date</th>
+                <th className="text-left px-5 py-3 font-semibold w-64">
+                  <div className="flex items-center justify-between gap-2">
                     <span>Status</span>
                     <select
                       value={printFilter}
                       onChange={(e) => setPrintFilter(e.target.value)}
                       onClick={(e) => e.stopPropagation()}
-                      className="text-xs font-normal normal-case border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer"
+                      className="text-xs font-medium border border-slate-300 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer shadow-sm"
                       aria-label="Filter status by print state"
                     >
                       <option value="all">All</option>
-                      <option value="printed">Printed</option>
-                      <option value="unprinted">Not Printed</option>
+                      <option value="printed">🖶 Printed</option>
+                      <option value="unprinted">⚠️ Not Printed</option>
                     </select>
                   </div>
                 </th>
@@ -517,7 +515,7 @@ export default function OrdersPage() {
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   {showCheckboxes && (
-                    <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-5 py-4 w-12" onClick={(e) => e.stopPropagation()}>
                       <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -530,19 +528,19 @@ export default function OrdersPage() {
                       </label>
                     </td>
                   )}
-                  <td className="px-5 py-4 font-mono text-slate-500 text-sm">{orderRef(o)}</td>
+                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">{orderRef(o)}</td>
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>
-                  <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums">
+                  <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell">
+                  <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell w-36">
                     {new Date(o.created_at).toLocaleDateString('en-PH', {
                       month: 'short', day: 'numeric', year: 'numeric',
                     })}
                   </td>
-                  <td className="px-5 py-4">
+                  <td className="px-5 py-4 w-64">
                     <div className="flex flex-wrap gap-1.5 items-center">
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                         {STATUS_LABEL[o.status] ?? o.status}
@@ -563,13 +561,13 @@ export default function OrdersPage() {
                           className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold"
                           title="Same customer, channel and total as another order — possibly the same sale printed twice."
                         >
-                          ⚠️ possible double
+                          ⚠️ possible duplicate
                         </span>
                       )}
                     </div>
                   </td>
                   {statusTab === 'draft' && (
-                    <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-5 py-4 text-right w-28" onClick={(e) => e.stopPropagation()}>
                       <Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(o)}>
                         Discard
                       </Button>
@@ -617,25 +615,6 @@ export default function OrdersPage() {
               </Button>
               <Button variant="danger" onClick={confirmDiscardDraft} loading={discarding}>
                 Discard
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {discardAllConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
-          <div className="bg-white rounded-xl max-w-sm w-full mx-4 shadow-2xl p-6">
-            <h2 className="text-lg font-bold text-slate-900 mb-2">Discard all {draftsCount} drafts?</h2>
-            <p className="text-sm text-slate-600 mb-5">
-              All parked drafts will be permanently removed. This cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button variant="secondary" onClick={() => setDiscardAllConfirm(false)} disabled={discardingAll}>
-                Keep
-              </Button>
-              <Button variant="danger" onClick={confirmDiscardAllDrafts} loading={discardingAll}>
-                Discard all
               </Button>
             </div>
           </div>

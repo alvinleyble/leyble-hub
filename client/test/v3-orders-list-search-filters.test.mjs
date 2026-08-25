@@ -129,7 +129,7 @@ test('G20: OrdersPage instant client-side search matches customer_name, id, #id,
   assert.equal(rows.length, 3, 'Should restore all 3 orders after clearing search');
 });
 
-test('G21: Possible double toggle pill filters to duplicate group and displays badge', async () => {
+test('G21: Possible duplicate toggle pill filters to duplicate group and displays badge', async () => {
   // Orders 201 and 202 share customer_id, order_type, total_amount, adjustment, status=pending, but different receipt_number
   const mockOrders = [
     makeOrder(201, { customer_id: 10, customer_name: 'Twin Store', total_amount: 1200, adjustment: 0, receipt_number: '1-000201' }),
@@ -152,12 +152,12 @@ test('G21: Possible double toggle pill filters to duplicate group and displays b
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
   // Check that row badge exists on 201 and 202
-  const badges = r.all('span').filter((s) => s.textContent.includes('possible double'));
-  assert.equal(badges.length, 2, 'Should display 2 possible double badges in rows');
+  const badges = r.all('span').filter((s) => s.textContent.includes('possible duplicate'));
+  assert.equal(badges.length, 2, 'Should display 2 possible duplicate badges in rows');
 
-  // Toggle "Possible double only"
-  const doublePill = r.all('button').find((b) => b.textContent.includes('Possible double only'));
-  assert.ok(doublePill, 'Possible double only pill should exist');
+  // Toggle "Possible duplicate only"
+  const doublePill = r.all('button').find((b) => b.textContent.includes('Possible duplicate only'));
+  assert.ok(doublePill, 'Possible duplicate only pill should exist');
   assert.equal(doublePill.getAttribute('aria-pressed'), 'false');
 
   r.click(doublePill);
@@ -174,7 +174,7 @@ test('G21: Possible double toggle pill filters to duplicate group and displays b
   assert.equal(r.all('tbody tr').length, 3, 'Should show all 3 orders after untoggling');
 });
 
-test('G21: Print status filter (All, Printed, Not Printed) filters correctly', async () => {
+test('G21: Print status filter (All, Printed, Not Printed) directly on Status column header filters correctly', async () => {
   const mockOrders = [
     makeOrder(301, { status: 'pending', pending_receipt_printed_at: '2026-08-25T10:00:00Z', customer_name: 'Printed Pending' }),
     makeOrder(302, { status: 'pending', pending_receipt_printed_at: null, customer_name: 'Unprinted Pending' }),
@@ -196,8 +196,8 @@ test('G21: Print status filter (All, Printed, Not Printed) filters correctly', a
 
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  const printSelect = r.byLabel('Filter by print status');
-  assert.ok(printSelect, 'Filter by print status dropdown should exist');
+  const printSelect = r.byLabel('Filter status by print state');
+  assert.ok(printSelect, 'Filter status by print state dropdown should exist in header');
 
   // Filter: Printed
   act(() => {
@@ -235,7 +235,7 @@ test('G21: Print status filter (All, Printed, Not Printed) filters correctly', a
   assert.equal(rows.length, 4);
 });
 
-test('G22: Drafts bulk discard-all with modal confirmation and parallel deletion', async () => {
+test('G22: Drafts tab supports checkboxes and bulk discard via bulk action bar', async () => {
   const mockDrafts = [
     makeOrder(401, { status: 'draft', customer_name: 'Draft One' }),
     makeOrder(402, { status: 'draft', customer_name: 'Draft Two' }),
@@ -265,38 +265,57 @@ test('G22: Drafts bulk discard-all with modal confirmation and parallel deletion
   r.click(draftsTab);
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  // Discard all button should appear
-  const discardAllBtn = r.all('button').find((b) => b.textContent.includes('Discard all (2)'));
-  assert.ok(discardAllBtn, 'Discard all (2) button should be visible on Drafts tab');
+  // Checkboxes should be enabled on Drafts tab
+  const selectAll = r.byLabel('Select all orders');
+  assert.ok(selectAll, 'Select all orders checkbox should be rendered on Drafts tab');
 
-  // Tap Discard all -> opens modal
-  r.click(discardAllBtn);
+  // Select all drafts
+  r.click(selectAll);
   await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
 
-  assert.ok(r.text().includes('Discard all 2 drafts?'));
-  assert.ok(r.text().includes('All parked drafts will be permanently removed. This cannot be undone.'));
+  // Bulk action bar should appear with Discard Selected
+  const discardSelectedBtn = r.all('button').find((b) => b.textContent.trim() === 'Discard Selected');
+  assert.ok(discardSelectedBtn, 'Discard Selected button should be visible in bulk action bar');
 
-  // Cancel via Keep
-  const keepBtn = r.all('button').find((b) => b.textContent.trim() === 'Keep');
-  assert.ok(keepBtn, 'Keep button should exist in modal');
-  r.click(keepBtn);
-  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
-  assert.equal(deletedIds.length, 0, 'No api.del should have been called on Keep');
-
-  // Re-open and confirm Discard all
-  const discardAllBtnAgain = r.all('button').find((b) => b.textContent.includes('Discard all (2)'));
-  r.click(discardAllBtnAgain);
+  // Click Discard Selected -> sets confirmation in bulk bar
+  r.click(discardSelectedBtn);
   await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
 
-  const confirmModalDiscardBtn = r.all('button').find((b) => b.textContent.trim() === 'Discard all');
-  assert.ok(confirmModalDiscardBtn, 'Modal Discard all button should exist');
-  r.click(confirmModalDiscardBtn);
+  assert.ok(r.text().includes('Confirm: Discard Selected'));
+  assert.ok(r.text().includes('2 selected draft order(s) will be permanently removed'));
+
+  // Cancel via Cancel
+  const cancelBtn = r.all('button').find((b) => b.textContent.trim() === 'Cancel');
+  assert.ok(cancelBtn, 'Cancel button should exist in bulk confirmation');
+  r.click(cancelBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+  assert.equal(deletedIds.length, 0, 'No api.del should have been called on Cancel');
+
+  // Clear selection
+  const clearBtn = r.all('button').find((b) => b.textContent.trim() === 'Clear');
+  assert.ok(clearBtn, 'Clear button should exist in bulk action bar');
+  r.click(clearBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Select first draft checkbox specifically
+  const firstDraftCheckbox = r.byLabel('Select order #401');
+  assert.ok(firstDraftCheckbox, 'Select order #401 checkbox should exist');
+  r.click(firstDraftCheckbox);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Click Discard Selected again
+  const discardSelectedBtn2 = r.all('button').find((b) => b.textContent.trim() === 'Discard Selected');
+  r.click(discardSelectedBtn2);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Confirm discard
+  const confirmBtn = r.all('button').find((b) => b.textContent.trim() === 'Discard Selected');
+  r.click(confirmBtn);
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  assert.equal(deletedIds.length, 2);
+  assert.equal(deletedIds.length, 1);
   assert.ok(deletedIds.includes('/orders/401'));
-  assert.ok(deletedIds.includes('/orders/402'));
-  assert.ok(r.text().includes('All 2 drafts discarded.'));
+  assert.ok(r.text().includes('1 draft discarded.'));
 });
 
 test('G23: Personnel column is removed from table header and rows', async () => {
