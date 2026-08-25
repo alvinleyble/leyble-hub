@@ -48,13 +48,30 @@ afterEach(() => {
   api.del = originalApiDel;
 });
 
-// Helper to select customer in Combobox
+function changeInput(input, value) {
+  const prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
+    : input.tagName === 'SELECT' ? window.HTMLSelectElement.prototype
+    : window.HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+  if (descriptor?.set) {
+    descriptor.set.call(input, value);
+  } else {
+    input.value = value;
+  }
+  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps'));
+  if (reactPropsKey && input[reactPropsKey]?.onChange) {
+    input[reactPropsKey].onChange({ target: { value, type: input.type || 'text', checked: input.checked } });
+  }
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+}
+
+// Helper to select customer in Combobox (types to trigger minChars=1 match)
 async function selectFirstCustomer(r) {
   const custInput = r.byLabel('Customer');
   act(() => {
     custInput.focus();
-    custInput.dispatchEvent(new globalThis.window.Event('focus', { bubbles: true }));
-    custInput.dispatchEvent(new globalThis.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    changeInput(custInput, 'Buddy');
   });
   await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
   act(() => {
@@ -266,6 +283,106 @@ test('OrderCreateModal: submit calls PATCH draft and POST finalize, then onSaved
 
   assert.ok(finalizeCalled || patchCalled, 'Submit should finalize or patch the order');
   assert.equal(savedOrderId, 201, 'onSaved should be called with orderId');
+
+  r.unmount();
+});
+
+test('OrderCreateModal: Customer Combobox does NOT show dropdown upon focus when empty (minChars=1) and only shows after typing', async () => {
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrderCreateModal, { onClose: () => {}, onSaved: () => {} })
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  const custInput = r.byLabel('Customer');
+  assert.ok(custInput, 'Customer input should exist');
+
+  // Focus the input with empty text
+  act(() => {
+    custInput.focus();
+    custInput.dispatchEvent(new globalThis.window.Event('focus', { bubbles: true }));
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Dropdown listbox should NOT be present
+  assert.equal(r.all('ul[role="listbox"]').length, 0, 'Dropdown list must NOT render on focus when query is empty');
+
+  // Type 1 character 'A'
+  act(() => {
+    changeInput(custInput, 'A');
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Dropdown listbox should now be visible and display matching customer
+  assert.equal(r.all('ul[role="listbox"]').length, 1, 'Dropdown list must render once >= 1 character typed');
+  assert.ok(r.text().includes('Alvin Store'));
+
+  r.unmount();
+});
+
+test('OrderCreateModal regression: submit before draftId state updates awaits in-flight draft creation and does NOT create a duplicate POST /orders', async () => {
+  const postCalls = [];
+  const patchCalls = [];
+  let draftResolve;
+
+  // Draft creation intentionally delayed to simulate the race window
+  api.post = async (path, body) => {
+    postCalls.push(path);
+    if (path === '/orders' && body?.status === 'draft') {
+      await new Promise((res) => { draftResolve = res; });
+      return { id: 999 };
+    }
+    if (path.includes('/finalize')) return { id: 999, status: 'pending' };
+    return { id: 999 };
+  };
+  api.patch = async (path) => {
+    patchCalls.push(path);
+    return { id: 999 };
+  };
+
+  let savedOrderId = null;
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrderCreateModal, {
+        onClose: () => {},
+        onSaved: (id) => { savedOrderId = id; },
+      })
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  // Select customer — triggers the in-flight draft creation (now deliberately delayed)
+  await selectFirstCustomer(r);
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  // Add a product
+  const cokeBtn = r.all('button').find((b) => b.getAttribute('aria-label')?.includes('Coke Sakto'));
+  r.click(cokeBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Click Create Order BEFORE the draft creation resolves — this is the race window
+  const submitBtn = r.all('button').find((b) => b.textContent.includes('Create Order'));
+  assert.ok(submitBtn, 'Create order button should exist');
+  act(() => { r.click(submitBtn); });
+
+  // Now resolve the draft creation — handleSubmit was waiting on draftPromiseRef
+  await act(async () => {
+    if (draftResolve) draftResolve();
+    await new Promise((res) => setTimeout(res, 150));
+  });
+
+  // Only ONE POST /orders call (the draft creation); no second POST /orders
+  const orderPostCalls = postCalls.filter((p) => p === '/orders');
+  assert.equal(orderPostCalls.length, 1, 'Should only POST /orders once (the draft), not a duplicate pending order');
+
+  // Should PATCH + finalize the draft instead of creating a new one
+  assert.ok(patchCalls.some((p) => p.includes('/orders/999')), 'Should PATCH the draft order');
+  assert.ok(postCalls.some((p) => p.includes('/finalize')), 'Should finalize the draft order');
+
+  assert.equal(savedOrderId, 999, "onSaved should be called with the draft's order id");
 
   r.unmount();
 });
