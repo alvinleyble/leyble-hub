@@ -19,7 +19,7 @@ const INPUT = `w-full h-11 px-3 border border-slate-300 rounded-lg text-sm text-
 
 const customerMatches = (c, q) => {
   const s = q.trim().toLowerCase();
-  return s === '' ? true : c.name.toLowerCase().includes(s);
+  return s === '' ? false : c.name.toLowerCase().includes(s);
 };
 
 export default function OrderCreateModal({ onClose, onSaved, editOrder = null }) {
@@ -500,6 +500,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                       match={customerMatches}
                       value={selectedCustomer ?? null}
                       displayValue={(c) => c.name}
+                      minChars={1}
                       onSelect={(c) => setCustomerId(String(c.id))}
                       onQueryChange={() => setCustomerId('')}
                       onCreate={handleCreateCustomer}

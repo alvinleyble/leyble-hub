@@ -48,13 +48,30 @@ afterEach(() => {
   api.del = originalApiDel;
 });
 
-// Helper to select customer in Combobox
+function changeInput(input, value) {
+  const prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
+    : input.tagName === 'SELECT' ? window.HTMLSelectElement.prototype
+    : window.HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+  if (descriptor?.set) {
+    descriptor.set.call(input, value);
+  } else {
+    input.value = value;
+  }
+  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps'));
+  if (reactPropsKey && input[reactPropsKey]?.onChange) {
+    input[reactPropsKey].onChange({ target: { value, type: input.type || 'text', checked: input.checked } });
+  }
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+}
+
+// Helper to select customer in Combobox (types to trigger minChars=1 match)
 async function selectFirstCustomer(r) {
   const custInput = r.byLabel('Customer');
   act(() => {
     custInput.focus();
-    custInput.dispatchEvent(new globalThis.window.Event('focus', { bubbles: true }));
-    custInput.dispatchEvent(new globalThis.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    changeInput(custInput, 'Buddy');
   });
   await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
   act(() => {
@@ -269,3 +286,39 @@ test('OrderCreateModal: submit calls PATCH draft and POST finalize, then onSaved
 
   r.unmount();
 });
+
+test('OrderCreateModal: Customer Combobox does NOT show dropdown upon focus when empty (minChars=1) and only shows after typing', async () => {
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrderCreateModal, { onClose: () => {}, onSaved: () => {} })
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  const custInput = r.byLabel('Customer');
+  assert.ok(custInput, 'Customer input should exist');
+
+  // Focus the input with empty text
+  act(() => {
+    custInput.focus();
+    custInput.dispatchEvent(new globalThis.window.Event('focus', { bubbles: true }));
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Dropdown listbox should NOT be present
+  assert.equal(r.all('ul[role="listbox"]').length, 0, 'Dropdown list must NOT render on focus when query is empty');
+
+  // Type 1 character 'A'
+  act(() => {
+    changeInput(custInput, 'A');
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  // Dropdown listbox should now be visible and display matching customer
+  assert.equal(r.all('ul[role="listbox"]').length, 1, 'Dropdown list must render once >= 1 character typed');
+  assert.ok(r.text().includes('Alvin Store'));
+
+  r.unmount();
+});
+
