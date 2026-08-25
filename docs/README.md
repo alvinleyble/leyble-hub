@@ -37,10 +37,12 @@ Antipolo, Philippines. This folder is the single home for project documentation.
     [0010](adr/0010-receipt-number-addresses-order-across-sync-boundary.md) receipt number addresses order across sync boundary,
     [0011](adr/0011-tablets-as-stations-browser-as-dev-tier.md) tablets as stations / browser as dev tier,
     [0012](adr/0012-stock-deducts-at-dispatch-not-at-save.md) stock deducts at dispatch *(provisional)*,
-    [0013](adr/0013-unswitched-offline-core-no-flag-rollback.md) unswitched offline core *(supersedes 0008)*.
+    [0013](adr/0013-unswitched-offline-core-no-flag-rollback.md) unswitched offline core *(supersedes 0008)*,
+    [0014](adr/0014-v3-release-sequencing.md) release sequencing (database before server/APK).
 
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally.
+- [operations/development-database.md](operations/development-database.md) — development database replica & isolation rules.
 - [operations/android.md](operations/android.md) — build & sideload the Android APK; cloud setup.
 
 ### Archive (historical, not maintained)

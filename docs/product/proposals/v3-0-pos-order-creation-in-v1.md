@@ -195,6 +195,17 @@ The V3.0 scope is directly derived from the product owner's item-by-item markup 
 * **Rationale:** Provides high-visibility filtering for daily fulfillment and offline duplicate reconciliation directly within the main orders list.
 * **Accepted Cost:** Minor addition of filter chips to the Outgoing Orders table header.
 
+### V3-D19 — Two-Stage Release Sequencing: Database Migrations Ahead of Server & APK [SETTLED]
+* **Decision:** Database migrations deploy first and alone ahead of release day; the server and the Android APK land together on release day.
+* **Rationale:**
+  1. The hosted API redeploys automatically from `main` on Render (`render.yaml:18`, production environment, `branch: main`). Live store tablets call this hosted API. Anything merged to `main` reaches the live store within minutes, with no APK update and nothing for the owners to install.
+  2. The Render build command (`render.yaml:23-24`) executes `npm --prefix server install && node server/db/migrate.js`, so merging to `main` also applies pending migrations to the production database automatically on deploy without a pause step.
+  3. Migrations `031`, `032`, and `033` have never been applied to production (verified against the live database on 2026-08-25; `_migrations` stops at `030`). All three migrations are strictly additive: `031`/`032` widen the customer type check constraint, and `033` creates the `stations` table and adds nullable columns / partial unique index to `orders`. None drop, rename, or retype schema objects. Running them early introduces zero disruption for the running V1 server.
+  4. Two critical V3.0 changes are invisible on screen: saved prices becoming the pricing source (G16 / ADR 0009 / V3-D15) and stock deduction returning to dispatch time (G4 / ADR 0012 / V3-D3). If either reached `main` before the APK update, the store tablets' prices and stock behavior would change while the app looked identical to operators.
+* **Accepted Cost:** Deploying the release requires a two-stage operational procedure rather than a single git merge to `main`.
+* **See also:** [ADR 0014](../../adr/0014-v3-release-sequencing.md).
+
+
 ---
 
 ## 4. Re-Hosting the Offline Core: Consumer Map
@@ -262,20 +273,46 @@ graph TD
 
 ---
 
-## 7. Open Questions & Verification
+## 7. Live Production Database Verification & Findings (2026-08-25)
 
-### Production Database Schema Audit (Q6)
-The production Supabase PostgreSQL instance cannot be directly queried from this development environment. The expected baseline is that live production stops at migration `030_add_profiles.sql` and contains zero customer records tagged with V2 labels (`discounted`, `markup`, `unassigned`).
+The production Supabase PostgreSQL instance was audited on 2026-08-25 via direct read-only query access (`supabase-leyble`). The findings settled prior inferences and clarified the data landscape:
 
-To verify production database status with certainty prior to deployment, execute the following read-only SQL queries:
+### 1. Production Migration Status: Confirmed
+- `SELECT filename FROM _migrations ORDER BY filename;` returned 29 applied migrations (`001` through `030`, with `021` absent as it was never created).
+- Migrations `031`, `032`, and `033` have **never been applied to production**.
+- Because all three migrations are strictly additive (widening check constraints and adding nullable columns/tables), they can be applied early and alone ahead of release day without interrupting the running V1 server ([ADR 0014](../../adr/0014-v3-release-sequencing.md)).
 
-```sql
--- 1. Check applied migration history
-SELECT filename FROM _migrations ORDER BY filename;
+### 2. Live Customer Tags & Saved Prices Distribution
+The customer distribution query revealed that V2 exploratory customer tagging on local dev wrote through to the live production database (prior to establishing the separate development database):
 
--- 2. Audit existing customer type distribution
-SELECT customer_type, COUNT(*) 
-FROM customers 
-GROUP BY customer_type;
-```
-If any customers carry `unassigned`, they will be mapped cleanly to `regular` during data migration without impacting pricing calculations.
+| `customer_type` | Total Customers | Customers with Saved Prices | Total Saved Price Rows |
+| :--- | ---: | ---: | ---: |
+| `regular` | 322 | 4 | 9 |
+| `wholesaler` | 103 | 103 | 800 |
+| `discounted` | 27 | 27 | 217 |
+| `markup` | 8 | 8 | 13 |
+
+- No `unassigned` customer rows exist in production, so collapsing `unassigned` to `regular` is a clean no-op.
+- **35 live customers** carry `discounted` (27) or `markup` (8) tags, representing 230 saved price rows. Because V1 only loaded custom prices when `customer_type === 'wholesaler'` (`OrderCreateModal.jsx:104-105`), these 230 agreed prices were previously dead in the V1 order creation UI.
+
+### 3. Price-Audit Finding Corrected: Audit is NOT a Prerequisite
+- **Initial Belief:** A preliminary scan flagged seven out-of-band price rows in `customer_product_prices` with values roughly 94x–99x higher than base wholesale prices (e.g., ₱73,200 for a ₱736 item), leading to the belief that a full price audit and database cleanup was a mandatory prerequisite before activating G16 to prevent catastrophic billing errors.
+- **Evidence & Code Truth:**
+  1. `customer_product_prices` is strictly **append-only**. Every price update inserts a new row via `POST /api/v1/customers/:id/prices`; no in-place `UPDATE` or `DELETE` exists.
+  2. The read path (`server/src/routes/customers.js`, `GET /customers/:id/prices` via `SELECT DISTINCT ON (cpp.product_id) ... ORDER BY cpp.product_id, cpp.created_at DESC`) returns **only the most recent row per customer, product, and order type**. Both the customer profile panel and the order creation modal consume this exact query.
+  3. All seven out-of-band rows were superseded by subsequent corrected rows (centavo-style entry slips, e.g. typing 73200 instead of 732.00, corrected to 732.00). Five of the seven were superseded within two minutes of the original entry.
+  4. These out-of-band rows are historical log entries that are never returned by the read path and can never reach an active order.
+- **Conclusion:** No price clean-up is owed in the database, and the price audit is **not** a prerequisite of the G16 pricing change.
+
+### 4. What G16 Actually Changes for Live Customers
+Under G16, custom pricing follows saved prices in `customer_product_prices`, and `customer_type` becomes a purely descriptive tag. On release day, agreed custom prices begin applying automatically for these accounts:
+
+| Tag | Customers | Current saved prices | Effect against base price |
+| :--- | ---: | ---: | :--- |
+| `discounted` | 27 | 195 | 193 below base; average ₱5.51 lower per case, largest ₱20 |
+| `markup` | 8 | 13 | 12 above base; average ₱2.92 higher per case, largest ₱5 |
+| `regular` | 4 | 6 | mostly equal to base; one ₱40 below |
+
+- **Correction vs. New Policy:** This is a correction rather than a new pricing policy. In V1, operators had to remember and manually type these negotiated prices in at order time, leading to inconsistent charges across orders. Sampled historical orders showed one customer charged base price when a lower agreed price existed ("Cagayan Rice" charged ₱200 vs agreed ₱190 for `Y-COB-PET`), and markup accounts charged below agreed prices ("FALLEN ANGEL" and "Berdan" charged base ₱1,065 vs agreed ₱1,070 for `SML`). G16 makes the already-agreed price apply consistently.
+- **Operational Consequence:** The affected customers' order totals will visibly change on release day to reflect their agreed prices consistently. The store owners should be informed of this pricing transition prior to release day rather than after.
+
