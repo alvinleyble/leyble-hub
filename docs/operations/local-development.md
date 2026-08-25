@@ -70,6 +70,7 @@ A dedicated **development database** (Supabase PostgreSQL, full replica of produ
 | `JWT_SECRET` | Yes | Secret for signing auth tokens |
 | `JWT_EXPIRES_IN` | No | Token lifetime, default `8h` |
 | `PORT` | No | Backend port, default `3000` |
+| `DEV_CORS_EXTRA_ORIGINS` | No | Comma-separated list of extra origins allowed for CORS in local development (e.g. `http://localhost:5174,http://100.96.45.91:5173`) |
 | `SEED_ADMIN_EMAIL` | No | Admin email for seed, default `admin@leyblevhub.local` |
 | `SEED_ADMIN_PASSWORD` | Yes | Admin password created by `node db/seed.js` |
 | `SEED_ADMIN_NAME` | No | Admin display name, default `Admin` |
