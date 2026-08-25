@@ -51,6 +51,12 @@ export default function OrdersPage() {
   const [toDate, setToDate]       = useState('');
   const [creating, setCreating]   = useState(false);
 
+  // Pagination state (V3.0 Slice 7)
+  const [page, setPage]               = useState(1);
+  const [pageSize, setPageSize]       = useState(50);
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [totalPages, setTotalPages]   = useState(1);
+
   // Search & Filter controls (G20, G21)
   const [searchQuery, setSearchQuery] = useState('');
   const [doubleOnly, setDoubleOnly]   = useState(false);
@@ -78,12 +84,28 @@ export default function OrdersPage() {
     if (statusTab !== 'all') params.set('status', statusTab);
     if (fromDate) params.set('from_date', fromDate);
     if (toDate)   params.set('to_date',   toDate);
+    params.set('page', String(page));
+    params.set('limit', String(pageSize));
 
     api.get(`/orders?${params}`)
-      .then(setOrders)
+      .then((res) => {
+        if (res && res.orders && res.pagination) {
+          setOrders(res.orders);
+          setTotalOrders(res.pagination.total);
+          setTotalPages(res.pagination.totalPages);
+        } else if (Array.isArray(res)) {
+          setOrders(res);
+          setTotalOrders(res.length);
+          setTotalPages(1);
+        } else {
+          setOrders([]);
+          setTotalOrders(0);
+          setTotalPages(1);
+        }
+      })
       .catch(() => addToast('Failed to load orders', 'error'))
       .finally(() => setLoading(false));
-  }, [statusTab, fromDate, toDate, addToast]);
+  }, [statusTab, fromDate, toDate, page, pageSize, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -93,7 +115,15 @@ export default function OrdersPage() {
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
 
-  useEffect(() => { setSelectedIds(new Set()); setBulkConfirm(null); }, [statusTab]);
+  // Reset page to 1 when filters or search criteria change
+  useEffect(() => {
+    setPage(1);
+  }, [statusTab, fromDate, toDate, searchQuery, doubleOnly, printFilter]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setBulkConfirm(null);
+  }, [statusTab, page]);
 
   // D6 / G21 — Possible duplicate detection across loaded orders
   const possibleDoubleIds = useMemo(
@@ -580,7 +610,60 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {creating && (
+      {/* Bottom Pagination Bar */}
+      <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="text-sm font-medium text-slate-600">
+          Showing {totalOrders === 0 ? 0 : (page - 1) * pageSize + 1}–{totalOrders === 0 ? 0 : Math.min(page * pageSize, totalOrders)} of {totalOrders} orders
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="pageSizeSelect" className="text-sm text-slate-500 font-medium whitespace-nowrap">
+              Per page:
+            </label>
+            <select
+              id="pageSizeSelect"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPage(1);
+              }}
+              className="h-10 min-h-[40px] px-3 py-1.5 border border-slate-300 rounded-lg text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer shadow-sm"
+              aria-label="Orders per page"
+            >
+              <option value={25}>25 per page</option>
+              <option value={50}>50 per page</option>
+              <option value={100}>100 per page</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1 || loading}
+              className="min-h-[48px] px-4 py-2 rounded-lg text-sm font-semibold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 flex items-center justify-center shadow-sm"
+              aria-label="Previous page"
+            >
+              &lt; Previous
+            </button>
+
+            <span className="text-sm font-medium text-slate-700 px-2 select-none whitespace-nowrap">
+              Page {page} of {totalPages}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages || totalOrders === 0 || loading}
+              className="min-h-[48px] px-4 py-2 rounded-lg text-sm font-semibold border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 flex items-center justify-center shadow-sm"
+              aria-label="Next page"
+            >
+              Next &gt;
+            </button>
+          </div>
+        </div>
+      </div>
         <OrderCreateModal
           onClose={() => { setCreating(false); load(); loadDrafts(); }}
           onSaved={(orderId) => {

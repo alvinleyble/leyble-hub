@@ -264,7 +264,14 @@ async function reconcileStock(client, oldItems, newItems, order, userId) {
 // GET /api/v1/orders
 router.get('/', async (req, res, next) => {
   try {
-    const { status, customer_id, from_date, to_date } = req.query;
+    const { status, customer_id, from_date, to_date, page: pageQuery, limit: limitQuery } = req.query;
+    const isPaginated = pageQuery !== undefined || limitQuery !== undefined;
+    const page = Math.max(1, parseInt(pageQuery, 10) || 1);
+    const limit = isPaginated
+      ? Math.min(200, Math.max(1, parseInt(limitQuery, 10) || 50))
+      : 200;
+    const offset = (page - 1) * limit;
+
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -286,11 +293,21 @@ router.get('/', async (req, res, next) => {
       params.push(from_date);
     }
     if (to_date) {
-      conditions.push(`o.created_at < $${idx++}`);
-      params.push(to_date);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(to_date).trim())) {
+        conditions.push(`o.created_at < ($${idx++}::date + INTERVAL '1 day')`);
+        params.push(String(to_date).trim());
+      } else {
+        conditions.push(`o.created_at < $${idx++}`);
+        params.push(to_date);
+      }
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const limitParamIdx = idx++;
+    params.push(limit);
+    const offsetParamIdx = idx++;
+    params.push(offset);
 
     const { rows } = await db.query(
       `SELECT o.*,
@@ -298,14 +315,33 @@ router.get('/', async (req, res, next) => {
               (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
                FROM order_personnel op
                JOIN personnel per ON per.id = op.personnel_id
-               WHERE op.order_id = o.id) AS personnel_summary
+               WHERE op.order_id = o.id) AS personnel_summary,
+              COUNT(*) OVER()::int AS total_count
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
        ${whereClause}
        ORDER BY o.created_at DESC
-       LIMIT 200`,
+       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`,
       params
     );
+
+    const totalCount = rows.length > 0 ? (parseInt(rows[0].total_count, 10) || 0) : 0;
+    for (const row of rows) {
+      delete row.total_count;
+    }
+
+    if (isPaginated) {
+      return res.json({
+        orders: rows,
+        pagination: {
+          page,
+          limit,
+          total: totalCount,
+          totalPages: Math.ceil(totalCount / limit) || 1,
+        },
+      });
+    }
+
     res.json(rows);
   } catch (err) {
     next(err);
