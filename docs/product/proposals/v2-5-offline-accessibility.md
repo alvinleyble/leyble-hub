@@ -93,7 +93,7 @@ When two disconnected devices create customers with identical or similar names o
 * **Handling:** No distributed locks or blocking guards are built. When connectivity restores and both orders sync, the system flags the matching items as a potential double order using the D4 duplicate surfacing pattern.
 
 ### D7 — Outbox Status Marker: Standing Connection Marker [SETTLED]
-> **Revision Note (2026-08-24 / 2026-08-25):** The original "Zero Normal Wallpaper" specification below was superseded during implementation in `client/src/components/layout/OfflineMarker.jsx` and confirmed during the V3.0 grill. Rather than disappearing when online with an empty outbox, the marker remains **always visible** across application chrome as a calm green `● Online` indicator. Continuous visibility reassures operators that connection status is active and prevents confusing UI state transitions when the outbox drains.
+> **Revision Note (2026-08-24 / 2026-08-25):** The original "Zero Normal Wallpaper" specification below was superseded in implementation on 2026-08-24 in `client/src/components/layout/OfflineMarker.jsx` (whose header comment records the revision). The written rule was not updated at the time. On 2026-08-25, the product owner confirmed that the shipped always-visible marker is correct and that the document should follow the code. No rationale was recorded for the revision at the time.
 
 * **Standing Top-Bar Marker:** A status badge is permanently mounted in the navigation bar to provide unambiguous connection and outbox awareness:
   - **Online & Idle (0 waiting):** Calm green `● Online` indicator (no alarm, no red).
