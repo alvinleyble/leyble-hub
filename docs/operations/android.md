@@ -73,38 +73,43 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
 
 ---
 
-## Building the APK
+## Building and Distributing (Google Play Internal Testing)
 
-1. Point the frontend at the backend:
-   ```bash
-   cd client
-   cp .env.production.example .env.production
-   # edit VITE_API_URL to the Render URL (no trailing slash, no /api/v1)
-   ```
-2. Build the web app and sync it into the native project:
-   ```bash
-   npm run android:open    # vite build + cap sync + opens Android Studio
-   ```
-3. In Android Studio: **Build → Generate Signed Bundle / APK → APK**.
-   - First time: create a **keystore** and store it + its passwords somewhere safe
-     (a password manager). The keystore and `key.properties`/`keystore.properties` are
-     git-ignored — **never commit them**. Losing the keystore means you can't ship updates
-     to an already-installed app under the same identity.
-4. The signed APK lands under `client/android/app/build/outputs/apk/release/`.
+Leyble Hub distributes to the owners' devices automatically via **Google Play Store (Internal Testing track)**.
 
----
+### Continuous Deployment (GitHub Actions)
 
-## Installing on the owners' devices (sideload, no Play Store)
+Deployments are fully automated via [.github/workflows/deploy-play.yml](../../.github/workflows/deploy-play.yml):
+- **Trigger**: Any push to `main` modifying `client/**` or `.github/workflows/deploy-play.yml` (and on-demand via `workflow_dispatch`).
+- **Steps**:
+  1. Sets up Node 22 (required for Capacitor 8 CLI) and Java 21 (Temurin).
+  2. Runs `npm ci && npm run build` inside `client/`.
+  3. Runs `npx cap sync android` to sync web assets.
+  4. Decodes the base64 release keystore to `client/android/app/release.jks`.
+  5. Executes `./gradlew bundleRelease` to produce `app-release.aab`.
+  6. Uploads the signed AAB to Google Play Internal Testing track via `r0adkll/upload-google-play@v1`.
 
-1. Transfer the `.apk` to the device (USB, email, or a download link).
-2. On the device: allow "Install unknown apps" for the app you're installing from, then open
-   the APK to install.
-3. Launch **Leyble Hub**, log in. To prove it's cloud-backed, turn WiFi off (mobile data)
-   and confirm it still works.
+### Signing & Keystore Secrets
 
-### Updating the app later
-Rebuild with the same keystore (steps above), bump `versionCode`/`versionName` in
-`client/android/app/build.gradle`, and re-install the new APK over the old one.
+The release keystore is stored locally at `client/android/app/release.jks` (alias `upload`) and is gitignored (`*.jks`).
+The CI pipeline uses 5 GitHub Repository Secrets:
+- `PLAY_SERVICE_ACCOUNT_JSON`: Google Cloud IAM service account key with Google Play Android Developer API access.
+- `PLAY_KEYSTORE_BASE64`: Base64 encoded `release.jks` (`base64 -i client/android/app/release.jks | pbcopy`).
+- `PLAY_KEYSTORE_PASSWORD`: Keystore password.
+- `PLAY_KEY_ALIAS`: Keystore alias (`upload`).
+- `PLAY_KEY_PASSWORD`: Key password.
+
+### Versioning Rules
+
+Google Play requires every release to have a strictly higher `versionCode`:
+- Update `versionCode` and `versionName` in `client/android/app/build.gradle` for every release.
+- Google Play Developer API rejects duplicate `versionCode` with `"Version code X has already been used."`
+
+### Installing & Updating on Devices
+
+1. Invite the Google accounts of the tablet owners under **Google Play Console → Testing → Internal testing → Testers**.
+2. Have owners open the one-time opt-in link and install **Leyble Hub** from Google Play Store.
+3. Subsequent releases pushed to `main` will automatically update on the tablets via Google Play background updates.
 
 ---
 
