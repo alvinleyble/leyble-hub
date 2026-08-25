@@ -664,6 +664,8 @@ export default function OrdersPage() {
           </div>
         </div>
       </div>
+
+      {creating && (
         <OrderCreateModal
           onClose={() => { setCreating(false); load(); loadDrafts(); }}
           onSaved={(orderId) => {

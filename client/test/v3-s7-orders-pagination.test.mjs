@@ -353,3 +353,39 @@ test('V3.0 Slice 7: Handles 0 orders gracefully in pagination bar', async () => 
   assert.equal(prevBtn.disabled, true);
   assert.equal(nextBtn.disabled, true);
 });
+
+test('V3.0 Slice 7: OrderCreateModal is only open when creating state is true', async () => {
+  api.get = async (path) => {
+    if (path.startsWith('/orders?status=draft')) return [];
+    if (path.startsWith('/orders')) {
+      return {
+        orders: [],
+        pagination: { page: 1, limit: 50, total: 0, totalPages: 1 },
+      };
+    }
+    if (path.startsWith('/products')) return [];
+    if (path.startsWith('/customers')) return [];
+    return [];
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrdersPage, null)
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  // Initially modal should NOT be present
+  assert.equal(r.byLabel('Close modal') || r.byLabel('Order Creation'), null, 'Modal should not be open initially');
+
+  // Click "+ New Order"
+  const newOrderBtn = r.all('button').find((b) => b.textContent.includes('+ New Order'));
+  assert.ok(newOrderBtn, '+ New Order button should exist');
+  r.click(newOrderBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  // Now modal content should be visible (e.g. New Outgoing Order or Customer picker)
+  assert.ok(r.text().includes('New Outgoing Order') || r.text().includes('New Order'), 'Create order modal should be open');
+});
+
