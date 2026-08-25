@@ -25,6 +25,28 @@ We are decoupling custom pricing from `customer_type` entirely:
 
 ADR 0001 chose coupling because the legacy read path ignored custom prices for non-wholesalers, leaving dead rows. Under the new read rule ("always load saved custom prices whenever rows exist in `customer_product_prices`"), orphaned price rows cannot exist. A regular customer with agreed special rates will have those rates applied reliably without needing to be labeled a wholesaler.
 
+## Production Data Audit & Price Audit Correction
+
+An audit of the live production database on 2026-08-25 verified that 35 live customer accounts carry `discounted` (27) or `markup` (8) tags representing 230 saved price rows, and 4 `regular` customers hold saved prices. Under V1, these agreed prices were dead because V1 strictly gated on `customer_type === 'wholesaler'` (`OrderCreateModal.jsx:104-105`).
+
+A preliminary scan raised concern that out-of-band price entries in `customer_product_prices` (e.g. ₱73,200 for a ₱736 product) would become active upon releasing G16, creating a requirement for a pre-release price audit. However, code and database verification confirmed:
+1. `customer_product_prices` is strictly **append-only** (`POST /api/v1/customers/:id/prices` executes `INSERT INTO customer_product_prices ...`).
+2. The read path (`server/src/routes/customers.js`, `GET /customers/:id/prices` via `SELECT DISTINCT ON (cpp.product_id) ... ORDER BY cpp.product_id, cpp.created_at DESC`) returns **only the most recent row per customer, product, and order type**. Both the customer profile and order modal consume this exact query.
+3. All seven out-of-band rows were superseded by subsequent corrected rows (centavo-style entry slips corrected within minutes). They are dead history in an append-only log.
+4. Consequently, no database cleanup is required, and the price audit is **not** a prerequisite of G16.
+
+### Live Customer Impact on Release Day
+
+Under G16, agreed prices begin applying automatically for live customer accounts on release day:
+
+| Tag | Customers | Current saved prices | Effect against base price |
+| :--- | ---: | ---: | :--- |
+| `discounted` | 27 | 195 | 193 below base; average ₱5.51 lower per case, largest ₱20 |
+| `markup` | 8 | 13 | 12 above base; average ₱2.92 higher per case, largest ₱5 |
+| `regular` | 4 | 6 | mostly equal to base; one ₱40 below |
+
+This is a correction rather than a new pricing policy: operators previously had to type these negotiated prices in manually from memory, leading to inconsistent billing across orders. As an operational consequence (not a decision), affected customer order totals will visibly change on release day, so store owners should be notified prior to release.
+
 ## Considered Options
 
 - **Option A: Derive Pricing from Saved Rates + Pure Descriptive Tag (Chosen)** — Derives pricing eligibility from the existence of price records and frees `customer_type` to serve purely as human-readable categorization. Eliminates orphaned price data and eliminates fragile multi-string type checks.
@@ -37,3 +59,5 @@ ADR 0001 chose coupling because the legacy read path ignored custom prices for n
 - ADR 0001 is formally superseded.
 - Gating checks in order creation, customer panels, and price search queries are simplified to query `customer_product_prices` directly.
 - The "Save custom price?" flow saves prices cleanly without triggering background customer conversions.
+- The 35 `discounted` and `markup` customers' agreed prices apply automatically on order creation.
+

@@ -45,13 +45,11 @@ script (not run automatically by `migrate.js`/`seed.js`). See
 
 ### `customers` (003, altered by 015, 025, 031, 032)
 `customer_type` ∈ **`('regular','wholesaler','discounted','markup','unassigned')`** default `'regular'`. (History: started as
-`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032).) Wholesaler,
-discounted, markup, and unassigned customers get custom per-product pricing. Fields: `name`, `address`, `phone`, `notes`,
-`is_active`.
+`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032).) In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`. Fields: `name`, `address`, `phone`, `notes`, `is_active`.
 
 ### `customer_product_prices` (004, altered by 020, 026) — **append-only**
-Custom price history for wholesaler customers. The **most recent row** per
-`(customer_id, product_id, order_type)` is the active price.
+Custom price history. Every save inserts a new row. The **most recent row** per
+`(customer_id, product_id, order_type)` is the active price (queried via `SELECT DISTINCT ON (cpp.product_id) ... ORDER BY cpp.product_id, cpp.created_at DESC`).
 | Column | Notes |
 |---|---|
 | `customer_id`, `product_id` | FK, ON DELETE CASCADE |

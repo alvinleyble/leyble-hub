@@ -25,7 +25,7 @@ cd client && npm run dev
 ```
 
 Vite dev proxy: `/api` → `http://localhost:3000`
-DB: `DATABASE_URL=postgresql://localhost/leyble_hub`
+DB: `DATABASE_URL` (points to the development Supabase database; see [docs/operations/development-database.md](docs/operations/development-database.md))
 **Never expose `server/.env` contents** — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`.
 
 ### Tests
@@ -333,13 +333,11 @@ returns a 404 JSON. The Android APK is the only way in.
   not the shared login.
 - Full build/deploy/sideload steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
-### Single production environment
+### Database environments & deployment
 
-There is **one** environment: production. It's defined in [render.yaml](render.yaml) as the
-`leyble-hub-api` service (deploys from `main`) against the prod Supabase DB.
-
-**Workflow:** changes flow `dev` → `main` (prod). Render production auto-deploys on push to
-`main`. (There is no staging environment — it was removed in June 2026.)
+- **Production:** Supabase PostgreSQL (Sydney). Render `leyble-hub-api` auto-deploys from `main` on push.
+- **Development database:** Separate Supabase PostgreSQL (Tokyo), full replica set up 2026-08-25. Local dev points exclusively to development (never production); see [docs/operations/development-database.md](docs/operations/development-database.md).
+- **V3.0 release sequencing:** Migrations deploy early and alone to production; server code and Android APK land together on release day ([ADR 0014](docs/adr/0014-v3-release-sequencing.md)).
 
 > Because there is no web client, **every UI change requires rebuilding + reinstalling the APK**
 > on each device — there is no web fallback to push fixes instantly.
