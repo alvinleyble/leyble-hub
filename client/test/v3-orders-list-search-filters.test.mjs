@@ -129,7 +129,7 @@ test('G20: OrdersPage instant client-side search matches customer_name, id, #id,
   assert.equal(rows.length, 3, 'Should restore all 3 orders after clearing search');
 });
 
-test('G21: Possible duplicate toggle pill filters to duplicate group and displays badge', async () => {
+test('G21: Possible duplicates toggle pill filters to duplicate group and displays badge', async () => {
   // Orders 201 and 202 share customer_id, order_type, total_amount, adjustment, status=pending, but different receipt_number
   const mockOrders = [
     makeOrder(201, { customer_id: 10, customer_name: 'Twin Store', total_amount: 1200, adjustment: 0, receipt_number: '1-000201' }),
@@ -152,12 +152,12 @@ test('G21: Possible duplicate toggle pill filters to duplicate group and display
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
   // Check that row badge exists on 201 and 202
-  const badges = r.all('span').filter((s) => s.textContent.includes('possible duplicate'));
-  assert.equal(badges.length, 2, 'Should display 2 possible duplicate badges in rows');
+  const badges = r.all('span').filter((s) => s.textContent.includes('possible duplicates'));
+  assert.equal(badges.length, 2, 'Should display 2 possible duplicates badges in rows');
 
-  // Toggle "Possible duplicate only"
-  const doublePill = r.all('button').find((b) => b.textContent.includes('Possible duplicate only'));
-  assert.ok(doublePill, 'Possible duplicate only pill should exist');
+  // Toggle "Possible Duplicates"
+  const doublePill = r.all('button').find((b) => b.textContent.includes('Possible Duplicates'));
+  assert.ok(doublePill, 'Possible Duplicates pill should exist');
   assert.equal(doublePill.getAttribute('aria-pressed'), 'false');
 
   r.click(doublePill);

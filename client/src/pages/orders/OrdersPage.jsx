@@ -329,7 +329,7 @@ export default function OrdersPage() {
           )}
         </div>
 
-        {/* Possible duplicate filter toggle pill (G21) */}
+        {/* Possible duplicates filter toggle pill (G21) */}
         <button
           type="button"
           onClick={() => setDoubleOnly((v) => !v)}
@@ -340,7 +340,7 @@ export default function OrdersPage() {
               : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
           }`}
         >
-          <span>⚠️</span> Possible duplicate only
+          <span>⚠️</span> Possible Duplicates
         </button>
 
         {/* Date range filters */}
@@ -561,7 +561,7 @@ export default function OrdersPage() {
                           className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold"
                           title="Same customer, channel and total as another order — possibly the same sale printed twice."
                         >
-                          ⚠️ possible duplicate
+                          ⚠️ possible duplicates
                         </span>
                       )}
                     </div>
