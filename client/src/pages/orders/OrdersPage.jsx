@@ -58,9 +58,16 @@ export default function OrdersPage() {
   const [totalPages, setTotalPages]   = useState(1);
 
   // Search & Filter controls (G20, G21)
-  const [searchQuery, setSearchQuery] = useState('');
-  const [doubleOnly, setDoubleOnly]   = useState(false);
-  const [printFilter, setPrintFilter] = useState('all'); // 'all' | 'printed' | 'unprinted'
+  const [searchQuery, setSearchQuery]         = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [doubleOnly, setDoubleOnly]           = useState(false);
+  const [printFilter, setPrintFilter]         = useState('all'); // 'all' | 'printed' | 'unprinted'
+
+  // Debounce search input so we don't fire on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   // Drafts: separate banner feed (shown on any tab) + resume/discard state
   const [drafts, setDrafts]                     = useState([]);
@@ -84,6 +91,7 @@ export default function OrdersPage() {
     if (statusTab !== 'all') params.set('status', statusTab);
     if (fromDate) params.set('from_date', fromDate);
     if (toDate)   params.set('to_date',   toDate);
+    if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
     params.set('page', String(page));
     params.set('limit', String(pageSize));
 
@@ -105,7 +113,7 @@ export default function OrdersPage() {
       })
       .catch(() => addToast('Failed to load orders', 'error'))
       .finally(() => setLoading(false));
-  }, [statusTab, fromDate, toDate, page, pageSize, addToast]);
+  }, [statusTab, fromDate, toDate, debouncedSearch, page, pageSize, addToast]);
 
   useEffect(() => { load(); }, [load]);
 

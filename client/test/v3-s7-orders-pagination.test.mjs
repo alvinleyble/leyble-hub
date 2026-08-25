@@ -389,3 +389,51 @@ test('V3.0 Slice 7: OrderCreateModal is only open when creating state is true', 
   assert.ok(r.text().includes('New Outgoing Order') || r.text().includes('New Order'), 'Create order modal should be open');
 });
 
+test('V3.0 Slice 7: Search input triggers debounced API call with search parameter across all records and resets page to 1', async () => {
+  const requestedUrls = [];
+
+  api.get = async (path) => {
+    requestedUrls.push(path);
+    if (path.startsWith('/orders?status=draft')) return [];
+    if (path.includes('search=Alpha')) {
+      return {
+        orders: [makeOrder(101, { customer_name: 'Alpha Beverage' })],
+        pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+      };
+    }
+    if (path.startsWith('/orders')) {
+      return {
+        orders: [makeOrder(1), makeOrder(2)],
+        pagination: { page: 1, limit: 50, total: 200, totalPages: 4 },
+      };
+    }
+    return [];
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrdersPage, null)
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  const searchInput = r.byLabel('Search orders');
+  assert.ok(searchInput, 'Search input should exist');
+
+  // Type search query
+  act(() => {
+    changeInput(searchInput, 'Alpha');
+  });
+
+  // Wait for 300ms debounce
+  await act(async () => { await new Promise((res) => setTimeout(res, 350)); });
+
+  // Verify that an API call with search=Alpha was made
+  const searchApiCall = requestedUrls.find((u) => u.includes('search=Alpha'));
+  assert.ok(searchApiCall, 'Should make API call with search=Alpha');
+  assert.ok(searchApiCall.includes('page=1'), 'Search should request page=1');
+  assert.ok(r.text().includes('Showing 1–1 of 1 orders'), 'Pagination should show 1 of 1 orders');
+});
+
+

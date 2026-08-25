@@ -183,4 +183,29 @@ describe('V3.0 Slice 7: Orders List Pagination & Date Boundary Fix', () => {
     assert.equal(status, 200);
     assert.equal(body.pagination.total, 1, 'Should only include the order before 14:00');
   });
+
+  it('7. Server-side search matches customer name (ILIKE), order ID (#id), and receipt number', async () => {
+    // Search by customer name substring
+    const nameSearch = await apiGet(`?search=Pagination&page=1&limit=50`);
+    assert.equal(nameSearch.status, 200);
+    assert.ok(nameSearch.body.pagination.total >= 5, 'Search by customer name should find orders');
+    assert.ok(nameSearch.body.orders.every((o) => o.customer_name.includes('Pagination')));
+
+    // Search by order ID with '#' prefix
+    const firstOrderId = createdOrderIds[0];
+    const idSearchWithHash = await apiGet(`?search=%23${firstOrderId}&page=1&limit=50`);
+    assert.equal(idSearchWithHash.status, 200);
+    assert.equal(idSearchWithHash.body.pagination.total, 1);
+    assert.equal(idSearchWithHash.body.orders[0].id, firstOrderId);
+
+    // Search by order ID without '#' prefix
+    const idSearch = await apiGet(`?search=${firstOrderId}&page=1&limit=50`);
+    assert.equal(idSearch.status, 200);
+    assert.ok(idSearch.body.orders.some((o) => o.id === firstOrderId));
+
+    // Search with q parameter alias
+    const qSearch = await apiGet(`?q=Pagination&page=1&limit=50`);
+    assert.equal(qSearch.status, 200);
+    assert.ok(qSearch.body.pagination.total >= 5);
+  });
 });

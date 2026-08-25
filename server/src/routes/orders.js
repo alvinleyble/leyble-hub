@@ -264,7 +264,7 @@ async function reconcileStock(client, oldItems, newItems, order, userId) {
 // GET /api/v1/orders
 router.get('/', async (req, res, next) => {
   try {
-    const { status, customer_id, from_date, to_date, page: pageQuery, limit: limitQuery } = req.query;
+    const { status, customer_id, from_date, to_date, search, q, page: pageQuery, limit: limitQuery } = req.query;
     const isPaginated = pageQuery !== undefined || limitQuery !== undefined;
     const page = Math.max(1, parseInt(pageQuery, 10) || 1);
     const limit = isPaginated
@@ -299,6 +299,24 @@ router.get('/', async (req, res, next) => {
       } else {
         conditions.push(`o.created_at < $${idx++}`);
         params.push(to_date);
+      }
+    }
+
+    const searchTerm = String(search || q || '').trim();
+    if (searchTerm) {
+      const cleanTerm = searchTerm.replace(/^#/, '');
+      const p1 = `%${searchTerm}%`;
+      const p2 = `%${cleanTerm}%`;
+      if (p1 === p2) {
+        const pIdx = idx++;
+        params.push(p1);
+        conditions.push(`(c.name ILIKE $${pIdx} OR o.id::text ILIKE $${pIdx} OR (o.receipt_number IS NOT NULL AND o.receipt_number ILIKE $${pIdx}))`);
+      } else {
+        const p1Idx = idx++;
+        params.push(p1);
+        const p2Idx = idx++;
+        params.push(p2);
+        conditions.push(`(c.name ILIKE $${p1Idx} OR o.id::text ILIKE $${p2Idx} OR (o.receipt_number IS NOT NULL AND (o.receipt_number ILIKE $${p1Idx} OR o.receipt_number ILIKE $${p2Idx})))`);
       }
     }
 
