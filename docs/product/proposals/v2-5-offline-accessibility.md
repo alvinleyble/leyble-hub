@@ -92,15 +92,22 @@ When two disconnected devices create customers with identical or similar names o
 * **Accepted Double-Print Risk:** Tablet A parks an order → Tablet B picks it up online and prints it → connection drops while Tablet A still holds its stale local draft → Tablet A resumes and prints it offline. The customer receives two receipts with two distinct receipt numbers.
 * **Handling:** No distributed locks or blocking guards are built. When connectivity restores and both orders sync, the system flags the matching items as a potential double order using the D4 duplicate surfacing pattern.
 
-### D7 — Outbox Status Marker: Shown Only When There is Something to Say [SETTLED]
-* **Subtle Top-Bar Marker:** A status badge appears in the top navigation bar **only** when the device is offline or when receipts are waiting to sync (e.g. `"Offline · 12 waiting"` or `"12 waiting"`).
-* **Zero Normal Wallpaper:** When the device is online and the outbox is completely empty, no indicator or green light is shown.
+### D7 — Outbox Status Marker: Standing Connection Marker [SETTLED]
+> **Revision Note (2026-08-24 / 2026-08-25):** The original "Zero Normal Wallpaper" specification below was superseded during implementation in `client/src/components/layout/OfflineMarker.jsx` and confirmed during the V3.0 grill. Rather than disappearing when online with an empty outbox, the marker remains **always visible** across application chrome as a calm green `● Online` indicator. Continuous visibility reassures operators that connection status is active and prevents confusing UI state transitions when the outbox drains.
+
+* **Standing Top-Bar Marker:** A status badge is permanently mounted in the navigation bar to provide unambiguous connection and outbox awareness:
+  - **Online & Idle (0 waiting):** Calm green `● Online` indicator (no alarm, no red).
+  - **Online & Syncing:** Sky-blue `● N waiting` indicator while outbox drains.
+  - **Offline & Idle (0 waiting):** Amber `● Offline` indicator.
+  - **Offline & Queued:** Amber `● Offline · N waiting` indicator.
+  - **Refused Receipts:** Pulsing red `● Needs attention` / `● N waiting` badge that opens the attention resolution dialog (D8).
 * **Accidental Loss Prevention:** Making the waiting outbox count visible ensures operators do not clear app data, drop, or wipe a device that holds unsynced sales.
 
 ```
-[ Normal Online / Idle ]  ──►  (No status marker shown in top bar)
+[ Normal Online / Idle ]  ──►  [ 🟢 Online ]
 [ Outage Active        ]  ──►  [ ⚠️ Offline · 14 waiting ]
-[ Online Syncing       ]  ──►  [ 🔄 14 waiting ]  ──►  (Disappears when drained)
+[ Online Syncing       ]  ──►  [ 🔄 14 waiting ]  ──►  [ 🟢 Online ]
+[ Refused Receipts     ]  ──►  [ 🚨 Needs attention ] (Clickable modal)
 ```
 
 ### D8 — Refused Receipts Go to an Attention List, Never a Guess [SETTLED]

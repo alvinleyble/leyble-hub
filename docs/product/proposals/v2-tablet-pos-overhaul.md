@@ -110,7 +110,8 @@ V2 deliberately deviates from the intended lifecycle to match how the owners act
 | **V2.0 Slice 7** | ✅ **Done** | **Pre-Print Order Review Modal & Edit ⇄ Review Loop** | Large high-contrast tablet order review modal (`POSReviewModal.jsx`) before thermal printing, itemized bill breakdown with case counts, suki custom pricing badges, goods total & adjustments, and a frictionless Edit ⇄ Review loop allowing operators to jump seamlessly between modifying items and reviewing order totals. |
 | **V2.0 Slice 5** | ✅ **Done** | **Unified Android App Bridge & Route Persistence** | Single APK `com.leyble.hub` (no `.pos` split), default landing on `/v2/pos` with `preferred_ui` persistence via `PreferenceSync`, 3-second long-press bridge between V1 and V2 with visual feedback and toast notifications, `sensorLandscape` orientation lock, and production Gradle build (PR #26, merged 2026-08-22). |
 | **V2.5 Slice 1** | ✅ **Designed** | **Offline Accessibility** | Local-first POS architecture, device-issued receipt numbers, outbox background sync, shared parked orders with offline degradation, duplicate surfacing, attention list, and advisory toasts. See proposal: [v2-5-offline-accessibility.md](v2-5-offline-accessibility.md). |
-| **V3.0 Slice 1** | ⏳ **Queued** | **Voice AI (OpenAI API)** | OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing (re-allocated from earlier V2 draft). |
+| **V3.0 Slice 1** | 📐 **Settled** | **POS-Style Order Creation in V1** | Retains V1 as the core application; adopts POS tile product-picking inside V1's `OrderCreateModal.jsx` and re-hosts V2.5's offline core. Drops standalone V2 screens and bridge. See proposal: [v3-0-pos-order-creation-in-v1.md](v3-0-pos-order-creation-in-v1.md). |
+| **V4.0 Slice 1** | ⏳ **Queued** | **Voice AI (OpenAI API)** | OpenAI Taglish voice parsing for POS, Inventory, and Customer Suki pricing (re-allocated from earlier V2/V3 draft). |
 
 ### Slice 1 — what shipped
 
@@ -252,7 +253,9 @@ Dependency + value order; each step lands as one fully-serial PR before the next
 #### **Future Releases on Roadmap**
 * **V2.5 (Offline Operations):**
   * **Slice 1 — Offline Accessibility (Designed):** Settled local-first POS design, device-issued receipt numbers, waiting receipts outbox, shared parked orders with offline fallback, duplicate surfacing, attention list, and advisory toasts. See proposal: [docs/product/proposals/v2-5-offline-accessibility.md](v2-5-offline-accessibility.md).
-* **V3.0 (AI-Powered Operations):**
+* **V3.0 (POS Order Creation in V1):**
+  * **Slice 1 — POS-Style Order Creation in V1 (Settled):** Embedded POS tile product-picker in V1's `OrderCreateModal.jsx` and re-hosted offline core. Retains V1 shell; deletes standalone V2 screens and dual-app bridge. See proposal: [docs/product/proposals/v3-0-pos-order-creation-in-v1.md](v3-0-pos-order-creation-in-v1.md).
+* **V4.0 (AI-Powered Operations):**
   * **Slice 1 — Voice AI (Taglish Parsing):** OpenAI API integration for Taglish voice order creation and catalog queries across POS, Inventory, and Customers.
 
 ---
