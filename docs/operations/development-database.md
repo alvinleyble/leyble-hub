@@ -19,7 +19,7 @@ This database provides an isolated development tier for local testing, browser-b
 
 ### 2. Environment Configuration (`server/.env`)
 - Local development sets the active `DATABASE_URL` environment variable to the development Supabase database pooled connection string.
-- The production connection string is retained in the local `server/.env` file under a disabled variable name (for example, `DATABASE_URL_PRODUCTION_DISABLED` or commented out).
+- The production connection string is retained in the local `server/.env` file under a disabled variable name (specifically `PROD_DATABASE_URL_DISABLED` or commented out).
 - Switching environments is a deliberate, manual act of swapping or renaming the variable names in `server/.env`.
 - **Security Rule:** Never commit connection strings, passwords, project references, or credentials to git. All credentials remain strictly within uncommitted local `.env` files.
 
