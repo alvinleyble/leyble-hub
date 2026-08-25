@@ -37,41 +37,38 @@ function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
                       : '')}
       className={`flex h-full w-full touch-none select-none flex-col rounded-xl border p-3 text-left
                   transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2
-                  focus-visible:ring-v2-accent disabled:opacity-50
+                  focus-visible:ring-blue-600 disabled:opacity-50
                   ${quantity > 0
-                    ? 'border-v2-accent bg-v2-raised'
-                    : 'border-v2-border bg-v2-surface hover:bg-v2-raised'}`}
+                    ? 'border-blue-600 bg-blue-50/60 shadow-sm ring-1 ring-blue-600'
+                    : 'border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 shadow-sm'}`}
     >
       <span className="flex items-start justify-between gap-2">
-        <span className="text-base font-bold tracking-wide text-v2-muted">{product.sku || '—'}</span>
+        <span className="text-sm font-bold tracking-wide text-slate-500">{product.sku || '—'}</span>
         {quantity > 0 && (
-          <span className="shrink-0 rounded-lg bg-emerald-600 px-2 py-0.5 text-sm font-bold text-white shadow-sm">
+          <span className="shrink-0 rounded-lg bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white shadow-sm">
             {quantity} cs
           </span>
         )}
       </span>
 
-      <span className="mt-1 line-clamp-2 text-base font-semibold leading-snug text-v2-text">
+      <span className="mt-1 line-clamp-2 text-base font-semibold leading-snug text-slate-900">
         {product.name}
       </span>
 
-      <span className="text-sm text-v2-muted">{product.category}</span>
+      <span className="text-xs text-slate-500">{product.category}</span>
 
       <span className="mt-auto flex flex-wrap items-baseline gap-x-2 gap-y-1 pt-2">
-        <span className="text-lg font-bold text-v2-text">
+        <span className="text-base font-bold text-slate-900">
           {PHP(effective)}
-          <span className="text-sm font-semibold text-v2-muted"> /cs</span>
+          <span className="text-xs font-medium text-slate-500"> /cs</span>
         </span>
-        {/* Emerald for a discount (the normal Suki case); the standard purple Suki
-            tokens for the rarer above-standard rate, so the two never read alike. */}
+        {/* Emerald for a discount (the normal Suki case); purple for markup */}
         {isSuki && (
           <span
-            style={{
-              backgroundColor: `var(--v2-${isCheaper ? 'discount' : 'suki'}-badge-bg)`,
-              borderColor:     `var(--v2-${isCheaper ? 'discount' : 'suki'}-badge-border)`,
-              color:           `var(--v2-${isCheaper ? 'discount' : 'suki'}-badge-text)`,
-            }}
-            className="inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-bold tabular-nums"
+            className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-bold tabular-nums
+              ${isCheaper
+                ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
+                : 'bg-purple-100 border-purple-300 text-purple-800'}`}
             aria-hidden="true"
           >
             {gapLabel}
@@ -82,10 +79,8 @@ function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
   );
 }
 
-// Product catalogue for the V2 POS: a search bar, the category matrix (an "All
-// Categories" pill plus one pill per production category — ~12 of them wrap into
-// three rows on the tablet) and clean, icon-free product cards showing just name,
-// category and price per case.
+// Product catalogue for the POS order creation: search bar, category pill matrix
+// and clean touch product cards.
 export default function POSProductGrid({
   products,
   orderQty,
@@ -113,20 +108,19 @@ export default function POSProductGrid({
   );
 
   const pill = (active) =>
-    `flex min-h-tablet items-center rounded-xl px-4 text-base font-semibold transition-colors duration-100
-     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+    `flex min-h-[38px] items-center rounded-xl px-3.5 text-sm font-semibold transition-colors duration-100
+     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 border
      ${active
-       ? 'bg-v2-pill-active text-v2-pill-text border border-v2-pill-border shadow-sm'
-       : 'bg-v2-raised text-v2-muted hover:bg-v2-border hover:text-v2-text'}`;
+       ? 'bg-blue-700 text-white border-blue-700 shadow-sm'
+       : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:text-slate-900'}`;
 
   return (
-    <section className="flex min-h-0 flex-col" aria-label="Products">
-      {/* Search + category matrix. `headerActions` (History, print alert) sits on the
-          search row so the top of the screen carries no empty band. */}
-      <div className="shrink-0 space-y-2">
+    <section className="flex min-h-0 flex-col h-full" aria-label="Products">
+      {/* Search + category matrix. `headerActions` (Drafts, History) sits on top */}
+      <div className="shrink-0 space-y-2.5 pb-2">
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
-            <label htmlFor="pos-product-search" className="block text-sm font-bold uppercase tracking-wide text-v2-muted">
+            <label htmlFor="pos-product-search" className="block text-xs font-bold uppercase tracking-wider text-slate-500">
               Search products
             </label>
             <input
@@ -136,15 +130,15 @@ export default function POSProductGrid({
               onChange={(e) => setQuery(e.target.value)}
               autoComplete="off"
               placeholder="SKU, name or category…"
-              className="mt-1 h-14 w-full rounded-xl border border-v2-border bg-v2-bg px-4 text-lg
-                         text-v2-text placeholder:text-v2-muted
-                         focus:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+              className="mt-1 h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-base
+                         text-slate-900 placeholder:text-slate-400
+                         focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             />
           </div>
           {headerActions && <div className="flex shrink-0 items-center gap-2">{headerActions}</div>}
         </div>
 
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Product categories">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Product categories">
           <button
             type="button"
             onClick={() => setCategory(ALL_CATEGORIES)}
@@ -168,11 +162,11 @@ export default function POSProductGrid({
       </div>
 
       {/* Cards */}
-      <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {visible.length === 0 ? (
-          <p className="py-10 text-center text-lg text-v2-muted">No products match this search.</p>
+          <p className="py-12 text-center text-base text-slate-400">No products match this search.</p>
         ) : (
-          <ul className="grid grid-cols-2 gap-3 pb-2 lg:grid-cols-3 xl:grid-cols-4">
+          <ul className="grid grid-cols-2 gap-2.5 pb-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
             {visible.map((p) => (
               <li key={p.id}>
                 <ProductCard

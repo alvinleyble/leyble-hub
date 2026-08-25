@@ -11,17 +11,20 @@ export default function useHoldRepeat(action, { delay = 400, interval = 110 } = 
   actionRef.current = action;
   const delayTimer = useRef(null);
   const repeatTimer = useRef(null);
+  const pointerHandled = useRef(false);
 
   const stop = useCallback(() => {
     if (delayTimer.current) { clearTimeout(delayTimer.current); delayTimer.current = null; }
     if (repeatTimer.current) { clearInterval(repeatTimer.current); repeatTimer.current = null; }
     window.removeEventListener('pointerup', stop);
     window.removeEventListener('pointercancel', stop);
+    setTimeout(() => { pointerHandled.current = false; }, 50);
   }, []);
 
   const start = useCallback((e) => {
     if (e.button != null && e.button > 0) return; // ignore right/middle mouse buttons
     e.preventDefault();                            // don't steal focus / pop the keyboard / select text
+    pointerHandled.current = true;
     actionRef.current();
     window.addEventListener('pointerup', stop);
     window.addEventListener('pointercancel', stop);
@@ -34,7 +37,13 @@ export default function useHoldRepeat(action, { delay = 400, interval = 110 } = 
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); actionRef.current(); }
   }, []);
 
+  const onClick = useCallback((e) => {
+    if (!pointerHandled.current) {
+      actionRef.current();
+    }
+  }, []);
+
   useEffect(() => stop, [stop]); // clear timers + listeners on unmount
 
-  return { onPointerDown: start, onPointerLeave: stop, onKeyDown };
+  return { onPointerDown: start, onPointerLeave: stop, onKeyDown, onClick };
 }

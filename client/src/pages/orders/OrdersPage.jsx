@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import Modal from '../../components/ui/Modal';
 import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
@@ -51,10 +52,13 @@ export default function OrdersPage() {
   const [creating, setCreating]   = useState(false);
 
   // Drafts: separate banner feed (shown on any tab) + resume/discard state
-  const [drafts, setDrafts]               = useState([]);
-  const [resumeDraft, setResumeDraft]     = useState(null);
-  const [discardConfirm, setDiscardConfirm] = useState(null);
-  const [discarding, setDiscarding]       = useState(false);
+  const [drafts, setDrafts]                     = useState([]);
+  const [draftQuery, setDraftQuery]             = useState('');
+  const [resumeDraft, setResumeDraft]           = useState(null);
+  const [discardConfirm, setDiscardConfirm]     = useState(null);
+  const [discarding, setDiscarding]             = useState(false);
+  const [bulkDiscardPrompt, setBulkDiscardPrompt] = useState(false);
+  const [bulkDiscarding, setBulkDiscarding]     = useState(false);
 
   // Bulk selection + actions (only meaningful on pending/in_transit/completed tabs)
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
@@ -114,6 +118,35 @@ export default function OrdersPage() {
     }
   };
 
+  // Filtered orders for table display (including draft-scoped search when in draft tab)
+  const displayedOrders = useMemo(() => {
+    if (statusTab !== 'draft' || !draftQuery.trim()) return orders;
+    const q = draftQuery.trim().toLowerCase();
+    return orders.filter((o) =>
+      (o.customer_name || '').toLowerCase().includes(q)
+      || String(o.id ?? '').includes(q)
+      || String(o.receipt_number ?? '').toLowerCase().includes(q)
+    );
+  }, [orders, statusTab, draftQuery]);
+
+  const handleBulkDiscardAll = async () => {
+    setBulkDiscarding(true);
+    const targetDrafts = displayedOrders.filter((o) => o.status === 'draft');
+    const results = await Promise.allSettled(targetDrafts.map((d) => api.del(`/orders/${d.id}`)));
+    const done = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - done;
+    addToast(
+      failed
+        ? `Discarded ${done} draft${done === 1 ? '' : 's'}, ${failed} failed.`
+        : `${done} draft${done === 1 ? '' : 's'} discarded.`,
+      failed ? 'error' : 'success'
+    );
+    setBulkDiscarding(false);
+    setBulkDiscardPrompt(false);
+    load();
+    loadDrafts();
+  };
+
   const toggleSelected = (id) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -122,10 +155,10 @@ export default function OrdersPage() {
     });
   };
 
-  const allSelected = orders.length > 0 && orders.every((o) => selectedIds.has(o.id));
+  const allSelected = displayedOrders.length > 0 && displayedOrders.every((o) => selectedIds.has(o.id));
 
   const toggleSelectAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(orders.map((o) => o.id)));
+    setSelectedIds(allSelected ? new Set() : new Set(displayedOrders.map((o) => o.id)));
   };
 
   const runBulkTransition = async (targetStatus, pastTenseLabel) => {
@@ -230,41 +263,70 @@ export default function OrdersPage() {
         ))}
       </div>
 
+      {/* Scoped Drafts Search & Bulk Actions Bar (when on Drafts tab) */}
+      {statusTab === 'draft' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4 p-3 bg-violet-50 border border-violet-200 rounded-xl">
+          <div className="flex-1 min-w-[200px]">
+            <input
+              type="text"
+              value={draftQuery}
+              onChange={(e) => setDraftQuery(e.target.value)}
+              placeholder="Search drafts by customer or order number…"
+              className="w-full h-10 px-3.5 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white
+                         focus:outline-none focus:ring-2 focus:ring-blue-600"
+              aria-label="Search drafts by customer or order number"
+            />
+          </div>
+          {displayedOrders.length > 0 && (
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => setBulkDiscardPrompt(true)}
+              className="shrink-0"
+            >
+              🗑 Discard all ({displayedOrders.length})
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Date range filters */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">From</label>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="h-10 px-3 border border-slate-300 rounded-lg text-base text-slate-900
-                       focus:outline-none focus:ring-2 focus:ring-blue-600"
-            aria-label="From date"
-          />
+      {statusTab !== 'draft' && (
+        <div className="flex flex-wrap gap-3 mb-6">
+          <div className="flex gap-2 items-center">
+            <label className="text-sm text-slate-500 font-medium whitespace-nowrap">From</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="h-10 px-3 border border-slate-300 rounded-lg text-base text-slate-900
+                         focus:outline-none focus:ring-2 focus:ring-blue-600"
+              aria-label="From date"
+            />
+          </div>
+          <div className="flex gap-2 items-center">
+            <label className="text-sm text-slate-500 font-medium whitespace-nowrap">To</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="h-10 px-3 border border-slate-300 rounded-lg text-base text-slate-900
+                         focus:outline-none focus:ring-2 focus:ring-blue-600"
+              aria-label="To date"
+            />
+          </div>
+          {(fromDate || toDate) && (
+            <button
+              onClick={() => { setFromDate(''); setToDate(''); }}
+              className="h-10 px-4 text-sm font-medium text-slate-500 hover:text-slate-800
+                         border border-slate-300 rounded-lg bg-white hover:bg-slate-50
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap"
+            >
+              Clear dates
+            </button>
+          )}
         </div>
-        <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">To</label>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="h-10 px-3 border border-slate-300 rounded-lg text-base text-slate-900
-                       focus:outline-none focus:ring-2 focus:ring-blue-600"
-            aria-label="To date"
-          />
-        </div>
-        {(fromDate || toDate) && (
-          <button
-            onClick={() => { setFromDate(''); setToDate(''); }}
-            className="h-10 px-4 text-sm font-medium text-slate-500 hover:text-slate-800
-                       border border-slate-300 rounded-lg bg-white hover:bg-slate-50
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap"
-          >
-            Clear dates
-          </button>
-        )}
-      </div>
+      )}
 
       {/* Bulk action bar */}
       {showCheckboxes && selectedIds.size > 0 && (
@@ -341,7 +403,7 @@ export default function OrdersPage() {
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
-      ) : orders.length === 0 ? (
+      ) : displayedOrders.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {statusTab === 'all' ? 'No orders yet.' : `No ${STATUS_LABEL[statusTab]?.toLowerCase()} orders.`}
         </p>
@@ -374,7 +436,7 @@ export default function OrdersPage() {
               </tr>
             </thead>
             <tbody>
-              {orders.map((o) => (
+              {displayedOrders.map((o) => (
                 <tr
                   key={o.id}
                   onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id}`)}
@@ -463,23 +525,35 @@ export default function OrdersPage() {
       )}
 
       {discardConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
-          <div className="bg-white rounded-xl max-w-sm w-full mx-4 shadow-2xl p-6">
-            <h2 className="text-lg font-bold text-slate-900 mb-2">Discard draft?</h2>
-            <p className="text-sm text-slate-600 mb-5">
-              The draft order for <span className="font-semibold">{discardConfirm.customer_name}</span> will be
-              permanently removed. This can't be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <Button variant="secondary" onClick={() => setDiscardConfirm(null)} disabled={discarding}>
-                Keep
-              </Button>
-              <Button variant="danger" onClick={confirmDiscardDraft} loading={discarding}>
-                Discard
-              </Button>
-            </div>
-          </div>
-        </div>
+        <Modal
+          title="Discard draft?"
+          onClose={() => setDiscardConfirm(null)}
+          onConfirm={confirmDiscardDraft}
+          confirmLabel="Discard"
+          confirmVariant="danger"
+          loading={discarding}
+        >
+          <p className="text-slate-600">
+            The draft order for <strong className="text-slate-900">{discardConfirm.customer_name}</strong> will be
+            permanently removed. This can't be undone.
+          </p>
+        </Modal>
+      )}
+
+      {bulkDiscardPrompt && (
+        <Modal
+          title={`Discard ${displayedOrders.length} draft${displayedOrders.length === 1 ? '' : 's'}?`}
+          onClose={() => setBulkDiscardPrompt(false)}
+          onConfirm={handleBulkDiscardAll}
+          confirmLabel={`Yes, discard ${displayedOrders.length} ${displayedOrders.length === 1 ? 'draft' : 'drafts'}`}
+          confirmVariant="danger"
+          loading={bulkDiscarding}
+        >
+          <p className="text-slate-600">
+            This will permanently remove {displayedOrders.length === 1 ? 'this draft' : `all ${displayedOrders.length} drafts currently listed`}.
+            This cannot be undone.
+          </p>
+        </Modal>
       )}
 
       {reviewPrompt && (
