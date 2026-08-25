@@ -181,18 +181,16 @@ returns a 404 JSON. The Android APK is the only way in.
   chosen profile as an `X-Active-Profile` header on every request, and `requireAuth` swaps the
   request identity to that profile so `activity_logs.performed_by` reflects who's actually driving,
   not the shared login.
-- Full build/deploy/sideload steps: **[docs/operations/android.md](docs/operations/android.md)**.
+- Full build & automated Play Store deploy steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
 ### Single production environment
 
 There is **one** environment: production. It's defined in [render.yaml](render.yaml) as the
 `leyble-hub-api` service (deploys from `main`) against the prod Supabase DB.
 
-**Workflow:** changes flow `dev` → `main` (prod). Render production auto-deploys on push to
-`main`. (There is no staging environment — it was removed in June 2026.)
-
-> Because there is no web client, **every UI change requires rebuilding + reinstalling the APK**
-> on each device — there is no web fallback to push fixes instantly.
+**Workflow:** changes flow `dev` → `main` (prod). 
+- Render production backend auto-deploys on push to `main`.
+- Android app builds and deploys to **Google Play Store (Internal Testing)** automatically via GitHub Actions on push to `main` (modifying `client/**`). Tablet users receive background updates automatically through the Play Store.
 
 ---
 
