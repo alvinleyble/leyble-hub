@@ -1,8 +1,10 @@
 # V1 and V2 Dual-App Coexistence on User Devices
 
-**Status:** Superseded (2026-08-22 by V2.0 Slice 5 in PR #26)  
+**Status:** Superseded (2026-08-22 by V2.0 Slice 5 in PR #26; further superseded 2026-08-25 by V3.0)  
 **Origin:** Captain directive (2026-08-20)  
-**See also:** [docs/product/proposals/v2-tablet-pos-overhaul.md](../product/proposals/v2-tablet-pos-overhaul.md) (Section 7: Unified App Distribution & V1/V2 Bridge)
+**See also:** [docs/product/proposals/v2-tablet-pos-overhaul.md](../product/proposals/v2-tablet-pos-overhaul.md), [V3.0 Proposal](../product/proposals/v3-0-pos-order-creation-in-v1.md)
+
+*(Note: In V3.0, the separate V2 screens, `/v2/*` routes, and the V1↔V2 3-second long-press switching bridge were removed entirely [G12, G17]. V1 is the sole application, embedding the POS-style order creation modal directly inside Outgoing Orders).*
 
 ## Context
 

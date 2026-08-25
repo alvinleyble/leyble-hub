@@ -1,8 +1,10 @@
 # One Build-Time Release Switch for the Offline Core
 
-**Status:** Settled (2026-08-23)  
+**Status:** Superseded (2026-08-25 by [ADR 0013: The Offline Core Ships Unswitched; No Flag-Based Rollback](0013-unswitched-offline-core-no-flag-rollback.md))  
 **Origin:** Captain decision D18, refining D12 (2026-08-23)  
-**See also:** [docs/product/proposals/v2-5-offline-accessibility.md](../product/proposals/v2-5-offline-accessibility.md), [ADR 0004](0004-local-first-pos.md), [render.yaml](../../render.yaml)
+**See also:** [docs/product/proposals/v2-5-offline-accessibility.md](../product/proposals/v2-5-offline-accessibility.md), [ADR 0004](0004-local-first-pos.md), [V3.0 Proposal](../product/proposals/v3-0-pos-order-creation-in-v1.md)
+
+*(Preserved for historical context: the build-time release switch `V25_OFFLINE_CORE` was used to land the offline core across four PRs while dark. In V3.0, the switch was retired and the offline core was made permanently active).*
 
 ## Context
 
