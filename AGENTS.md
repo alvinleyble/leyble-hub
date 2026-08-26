@@ -84,6 +84,12 @@ Ask [`client/src/utils/customerTypes.js`](client/src/utils/customerTypes.js) (`h
 in a new screen — the old per-screen type lists are exactly how agreed prices went unread for 35
 live accounts. Saving a price never re-tags the customer.
 
+One nudge sits on top of that rule, not against it: picking a **`regular` customer who holds
+saved prices** in the New Order modal prompts to retag them (Markup / Discounted / Wholesale /
+Skip), because that combination means the tag is lying about the account. Pricing is unaffected
+either way — the prompt only corrects the label — and it deliberately has no dismissal memory, so
+it asks again until someone fixes the tag.
+
 **Stock deducts at dispatch, not at save** ([ADR 0012](docs/adr/0012-stock-deducts-at-dispatch-not-at-save.md)):
 `pending → in_transit` for a delivery, `pending → completed` for a pickup. Creating, finalizing
 and draining an order move nothing, which is what keeps inventory out of the offline path. Every

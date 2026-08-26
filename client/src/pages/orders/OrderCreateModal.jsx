@@ -84,6 +84,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   // ── Save-custom-price prompt ───────────────────────────────────────────────
   const [priceSavePrompt, setPriceSavePrompt] = useState(null);
 
+  // ── Mis-tagged-customer nudge ──────────────────────────────────────────────
+  // A `regular` customer holding saved prices is a contradiction the owners want to see and
+  // resolve: under ADR 0009 those prices are live either way, so the tag is simply lying about
+  // the account. This prompt fires on selection, before the order is built — distinct from the
+  // "Save Custom Price?" prompt above, which fires at save time about a price typed in THIS
+  // order. Both can appear in one order session; they are independent.
+  //
+  // Deliberately has no dismissal memory (captain's explicit instruction): Skip drops it for
+  // this selection only, and picking the same customer again asks again. It stops when the tag
+  // is corrected, which is the point.
+  const [tagPrompt, setTagPrompt] = useState(null);
+
   useEffect(() => {
     Promise.all([
       api.get('/customers'),
@@ -119,6 +131,34 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       })
       .catch(() => {});
   }, [customerId, orderType]);
+
+  // Does this customer hold ANY saved price, on either channel? `/customers/:id/prices` is
+  // scoped to one order_type, and the tag is wrong regardless of which channel the rows sit on,
+  // so this asks both rather than reusing the single-channel response loaded above.
+  const hasAnySavedPrice = async (id) => {
+    const [delivery, pickup] = await Promise.all([
+      api.get(`/customers/${id}/prices?order_type=delivery`),
+      api.get(`/customers/${id}/prices?order_type=pickup`),
+    ]);
+    return hasCustomPricing(delivery) || hasCustomPricing(pickup);
+  };
+
+  // Fires on selection, not on order-type switches — hence customerId alone in the deps. Skipped
+  // while editing a live order: that customer was tagged long before this order existed, and the
+  // nudge belongs to the create flow.
+  useEffect(() => {
+    if (isRealEdit || !customerId) { setTagPrompt(null); return; }
+    const customer = customers.find((c) => String(c.id) === String(customerId));
+    if (customer?.customer_type !== 'regular') { setTagPrompt(null); return; }
+
+    let cancelled = false;
+    hasAnySavedPrice(customerId)
+      .then((has) => {
+        if (!cancelled && has) setTagPrompt({ customer, busy: false });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [customerId, customers, isRealEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeCustomers = customers.filter((c) => c.is_active);
   const activeProducts  = products.filter((p) => p.is_active);
@@ -440,6 +480,23 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     } finally {
       setPriceSavePrompt(null);
       onSaved(priceSavePrompt?.orderId);
+    }
+  };
+
+  // ── Mis-tagged-customer nudge handlers ─────────────────────────────────────
+  // Retagging is the whole action: pricing already follows the saved rows (ADR 0009), so this
+  // only makes the label agree with them. Nothing about the order in progress changes.
+  const applyCustomerTag = async (customerType) => {
+    setTagPrompt((p) => ({ ...p, busy: true }));
+    const { customer } = tagPrompt;
+    try {
+      const updated = await api.patch(`/customers/${customer.id}`, { customer_type: customerType });
+      setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      addToast(`${updated.name} tagged as ${customerTypeLabel(customerType)}.`, 'success');
+      setTagPrompt(null);
+    } catch (err) {
+      addToast(err.message || 'Failed to update customer type.', 'error');
+      setTagPrompt((p) => (p ? { ...p, busy: false } : null));
     }
   };
 
@@ -910,6 +967,48 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
               </li>
             ))}
           </ul>
+        </Modal>
+      )}
+
+      {/* ── Regular customer holding saved prices — tag them? ──────────────── */}
+      {tagPrompt && (
+        <Modal
+          title="Custom Prices Found"
+          onClose={() => setTagPrompt(null)}
+          cancelLabel="Skip"
+          loading={tagPrompt.busy}
+        >
+          <p className="text-slate-700">
+            <strong>{tagPrompt.customer.name}</strong> has custom prices — would you like to tag
+            them as Markup, Discounted, or Wholesale?
+          </p>
+          <p className="mt-2 text-sm text-slate-500">
+            Their saved prices apply to this order either way. This only corrects the label.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-2">
+            {[
+              { value: 'markup',     label: 'Markup',     desc: 'Agreed higher rates' },
+              { value: 'discounted', label: 'Discounted', desc: 'Agreed lower rates' },
+              { value: 'wholesaler', label: 'Wholesale',  desc: 'Bulk buyer' },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={tagPrompt.busy}
+                onClick={() => applyCustomerTag(opt.value)}
+                className="flex min-h-[48px] items-center justify-between gap-3 rounded-lg border
+                           border-slate-300 bg-white px-4 py-2.5 text-left transition-colors
+                           hover:border-blue-500 hover:bg-blue-50/50 focus-visible:outline-none
+                           focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-50"
+              >
+                <span className="text-base font-semibold text-slate-800">{opt.label}</span>
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold
+                                  ${customerTypeBadge(opt.value)}`}>
+                  {opt.desc}
+                </span>
+              </button>
+            ))}
+          </div>
         </Modal>
       )}
 
