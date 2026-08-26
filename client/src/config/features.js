@@ -41,7 +41,24 @@ export const V25_OFFLINE_CORE = readFlag('VITE_V25_OFFLINE_CORE');
 //
 //   VITE_V25_SIMULATE_OFFLINE=on npm run dev
 //   window.__leyble.simulateOffline(true)     // dev builds only
-let simulatedOffline = readFlag('VITE_V25_SIMULATE_OFFLINE');
+// G30 — Tab-Scoped Reload Persistence. window.__leyble.simulateOffline(true) is a
+// console-only dev toggle, and a page reload used to silently drop it — a tester
+// would reload mid-outage-simulation and land back "online" with no warning.
+// sessionStorage keeps the toggle for the lifetime of that browser tab (cleared on
+// tab close, never shared across tabs) until explicitly turned back off.
+const SIMULATED_OFFLINE_KEY = 'leyble_simulated_offline';
+
+function readSimulatedOfflineStorage() {
+  if (typeof sessionStorage === 'undefined') return false;
+  try {
+    return sessionStorage.getItem(SIMULATED_OFFLINE_KEY) === 'true';
+  } catch {
+    // Private-mode / storage-disabled browsers throw on access, not just on quota.
+    return false;
+  }
+}
+
+let simulatedOffline = readFlag('VITE_V25_SIMULATE_OFFLINE') || readSimulatedOfflineStorage();
 
 export function isSimulatedOffline() {
   return simulatedOffline;
@@ -49,6 +66,14 @@ export function isSimulatedOffline() {
 
 export function setSimulatedOffline(value) {
   simulatedOffline = !!value;
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      if (simulatedOffline) sessionStorage.setItem(SIMULATED_OFFLINE_KEY, 'true');
+      else sessionStorage.removeItem(SIMULATED_OFFLINE_KEY);
+    } catch {
+      // Best-effort only — the in-memory flag above is still authoritative this tab.
+    }
+  }
   return simulatedOffline;
 }
 

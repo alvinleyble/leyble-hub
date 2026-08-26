@@ -193,13 +193,44 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   V1's price-list print — blank `Counted:` line per item instead of the system count. No per-row
   `−1`/`+1` steppers (V1 had none in its table either).
 
-### V2.5 offline core (in build — see [docs/product/proposals/v2-5-offline-accessibility.md](docs/product/proposals/v2-5-offline-accessibility.md))
+### V2.5 offline core — re-hosted on V1's screens (Slice 3, see [docs/product/proposals/v2-5-offline-accessibility.md](docs/product/proposals/v2-5-offline-accessibility.md))
 
-The POS becomes local-first every day: the device saves locally, issues its own receipt
+Order-taking is local-first every day: the device saves locally, issues its own receipt
 number, prints, and a background outbox drains when the line is up. Design is closed
-(18 decisions, all in that proposal); ADRs 0003–0008 hold the load-bearing ones.
-Release 1 lands as four pieces, all dark, switched on together.
+(18 decisions, all in that proposal); ADRs 0003–0008 hold the load-bearing ones. What
+was originally built against the V2 POS screens now runs on V1's own screens —
+`OrderCreateModal.jsx` (local-first save + `local-*` quick-created customers),
+`OrderDetailPage.jsx` (local fallback + silent sync + offline editing), and
+`CustomersPage.jsx` (queued-customer visibility). The V2 POS screens (`POSPage.jsx`
+etc.) still exist and still use the same engine underneath, unrelated to the V1 path.
 
+- **The engine itself now starts unconditionally** — `startOfflineCore()` in
+  `client/src/offline/index.js` no longer gates registration/drain on
+  `V25_OFFLINE_CORE`; V1's `OrderCreateModal` calls `saveOrderLocalFirst()`
+  unconditionally too, so the station has to be able to register and the outbox has to
+  be able to drain in every build, flag or no flag. `V25_OFFLINE_CORE` still gates pure
+  UI/display concerns (the marker, `orderRef()`'s receipt-number fallback).
+- **Two differently-shaped draft-cleanup functions live in `posSave.js` — do not
+  confuse them.** `cleanupOrphanedDraft` (outbox-queued, retried indefinitely) is for
+  the V2 POS's blind-print case, where the draft's row id is the only way to reach it
+  later. `cleanupOrphanedDraftDirect` (a bare fire-and-forget `api.del(...).catch(()
+  => {})`, never queued) is what V1's `OrderCreateModal` uses for the early draft it
+  creates on customer-pick — queuing that cleanup through the outbox was the rejected
+  PR #41's exact bug (a throwaway delete stuck ahead of/behind real order POSTs,
+  wedging "Offline · N waiting" for minutes).
+- **Silent background sync** — `drainNotifier.js` dispatches a
+  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting } })`
+  whenever a drain sends something, independent of the once-per-outage toast latch.
+  `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
+  touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
+  the synced server row spinner-free.
+- **Dev-browser gotcha:** on a plain desktop browser (not the Android APK),
+  `nativeStore.js` falls back to an in-memory `Map` (D17 forbids WebView storage) —
+  **a page reload wipes the entire outbox and receipt history.** An order or customer
+  created while `window.__leyble.simulateOffline(true)` is on will never sync if you
+  reload before flipping it back off; test offline flows within one tab session
+  without reloading, or on a real device/emulator. This is G2's known, still-open dev-
+  tier gap, not a bug to chase.
 - **The off switch is `V25_OFFLINE_CORE`** in `client/src/config/features.js` — build-time
   (`VITE_V25_OFFLINE_CORE=on`), off by default, reused by every piece. Off must be
   indistinguishable from today. **Migrations are NOT behind it** (Render runs

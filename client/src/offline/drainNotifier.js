@@ -46,6 +46,19 @@ export function notifyDrainCompleteWith(
   { sent = 0, waiting = 0, customers = [], orders = [], addToast = globalToastHandler } = {},
   enabled = V25_OFFLINE_CORE
 ) {
+  // G27 — silent background sync. Screens like OrderDetailPage listen for this to
+  // silently re-read their record once something has actually synced, with no
+  // spinner and no toast of their own. Fires whenever a drain sent something,
+  // independent of the once-per-outage toast latch below — a screen showing
+  // "Waiting to sync" needs to know about every drain that might concern it, not
+  // just the first one after an outage.
+  if (typeof window !== 'undefined' && typeof window.CustomEvent === 'function' && sent > 0) {
+    // Use window's own CustomEvent constructor, not the bare global — under jsdom
+    // (this app's test harness) `window` is a separate realm from Node's global
+    // CustomEvent, and jsdom's dispatchEvent rejects an event built with the wrong one.
+    window.dispatchEvent(new window.CustomEvent('leyble:drain-complete', { detail: { sent, waiting } }));
+  }
+
   if (!enabled) return false;
   if (sent <= 0) return false;
   if (drainToastFired) return false;
