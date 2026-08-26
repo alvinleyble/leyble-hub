@@ -92,6 +92,9 @@ describe('V2 accuracy audit', () => {
   });
 
   // ── Amber Edit Mode (V2 sends PATCH /orders/:id with items only) ──────────────
+  //
+  // Under ADR 0012 an order holds no stock until it is dispatched, so every reconciliation
+  // case here dispatches first — that is the state in which an edit has stock to move.
   describe('Amber Edit Mode stock reconciliation', () => {
     it('a price-only edit moves no stock and writes no order_edit audit row', async () => {
       const p = await mkProduct('AUD_PRICE_ONLY', 40);
@@ -99,6 +102,8 @@ describe('V2 accuracy audit', () => {
         method: 'POST',
         body: JSON.stringify({ customer_id: customerId, items: [{ product_id: p.id, quantity: 3, unit_price: 100 }] }),
       }));
+      assert.equal(await stockOf(p.id), 40, 'saving an order moves no stock (ADR 0012)');
+      await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
       assert.equal(await stockOf(p.id), 37);
 
       await json(await api(`/orders/${order.id}`, {
@@ -120,6 +125,8 @@ describe('V2 accuracy audit', () => {
           { product_id: b.id, quantity: 6, unit_price: 100 },
         ] }),
       }));
+      assert.deepEqual([await stockOf(a.id), await stockOf(b.id)], [20, 20]);
+      await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
       assert.deepEqual([await stockOf(a.id), await stockOf(b.id)], [16, 14]);
 
       await json(await api(`/orders/${order.id}`, {
@@ -135,6 +142,8 @@ describe('V2 accuracy audit', () => {
         method: 'POST',
         body: JSON.stringify({ customer_id: customerId, items: [{ product_id: p.id, quantity: 2.5, unit_price: 100 }] }),
       }));
+      assert.equal(await stockOf(p.id), 10);
+      await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
       assert.equal(await stockOf(p.id), 7.5);
       await json(await api(`/orders/${order.id}`, {
         method: 'PATCH', body: JSON.stringify({ items: [{ product_id: p.id, quantity: 0.5, unit_price: 100 }] }),
@@ -149,8 +158,11 @@ describe('V2 accuracy audit', () => {
         body: JSON.stringify({ customer_id: customerId, items: [{ product_id: p.id, quantity: 50, unit_price: 100 }] }),
       }));
       assert.equal(status, 201);
-      assert.equal(await stockOf(p.id), -48);
       assert.equal(order.status, 'pending');
+      assert.equal(await stockOf(p.id), 2, 'nothing has left the warehouse yet');
+
+      await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
+      assert.equal(await stockOf(p.id), -48);
     });
 
     it('cancelling twice is rejected (422) and never double-restores stock', async () => {
@@ -159,6 +171,8 @@ describe('V2 accuracy audit', () => {
         method: 'POST',
         body: JSON.stringify({ customer_id: customerId, items: [{ product_id: p.id, quantity: 3, unit_price: 100 }] }),
       }));
+      await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
+      assert.equal(await stockOf(p.id), 7);
       await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'cancelled' }) }));
       assert.equal(await stockOf(p.id), 10);
       const second = await json(await api(`/orders/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'cancelled' }) }));
@@ -236,7 +250,7 @@ describe('V2 accuracy audit', () => {
       assert.equal(acts.length, 0, 'an abandoned draft is not a business event');
     });
 
-    it('confirming the reviewed draft is what creates the order and deducts the stock', async () => {
+    it('confirming the reviewed draft creates the order — the stock waits for dispatch', async () => {
       const p = await mkProduct('AUD_REVIEW_CONFIRM', 30);
       const { body: draft } = await json(await api('/orders', {
         method: 'POST',
@@ -253,7 +267,10 @@ describe('V2 accuracy audit', () => {
       assert.equal(status, 200);
       assert.equal(created.id, draft.id, 'the number reviewed is the number printed');
       assert.equal(created.status, 'pending');
-      assert.equal(await stockOf(p.id), 26, 'stock moves at confirm, not before');
+      assert.equal(await stockOf(p.id), 30, 'ADR 0012 — confirm creates the order, dispatch moves the stock');
+
+      await json(await api(`/orders/${draft.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
+      assert.equal(await stockOf(p.id), 26);
       // The adjustment parked on the draft survives the finalize (F11).
       assert.equal(Number(created.adjustment), -40);
       assert.equal(created.adjustment_reason, 'suki discount');
@@ -288,6 +305,7 @@ describe('V2 accuracy audit', () => {
           items: [{ product_id: p.id, quantity: 5, unit_price: 100 }] }),
       }));
       await json(await api(`/orders/${draft.id}/finalize`, { method: 'POST', body: '{}' }));
+      await json(await api(`/orders/${draft.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) }));
       assert.equal(await stockOf(p.id), 15);
       const again = await json(await api(`/orders/${draft.id}/finalize`, { method: 'POST', body: '{}' }));
       assert.equal(again.status, 400);
@@ -471,16 +489,21 @@ describe('V2 accuracy audit', () => {
       assert.equal(Number(pickup.find((r) => r.product_id === p.id).custom_unit_price), 290);
     });
 
-    it('a custom price can be saved for a REGULAR customer and is then served back', async () => {
-      // POSSavePriceModal is supposed to be the only path that writes one, and it converts
-      // the customer first. The endpoint itself enforces nothing.
+    it('a custom price saved for a REGULAR customer is served back and stays live (ADR 0009)', async () => {
+      // This used to be the orphaned-data case: the endpoint stored the price, the order
+      // screens refused to read it back because the customer was not a wholesaler, and the
+      // save flow therefore had to convert the customer first. ADR 0009 removed the gate —
+      // the row is the pricing source, and the customer keeps the tag it had.
       const p = await mkProduct('AUD_SUKI_REGULAR', 10, 300);
       const { status } = await json(await api(`/customers/${customerId}/prices`, {
         method: 'POST', body: JSON.stringify({ product_id: p.id, custom_unit_price: 111, order_type: 'delivery' }) }));
       assert.equal(status, 201);
       const { body: prices } = await json(await api(`/customers/${customerId}/prices?order_type=delivery`));
-      assert.ok(prices.some((r) => r.product_id === p.id));
-      // ...but POSPage.priceFor() ignores it entirely while customer_type is 'regular'.
+      const row = prices.find((r) => r.product_id === p.id);
+      assert.ok(row, 'the saved price is served back for a regular customer');
+      assert.equal(Number(row.custom_unit_price), 111);
+
+      // Saving a price must not have re-tagged the customer.
       const { body: cust } = await json(await api(`/customers/${customerId}`));
       assert.equal(cust.customer_type, 'regular');
     });
@@ -777,29 +800,26 @@ describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
     assert.equal(overTotal, 185.00);
   });
 
-  it('F10 — Custom price detection only flags explicit overrides and wholesaler matrix', () => {
-    // POSReviewModal logic
-    const posCustomPrice = (item, order, customPrices = {}) =>
-      Boolean(item.is_price_overridden) ||
-      (order.customer_type === 'wholesaler' && Boolean(customPrices[item.product_id]));
+  it('F10 — Custom price detection flags explicit overrides and any saved price (ADR 0009)', () => {
+    // POSReviewModal logic. The customer_type term is gone: a saved price counts for every
+    // customer, which is the whole point of ADR 0009.
+    const posCustomPrice = (item, customPrices = {}) =>
+      Boolean(item.is_price_overridden) || Boolean(customPrices[item.product_id]);
 
-    // CustomerOrderDetailModal logic
+    // OrderViewModal logic
     const detailModalCustomPrice = (item) => Boolean(item.is_price_overridden);
 
-    // Case 1: Regular customer with regular price (even if catalogue base price changed later)
+    // Case 1: no override, no saved price (even if catalogue base price changed later)
     const itemNormal = { product_id: 1, unit_price: 90, is_price_overridden: false };
-    const regularOrder = { customer_type: 'regular' };
-    assert.equal(posCustomPrice(itemNormal, regularOrder, {}), false);
+    assert.equal(posCustomPrice(itemNormal, {}), false);
     assert.equal(detailModalCustomPrice(itemNormal), false);
 
-    // Case 2: Regular customer with overridden price
+    // Case 2: an explicit override always counts
     const itemOverridden = { product_id: 1, unit_price: 85, is_price_overridden: true };
-    assert.equal(posCustomPrice(itemOverridden, regularOrder, {}), true);
+    assert.equal(posCustomPrice(itemOverridden, {}), true);
     assert.equal(detailModalCustomPrice(itemOverridden), true);
 
-    // Case 3: Wholesaler with custom price in matrix
-    const wholesalerOrder = { customer_type: 'wholesaler' };
-    assert.equal(posCustomPrice(itemNormal, wholesalerOrder, { 1: 90 }), true);
-    assert.equal(posCustomPrice(itemNormal, wholesalerOrder, {}), false);
+    // Case 3: a saved price counts for a regular customer too — previously it did not.
+    assert.equal(posCustomPrice(itemNormal, { 1: 90 }), true);
   });
 });

@@ -9,7 +9,7 @@ import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
-import { orderRef } from '../../utils/orderRef';
+import { orderRef, orderRefFromId } from '../../utils/orderRef';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -268,7 +268,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                         ? 'bg-slate-100 text-slate-400 border-slate-200'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
                 >
-                  Order #{orderId}{isDone ? ' ✓' : ''}
+                  Order {orderRefFromId(orderId, o?.receipt_number)}{isDone ? ' ✓' : ''}
                 </button>
               );
             })}

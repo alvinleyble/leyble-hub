@@ -9,6 +9,7 @@ import POSConfirm from '../pos/POSConfirm';
 import { usePrintReceipt } from '../../pages/orders/usePrintReceipt';
 import CustomerMergeModal from './CustomerMergeModal';
 import { orderRef } from '../../utils/orderRef';
+import { CUSTOMER_TYPE_OPTIONS, customerTypeBadge, customerTypeLabel, normalizeCustomerType } from '../../utils/customerTypes';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -189,7 +190,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
     setCancelling(true);
     try {
       await api.post(`/orders/${cancelTarget.id}/status`, { status: 'cancelled' });
-      addToast(`Order ${orderRef(cancelTarget)} cancelled — stock restored.`, 'success');
+      addToast(`Order ${orderRef(cancelTarget)} cancelled.`, 'success');
       setCancelTarget(null);
       setPreviewOrder(null);
       await load(true);
@@ -235,17 +236,14 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
         setOrders(data.orders ?? []);
         setForm({
           name:          data.name,
-          customer_type: data.customer_type,
+          customer_type: normalizeCustomerType(data.customer_type),
           phone:         data.phone ?? '',
           address:       data.address ?? '',
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(data.customer_type)) {
-          await loadCustomPrices(priceTabRef.current);
-        } else {
-          setCustomPrices([]);
-        }
+        // ADR 0009 — saved prices are the pricing source, so the panel is always shown.
+        await loadCustomPrices(priceTabRef.current);
       })
       .catch(() => addToast('Failed to load customer details.', 'error'))
       .finally(() => {
@@ -445,27 +443,9 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
 
             {/* ── Summary bar ────────────────────────────────────────── */}
             <div className="flex flex-wrap items-center gap-3 border-b border-v2-border bg-v2-bg px-6 py-4">
-              {customer.customer_type === 'wholesaler' ? (
-                <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-sm font-semibold text-amber-300">
-                  Wholesaler
-                </span>
-              ) : customer.customer_type === 'discounted' ? (
-                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1 text-sm font-semibold text-blue-300">
-                  Discounted
-                </span>
-              ) : customer.customer_type === 'markup' ? (
-                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-sm font-semibold text-purple-300">
-                  Markup
-                </span>
-              ) : customer.customer_type === 'unassigned' ? (
-                <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-3 py-1 text-sm font-semibold text-red-400">
-                  Unassigned
-                </span>
-              ) : (
-                <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-raised px-3 py-1 text-sm font-semibold text-v2-muted">
-                  Regular
-                </span>
-              )}
+              <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${customerTypeBadge(customer.customer_type, 'dark')}`}>
+                {customerTypeLabel(customer.customer_type)}
+              </span>
 
               {!customer.is_active && (
                 <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-950/40 px-3 py-1 text-sm font-semibold text-red-400">
@@ -504,11 +484,9 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
                       onChange={set('customer_type')}
                       className={FIELD}
                     >
-                      <option value="regular">Regular</option>
-                      <option value="discounted">Discounted</option>
-                      <option value="wholesaler">Wholesaler</option>
-                      <option value="markup">Markup</option>
-                      <option value="unassigned">Unassigned</option>
+                      {CUSTOMER_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -579,233 +557,231 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
             </form>
 
             {/* ── Custom Pricing Matrix ──────────────────────────────── */}
-            {['wholesaler', 'discounted', 'markup', 'unassigned'].includes(customer.customer_type) && (
-              <div className="border-b border-v2-border px-6 py-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-widest text-v2-muted">Suki Custom Pricing</p>
-                    <p className="text-xs text-v2-muted mt-0.5">Special rates saved per product channel</p>
-                  </div>
-                  {!pricingOpen && (
-                    <button
-                      type="button"
-                      onClick={() => openPricingForm()}
-                      className="flex h-10 items-center gap-1.5 rounded-xl bg-v2-raised px-4 text-sm font-bold text-v2-text
-                                 hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-                    >
-                      + Set Price
-                    </button>
-                  )}
+            <div className="border-b border-v2-border px-6 py-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-v2-muted">Custom Prices</p>
+                  <p className="text-xs text-v2-muted mt-0.5">Special rates saved per product channel</p>
                 </div>
+                {!pricingOpen && (
+                  <button
+                    type="button"
+                    onClick={() => openPricingForm()}
+                    className="flex h-10 items-center gap-1.5 rounded-xl bg-v2-raised px-4 text-sm font-bold text-v2-text
+                               hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                  >
+                    + Set Price
+                  </button>
+                )}
+              </div>
 
-                {/* Delivery / Pickup tab switcher */}
-                <div className="mb-4 flex gap-2" role="tablist" aria-label="Order type price matrix">
-                  {['delivery', 'pickup'].map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      role="tab"
-                      aria-selected={priceTab === type}
-                      onClick={() => {
-                        setPriceTab(type);
-                        setPricingOpen(false);
-                        loadCustomPrices(type);
-                      }}
-                      className={`flex min-h-[44px] flex-1 items-center justify-center rounded-xl border text-sm font-bold transition-colors
-                                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
-                        ${priceTab === type
-                          ? 'border-v2-accent bg-v2-pill-active text-v2-pill-text shadow-sm'
-                          : 'border-v2-border bg-v2-bg text-v2-muted hover:bg-v2-raised hover:text-v2-text'
-                        }`}
-                    >
-                      {type === 'delivery' ? '🚚 Delivery Custom Prices' : '🏪 Pickup Custom Prices'}
-                    </button>
-                  ))}
-                </div>
+              {/* Delivery / Pickup tab switcher */}
+              <div className="mb-4 flex gap-2" role="tablist" aria-label="Order type price matrix">
+                {['delivery', 'pickup'].map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    role="tab"
+                    aria-selected={priceTab === type}
+                    onClick={() => {
+                      setPriceTab(type);
+                      setPricingOpen(false);
+                      loadCustomPrices(type);
+                    }}
+                    className={`flex min-h-[44px] flex-1 items-center justify-center rounded-xl border text-sm font-bold transition-colors
+                                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+                      ${priceTab === type
+                        ? 'border-v2-accent bg-v2-pill-active text-v2-pill-text shadow-sm'
+                        : 'border-v2-border bg-v2-bg text-v2-muted hover:bg-v2-raised hover:text-v2-text'
+                      }`}
+                  >
+                    {type === 'delivery' ? '🚚 Delivery Custom Prices' : '🏪 Pickup Custom Prices'}
+                  </button>
+                ))}
+              </div>
 
-                {/* Inline Set Price Form */}
-                {pricingOpen && (
-                  <div className="mb-5 rounded-xl border border-v2-border bg-v2-raised p-4">
-                    <p className="mb-3 text-sm font-bold text-v2-text">
-                      Set {priceTab === 'pickup' ? 'Pickup' : 'Delivery'} Custom Price
-                    </p>
+              {/* Inline Set Price Form */}
+              {pricingOpen && (
+                <div className="mb-5 rounded-xl border border-v2-border bg-v2-raised p-4">
+                  <p className="mb-3 text-sm font-bold text-v2-text">
+                    Set {priceTab === 'pickup' ? 'Pickup' : 'Delivery'} Custom Price
+                  </p>
 
-                    <div className="grid grid-cols-1 gap-3">
-                      <div>
-                        <label className={LABEL}>Product *</label>
-                        <DarkProductPicker
-                          products={products}
-                          selectedProductId={priceForm.product_id}
-                          onSelect={selectPriceProduct}
-                        />
-                        {priceErrors.product_id && <p role="alert" className="mt-1 text-sm font-semibold text-red-400">{priceErrors.product_id}</p>}
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
+                      <label className={LABEL}>Product *</label>
+                      <DarkProductPicker
+                        products={products}
+                        selectedProductId={priceForm.product_id}
+                        onSelect={selectPriceProduct}
+                      />
+                      {priceErrors.product_id && <p role="alert" className="mt-1 text-sm font-semibold text-red-400">{priceErrors.product_id}</p>}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className={LABEL} htmlFor="custom-price-input">
+                          Custom Price (₱ / case) *
+                        </label>
+                        {currentSelectedProduct && (
+                          <span className="text-xs text-v2-muted tabular-nums">
+                            Standard: {PHP(currentSelectedProduct.base_wholesale_price)}
+                          </span>
+                        )}
                       </div>
 
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <label className={LABEL} htmlFor="custom-price-input">
-                            Custom Price (₱ / case) *
-                          </label>
-                          {currentSelectedProduct && (
-                            <span className="text-xs text-v2-muted tabular-nums">
-                              Standard: {PHP(currentSelectedProduct.base_wholesale_price)}
+                      <input
+                        id="custom-price-input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={priceForm.custom_unit_price}
+                        onChange={setP('custom_unit_price')}
+                        className={FIELD}
+                        placeholder="0.00"
+                      />
+                      {priceErrors.custom_unit_price && (
+                        <p role="alert" className="mt-1 text-sm font-semibold text-red-400">{priceErrors.custom_unit_price}</p>
+                      )}
+
+                      {/* Live discount / delta comparison badge */}
+                      {priceDelta !== null && (
+                        <div className="mt-2 flex items-center gap-2 rounded-lg border border-v2-border bg-v2-surface px-3 py-2 text-xs">
+                          <span className="text-v2-muted">Difference vs Std:</span>
+                          {priceDelta < 0 ? (
+                            <span className="font-bold text-emerald-400 tabular-nums">
+                              -₱{Math.abs(priceDelta).toFixed(2)} ({Math.abs(deltaPercent).toFixed(1)}% discount)
+                            </span>
+                          ) : priceDelta > 0 ? (
+                            <span className="font-bold text-amber-400 tabular-nums">
+                              +₱{priceDelta.toFixed(2)} (+{deltaPercent.toFixed(1)}% markup)
+                            </span>
+                          ) : (
+                            <span className="font-medium text-v2-muted">
+                              Same as base price
                             </span>
                           )}
                         </div>
+                      )}
+                    </div>
 
-                        <input
-                          id="custom-price-input"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={priceForm.custom_unit_price}
-                          onChange={setP('custom_unit_price')}
-                          className={FIELD}
-                          placeholder="0.00"
-                        />
-                        {priceErrors.custom_unit_price && (
-                          <p role="alert" className="mt-1 text-sm font-semibold text-red-400">{priceErrors.custom_unit_price}</p>
-                        )}
+                    <div>
+                      <label className={LABEL} htmlFor="custom-notes-input">Notes (Optional)</label>
+                      <input
+                        id="custom-notes-input"
+                        type="text"
+                        value={priceForm.notes}
+                        onChange={setP('notes')}
+                        className={FIELD}
+                        placeholder="e.g. Suki agreement, bulk volume discount"
+                      />
+                    </div>
 
-                        {/* Live discount / delta comparison badge */}
-                        {priceDelta !== null && (
-                          <div className="mt-2 flex items-center gap-2 rounded-lg border border-v2-border bg-v2-surface px-3 py-2 text-xs">
-                            <span className="text-v2-muted">Difference vs Std:</span>
-                            {priceDelta < 0 ? (
-                              <span className="font-bold text-emerald-400 tabular-nums">
-                                -₱{Math.abs(priceDelta).toFixed(2)} ({Math.abs(deltaPercent).toFixed(1)}% discount)
-                              </span>
-                            ) : priceDelta > 0 ? (
-                              <span className="font-bold text-amber-400 tabular-nums">
-                                +₱{priceDelta.toFixed(2)} (+{deltaPercent.toFixed(1)}% markup)
-                              </span>
-                            ) : (
-                              <span className="font-medium text-v2-muted">
-                                Same as base price
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className={LABEL} htmlFor="custom-notes-input">Notes (Optional)</label>
-                        <input
-                          id="custom-notes-input"
-                          type="text"
-                          value={priceForm.notes}
-                          onChange={setP('notes')}
-                          className={FIELD}
-                          placeholder="e.g. Suki agreement, bulk volume discount"
-                        />
-                      </div>
-
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPricingOpen(false);
-                            setPriceForm(DEFAULT_PRICE_FORM);
-                            setPriceErrors({});
-                          }}
-                          disabled={priceSaving}
-                          className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-raised px-5 text-base
-                                     font-bold text-v2-text hover:bg-v2-border disabled:opacity-50
-                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSetPrice}
-                          disabled={priceSaving}
-                          className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-5 text-base
-                                     font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
-                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-                        >
-                          {priceSaving ? 'Saving…' : 'Save Price'}
-                        </button>
-                      </div>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPricingOpen(false);
+                          setPriceForm(DEFAULT_PRICE_FORM);
+                          setPriceErrors({});
+                        }}
+                        disabled={priceSaving}
+                        className="flex min-h-tablet items-center justify-center rounded-xl bg-v2-raised px-5 text-base
+                                   font-bold text-v2-text hover:bg-v2-border disabled:opacity-50
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSetPrice}
+                        disabled={priceSaving}
+                        className="flex min-h-tablet items-center justify-center rounded-xl bg-emerald-600 px-5 text-base
+                                   font-bold text-white hover:bg-emerald-500 shadow-sm disabled:opacity-50
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                      >
+                        {priceSaving ? 'Saving…' : 'Save Price'}
+                      </button>
                     </div>
                   </div>
-                )}
+                </div>
+              )}
 
-                {/* Custom Prices Matrix Table */}
-                {customPrices.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-v2-muted">
-                    No custom prices set for {priceTab === 'delivery' ? 'delivery' : 'pickup'} orders yet.
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto rounded-xl border border-v2-border bg-v2-bg">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-v2-border bg-v2-surface text-xs uppercase tracking-wider text-v2-muted">
-                          <th className="px-3 py-2.5 text-left font-semibold">Product</th>
-                          <th className="hidden px-3 py-2.5 text-right font-semibold sm:table-cell">Base Std</th>
-                          <th className="px-3 py-2.5 text-right font-semibold">Custom Price</th>
-                          <th className="px-3 py-2.5 text-right font-semibold">Savings / Delta</th>
-                          <th className="px-3 py-2.5 text-center font-semibold">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {customPrices.map((sp) => {
-                          const base = productMap[sp.product_id]?.base_wholesale_price;
-                          const custom = Number(sp.custom_unit_price);
-                          const delta = base !== undefined ? custom - Number(base) : null;
-                          const pct = (delta !== null && Number(base) > 0) ? (delta / Number(base)) * 100 : null;
+              {/* Custom Prices Matrix Table */}
+              {customPrices.length === 0 ? (
+                <p className="py-6 text-center text-sm text-v2-muted">
+                  No custom prices set for {priceTab === 'delivery' ? 'delivery' : 'pickup'} orders yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-v2-border bg-v2-bg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-v2-border bg-v2-surface text-xs uppercase tracking-wider text-v2-muted">
+                        <th className="px-3 py-2.5 text-left font-semibold">Product</th>
+                        <th className="hidden px-3 py-2.5 text-right font-semibold sm:table-cell">Base Std</th>
+                        <th className="px-3 py-2.5 text-right font-semibold">Custom Price</th>
+                        <th className="px-3 py-2.5 text-right font-semibold">Savings / Delta</th>
+                        <th className="px-3 py-2.5 text-center font-semibold">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customPrices.map((sp) => {
+                        const base = productMap[sp.product_id]?.base_wholesale_price;
+                        const custom = Number(sp.custom_unit_price);
+                        const delta = base !== undefined ? custom - Number(base) : null;
+                        const pct = (delta !== null && Number(base) > 0) ? (delta / Number(base)) * 100 : null;
 
-                          return (
-                            <tr key={sp.id} className="border-t border-v2-border transition-colors hover:bg-v2-raised">
-                              <td className="px-3 py-3 font-medium text-v2-text">
-                                <div>
-                                  {sp.sku ? <span className="font-mono text-xs text-v2-muted mr-1">{sp.sku}</span> : null}
-                                  {sp.product_name}
-                                </div>
-                                {sp.notes && (
-                                  <span className="block text-xs italic text-v2-muted">{sp.notes}</span>
-                                )}
-                              </td>
-                              <td className="hidden px-3 py-3 text-right tabular-nums text-v2-muted sm:table-cell">
-                                {base !== undefined ? PHP(base) : '—'}
-                              </td>
-                              <td className="px-3 py-3 text-right font-bold tabular-nums text-v2-text">
-                                {PHP(sp.custom_unit_price)}
-                              </td>
-                              <td className="px-3 py-3 text-right tabular-nums">
-                                {delta !== null ? (
-                                  delta < 0 ? (
-                                    <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold text-emerald-300">
-                                      -₱{Math.abs(delta).toFixed(2)} ({Math.abs(pct).toFixed(1)}%)
-                                    </span>
-                                  ) : delta > 0 ? (
-                                    <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-300">
-                                      +₱{delta.toFixed(2)} (+{pct.toFixed(1)}%)
-                                    </span>
-                                  ) : (
-                                    <span className="text-xs text-v2-muted">Std rate</span>
-                                  )
-                                ) : '—'}
-                              </td>
-                              <td className="px-3 py-3 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => editCustomPrice(sp)}
-                                  className="rounded-lg border border-v2-border bg-v2-surface px-2.5 py-1 text-xs font-bold text-v2-text
-                                             hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
-                                >
-                                  Edit
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+                        return (
+                          <tr key={sp.id} className="border-t border-v2-border transition-colors hover:bg-v2-raised">
+                            <td className="px-3 py-3 font-medium text-v2-text">
+                              <div>
+                                {sp.sku ? <span className="font-mono text-xs text-v2-muted mr-1">{sp.sku}</span> : null}
+                                {sp.product_name}
+                              </div>
+                              {sp.notes && (
+                                <span className="block text-xs italic text-v2-muted">{sp.notes}</span>
+                              )}
+                            </td>
+                            <td className="hidden px-3 py-3 text-right tabular-nums text-v2-muted sm:table-cell">
+                              {base !== undefined ? PHP(base) : '—'}
+                            </td>
+                            <td className="px-3 py-3 text-right font-bold tabular-nums text-v2-text">
+                              {PHP(sp.custom_unit_price)}
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums">
+                              {delta !== null ? (
+                                delta < 0 ? (
+                                  <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold text-emerald-300">
+                                    -₱{Math.abs(delta).toFixed(2)} ({Math.abs(pct).toFixed(1)}%)
+                                  </span>
+                                ) : delta > 0 ? (
+                                  <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-300">
+                                    +₱{delta.toFixed(2)} (+{pct.toFixed(1)}%)
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-v2-muted">Std rate</span>
+                                )
+                              ) : '—'}
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => editCustomPrice(sp)}
+                                className="rounded-lg border border-v2-border bg-v2-surface px-2.5 py-1 text-xs font-bold text-v2-text
+                                           hover:bg-v2-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                              >
+                                Edit
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
             {/* ── Order history ──────────────────────────────────────── */}
             <div className="border-b border-v2-border px-6 py-5">
@@ -960,7 +936,7 @@ export default function CustomerDetailDrawer({ customerId, onClose, onSaved }) {
           onClose={() => setCancelTarget(null)}
         >
           This voids the order for <strong className="text-v2-text">{customer?.name || cancelTarget.customer_name}</strong> and
-          puts the stock back. It cannot be undone.
+          puts back any stock that was already deducted. It cannot be undone.
         </POSConfirm>
       )}
     </>

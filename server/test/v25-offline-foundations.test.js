@@ -190,15 +190,22 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
 
     it('a resend does not deduct stock a second time', async () => {
       const receipt = `7-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
-      const before = Number((await db.query('SELECT current_stock FROM products WHERE id = $1', [productId])).rows[0].current_stock);
+      const stock = async () =>
+        Number((await db.query('SELECT current_stock FROM products WHERE id = $1', [productId])).rows[0].current_stock);
+      const before = await stock();
 
-      await call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt, items: [{ product_id: productId, quantity: 3, unit_price: 100 }] })) });
-      const afterFirst = Number((await db.query('SELECT current_stock FROM products WHERE id = $1', [productId])).rows[0].current_stock);
-      assert.equal(afterFirst, before - 3);
+      const first = await call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt, items: [{ product_id: productId, quantity: 3, unit_price: 100 }] })) });
+      const order = await first.json();
+      // ADR 0012 — a drained order is created, not dispatched; the stock moves later.
+      assert.equal(await stock(), before);
 
-      await call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt, items: [{ product_id: productId, quantity: 3, unit_price: 100 }] })) });
-      const afterReplay = Number((await db.query('SELECT current_stock FROM products WHERE id = $1', [productId])).rows[0].current_stock);
-      assert.equal(afterReplay, afterFirst, 'the replay is a read, not a second sale');
+      await call(`/orders/${receipt}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) });
+      const afterDispatch = await stock();
+      assert.equal(afterDispatch, before - 3);
+
+      const replay = await call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt, items: [{ product_id: productId, quantity: 3, unit_price: 100 }] })) });
+      assert.equal((await replay.json()).id, order.id);
+      assert.equal(await stock(), afterDispatch, 'the replay is a read, not a second sale');
     });
 
     it('two overlapping drains of the same number still leave one row', async () => {
@@ -288,6 +295,11 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.equal(activity.performed_by, luis.id);
       assert.match(activity.summary, new RegExp(receipt), 'and names the order by its receipt number');
 
+      // The stock movement is a separate, later act (ADR 0012 — deduct at dispatch), and it
+      // is credited to whoever dispatches, replayed the same way through the header.
+      await call(`/orders/${receipt}/status`, {
+        method: 'POST', profile: 'luis', body: JSON.stringify({ status: 'in_transit' }),
+      });
       const { rows: [movement] } = await db.query(
         `SELECT performed_by FROM inventory_audit_logs WHERE related_order_id = $1 ORDER BY id DESC LIMIT 1`,
         [order.id]

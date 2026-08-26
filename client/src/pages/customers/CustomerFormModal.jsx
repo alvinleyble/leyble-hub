@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
+import { CUSTOMER_TYPE_OPTIONS } from '../../utils/customerTypes';
 
 const FIELD = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -70,11 +71,9 @@ export default function CustomerFormModal({ onClose, onSaved }) {
 
           <FormField label="Customer Type" required className="sm:col-span-2">
             <select value={form.customer_type} onChange={set('customer_type')} className={FIELD}>
-              <option value="regular">Regular</option>
-              <option value="discounted">Discounted</option>
-              <option value="wholesaler">Wholesaler</option>
-              <option value="markup">Markup</option>
-              <option value="unassigned">Unassigned</option>
+              {CUSTOMER_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
             </select>
           </FormField>
 

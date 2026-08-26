@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
+import { orderRefFromId } from '../../utils/orderRef';
 
 const ACTION_LABELS = {
   manual_adjustment: 'Manual Adjustment',
@@ -65,8 +66,10 @@ const TAB_BUTTON = (active) => `px-4 py-1.5 rounded-lg text-sm font-semibold bor
     ? 'bg-slate-800 text-white border-slate-800'
     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`;
 
-// Renders an "Order #123" / "Customer: Name" style reference for an activity entry,
-// linking through to the relevant detail page where one exists.
+// Renders an "Order 1-00042" / "Customer: Name" style reference for an activity entry,
+// linking through to the relevant detail page where one exists. Orders are named by their
+// receipt number (ADR 0010) — GET /audit/activity joins it in as entity_receipt_number —
+// falling back to '#<id>' for the historical rows that never had one.
 function EntityRef({ entry }) {
   const label = ENTITY_LABELS[entry.entity_type] ?? entry.entity_type;
   if (entry.entity_type === 'order' && entry.entity_id) {
@@ -76,7 +79,7 @@ function EntityRef({ entry }) {
         className="text-blue-700 hover:underline font-medium"
         onClick={(ev) => ev.stopPropagation()}
       >
-        Order #{entry.entity_id}
+        Order {orderRefFromId(entry.entity_id, entry.entity_receipt_number)}
       </Link>
     );
   }
@@ -329,7 +332,7 @@ export default function AuditPage() {
                                     className="text-blue-700 hover:underline"
                                     onClick={(ev) => ev.stopPropagation()}
                                   >
-                                    Order #{e.related_order_id}
+                                    Order {orderRefFromId(e.related_order_id, e.related_order_receipt_number)}
                                   </Link>
                                 : e.related_delivery_id
                                 ? `Delivery #${e.related_delivery_id}`

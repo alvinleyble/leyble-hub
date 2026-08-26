@@ -92,6 +92,7 @@ export default function POSOrderPanel({
   mode,                  // 'build' | 'saved' | 'edit'
   customers,
   selectedCustomer,
+  customerHasSavedPrices,
   onSelectCustomer,
   onClearCustomer,
   orderType,
@@ -137,6 +138,7 @@ export default function POSOrderPanel({
         <POSCustomerSearch
           customers={customers}
           selected={selectedCustomer}
+          hasSavedPrices={customerHasSavedPrices}
           onSelect={onSelectCustomer}
           onClear={onClearCustomer}
           disabled={mode !== 'build'}

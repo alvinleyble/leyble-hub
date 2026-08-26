@@ -19,6 +19,7 @@ We are decoupling custom pricing from `customer_type` entirely:
 2. **`customer_type` as Pure Descriptive Tag:** The `customer_type` column becomes a purely descriptive label for store owners to categorize accounts (`regular`, `wholesaler`, `discounted`, `markup`). It carries zero pricing logic and affects no calculations.
 3. **Collapsing `unassigned` into `regular`:** The redundant `unassigned` type is removed from UI options; any legacy records are mapped to `regular`. `Regular` remains the default for newly created customers.
 4. **Simplified Custom Price Saving:** When an operator overrides a product price on an order and chooses to save it for the customer, the price is saved directly to `customer_product_prices`. No mutation of `customer_type` occurs.
+   - **That choice is the only writer.** `POST /api/v1/customers/:id/prices` is the sole path that creates a saved price. `insertItems` in `server/src/routes/orders.js` no longer writes one on `is_price_overridden` — that flag records a hand-typed price on *this* order, which is a different claim from an agreed standing rate. Order-save writing the row before the operator was asked made the prompt's **No** a no-op, and since the table is append-only with no delete endpoint, a one-off price became permanent with no way back.
 5. **UI Label Clean-up:** Form dropdowns and detail panels display plain names ("Regular", "Wholesaler", "Discounted", "Markup") without "— With/Without Custom Prices" suffixes.
 
 ## Why ADR 0001's Objection Dissolves
@@ -60,4 +61,10 @@ This is a correction rather than a new pricing policy: operators previously had 
 - Gating checks in order creation, customer panels, and price search queries are simplified to query `customer_product_prices` directly.
 - The "Save custom price?" flow saves prices cleanly without triggering background customer conversions.
 - The 35 `discounted` and `markup` customers' agreed prices apply automatically on order creation.
+
+## Implementation notes (V3.0 Slice 2)
+
+- Migration `034_collapse_unassigned_customer_type.sql` relabels any `unassigned` row to `regular` and narrows the check constraint to the four surviving types.
+- The read rule lives in one place client-side: `hasCustomPricing()` in [`client/src/utils/customerTypes.js`](../../client/src/utils/customerTypes.js), alongside the shared labels/badges and `normalizeCustomerType()` (which keeps any pre-034 payload reading as `Regular`). The repeated `['wholesaler','discounted','markup','unassigned'].includes(...)` checks — the exact fragility this ADR names — are gone from every screen.
+- The "Save custom price?" prompt is one step everywhere (V1 `OrderCreateModal`, V2 `POSSavePriceModal`); the second "Select Customer Type" step and its `PATCH /customers/:id` conversion call are removed.
 

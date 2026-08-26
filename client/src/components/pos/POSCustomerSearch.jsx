@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../ui/Toast';
 import { customerMatches } from '../../utils/customerSearch';
+import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
 import { V25_OFFLINE_CORE } from '../../config/features.js';
 import { enqueue, drainOutbox } from '../../offline/index.js';
 
@@ -15,6 +16,7 @@ import { enqueue, drainOutbox } from '../../offline/index.js';
 export default function POSCustomerSearch({
   customers,
   selected,
+  hasSavedPrices = false,   // ADR 0009 — derived from customer_product_prices, not the tag
   onSelect,
   onClear,
   disabled = false,
@@ -54,22 +56,22 @@ export default function POSCustomerSearch({
           entityType: 'customer',
           endpoint: '/customers',
           method: 'POST',
-          payload: { name: trimmed, customer_type: 'unassigned' },
+          payload: { name: trimmed, customer_type: 'regular' },
           profileKey,
         });
         const localCustomer = {
           id: `local-${rec.id}`,
           _outboxId: rec.id,
           name: trimmed,
-          customer_type: 'unassigned',
+          customer_type: 'regular',
           is_active: true,
         };
-        addToast(`${localCustomer.name} added as Unassigned Customer.`, 'success');
+        addToast(`${localCustomer.name} added as a Regular customer.`, 'success');
         pick(localCustomer);
         drainOutbox().catch(() => {});
       } else {
-        const created = await api.post('/customers', { name: trimmed, customer_type: 'unassigned' });
-        addToast(`${created.name} added as Unassigned Customer.`, 'success');
+        const created = await api.post('/customers', { name: trimmed, customer_type: 'regular' });
+        addToast(`${created.name} added as a Regular customer.`, 'success');
         pick(created);
       }
     } catch (err) {
@@ -115,7 +117,8 @@ export default function POSCustomerSearch({
           <div className="min-w-0 flex-1">
             <p className="truncate text-xl font-bold text-v2-text">{selected.name}</p>
             <p className="truncate text-base text-v2-muted">
-              {selected.customer_type === 'wholesaler' ? 'Wholesaler — custom pricing applied' : selected.customer_type === 'discounted' ? 'Discounted — custom pricing applied' : selected.customer_type === 'markup' ? 'Markup — custom pricing applied' : selected.customer_type === 'unassigned' ? 'Unassigned — custom pricing applied' : 'Regular'}
+              {customerTypeLabel(selected.customer_type)}
+              {hasSavedPrices ? ' — saved prices applied' : ''}
               {selected.address ? ` · ${selected.address}` : ''}
             </p>
           </div>
@@ -175,7 +178,7 @@ export default function POSCustomerSearch({
                     <>
                       <span className="text-xl leading-none">＋</span>
                       <span className="truncate">
-                        Create <span className="text-v2-text">“{query.trim()}”</span> as Unassigned Customer
+                        Create <span className="text-v2-text">“{query.trim()}”</span> as Regular Customer
                       </span>
                     </>
                   )}
@@ -199,28 +202,9 @@ export default function POSCustomerSearch({
                     <span className="block truncate text-lg font-semibold text-v2-text">{c.name}</span>
                     {c.address && <span className="block truncate text-sm text-v2-muted">{c.address}</span>}
                   </span>
-                  {c.customer_type === 'wholesaler' && (
-                    <span className="shrink-0 rounded-full border border-amber-400/50 bg-amber-400/10 px-2 py-0.5
-                                     text-xs font-bold uppercase text-amber-300">
-                      Wholesaler
-                    </span>
-                  )}
-                  {c.customer_type === 'discounted' && (
-                    <span className="shrink-0 rounded-full border border-blue-400/50 bg-blue-400/10 px-2 py-0.5
-                                     text-xs font-bold uppercase text-blue-300">
-                      Discounted
-                    </span>
-                  )}
-                  {c.customer_type === 'markup' && (
-                    <span className="shrink-0 rounded-full border border-purple-400/50 bg-purple-400/10 px-2 py-0.5
-                                     text-xs font-bold uppercase text-purple-300">
-                      Markup
-                    </span>
-                  )}
-                  {c.customer_type === 'unassigned' && (
-                    <span className="shrink-0 rounded-full border border-red-400/50 bg-red-400/10 px-2 py-0.5
-                                     text-xs font-bold uppercase text-red-400">
-                      Unassigned
+                  {c.customer_type && c.customer_type !== 'regular' && (
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold uppercase ${customerTypeBadge(c.customer_type, 'dark')}`}>
+                      {customerTypeLabel(c.customer_type)}
                     </span>
                   )}
                 </button>

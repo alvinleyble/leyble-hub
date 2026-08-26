@@ -18,6 +18,8 @@ This database provides an isolated development tier for local testing, browser-b
 - *Historical Context:* Prior to 2026-08-25, local development environments pointed directly at the production database. This allowed test orders, exploratory tagging, and development experiments to inadvertently pollute live store data. The dedicated development database completely eliminates this cross-environment contamination.
 
 ### 2. Environment Configuration (`server/.env`)
+- **The Supabase project already configured in `server/.env` (ref `yzopwoquzfnyqdmuookw`) is the standing dev/test database** — captain-confirmed 2026-08-26 ("we've been using this"). Use it as-is for local dev and for live pair-tests; do not substitute another connection string and do not stand up a local Postgres instead.
+- `server/.env` is gitignored, so a **freshly created worktree has no copy of it**. Copy the file in from an existing checkout before the first `node src/index.js`: with `DATABASE_URL` unset, `pg` silently falls back to a local socket and connects to the wrong database rather than failing loudly.
 - Local development sets the active `DATABASE_URL` environment variable to the development Supabase database pooled connection string.
 - The production connection string is retained in the local `server/.env` file under a disabled variable name (specifically `PROD_DATABASE_URL_DISABLED` or commented out).
 - Switching environments is a deliberate, manual act of swapping or renaming the variable names in `server/.env`.

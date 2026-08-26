@@ -12,7 +12,10 @@ const db = require('../src/db');
 const customerRoutes = require('../src/routes/customers');
 const { errorHandler } = require('../src/middleware/errorHandler');
 
-describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
+// ADR 0009 — customer_type is a descriptive tag; saved prices are the pricing source.
+// 'unassigned' was collapsed into 'regular' by migration 034, so it is now an invalid type
+// and a 'regular' customer holding saved prices is an ordinary, supported case.
+describe('Customer Types & Custom Pricing (ADR 0009)', () => {
   let server;
   let baseUrl;
   let authToken;
@@ -105,19 +108,19 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     createdCustomerIds.push(res.data.id);
   });
 
-  it('2. Successfully creates a customer with customer_type="unassigned" (POS quick create default)', async () => {
+  it('2. Successfully creates a customer with customer_type="regular" (quick create default)', async () => {
     const res = await apiRequest('', {
       method: 'POST',
       body: {
-        name: 'TEST Unassigned Walk-in Store',
-        customer_type: 'unassigned',
+        name: 'TEST Regular Walk-in Store',
+        customer_type: 'regular',
         phone: '09123456782',
       },
     });
 
     assert.equal(res.status, 201);
-    assert.equal(res.data.customer_type, 'unassigned');
-    assert.equal(res.data.name, 'TEST Unassigned Walk-in Store');
+    assert.equal(res.data.customer_type, 'regular');
+    assert.equal(res.data.name, 'TEST Regular Walk-in Store');
     createdCustomerIds.push(res.data.id);
   });
 
@@ -150,6 +153,18 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     assert.equal(res.status, 500); // DB constraint violation returns 500 through errorHandler
   });
 
+  it('4b. Rejects the retired "unassigned" type (migration 034 collapsed it into regular)', async () => {
+    const res = await apiRequest('', {
+      method: 'POST',
+      body: {
+        name: 'TEST Retired Unassigned Customer',
+        customer_type: 'unassigned',
+      },
+    });
+
+    assert.equal(res.status, 500);
+  });
+
   it('5. Supports custom pricing for "discounted" customers', async () => {
     const custId = createdCustomerIds[0]; // discounted customer
 
@@ -173,8 +188,8 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
     assert.equal(Number(getRes.data[0].custom_unit_price), 475.00);
   });
 
-  it('6. Supports custom pricing for "unassigned" customers', async () => {
-    const custId = createdCustomerIds[1]; // unassigned customer
+  it('6. Supports custom pricing for "regular" customers (ADR 0009 — no type gate)', async () => {
+    const custId = createdCustomerIds[1]; // regular customer
 
     const setRes = await apiRequest(`/${custId}/prices`, {
       method: 'POST',
@@ -216,7 +231,7 @@ describe('Customer Types & Custom Pricing (Discounted & Unassigned)', () => {
   });
 
   it('8. Allows updating customer_type between all valid types including markup', async () => {
-    const custId = createdCustomerIds[1]; // unassigned customer
+    const custId = createdCustomerIds[1]; // regular customer
 
     // Update to markup
     const patch0 = await apiRequest(`/${custId}`, {

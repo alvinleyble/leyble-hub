@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { lineTotal, orderTotals, totalCases } from './posMath';
 import { orderRef } from '../../utils/orderRef';
+import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -59,9 +60,10 @@ export default function POSReviewModal({
   const adjustmentVal = Number(order.adjustment) || 0;
   const totals = orderTotals(items, adjustmentVal);
 
+  // ADR 0009 — a line is at a custom price when the operator overrode it, or when a saved
+  // price exists for that product. The customer's tag has no say in it.
   const isCustomPrice = (item) =>
-    Boolean(item.is_price_overridden) ||
-    (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(order.customer_type) && Boolean(customPrices[item.product_id]));
+    Boolean(item.is_price_overridden) || Boolean(customPrices[item.product_id]);
 
   return (
     <div
@@ -85,27 +87,9 @@ export default function POSReviewModal({
               <span className="text-sm font-black uppercase tracking-wider text-v2-accent">
                 {order.id ? `📝 Draft ${orderRef(order)}` : '📝 Order Review'}
               </span>
-              {order.customer_type === 'wholesaler' ? (
-                <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-bold text-amber-300">
-                  Wholesaler
-                </span>
-              ) : order.customer_type === 'discounted' ? (
-                <span className="inline-flex items-center rounded-full border border-blue-500/40 bg-blue-500/10 px-2.5 py-0.5 text-xs font-bold text-blue-300">
-                  Discounted
-                </span>
-              ) : order.customer_type === 'markup' ? (
-                <span className="inline-flex items-center rounded-full border border-purple-500/40 bg-purple-500/10 px-2.5 py-0.5 text-xs font-bold text-purple-300">
-                  Markup
-                </span>
-              ) : order.customer_type === 'unassigned' ? (
-                <span className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-0.5 text-xs font-bold text-red-400">
-                  Unassigned
-                </span>
-              ) : (
-                <span className="inline-flex items-center rounded-full border border-v2-border bg-v2-raised px-2.5 py-0.5 text-xs font-bold text-v2-muted">
-                  Regular
-                </span>
-              )}
+              <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${customerTypeBadge(order.customer_type, 'dark')}`}>
+                {customerTypeLabel(order.customer_type)}
+              </span>
               <span className="inline-flex items-center rounded-full border border-v2-pill-border bg-v2-pill-active px-2.5 py-0.5 text-xs font-bold text-v2-pill-text">
                 {order.order_type === 'pickup' ? '🏪 Pickup' : '🚚 Delivery'}
               </span>

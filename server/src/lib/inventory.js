@@ -44,16 +44,27 @@ async function applyDeltaMap(client, deltaMap, opts) {
   }
 }
 
-// Check if stock has been deducted for an order (action_type = 'order_fulfillment')
-async function hasDeductedStock(client, orderId) {
-  const { rows: [result] } = await client.query(
-    `SELECT EXISTS (
-       SELECT 1 FROM inventory_audit_logs
-       WHERE related_order_id = $1 AND action_type = 'order_fulfillment'
-     ) AS deducted`,
+// Is this order's stock currently OUT of the warehouse?
+//
+// Not "was it ever deducted" — under ADR 0012 an order can cross the deduction boundary
+// more than once (dispatch → step back to pending → dispatch again), and "ever" answers
+// yes forever after the first crossing, which would make the second dispatch a no-op and
+// leave the stock permanently overstated.
+//
+// Every stock movement an order causes is logged against it (deduct negative, restore
+// positive, edit-reconcile either way), and inventory_audit_logs is append-only, so the
+// running sum of an order's own deltas IS its current state: negative while the goods are
+// out, zero once they are back. That also reads the ~V2-window orders correctly — they
+// were deducted at save, so they sum negative while still `pending`, and this refuses to
+// deduct them a second time on dispatch.
+async function isStockOut(client, orderId) {
+  const { rows: [row] } = await client.query(
+    `SELECT COALESCE(SUM(delta), 0) AS net
+     FROM inventory_audit_logs
+     WHERE related_order_id = $1`,
     [orderId]
   );
-  return Boolean(result?.deducted);
+  return Number(row.net) < 0;
 }
 
-module.exports = { applyStockDelta, applyDeltaMap, hasDeductedStock };
+module.exports = { applyStockDelta, applyDeltaMap, isStockOut };

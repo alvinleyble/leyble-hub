@@ -259,7 +259,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
         addToast(`Order ${orderRef(cancelTarget)} discarded.`, 'success');
       } else {
         await api.post(`/orders/${cancelTarget.id || cancelTarget.receipt_number}/status`, { status: 'cancelled' });
-        addToast(`Order ${orderRef(cancelTarget)} cancelled — stock restored.`, 'success');
+        addToast(`Order ${orderRef(cancelTarget)} cancelled.`, 'success');
       }
       setCancelTarget(null);
       setViewOrder(null);   // back to the list, which reloads with the new status
@@ -474,7 +474,7 @@ export default function POSHistoryModal({ onClose, onEdit, onReprint, onChanged,
           onClose={() => setCancelTarget(null)}
         >
           This voids the order for <strong className="text-v2-text">{cancelTarget.customer_name}</strong> and
-          puts the stock back. It cannot be undone.
+          puts back any stock that was already deducted. It cannot be undone.
         </POSConfirm>
       )}
     </>

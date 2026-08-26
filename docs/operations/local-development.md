@@ -56,6 +56,19 @@ Josie/Luis/Admin profile picker (see [ARCHITECTURE.md#authentication-flow](../ar
 
 A dedicated **development database** (Supabase PostgreSQL, full replica of production) was provisioned on 2026-08-25. See [development-database.md](development-database.md) for full operational policy.
 
+> **The Supabase project already wired into `server/.env` (ref `yzopwoquzfnyqdmuookw`) IS the
+> standing dev/test database.** Captain-confirmed 2026-08-26 — "we've been using this." Do not
+> swap it for another connection string and do not stand up a local Postgres for ordinary dev or
+> a live pair-test; point at what the file already holds.
+>
+> `server/.env` is gitignored, so a **fresh worktree has no copy of it**. Copy it in from an
+> existing checkout before starting the backend the first time. Without it `DATABASE_URL` is
+> unset and `pg` falls back to a local socket — it connects to the *wrong* database silently
+> instead of failing loudly, which is the failure mode this note exists to prevent.
+>
+> (Throwaway databases are still the right thing for the automated suites — see the Tests
+> section of [CLAUDE.md](../../CLAUDE.md); never run those against the dev database.)
+
 - **Isolation Rule:** Local development points at the development database; **local development must NEVER point at the production database.** (Connecting local dev to production was how test orders and exploratory customer tagging reached live data in the past.)
 - **Configuration (`server/.env`):** `DATABASE_URL` is configured to the development database connection string. The production connection string is kept in `server/.env` under a disabled variable name (`PROD_DATABASE_URL_DISABLED`); switching environments requires deliberately swapping variable names.
 - **Regional Latency:** The development database is hosted in Tokyo (`ap-northeast-1`), while production is in Sydney (`ap-southeast-2`). Queries from the Philippines against the dev database will be measurably slower due to network latency; this is expected and affects only local dev.

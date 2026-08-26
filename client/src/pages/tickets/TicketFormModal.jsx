@@ -107,7 +107,7 @@ export default function TicketFormModal({ onClose, onSaved }) {
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   className={INPUT}
-                  placeholder="e.g. Short delivery on Order #42"
+                  placeholder="e.g. Short delivery on Order 1-00042"
                   autoFocus
                 />
               </FormField>

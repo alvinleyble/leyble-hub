@@ -7,6 +7,7 @@ import Spinner from '../../components/ui/Spinner';
 import Combobox from '../../components/ui/Combobox';
 import Modal from '../../components/ui/Modal';
 import { orderRef } from '../../utils/orderRef';
+import { customerTypeBadge, customerTypeLabel, hasCustomPricing } from '../../utils/customerTypes';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import CaseStepper from '../../components/pos/CaseStepper';
 import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
@@ -82,7 +83,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   // ── Save-custom-price prompt ───────────────────────────────────────────────
   const [priceSavePrompt, setPriceSavePrompt] = useState(null);
-  const [convertTarget, setConvertTarget]     = useState('unassigned');
+
+  // ── Mis-tagged-customer nudge ──────────────────────────────────────────────
+  // A `regular` customer holding saved prices is a contradiction the owners want to see and
+  // resolve: under ADR 0009 those prices are live either way, so the tag is simply lying about
+  // the account. This prompt fires on selection, before the order is built — distinct from the
+  // "Save Custom Price?" prompt above, which fires at save time about a price typed in THIS
+  // order. Both can appear in one order session; they are independent.
+  //
+  // Deliberately has no dismissal memory (captain's explicit instruction): Skip drops it for
+  // this selection only, and picking the same customer again asks again. It stops when the tag
+  // is corrected, which is the point.
+  const [tagPrompt, setTagPrompt] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -101,9 +113,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
   const selectedCustomer = customers.find((c) => String(c.id) === String(customerId));
 
-  // Load custom prices when customer or order_type changes
+  // Load saved prices when customer or order_type changes.
+  //
+  // ADR 0009: the saved prices ARE the pricing source. Every customer is asked, not
+  // just the ones tagged wholesaler/discounted/markup — a customer prices as "custom"
+  // exactly when rows come back, so an agreed rate can never be saved and then ignored.
   useEffect(() => {
-    if (!customerId || !['wholesaler', 'discounted', 'markup', 'unassigned'].includes(selectedCustomer?.customer_type)) {
+    if (!customerId) {
       setCustomPrices({});
       return;
     }
@@ -114,7 +130,35 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         setCustomPrices(map);
       })
       .catch(() => {});
-  }, [customerId, selectedCustomer?.customer_type, orderType]);
+  }, [customerId, orderType]);
+
+  // Does this customer hold ANY saved price, on either channel? `/customers/:id/prices` is
+  // scoped to one order_type, and the tag is wrong regardless of which channel the rows sit on,
+  // so this asks both rather than reusing the single-channel response loaded above.
+  const hasAnySavedPrice = async (id) => {
+    const [delivery, pickup] = await Promise.all([
+      api.get(`/customers/${id}/prices?order_type=delivery`),
+      api.get(`/customers/${id}/prices?order_type=pickup`),
+    ]);
+    return hasCustomPricing(delivery) || hasCustomPricing(pickup);
+  };
+
+  // Fires on selection, not on order-type switches — hence customerId alone in the deps. Skipped
+  // while editing a live order: that customer was tagged long before this order existed, and the
+  // nudge belongs to the create flow.
+  useEffect(() => {
+    if (isRealEdit || !customerId) { setTagPrompt(null); return; }
+    const customer = customers.find((c) => String(c.id) === String(customerId));
+    if (customer?.customer_type !== 'regular') { setTagPrompt(null); return; }
+
+    let cancelled = false;
+    hasAnySavedPrice(customerId)
+      .then((has) => {
+        if (!cancelled && has) setTagPrompt({ customer, busy: false });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [customerId, customers, isRealEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeCustomers = customers.filter((c) => c.is_active);
   const activeProducts  = products.filter((p) => p.is_active);
@@ -123,7 +167,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const handleCreateCustomer = async (name) => {
     setCreatingCustomer(true);
     try {
-      const created = await api.post('/customers', { name, customer_type: 'unassigned' });
+      const created = await api.post('/customers', { name, customer_type: 'regular' });
       setCustomers((prev) => [...prev, created]);
       setCustomerId(String(created.id));
       addToast(`${created.name} added as Customer.`, 'success');
@@ -417,25 +461,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     onSaved(priceSavePrompt?.orderId);
   };
 
-  const acceptFirstPrompt = () => {
-    if (['wholesaler', 'discounted', 'markup', 'unassigned'].includes(priceSavePrompt.customer.customer_type)) {
-      persistPriceSave(false);
-    } else {
-      setConvertTarget('unassigned');
-      setPriceSavePrompt((p) => ({ ...p, step: 'second' }));
-    }
-  };
-
-  const persistPriceSave = async (targetType) => {
+  // ADR 0009: saving a price is a pricing action, not a re-tagging action. It writes to
+  // customer_product_prices and touches nothing else — the second "pick a customer type"
+  // step V1 forced on the operator is gone with the coupling that needed it.
+  const persistPriceSave = async () => {
     setPriceSavePrompt((p) => ({ ...p, busy: true }));
     try {
-      if (targetType) {
-        const newType = typeof targetType === 'string' ? targetType : 'unassigned';
-        await api.patch(`/customers/${priceSavePrompt.customer.id}`, {
-          customer_type:   newType,
-          conversion_note: `custom price saved from order #${priceSavePrompt.orderId}`,
-        });
-      }
       await Promise.all(priceSavePrompt.dirty.map((d) =>
         api.post(`/customers/${priceSavePrompt.customer.id}/prices`, {
           product_id:        d.product_id,
@@ -449,6 +480,23 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     } finally {
       setPriceSavePrompt(null);
       onSaved(priceSavePrompt?.orderId);
+    }
+  };
+
+  // ── Mis-tagged-customer nudge handlers ─────────────────────────────────────
+  // Retagging is the whole action: pricing already follows the saved rows (ADR 0009), so this
+  // only makes the label agree with them. Nothing about the order in progress changes.
+  const applyCustomerTag = async (customerType) => {
+    setTagPrompt((p) => ({ ...p, busy: true }));
+    const { customer } = tagPrompt;
+    try {
+      const updated = await api.patch(`/customers/${customer.id}`, { customer_type: customerType });
+      setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      addToast(`${updated.name} tagged as ${customerTypeLabel(customerType)}.`, 'success');
+      setTagPrompt(null);
+    } catch (err) {
+      addToast(err.message || 'Failed to update customer type.', 'error');
+      setTagPrompt((p) => (p ? { ...p, busy: false } : null));
     }
   };
 
@@ -550,24 +598,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                               <span className="italic text-slate-400"> - {c.address}</span>
                             )}
                           </span>
-                          {c.customer_type === 'wholesaler' && (
-                            <span className="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 shrink-0">
-                              Wholesaler
-                            </span>
-                          )}
-                          {c.customer_type === 'discounted' && (
-                            <span className="text-xs font-semibold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full border border-blue-300 shrink-0">
-                              Discounted
-                            </span>
-                          )}
-                          {c.customer_type === 'markup' && (
-                            <span className="text-xs font-semibold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-300 shrink-0">
-                              Markup
-                            </span>
-                          )}
-                          {c.customer_type === 'unassigned' && (
-                            <span className="text-xs font-semibold text-red-800 bg-red-100 px-2 py-0.5 rounded-full border border-red-300 shrink-0">
-                              Unassigned
+                          {c.customer_type && c.customer_type !== 'regular' && (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
+                              {customerTypeLabel(c.customer_type)}
                             </span>
                           )}
                         </>
@@ -577,10 +610,16 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
                       <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1">
                         <div className="flex items-center justify-between gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-900">{selectedCustomer.name}</span>
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full font-semibold border bg-slate-100 text-slate-700 border-slate-200">
-                            {selectedCustomer.customer_type ? selectedCustomer.customer_type.toUpperCase() : 'REGULAR'}
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-semibold border ${customerTypeBadge(selectedCustomer.customer_type)}`}>
+                            {customerTypeLabel(selectedCustomer.customer_type).toUpperCase()}
                           </span>
                         </div>
+                        {/* ADR 0009 — pricing is derived from the saved rows, not the tag above. */}
+                        {hasCustomPricing(customPrices) && (
+                          <p className="font-semibold text-emerald-700">
+                            ✓ Saved {orderType} prices applied ({Object.keys(customPrices).length} product{Object.keys(customPrices).length === 1 ? '' : 's'})
+                          </p>
+                        )}
                         {selectedCustomer.address && (
                           <p className="text-slate-600 truncate"><span className="font-medium text-slate-500">Address:</span> {selectedCustomer.address}</p>
                         )}
@@ -910,7 +949,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         <Modal
           title="Save Custom Price?"
           onClose={declinePriceSave}
-          onConfirm={acceptFirstPrompt}
+          onConfirm={persistPriceSave}
           confirmLabel="Yes, Save"
           cancelLabel="No"
           loading={priceSavePrompt.busy}
@@ -931,51 +970,48 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
         </Modal>
       )}
 
-      {/* ── Customer type selection (step 2) ───────────────────────────── */}
-      {priceSavePrompt?.step === 'second' && (
+      {/* ── Regular customer holding saved prices — tag them? ──────────────── */}
+      {tagPrompt && (
         <Modal
-          title="Select Customer Type"
-          onClose={declinePriceSave}
-          onConfirm={() => persistPriceSave(convertTarget || 'unassigned')}
-          confirmLabel="Yes, Save Price"
-          cancelLabel="Cancel"
-          loading={priceSavePrompt.busy}
+          title="Custom Prices Found"
+          onClose={() => setTagPrompt(null)}
+          cancelLabel="Skip"
+          loading={tagPrompt.busy}
         >
-          <p className="text-slate-600 mb-3">
-            Saving custom prices for <strong>{priceSavePrompt.customer.name}</strong> requires assigning a customer type:
+          <p className="text-slate-700">
+            <strong>{tagPrompt.customer.name}</strong> has custom prices — would you like to tag
+            them as Markup, Discounted, or Wholesale?
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <p className="mt-2 text-sm text-slate-500">
+            Their saved prices apply to this order either way. This only corrects the label.
+          </p>
+          <div className="mt-4 grid grid-cols-1 gap-2">
             {[
-              { value: 'unassigned', label: 'Unassigned', desc: 'Default category' },
-              { value: 'wholesaler', label: 'Wholesaler', desc: 'Bulk pricing tier' },
-              { value: 'discounted', label: 'Discounted', desc: 'Reduced rate tier' },
-              { value: 'markup',     label: 'Markup',     desc: 'Surcharge tier' },
+              { value: 'markup',     label: 'Markup',     desc: 'Agreed higher rates' },
+              { value: 'discounted', label: 'Discounted', desc: 'Agreed lower rates' },
+              { value: 'wholesaler', label: 'Wholesale',  desc: 'Bulk buyer' },
             ].map((opt) => (
-              <label
+              <button
                 key={opt.value}
-                className={`flex cursor-pointer flex-col rounded-lg border p-2.5 text-sm transition ${
-                  convertTarget === opt.value
-                    ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
-                    : 'border-slate-200 hover:border-slate-300'
-                }`}
+                type="button"
+                disabled={tagPrompt.busy}
+                onClick={() => applyCustomerTag(opt.value)}
+                className="flex min-h-[48px] items-center justify-between gap-3 rounded-lg border
+                           border-slate-300 bg-white px-4 py-2.5 text-left transition-colors
+                           hover:border-blue-500 hover:bg-blue-50/50 focus-visible:outline-none
+                           focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-50"
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-800">{opt.label}</span>
-                  <input
-                    type="radio"
-                    name="convertTarget"
-                    value={opt.value}
-                    checked={convertTarget === opt.value}
-                    onChange={() => setConvertTarget(opt.value)}
-                    className="text-blue-600 focus:ring-blue-500"
-                  />
-                </div>
-                <span className="text-xs text-slate-500 mt-0.5">{opt.desc}</span>
-              </label>
+                <span className="text-base font-semibold text-slate-800">{opt.label}</span>
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold
+                                  ${customerTypeBadge(opt.value)}`}>
+                  {opt.desc}
+                </span>
+              </button>
             ))}
           </div>
         </Modal>
       )}
+
     </>
   );
 }

@@ -64,7 +64,8 @@ test('CustomerCreateModal: select options have clean single-word labels', () => 
   const select = r.container.querySelector('select#cc-type');
   assert.ok(select, 'Customer type select must exist');
   const options = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
-  assert.deepEqual(options, ['Regular', 'Discounted', 'Wholesaler', 'Markup', 'Unassigned']);
+  // ADR 0009 / migration 034: 'Unassigned' is gone, collapsed into 'Regular'.
+  assert.deepEqual(options, ['Regular', 'Wholesaler', 'Discounted', 'Markup']);
   r.unmount();
 });
 
@@ -77,7 +78,8 @@ test('CustomerFormModal (V1): select options have clean single-word labels', () 
   const select = r.container.querySelector('select');
   assert.ok(select, 'Customer type select must exist');
   const options = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
-  assert.deepEqual(options, ['Regular', 'Discounted', 'Wholesaler', 'Markup', 'Unassigned']);
+  // ADR 0009 / migration 034: 'Unassigned' is gone, collapsed into 'Regular'.
+  assert.deepEqual(options, ['Regular', 'Wholesaler', 'Discounted', 'Markup']);
   r.unmount();
 });
 

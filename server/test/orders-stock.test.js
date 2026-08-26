@@ -9,11 +9,19 @@ process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost/l
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-key-32-chars-minimum!!';
 
 const db = require('../src/db');
-const { hasDeductedStock } = require('../src/lib/inventory');
+const { isStockOut } = require('../src/lib/inventory');
 const orderRoutes = require('../src/routes/orders');
 const { errorHandler } = require('../src/middleware/errorHandler');
 
-describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
+// ADR 0012 — stock deducts at DISPATCH, not at save.
+//
+// This suite used to pin V2's deduct-on-save behaviour; those assertions are inverted here
+// rather than deleted, so the two models stay legible side by side. What is asserted now:
+// save/finalize move nothing, the dispatch transition moves stock (in_transit for
+// deliveries, completed for pickups), stepping back behind that boundary puts it back, and
+// the two populations of pre-existing rows — never-deducted (pre-V2) and already-deducted
+// (V2 window) — are each handled without a double move.
+describe('Stock deducts at dispatch (ADR 0012)', () => {
   let server;
   let baseUrl;
   let authToken;
@@ -123,12 +131,11 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
     });
   }
 
-  describe('1. Deduct on finalize (draft -> pending)', () => {
-    it('draft creation and draft edits do NOT deduct stock; finalize deducts stock and logs order_fulfillment', async () => {
+  describe('1. Save and finalize move no stock', () => {
+    it('draft create, draft edit and finalize all leave stock untouched', async () => {
       const prodA = await createProduct('TEST_PROD_DEDUCT_A', 50);
       const prodB = await createProduct('TEST_PROD_DEDUCT_B', 30);
 
-      // Create draft order with items
       const res1 = await api('', {
         method: 'POST',
         body: JSON.stringify({
@@ -144,12 +151,10 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       const draft = await res1.json();
       assert.equal(draft.status, 'draft');
 
-      // Stock should be completely unchanged
       assert.equal(await getProductStock(prodA.id), 50);
       assert.equal(await getProductStock(prodB.id), 30);
       assert.equal((await getAuditLogs(draft.id)).length, 0);
 
-      // Edit draft items
       const res2 = await api(`/${draft.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -161,35 +166,22 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       });
       assert.equal(res2.status, 200);
 
-      // Stock still unchanged
       assert.equal(await getProductStock(prodA.id), 50);
       assert.equal(await getProductStock(prodB.id), 30);
       assert.equal((await getAuditLogs(draft.id)).length, 0);
 
-      // Finalize draft
-      const res3 = await api(`/${draft.id}/finalize`, {
-        method: 'POST',
-      });
+      const res3 = await api(`/${draft.id}/finalize`, { method: 'POST' });
       assert.equal(res3.status, 200);
       const finalized = await res3.json();
       assert.equal(finalized.status, 'pending');
 
-      // Stock should now be deducted
-      assert.equal(await getProductStock(prodA.id), 38); // 50 - 12
-      assert.equal(await getProductStock(prodB.id), 22); // 30 - 8
-
-      // Audit logs should be written
-      const logs = await getAuditLogs(draft.id);
-      assert.equal(logs.length, 2);
-      assert.equal(logs[0].action_type, 'order_fulfillment');
-      assert.equal(logs[0].product_id, prodA.id);
-      assert.equal(Number(logs[0].delta), -12);
-      assert.equal(logs[1].action_type, 'order_fulfillment');
-      assert.equal(logs[1].product_id, prodB.id);
-      assert.equal(Number(logs[1].delta), -8);
+      // ADR 0012: finalizing creates the order; it does not move the goods.
+      assert.equal(await getProductStock(prodA.id), 50);
+      assert.equal(await getProductStock(prodB.id), 30);
+      assert.equal((await getAuditLogs(draft.id)).length, 0);
     });
 
-    it('direct pending order creation deducts stock immediately', async () => {
+    it('direct pending order creation leaves stock untouched', async () => {
       const prod = await createProduct('TEST_PROD_DIRECT_CREATE', 40);
 
       const res = await api('', {
@@ -203,67 +195,175 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       const order = await res.json();
       assert.equal(order.status, 'pending');
 
-      // Stock deducted
-      assert.equal(await getProductStock(prod.id), 25); // 40 - 15
-
-      const logs = await getAuditLogs(order.id);
-      assert.equal(logs.length, 1);
-      assert.equal(logs[0].action_type, 'order_fulfillment');
-      assert.equal(Number(logs[0].delta), -15);
+      assert.equal(await getProductStock(prod.id), 40);
+      assert.equal((await getAuditLogs(order.id)).length, 0);
     });
   });
 
-  describe('2. Restore on cancel (pending -> cancelled)', () => {
-    it('cancelling a finalized pending order restores stock and logs order_cancel', async () => {
-      const prodA = await createProduct('TEST_PROD_CANCEL_A', 50);
-      const prodB = await createProduct('TEST_PROD_CANCEL_B', 30);
+  describe('2. Dispatch deducts', () => {
+    it('a delivery deducts on pending -> in_transit and logs order_fulfillment', async () => {
+      const prodA = await createProduct('TEST_PROD_DISPATCH_A', 50);
+      const prodB = await createProduct('TEST_PROD_DISPATCH_B', 30);
 
-      // Create and finalize order
       const resCreate = await api('', {
         method: 'POST',
         body: JSON.stringify({
           customer_id: testCustomerId,
+          order_type: 'delivery',
           items: [
-            { product_id: prodA.id, quantity: 20, unit_price: 100 },
-            { product_id: prodB.id, quantity: 10, unit_price: 100 },
+            { product_id: prodA.id, quantity: 12, unit_price: 100 },
+            { product_id: prodB.id, quantity: 8, unit_price: 150 },
           ],
         }),
       });
       const order = await resCreate.json();
+      assert.equal(await getProductStock(prodA.id), 50);
 
-      assert.equal(await getProductStock(prodA.id), 30);
-      assert.equal(await getProductStock(prodB.id), 20);
+      const resDispatch = await api(`/${order.id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'in_transit' }),
+      });
+      assert.equal(resDispatch.status, 200);
 
-      // Cancel order
+      assert.equal(await getProductStock(prodA.id), 38); // 50 - 12
+      assert.equal(await getProductStock(prodB.id), 22); // 30 - 8
+
+      const logs = await getAuditLogs(order.id);
+      assert.equal(logs.length, 2);
+      assert.ok(logs.every((l) => l.action_type === 'order_fulfillment'));
+      assert.equal(Number(logs.find((l) => l.product_id === prodA.id).delta), -12);
+      assert.equal(Number(logs.find((l) => l.product_id === prodB.id).delta), -8);
+
+      // Advancing further must not move stock a second time.
+      await api(`/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'completed' }) });
+      assert.equal(await getProductStock(prodA.id), 38);
+      assert.equal((await getAuditLogs(order.id)).length, 2);
+    });
+
+    it('a pickup deducts on pending -> completed, not before', async () => {
+      const prod = await createProduct('TEST_PROD_PICKUP', 60);
+
+      const resCreate = await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: testCustomerId,
+          order_type: 'pickup',
+          items: [{ product_id: prod.id, quantity: 20, unit_price: 100 }],
+        }),
+      });
+      const order = await resCreate.json();
+      assert.equal(order.order_type, 'pickup');
+      assert.equal(await getProductStock(prod.id), 60);
+
+      const res = await api(`/${order.id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'completed' }),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(await getProductStock(prod.id), 40); // 60 - 20
+
+      const logs = await getAuditLogs(order.id);
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].action_type, 'order_fulfillment');
+      assert.equal(Number(logs[0].delta), -20);
+    });
+  });
+
+  describe('3. Crossing the boundary back and forth', () => {
+    it('step back to pending restores, re-dispatch deducts again, cancel restores', async () => {
+      const prod = await createProduct('TEST_PROD_BOUNDARY', 50);
+
+      const resCreate = await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: testCustomerId,
+          items: [{ product_id: prod.id, quantity: 10, unit_price: 100 }],
+        }),
+      });
+      const order = await resCreate.json();
+      assert.equal(await getProductStock(prod.id), 50);
+
+      await api(`/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) });
+      assert.equal(await getProductStock(prod.id), 40);
+
+      // Back behind the deduction boundary — the goods are in the warehouse again.
+      const resBack = await api(`/${order.id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'pending' }),
+      });
+      assert.equal(resBack.status, 200);
+      assert.equal(await getProductStock(prod.id), 50);
+
+      // And out again. "Ever deducted" would have made this a no-op; "currently out" does not.
+      await api(`/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) });
+      assert.equal(await getProductStock(prod.id), 40);
+
       const resCancel = await api(`/${order.id}/status`, {
         method: 'POST',
         body: JSON.stringify({ status: 'cancelled' }),
       });
       assert.equal(resCancel.status, 200);
-      const cancelledOrder = await resCancel.json();
-      assert.equal(cancelledOrder.status, 'cancelled');
+      assert.equal(await getProductStock(prod.id), 50);
+    });
 
-      // Stock should be fully restored
-      assert.equal(await getProductStock(prodA.id), 50);
-      assert.equal(await getProductStock(prodB.id), 30);
+    it('cancelling a pending order restores nothing, because nothing left', async () => {
+      const prod = await createProduct('TEST_PROD_CANCEL_PENDING', 50);
 
-      // Audit logs
-      const logs = await getAuditLogs(order.id);
-      assert.equal(logs.length, 4); // 2 fulfillment + 2 cancel
-      const cancelLogs = logs.filter((l) => l.action_type === 'order_cancel');
-      assert.equal(cancelLogs.length, 2);
-      assert.equal(Number(cancelLogs.find((l) => l.product_id === prodA.id).delta), 20);
-      assert.equal(Number(cancelLogs.find((l) => l.product_id === prodB.id).delta), 10);
+      const resCreate = await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: testCustomerId,
+          items: [{ product_id: prod.id, quantity: 20, unit_price: 100 }],
+        }),
+      });
+      const order = await resCreate.json();
+
+      const resCancel = await api(`/${order.id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
+      assert.equal(resCancel.status, 200);
+
+      assert.equal(await getProductStock(prod.id), 50);
+      assert.equal((await getAuditLogs(order.id)).length, 0);
     });
   });
 
-  describe('3. Reconcile on edit (PATCH /orders/:id on pending order)', () => {
-    it('editing quantities, adding, and removing items on a pending order adjusts stock by delta', async () => {
+  describe('4. Reconcile on edit follows the goods, not the status name', () => {
+    it('editing a pending (un-dispatched) order moves no stock', async () => {
+      const prodA = await createProduct('TEST_PROD_EDIT_PENDING_A', 100);
+      const prodB = await createProduct('TEST_PROD_EDIT_PENDING_B', 100);
+
+      const resCreate = await api('', {
+        method: 'POST',
+        body: JSON.stringify({
+          customer_id: testCustomerId,
+          items: [{ product_id: prodA.id, quantity: 20, unit_price: 100 }],
+        }),
+      });
+      const order = await resCreate.json();
+
+      const res = await api(`/${order.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          items: [
+            { product_id: prodA.id, quantity: 5, unit_price: 100 },
+            { product_id: prodB.id, quantity: 40, unit_price: 100 },
+          ],
+        }),
+      });
+      assert.equal(res.status, 200);
+
+      assert.equal(await getProductStock(prodA.id), 100);
+      assert.equal(await getProductStock(prodB.id), 100);
+      assert.equal((await getAuditLogs(order.id)).length, 0);
+    });
+
+    it('editing a dispatched order adjusts stock by the per-product delta', async () => {
       const prodA = await createProduct('TEST_PROD_EDIT_A', 100);
       const prodB = await createProduct('TEST_PROD_EDIT_B', 100);
       const prodC = await createProduct('TEST_PROD_EDIT_C', 100);
 
-      // Initial pending order: A=20, B=10
       const resCreate = await api('', {
         method: 'POST',
         body: JSON.stringify({
@@ -276,11 +376,12 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       });
       const order = await resCreate.json();
 
-      assert.equal(await getProductStock(prodA.id), 80); // 100 - 20
-      assert.equal(await getProductStock(prodB.id), 90); // 100 - 10
+      await api(`/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'in_transit' }) });
+      assert.equal(await getProductStock(prodA.id), 80);
+      assert.equal(await getProductStock(prodB.id), 90);
       assert.equal(await getProductStock(prodC.id), 100);
 
-      // Edit: A decreased (20 -> 15), B removed (10 -> 0), C added (0 -> 25)
+      // A decreased (20 -> 15), B removed (10 -> 0), C added (0 -> 25)
       const resEdit1 = await api(`/${order.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -292,9 +393,9 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       });
       assert.equal(resEdit1.status, 200);
 
-      assert.equal(await getProductStock(prodA.id), 85); // 80 + 5 (delta +5)
-      assert.equal(await getProductStock(prodB.id), 100); // 90 + 10 (delta +10)
-      assert.equal(await getProductStock(prodC.id), 75); // 100 - 25 (delta -25)
+      assert.equal(await getProductStock(prodA.id), 85);  // 80 + 5
+      assert.equal(await getProductStock(prodB.id), 100); // 90 + 10
+      assert.equal(await getProductStock(prodC.id), 75);  // 100 - 25
 
       const editLogs = (await getAuditLogs(order.id)).filter((l) => l.action_type === 'order_edit');
       assert.equal(editLogs.length, 3);
@@ -302,7 +403,7 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       assert.equal(Number(editLogs.find((l) => l.product_id === prodB.id).delta), 10);
       assert.equal(Number(editLogs.find((l) => l.product_id === prodC.id).delta), -25);
 
-      // Second edit: A increased (15 -> 30), C decreased (25 -> 10)
+      // A increased (15 -> 30), C decreased (25 -> 10)
       const resEdit2 = await api(`/${order.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -314,85 +415,69 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       });
       assert.equal(resEdit2.status, 200);
 
-      assert.equal(await getProductStock(prodA.id), 70); // 85 - 15 (delta -15)
-      assert.equal(await getProductStock(prodB.id), 100); // untouched
-      assert.equal(await getProductStock(prodC.id), 90); // 75 + 15 (delta +15)
+      assert.equal(await getProductStock(prodA.id), 70);  // 85 - 15
+      assert.equal(await getProductStock(prodB.id), 100);
+      assert.equal(await getProductStock(prodC.id), 90);  // 75 + 15
 
-      // Now cancel the edited order: should restore currently active items (A: 30, C: 10)
+      // Cancelling restores whatever is currently on the order (A: 30, C: 10).
       const resCancel = await api(`/${order.id}/status`, {
         method: 'POST',
         body: JSON.stringify({ status: 'cancelled' }),
       });
       assert.equal(resCancel.status, 200);
 
-      assert.equal(await getProductStock(prodA.id), 100); // 70 + 30
-      assert.equal(await getProductStock(prodB.id), 100); // 100
-      assert.equal(await getProductStock(prodC.id), 100); // 90 + 10
+      assert.equal(await getProductStock(prodA.id), 100);
+      assert.equal(await getProductStock(prodB.id), 100);
+      assert.equal(await getProductStock(prodC.id), 100);
     });
   });
 
-  describe('4. Critical Production Safety — Legacy Pre-Cutover Pending Orders', () => {
-    it('cancelling a legacy pending order (with no fulfillment audit logs) does NOT restore stock', async () => {
+  describe('5. Pre-existing rows: never-deducted and already-deducted', () => {
+    it('cancelling a pre-V2 pending order (no audit logs) does NOT restore stock', async () => {
       const prod = await createProduct('TEST_PROD_LEGACY_CANCEL', 100);
 
-      // Simulate a legacy order created before cutover:
-      // status = 'pending', order_items present, but ZERO rows in inventory_audit_logs
       const { rows: [legacyOrder] } = await db.query(
         `INSERT INTO orders (customer_id, status, order_type, total_amount, created_at, updated_at)
          VALUES ($1, 'pending', 'delivery', 500, NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days')
          RETURNING *`,
         [testCustomerId]
       );
-
       await db.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price, unit_deposit_fee, units_per_case, bottles_returned)
          VALUES ($1, $2, 25, 20, 0, 1, 0)`,
         [legacyOrder.id, prod.id]
       );
 
-      // Verify initial conditions
       assert.equal(await getProductStock(prod.id), 100);
       assert.equal((await getAuditLogs(legacyOrder.id)).length, 0);
 
-      // Cancel the legacy pending order
       const res = await api(`/${legacyOrder.id}/status`, {
         method: 'POST',
         body: JSON.stringify({ status: 'cancelled' }),
       });
       assert.equal(res.status, 200);
-      const updated = await res.json();
-      assert.equal(updated.status, 'cancelled');
 
-      // CRITICAL: Stock must NOT have been restored to 125! It must remain exactly 100.
+      // Must NOT become 125 — that stock never left.
       assert.equal(await getProductStock(prod.id), 100);
-
-      // CRITICAL: No fake inventory audit log entries should have been created
       assert.equal((await getAuditLogs(legacyOrder.id)).length, 0);
     });
 
-    it('editing a legacy pending order (with no fulfillment audit logs) does NOT reconcile stock', async () => {
+    it('editing a pre-V2 pending order (no audit logs) does NOT reconcile stock', async () => {
       const prodA = await createProduct('TEST_PROD_LEGACY_EDIT_A', 100);
       const prodB = await createProduct('TEST_PROD_LEGACY_EDIT_B', 100);
 
-      // Simulate legacy order
       const { rows: [legacyOrder] } = await db.query(
         `INSERT INTO orders (customer_id, status, order_type, total_amount, created_at, updated_at)
          VALUES ($1, 'pending', 'delivery', 500, NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days')
          RETURNING *`,
         [testCustomerId]
       );
-
       await db.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price, unit_deposit_fee, units_per_case, bottles_returned)
          VALUES ($1, $2, 20, 25, 0, 1, 0)`,
         [legacyOrder.id, prodA.id]
       );
 
-      assert.equal(await getProductStock(prodA.id), 100);
-      assert.equal(await getProductStock(prodB.id), 100);
-      assert.equal((await getAuditLogs(legacyOrder.id)).length, 0);
-
-      // Edit items on this legacy order (replace A:20 with A:10, B:15)
       const res = await api(`/${legacyOrder.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -404,104 +489,86 @@ describe('V2 Stock Trio & Legacy Order Safety Tests', () => {
       });
       assert.equal(res.status, 200);
 
-      // Items updated in DB
       const { rows: updatedItems } = await db.query(
         'SELECT product_id, quantity FROM order_items WHERE order_id = $1 ORDER BY product_id',
         [legacyOrder.id]
       );
       assert.equal(updatedItems.length, 2);
 
-      // CRITICAL: Stock for prodA and prodB must remain untouched at 100
       assert.equal(await getProductStock(prodA.id), 100);
       assert.equal(await getProductStock(prodB.id), 100);
-
-      // CRITICAL: No inventory audit logs
       assert.equal((await getAuditLogs(legacyOrder.id)).length, 0);
     });
-  });
 
-  describe('5. Inventory helper hasDeductedStock unit checks', () => {
-    it('correctly identifies deducted vs non-deducted orders', async () => {
-      const client = await db.connect();
-      try {
-        assert.equal(await hasDeductedStock(client, 99999999), false);
+    it('a V2-window pending order (already deducted at save) is not deducted again on dispatch', async () => {
+      const prod = await createProduct('TEST_PROD_V2_WINDOW', 100);
 
-        // Legacy order without audit log
-        const { rows: [legacy] } = await db.query(
-          `INSERT INTO orders (customer_id, status, order_type, total_amount)
-           VALUES ($1, 'pending', 'delivery', 100) RETURNING id`,
-          [testCustomerId]
-        );
-        assert.equal(await hasDeductedStock(client, legacy.id), false);
+      // Exactly what V2 left behind: pending, stock already out, one order_fulfillment row.
+      const { rows: [order] } = await db.query(
+        `INSERT INTO orders (customer_id, status, order_type, total_amount)
+         VALUES ($1, 'pending', 'delivery', 500) RETURNING *`,
+        [testCustomerId]
+      );
+      await db.query(
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, unit_deposit_fee, units_per_case, bottles_returned)
+         VALUES ($1, $2, 30, 20, 0, 1, 0)`,
+        [order.id, prod.id]
+      );
+      await db.query('UPDATE products SET current_stock = 70 WHERE id = $1', [prod.id]);
+      await db.query(
+        `INSERT INTO inventory_audit_logs
+           (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
+         VALUES ($1, 'order_fulfillment', 'current_stock', '100', '70', -30, 'V2-window save', $2, $3)`,
+        [prod.id, testUserId, order.id]
+      );
 
-        // Add audit log
-        const prod = await createProduct('TEST_PROD_HELPER', 10);
-        await db.query(
-          `INSERT INTO inventory_audit_logs
-             (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
-           VALUES ($1, 'order_fulfillment', 'current_stock', '10', '8', -2, 'test', $2, $3)`,
-          [prod.id, testUserId, legacy.id]
-        );
-        assert.equal(await hasDeductedStock(client, legacy.id), true);
-      } finally {
-        client.release();
-      }
-    });
-  });
-
-  describe('6. Edge cases and dispatch transitions', () => {
-    it('dispatching (pending -> in_transit -> completed) does not double-deduct stock', async () => {
-      const prod = await createProduct('TEST_PROD_DISPATCH', 50);
-
-      // Create pending order (deducts 10 -> stock becomes 40)
-      const resCreate = await api('', {
-        method: 'POST',
-        body: JSON.stringify({
-          customer_id: testCustomerId,
-          items: [{ product_id: prod.id, quantity: 10, unit_price: 100 }],
-        }),
-      });
-      const order = await resCreate.json();
-      assert.equal(await getProductStock(prod.id), 40);
-
-      // Transition pending -> in_transit (dispatch)
       const resDispatch = await api(`/${order.id}/status`, {
         method: 'POST',
         body: JSON.stringify({ status: 'in_transit' }),
       });
       assert.equal(resDispatch.status, 200);
-      assert.equal(await getProductStock(prod.id), 40); // Stock NOT deducted again!
+      assert.equal(await getProductStock(prod.id), 70); // NOT 40
+      assert.equal((await getAuditLogs(order.id)).length, 1);
 
-      // Transition in_transit -> completed
-      const resComplete = await api(`/${order.id}/status`, {
-        method: 'POST',
-        body: JSON.stringify({ status: 'completed' }),
-      });
-      assert.equal(resComplete.status, 200);
-      assert.equal(await getProductStock(prod.id), 40); // Stock NOT deducted again!
+      // And it still restores correctly when cancelled.
+      await api(`/${order.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'cancelled' }) });
+      assert.equal(await getProductStock(prod.id), 100);
+    });
+  });
 
-      // Step back completed -> in_transit -> pending
-      const resStepBack1 = await api(`/${order.id}/status`, {
-        method: 'POST',
-        body: JSON.stringify({ status: 'in_transit' }),
-      });
-      assert.equal(resStepBack1.status, 200);
-      assert.equal(await getProductStock(prod.id), 40);
+  describe('6. isStockOut unit checks', () => {
+    it('reads an order\'s net stock movement, not whether it ever moved', async () => {
+      const client = await db.connect();
+      try {
+        assert.equal(await isStockOut(client, 99999999), false);
 
-      const resStepBack2 = await api(`/${order.id}/status`, {
-        method: 'POST',
-        body: JSON.stringify({ status: 'pending' }),
-      });
-      assert.equal(resStepBack2.status, 200);
-      assert.equal(await getProductStock(prod.id), 40); // Stock NOT restored on step back
+        const { rows: [order] } = await db.query(
+          `INSERT INTO orders (customer_id, status, order_type, total_amount)
+           VALUES ($1, 'pending', 'delivery', 100) RETURNING id`,
+          [testCustomerId]
+        );
+        assert.equal(await isStockOut(client, order.id), false);
 
-      // Finally cancel from pending
-      const resCancel = await api(`/${order.id}/status`, {
-        method: 'POST',
-        body: JSON.stringify({ status: 'cancelled' }),
-      });
-      assert.equal(resCancel.status, 200);
-      assert.equal(await getProductStock(prod.id), 50); // Stock restored on cancel
+        const prod = await createProduct('TEST_PROD_HELPER', 10);
+        await db.query(
+          `INSERT INTO inventory_audit_logs
+             (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
+           VALUES ($1, 'order_fulfillment', 'current_stock', '10', '8', -2, 'test', $2, $3)`,
+          [prod.id, testUserId, order.id]
+        );
+        assert.equal(await isStockOut(client, order.id), true);
+
+        // Restored — net zero, so no longer out. This is the case hasDeductedStock got wrong.
+        await db.query(
+          `INSERT INTO inventory_audit_logs
+             (product_id, action_type, field_changed, previous_value, new_value, delta, reason, performed_by, related_order_id)
+           VALUES ($1, 'order_cancel', 'current_stock', '8', '10', 2, 'test', $2, $3)`,
+          [prod.id, testUserId, order.id]
+        );
+        assert.equal(await isStockOut(client, order.id), false);
+      } finally {
+        client.release();
+      }
     });
   });
 
