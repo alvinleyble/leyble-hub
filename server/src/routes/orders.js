@@ -103,7 +103,14 @@ async function sortItemsByCategory(client, items) {
   });
 }
 
-async function insertItems(client, orderId, customerId, orderType, items, userId, draft = false) {
+// Writes the order's lines and nothing else. It deliberately does NOT persist a saved
+// price: `is_price_overridden` records that this line's price was hand-typed on this
+// order, which is not the same as an agreed standing rate for the customer. Saving that
+// rate is the sole job of the explicit "Save Custom Price?" prompt (POST
+// /customers/:id/prices) — before this, order-save wrote a customer_product_prices row on
+// the flag alone, so a one-off price became permanent whatever the operator answered, and
+// there is no delete endpoint to take it back.
+async function insertItems(client, orderId, items, draft = false) {
   items = await sortItemsByCategory(client, items);
   for (const item of items) {
     const {
@@ -142,16 +149,6 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
        VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
       [orderId, product_id, qty, price, deposit, is_price_overridden, units_per_case]
     );
-
-    if (is_price_overridden) {
-      await client.query(
-        `INSERT INTO customer_product_prices
-           (customer_id, product_id, custom_unit_price, set_by_user_id, notes, order_type)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [customerId, product_id, price, userId,
-         `Set on order #${orderId}`, orderType || 'delivery']
-      );
-    }
   }
 }
 
@@ -432,7 +429,7 @@ router.post('/', async (req, res, next) => {
        adjNum, adjReason]
     );
 
-    await insertItems(client, order.id, customer_id, order_type, items, req.user.id, isDraft);
+    await insertItems(client, order.id, items, isDraft);
     await recomputeTotal(client, order.id);
     await syncPersonnel(client, order.id, personnel);
 
@@ -537,7 +534,7 @@ router.patch('/:id', async (req, res, next) => {
       );
 
       await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
-      await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id, isDraft);
+      await insertItems(client, order.id, items, isDraft);
 
       // insertItems resets bottles_returned to 0. For a closed (done) order, carry
       // the previously recorded returns back per product so editing a line (e.g.

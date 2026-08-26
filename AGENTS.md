@@ -84,6 +84,13 @@ Ask [`client/src/utils/customerTypes.js`](client/src/utils/customerTypes.js) (`h
 in a new screen — the old per-screen type lists are exactly how agreed prices went unread for 35
 live accounts. Saving a price never re-tags the customer.
 
+**Only the explicit prompt writes a saved price.** `POST /customers/:id/prices`, from the
+"Save Custom Price?" dialog, is the sole writer; `insertItems` deliberately writes none.
+`order_items.is_price_overridden` means "hand-typed on this order", not "this is their standing
+rate" — order-save used to write a `customer_product_prices` row on that flag alone, before the
+operator was asked, so answering **No** changed nothing and a one-off price became permanent with
+no way back (the table is append-only and has no delete endpoint).
+
 One nudge sits on top of that rule, not against it: picking a **`regular` customer who holds
 saved prices** in the New Order modal prompts to retag them (Markup / Discounted / Wholesale /
 Skip), because that combination means the tag is lying about the account. Pricing is unaffected

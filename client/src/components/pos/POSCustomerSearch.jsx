@@ -178,7 +178,7 @@ export default function POSCustomerSearch({
                     <>
                       <span className="text-xl leading-none">＋</span>
                       <span className="truncate">
-                        Create <span className="text-v2-text">“{query.trim()}”</span> as Unassigned Customer
+                        Create <span className="text-v2-text">“{query.trim()}”</span> as Regular Customer
                       </span>
                     </>
                   )}
