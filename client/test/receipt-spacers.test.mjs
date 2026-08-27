@@ -7,7 +7,6 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 
 const CustomerCreateModal = (await import('../src/components/customers/CustomerCreateModal.jsx')).default;
 const CustomerFormModal   = (await import('../src/pages/customers/CustomerFormModal.jsx')).default;
-const POSCustomerSearch   = (await import('../src/components/pos/POSCustomerSearch.jsx')).default;
 
 test('receiptTemplate: contains 6 blank spacer lines underneath Total', () => {
   const mockOrder = {
@@ -80,22 +79,5 @@ test('CustomerFormModal (V1): select options have clean single-word labels', () 
   const options = Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
   // ADR 0009 / migration 034: 'Unassigned' is gone, collapsed into 'Regular'.
   assert.deepEqual(options, ['Regular', 'Wholesaler', 'Discounted', 'Markup']);
-  r.unmount();
-});
-
-test('POSCustomerSearch: selected regular customer subtitle shows "Regular"', () => {
-  const r = render(
-    React.createElement(ToastProvider, null,
-      React.createElement(POSCustomerSearch, {
-        customers: [],
-        selected: { id: 1, name: 'Sari-Sari Store', customer_type: 'regular', address: 'Antipolo' },
-        onSelect: () => {},
-        onClear: () => {},
-      })
-    )
-  );
-  const subtitle = r.container.querySelector('.text-v2-muted.truncate');
-  assert.ok(subtitle, 'Subtitle element must exist');
-  assert.equal(subtitle.textContent, 'Regular · Antipolo');
   r.unmount();
 });

@@ -1,9 +1,8 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
-import { useToast } from '../ui/Toast';
 import { V25_OFFLINE_CORE } from '../../config/features';
 import { countDuplicateCustomers } from '../../utils/duplicateCustomers';
 
@@ -18,19 +17,10 @@ const NAV_ITEMS = [
   { path: '/audit',     label: 'Audit Log' },
 ];
 
-const PREFERRED_KEY = 'preferred_ui';
-const LONG_PRESS_MS = 3000;
-
 export default function Sidebar({ onClose, offlineMarker }) {
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
-  const { addToast } = useToast();
   const navigate = useNavigate();
-  const longPressTimerRef = useRef(null);
-  const progressIntervalRef = useRef(null);
-  const holdStartRef = useRef(null);
-  const [holding, setHolding] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [dupDismissed, setDupDismissed] = useState(false);
 
@@ -53,13 +43,6 @@ export default function Sidebar({ onClose, offlineMarker }) {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, []);
-
   const handleLogout = async () => {
     if (onClose) onClose();
     await logout();
@@ -71,43 +54,6 @@ export default function Sidebar({ onClose, offlineMarker }) {
     switchProfile();
   };
 
-  // 3-second long-press on "Leyble Hub" navigates to V2 POS with visual feedback + toast
-  const startLongPress = (e) => {
-    if (e.button !== undefined && e.button !== 0) return;
-    clearTimeout(longPressTimerRef.current);
-    clearInterval(progressIntervalRef.current);
-    setHolding(true);
-    setProgress(0);
-    holdStartRef.current = Date.now();
-    progressIntervalRef.current = setInterval(() => {
-      const elapsed = Date.now() - holdStartRef.current;
-      setProgress(Math.min(100, (elapsed / LONG_PRESS_MS) * 100));
-    }, 32);
-    longPressTimerRef.current = setTimeout(() => {
-      clearInterval(progressIntervalRef.current);
-      progressIntervalRef.current = null;
-      setHolding(false);
-      setProgress(0);
-      try { localStorage.setItem(PREFERRED_KEY, 'v2'); } catch {}
-      addToast('Switched to V2 Tablet POS', 'success');
-      if (onClose) onClose();
-      navigate('/v2/pos');
-    }, LONG_PRESS_MS);
-  };
-
-  const cancelLongPress = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-    if (progressIntervalRef.current) {
-      clearInterval(progressIntervalRef.current);
-      progressIntervalRef.current = null;
-    }
-    setHolding(false);
-    setProgress(0);
-  };
-
   return (
     <aside
       className="w-56 h-full flex flex-col shrink-0 bg-slate-900 text-slate-100"
@@ -115,19 +61,7 @@ export default function Sidebar({ onClose, offlineMarker }) {
     >
       {/* Brand header */}
       <div className="flex items-start justify-between px-5 py-5 border-b border-slate-700">
-        <div
-          onPointerDown={startLongPress}
-          onPointerUp={cancelLongPress}
-          onPointerLeave={cancelLongPress}
-          onPointerCancel={cancelLongPress}
-          onContextMenu={(e) => e.preventDefault()}
-          className={`relative overflow-hidden min-w-0 select-none cursor-default rounded-lg transition-opacity duration-150 ${holding ? 'opacity-90 ring-1 ring-sky-400/30' : 'opacity-100'}`}
-          style={{
-            background: holding ? `linear-gradient(to right, rgba(14,165,233,0.18) ${progress}%, transparent ${progress}%)` : undefined,
-            touchAction: 'none',
-          }}
-          aria-label="Leyble Hub — hold 3 seconds to switch to V2 POS"
-        >
+        <div className="min-w-0">
           <p className="text-lg font-bold tracking-tight">Leyble Hub</p>
           <p className="text-xs text-slate-400 mt-0.5 truncate" title={user?.full_name}>
             {activeProfile?.full_name || user?.full_name}
@@ -196,21 +130,6 @@ export default function Sidebar({ onClose, offlineMarker }) {
           );
         })}
       </nav>
-
-      {/* Way back into the V2 tablet shell */}
-      <div className="p-3 border-t border-slate-700">
-        <NavLink
-          to="/v2/pos"
-          onClick={onClose}
-          className="flex items-center justify-center w-full min-h-[48px] px-4 rounded-lg
-                     bg-sky-600 text-white font-semibold
-                     hover:bg-sky-500
-                     transition-colors duration-100
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
-        >
-          Open POS (V2)
-        </NavLink>
-      </div>
 
       {/* Switch profile / Logout */}
       <div className="p-3 border-t border-slate-700 flex flex-col gap-1">
