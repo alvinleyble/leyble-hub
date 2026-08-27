@@ -52,7 +52,7 @@ See [Order Lifecycle](order-lifecycle.md) for status rules and stock/deposit beh
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/orders` | List. Query: `status`, `customer_id`, `from_date`, `to_date`. Drafts excluded unless `status=draft`. |
-| POST | `/orders` | Create. Body: `customer_id`, `items[]`, `personnel[]`, `order_type`, optional `status:'draft'`. |
+| POST | `/orders` | Create. Body: `customer_id`, `items[]`, `personnel[]`, `order_type`, optional `status:'draft'`. Optionally `receipt_number` (`'1-00042'`, device-issued) and `created_at` (the device's sale time). A `receipt_number` already stored returns the **existing** order with `200` instead of creating a second one — see [ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md); a malformed one is a `400`. |
 | GET | `/orders/:id` | One order with items + personnel. |
 | PATCH | `/orders/:id` | Edit items/notes/personnel (drafts may also change customer/order_type). Reconciles stock + recomputes total. |
 | POST | `/orders/:id/finalize` | Draft → `pending` (writes the "created" activity log). |
@@ -61,6 +61,13 @@ See [Order Lifecycle](order-lifecycle.md) for status rules and stock/deposit beh
 | POST | `/orders/:id/receipt-printed` | Record a confirmed receipt print (pending vs delivered phase). |
 | POST | `/orders/:id/status` | Transition status; validated by `getAllowedTransitions`. Deducts/restores stock at the right edges. |
 | POST | `/orders/:id/close` | Record `bottles_returned` per item and move to `done`; folds deposit into total. |
+
+## Stations — `stations.js`
+Device registration for V2.5 device-issued receipt numbers ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/stations/register` | Body: `device_key` (device-generated, ≤64 chars), optional `label`. Returns `station_number`. Idempotent on `device_key`: `201` + `created:true` for a new station, `200` + `created:false` for one that already exists. |
+| GET | `/stations` | Registered devices, by station number. Read-only; build-side verification only. |
 
 ## Incoming (supplier deliveries) — `incoming.js`
 | Method | Path | Notes |

@@ -15,6 +15,65 @@
   *:focus-visible {
     @apply outline-none ring-2 ring-blue-600 ring-offset-2;
   }
+
+  /* V2 theme focus rings */
+  .v2-root *:focus-visible {
+    @apply ring-v2-accent ring-offset-v2-bg;
+  }
+}
+
+/* ── V2 Design Theme CSS Variables ────────────────────────────── */
+:root,
+[data-theme="dark"],
+.v2-root,
+.v2-root.dark,
+.dark {
+  --v2-bg: #121214;
+  --v2-surface: #1B1B1E;
+  --v2-raised: #262629;
+  --v2-border: #333338;
+  --v2-text: #F4F4F5;
+  --v2-muted: #A1A1AA;
+  --v2-accent: #F43F5E;
+  --v2-accent-strong: #9F1239;
+  --v2-pill-active: #27272A;
+  --v2-pill-border: #3F3F46;
+  --v2-pill-text: #FFFFFF;
+  --v2-print-btn: #4F46E5;
+  --v2-print-btn-hover: #6366F1;
+  --v2-suki-badge-bg: rgba(139, 92, 246, 0.15);
+  --v2-suki-badge-border: rgba(139, 92, 246, 0.35);
+  --v2-suki-badge-text: #C4B5FD;
+  --v2-discount-badge-bg: rgba(16, 185, 129, 0.15);
+  --v2-discount-badge-border: rgba(16, 185, 129, 0.40);
+  --v2-discount-badge-text: #6EE7B7;
+  --v2-table-hover: #262629;
+}
+
+[data-theme="light"],
+.v2-root.light,
+.v2-light,
+.light {
+  --v2-bg: #F4F5F7 !important;
+  --v2-surface: #FFFFFF !important;
+  --v2-raised: #E9EBEF !important;
+  --v2-border: #D7DAE0 !important;
+  --v2-text: #1B1E27 !important;
+  --v2-muted: #5B6270 !important;
+  --v2-accent: #0D9488 !important;
+  --v2-accent-strong: #0F766E !important;
+  --v2-pill-active: #0F766E !important;
+  --v2-pill-border: #0D9488 !important;
+  --v2-pill-text: #FFFFFF !important;
+  --v2-print-btn: #0369A1 !important;
+  --v2-print-btn-hover: #0284C7 !important;
+  --v2-suki-badge-bg: #EDE9FE !important;
+  --v2-suki-badge-border: #DDD6FE !important;
+  --v2-suki-badge-text: #6D28D9 !important;
+  --v2-discount-badge-bg: #D1FAE5 !important;
+  --v2-discount-badge-border: #A7F3D0 !important;
+  --v2-discount-badge-text: #065F46 !important;
+  --v2-table-hover: #F1F3F6 !important;
 }
 
 @layer components {

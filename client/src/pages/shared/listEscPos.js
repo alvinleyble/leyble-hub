@@ -1,6 +1,8 @@
 // ESC/POS generators for the Product price list and Customer list (80mm, 48 chars/line).
 // Sent directly to a Bluetooth thermal printer on Android — mirrors orders/escposReceipt.js.
 
+import { customerTypeLabel } from '../../utils/customerTypes';
+
 const W   = 48;
 const ESC = 0x1B;
 const GS  = 0x1D;
@@ -107,6 +109,45 @@ export function productListEscPos(products) {
   return new Uint8Array(w.buf);
 }
 
+export function productCountSheetEscPos(products) {
+  const active = (products || []).filter((p) => p.is_active !== false);
+
+  const groups = {};
+  for (const p of active) {
+    const cat = p.category || 'Uncategorised';
+    (groups[cat] ||= []).push(p);
+  }
+  const cats = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+
+  const w = makeWriter();
+  const { b, ln } = w;
+  header(w, 'PHYSICAL STOCK COUNT SHEET',
+    `${active.length} item${active.length === 1 ? '' : 's'}`, dateStr());
+
+  for (const cat of cats) {
+    const items = groups[cat].sort((a, b2) => (a.sku || a.name).localeCompare(b2.sku || b2.name));
+    b(ESC, 0x45, 0x01);
+    ln(cat.toUpperCase());
+    b(ESC, 0x45, 0x00);
+    for (const p of items) {
+      b(ESC, 0x45, 0x01);
+      for (const l of wrap(p.sku || p.name)) ln(l);
+      b(ESC, 0x45, 0x00);
+      if (p.sku) for (const l of wrap(`  ${p.name}`)) ln(l);
+      ln(padLR('  System stock', `${Number(p.current_stock)} ${p.unit}`));
+      ln(padLR('  Counted', '________'));
+    }
+    ln();
+  }
+
+  ln('Counted by: _______________________');
+  ln();
+  ln('Checked by: _______________________');
+
+  footer(w);
+  return new Uint8Array(w.buf);
+}
+
 export function customerListEscPos(customers) {
   const active = (customers || []).filter((c) => c.is_active !== false)
     .sort((a, b2) => a.name.localeCompare(b2.name));
@@ -120,7 +161,7 @@ export function customerListEscPos(customers) {
     b(ESC, 0x45, 0x01);
     for (const l of wrap(c.name)) ln(l);
     b(ESC, 0x45, 0x00);
-    ln(`  ${c.customer_type === 'wholesaler' ? 'Wholesaler' : 'Regular'}`);
+    ln(`  ${customerTypeLabel(c.customer_type)}`);
     if (c.address) for (const l of wrap(`  ${c.address}`)) ln(l);
     ln();
   }

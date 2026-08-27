@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import { orderRefFromId } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -128,7 +129,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved }) {
                       className="text-blue-700 font-semibold hover:underline
                                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
                     >
-                      #{ticket.related_order_id}
+                      {orderRefFromId(ticket.related_order_id, ticket.related_order_receipt_number)}
                     </Link>
                   </div>
                 )}

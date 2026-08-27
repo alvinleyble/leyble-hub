@@ -3,7 +3,7 @@
 // "C-8", "cxl" finds "C-XL", "cm" finds "C-M". Name and category match as
 // plain substrings (and also punctuation-insensitively), so typing "Mismo"
 // surfaces every Mismo product (C-M, S-M, R-M, …) by name.
-const normalize = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+export const normalize = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export function productMatches(product, query) {
   const q = String(query ?? '').trim().toLowerCase();

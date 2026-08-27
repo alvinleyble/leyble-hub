@@ -40,10 +40,12 @@ router.get('/', async (req, res, next) => {
       `SELECT ial.*,
               p.name       AS product_name,
               p.sku        AS sku,
-              u.full_name  AS performed_by_name
+              u.full_name  AS performed_by_name,
+              o.receipt_number AS related_order_receipt_number
        FROM inventory_audit_logs ial
        JOIN  products p ON p.id = ial.product_id
        LEFT JOIN users u ON u.id = ial.performed_by
+       LEFT JOIN orders o ON o.id = ial.related_order_id
        ${whereClause}
        ORDER BY ial.created_at DESC
        LIMIT $${idx}`,
@@ -84,9 +86,11 @@ router.get('/activity', async (req, res, next) => {
 
     const { rows } = await db.query(
       `SELECT al.*,
-              u.full_name AS performed_by_name
+              u.full_name AS performed_by_name,
+              o.receipt_number AS entity_receipt_number
        FROM activity_logs al
        LEFT JOIN users u ON u.id = al.performed_by
+       LEFT JOIN orders o ON al.entity_type = 'order' AND o.id = al.entity_id
        ${whereClause}
        ORDER BY al.created_at DESC
        LIMIT $${idx}`,

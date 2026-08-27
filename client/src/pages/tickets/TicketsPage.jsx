@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import TicketFormModal from './TicketFormModal';
 import TicketDetailPanel from './TicketDetailPanel';
+import { orderRefFromId } from '../../utils/orderRef';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -107,7 +108,7 @@ export default function TicketsPage() {
                   </td>
                   <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell">
                     {t.related_order_id && (
-                      <span className="inline-block mr-2">Order #{t.related_order_id}</span>
+                      <span className="inline-block mr-2">Order {orderRefFromId(t.related_order_id, t.related_order_receipt_number)}</span>
                     )}
                     {t.personnel_name && (
                       <span className="inline-block">{t.personnel_name}</span>

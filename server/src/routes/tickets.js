@@ -32,7 +32,8 @@ router.get('/', async (req, res, next) => {
       `SELECT t.*,
               p.full_name  AS personnel_name,
               uc.full_name AS created_by_name,
-              ur.full_name AS resolved_by_name
+              ur.full_name AS resolved_by_name,
+              o.receipt_number AS related_order_receipt_number
        ${TICKET_JOIN}
        ${whereClause}
        ORDER BY t.created_at DESC`,
@@ -81,7 +82,8 @@ router.get('/:id', async (req, res, next) => {
       `SELECT t.*,
               p.full_name  AS personnel_name,
               uc.full_name AS created_by_name,
-              ur.full_name AS resolved_by_name
+              ur.full_name AS resolved_by_name,
+              o.receipt_number AS related_order_receipt_number
        ${TICKET_JOIN}
        WHERE t.id = $1`,
       [req.params.id]

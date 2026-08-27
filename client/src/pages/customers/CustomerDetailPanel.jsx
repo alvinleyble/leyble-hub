@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -7,7 +7,9 @@ import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
 import Combobox from '../../components/ui/Combobox';
+import CustomerMergeModal from '../../components/customers/CustomerMergeModal';
 import { productMatches } from '../../utils/productSearch';
+import { CUSTOMER_TYPE_OPTIONS, customerTypeBadge, customerTypeLabel, normalizeCustomerType } from '../../utils/customerTypes';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -21,11 +23,6 @@ const ORDER_STATUS = {
   completed:  { label: 'Delivered',  color: 'bg-green-100 text-green-800 border-green-300' },
   done:       { label: 'Closed',     color: 'bg-slate-100 text-slate-600 border-slate-200' },
   cancelled:  { label: 'Cancelled',  color: 'bg-red-100 text-red-700 border-red-300' },
-};
-
-const TYPE_BADGE = {
-  regular:    'bg-slate-100 text-slate-600 border-slate-200',
-  wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
 };
 
 const DEFAULT_PRICE_FORM = {
@@ -42,44 +39,51 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [form, setForm]             = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving]         = useState(false);
+  const [mergeOpen, setMergeOpen]   = useState(false);
 
   const [customPrices, setCustomPrices]     = useState([]);
   const [priceTab, setPriceTab]             = useState('delivery');
+  const priceTabRef                         = useRef(priceTab);
+  useEffect(() => { priceTabRef.current = priceTab; }, [priceTab]);
+
   const [products, setProducts]             = useState([]);
   const [pricingOpen, setPricingOpen]       = useState(false);
   const [priceForm, setPriceForm]           = useState(DEFAULT_PRICE_FORM);
   const [priceErrors, setPriceErrors]       = useState({});
   const [priceSaving, setPriceSaving]       = useState(false);
 
-  const loadCustomPrices = useCallback(async (orderType = priceTab) => {
-    const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`).catch(() => []);
-    setCustomPrices(prices);
-  }, [customerId, priceTab]);
+  const loadCustomPrices = useCallback(async (orderType = priceTabRef.current) => {
+    try {
+      const prices = await api.get(`/customers/${customerId}/prices?order_type=${orderType}`);
+      setCustomPrices(Array.isArray(prices) ? prices : []);
+    } catch {
+      setCustomPrices([]);
+    }
+  }, [customerId]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    api.get(`/customers/${customerId}`)
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    return api.get(`/customers/${customerId}`)
       .then(async (data) => {
         setCustomer(data);
         setOrders(data.orders ?? []);
         setForm({
           name:          data.name,
-          customer_type: data.customer_type,
+          customer_type: normalizeCustomerType(data.customer_type),
           phone:         data.phone ?? '',
           address:       data.address ?? '',
           notes:         data.notes ?? '',
           is_active:     data.is_active,
         });
-        if (data.customer_type === 'wholesaler') {
-          const prices = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`).catch(() => []);
-          setCustomPrices(prices);
-        } else {
-          setCustomPrices([]);
-        }
+        // ADR 0009 — saved prices are the pricing source, so every customer has a
+        // Custom Prices panel. Nothing is hidden behind the descriptive tag.
+        await loadCustomPrices(priceTabRef.current);
       })
       .catch(() => addToast('Failed to load customer.', 'error'))
-      .finally(() => setLoading(false));
-  }, [customerId, addToast, priceTab]);
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
+  }, [customerId, loadCustomPrices, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,8 +109,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         is_active:     form.is_active,
       });
       addToast('Customer updated.', 'success');
-      onSaved();
-      load();
+      onSaved?.();
+      await load(true);
     } catch (err) {
       addToast(err.message || 'Failed to update customer.', 'error');
     } finally {
@@ -155,8 +159,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       setPricingOpen(false);
       setPriceForm(DEFAULT_PRICE_FORM);
       setPriceErrors({});
-      const updated = await api.get(`/customers/${customerId}/prices?order_type=${priceTab}`);
-      setCustomPrices(updated);
+      await loadCustomPrices(priceTab);
+      onSaved?.();
     } catch (err) {
       addToast(err.message || 'Failed to set price.', 'error');
     } finally {
@@ -194,8 +198,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
             {/* ── Summary bar ──────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[customer.customer_type]}`}>
-                {customer.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(customer.customer_type)}`}>
+                {customerTypeLabel(customer.customer_type)}
               </span>
               {!customer.is_active && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-300">
@@ -219,8 +223,9 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
                   <FormField label="Customer Type" required className="sm:col-span-2">
                     <select value={form.customer_type} onChange={set('customer_type')} className={INPUT}>
-                      <option value="regular">Regular Customer — Without Custom Prices</option>
-                      <option value="wholesaler">Wholesalers — With Custom Prices</option>
+                      {CUSTOMER_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                   </FormField>
 
@@ -254,134 +259,130 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               </div>
             </form>
 
-            {/* ── Wholesaler Custom Pricing ────────────────────── */}
-            {customer.customer_type === 'wholesaler' && (
-              <div className="px-6 py-5 border-b border-slate-400">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Wholesaler Custom Prices</p>
-                  {!pricingOpen && (
-                    <Button size="sm" variant="secondary" onClick={openPricingForm}>
-                      + Set Price
-                    </Button>
-                  )}
-                </div>
-
-                {/* Delivery / Pickup tab switcher */}
-                <div className="flex gap-1.5 mb-4">
-                  {['delivery', 'pickup'].map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => {
-                        setPriceTab(type);
-                        setPricingOpen(false);
-                        api.get(`/customers/${customerId}/prices?order_type=${type}`)
-                          .then(setCustomPrices)
-                          .catch(() => {});
-                      }}
-                      className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
-                        ${priceTab === type
-                          ? type === 'delivery'
-                            ? 'bg-slate-800 text-white border-slate-800'
-                            : 'bg-blue-700 text-white border-blue-700'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-                    >
-                      {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
-                    </button>
-                  ))}
-                </div>
-
-                {pricingOpen && (
-                  <div className="mb-5 p-4 bg-amber-50 rounded-lg border border-amber-200">
-                    <p className="text-sm font-bold text-amber-900 mb-3">
-                      Set {priceTab === 'pickup' ? 'Pickup' : 'Delivery'} Price
-                    </p>
-                    <div className="grid grid-cols-1 gap-3">
-                      <FormField label="Product" required error={priceErrors.product_id}>
-                        <Combobox
-                          items={products.filter((p) => p.is_active)}
-                          match={productMatches}
-                          onSelect={selectPriceProduct}
-                          onQueryChange={() => setPriceForm((f) => ({ ...f, product_id: '' }))}
-                          displayValue={(p) => p.sku || p.name}
-                          placeholder="Search product…"
-                          emptyText="No products match."
-                          renderRow={(p) => (
-                            <>
-                              <span className="font-medium text-slate-800">{p.sku || p.name}</span>
-                              <span className="text-sm text-slate-400 shrink-0 tabular-nums">
-                                std {PHP(p.base_wholesale_price)}
-                              </span>
-                            </>
-                          )}
-                        />
-                      </FormField>
-
-                      <FormField label="Custom Price (₱/case)" required error={priceErrors.custom_unit_price}>
-                        <input type="number" min="0" step="0.01"
-                          value={priceForm.custom_unit_price} onChange={setP('custom_unit_price')}
-                          className={INPUT} placeholder="0.00" />
-                      </FormField>
-
-                      <FormField label="Notes" hint="Optional">
-                        <input type="text" value={priceForm.notes} onChange={setP('notes')}
-                          className={INPUT} placeholder="e.g. Special agreement" />
-                      </FormField>
-
-                      <div className="flex gap-2 mt-1">
-                        <Button variant="secondary" size="sm" disabled={priceSaving}
-                          onClick={() => {
-                            setPricingOpen(false);
-                            setPriceForm(DEFAULT_PRICE_FORM);
-                            setPriceErrors({});
-                          }}>
-                          Cancel
-                        </Button>
-                        <Button size="sm" onClick={handleSetPrice} loading={priceSaving}>
-                          Save Price
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {customPrices.length === 0 ? (
-                  <p className="text-sm text-slate-400">No custom prices set yet.</p>
-                ) : (
-                  <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
-                          <th className="text-left px-4 py-2 font-semibold">Product</th>
-                          <th className="text-right px-4 py-2 font-semibold">Price / Case</th>
-                          <th className="text-right px-4 py-2 font-semibold hidden sm:table-cell">Set</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {customPrices.map((sp) => (
-                          <tr key={sp.id} className="border-t border-slate-300">
-                            <td className="px-4 py-3 font-medium text-slate-800">
-                              {sp.sku || sp.product_name}
-                              {sp.notes && (
-                                <span className="block text-xs text-slate-400 italic">{sp.notes}</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">
-                              {PHP(sp.custom_unit_price)}
-                            </td>
-                            <td className="px-4 py-3 text-right text-slate-400 text-xs hidden sm:table-cell">
-                              {new Date(sp.created_at).toLocaleDateString('en-PH', {
-                                month: 'short', day: 'numeric', year: 'numeric',
-                              })}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+            {/* ── Custom Pricing ────────────────────────────────── */}
+            <div className="px-6 py-5 border-b border-slate-400">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Prices</p>
+                {!pricingOpen && (
+                  <Button size="sm" variant="secondary" onClick={openPricingForm}>
+                    + Set Price
+                  </Button>
                 )}
               </div>
-            )}
+
+              {/* Delivery / Pickup tab switcher */}
+              <div className="flex gap-1.5 mb-4">
+                {['delivery', 'pickup'].map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => {
+                      setPriceTab(type);
+                      setPricingOpen(false);
+                      loadCustomPrices(type);
+                    }}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
+                      ${priceTab === type
+                        ? type === 'delivery'
+                          ? 'bg-slate-800 text-white border-slate-800'
+                          : 'bg-blue-700 text-white border-blue-700'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                  >
+                    {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                  </button>
+                ))}
+              </div>
+
+              {pricingOpen && (
+                <div className="mb-5 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                  <p className="text-sm font-bold text-amber-900 mb-3">
+                    Set {priceTab === 'pickup' ? 'Pickup' : 'Delivery'} Price
+                  </p>
+                  <div className="grid grid-cols-1 gap-3">
+                    <FormField label="Product" required error={priceErrors.product_id}>
+                      <Combobox
+                        items={products.filter((p) => p.is_active)}
+                        match={productMatches}
+                        onSelect={selectPriceProduct}
+                        onQueryChange={() => setPriceForm((f) => ({ ...f, product_id: '' }))}
+                        displayValue={(p) => p.sku || p.name}
+                        placeholder="Search product…"
+                        emptyText="No products match."
+                        renderRow={(p) => (
+                          <>
+                            <span className="font-medium text-slate-800">{p.sku || p.name}</span>
+                            <span className="text-sm text-slate-400 shrink-0 tabular-nums">
+                              std {PHP(p.base_wholesale_price)}
+                            </span>
+                          </>
+                        )}
+                      />
+                    </FormField>
+
+                    <FormField label="Custom Price (₱/case)" required error={priceErrors.custom_unit_price}>
+                      <input type="number" min="0" step="0.01"
+                        value={priceForm.custom_unit_price} onChange={setP('custom_unit_price')}
+                        className={INPUT} placeholder="0.00" />
+                    </FormField>
+
+                    <FormField label="Notes" hint="Optional">
+                      <input type="text" value={priceForm.notes} onChange={setP('notes')}
+                        className={INPUT} placeholder="e.g. Special agreement" />
+                    </FormField>
+
+                    <div className="flex gap-2 mt-1">
+                      <Button variant="secondary" size="sm" disabled={priceSaving}
+                        onClick={() => {
+                          setPricingOpen(false);
+                          setPriceForm(DEFAULT_PRICE_FORM);
+                          setPriceErrors({});
+                        }}>
+                        Cancel
+                      </Button>
+                      <Button size="sm" onClick={handleSetPrice} loading={priceSaving}>
+                        Save Price
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {customPrices.length === 0 ? (
+                <p className="text-sm text-slate-400">No custom prices set yet.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
+                        <th className="text-left px-4 py-2 font-semibold">Product</th>
+                        <th className="text-right px-4 py-2 font-semibold">Price / Case</th>
+                        <th className="text-right px-4 py-2 font-semibold hidden sm:table-cell">Set</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customPrices.map((sp) => (
+                        <tr key={sp.id} className="border-t border-slate-300">
+                          <td className="px-4 py-3 font-medium text-slate-800">
+                            {sp.sku || sp.product_name}
+                            {sp.notes && (
+                              <span className="block text-xs text-slate-400 italic">{sp.notes}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">
+                            {PHP(sp.custom_unit_price)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-400 text-xs hidden sm:table-cell">
+                            {new Date(sp.created_at).toLocaleDateString('en-PH', {
+                              month: 'short', day: 'numeric', year: 'numeric',
+                            })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
 
             {/* ── Order history ─────────────────────────────────── */}
             <div className="px-6 py-5">
@@ -426,6 +427,18 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               )}
             </div>
 
+            {/* ── Merge Customer (Housekeeping) ─────────────────── */}
+            <div className="px-6 py-5 border-t border-slate-400">
+              <p className="text-xs font-bold text-amber-600 uppercase tracking-widest mb-3">Merge & Housekeeping</p>
+              <Button
+                variant="secondary"
+                onClick={() => setMergeOpen(true)}
+                className="border-amber-400 text-amber-800 hover:bg-amber-50"
+              >
+                🔀 Merge customer
+              </Button>
+            </div>
+
             {/* ── Danger Zone ───────────────────────────────────── */}
             <DangerZoneDelete
               endpoint={`/customers/${customerId}`}
@@ -436,6 +449,19 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           </div>
         )}
       </div>
+
+      {mergeOpen && customer && (
+        <CustomerMergeModal
+          customer={customer}
+          orderCount={orders.length}
+          onClose={() => setMergeOpen(false)}
+          onMerged={() => {
+            setMergeOpen(false);
+            onClose();
+            onSaved?.();
+          }}
+        />
+      )}
     </>
   );
 }

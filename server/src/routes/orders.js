@@ -2,7 +2,13 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
-const { applyDeltaMap } = require('../lib/inventory');
+const { applyDeltaMap, isStockOut } = require('../lib/inventory');
+const { parseReceiptNumber } = require('../lib/receiptNumbers');
+const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
+
+// Name of the partial unique index from migration 033. Used to tell a genuine
+// duplicate receipt number apart from any other unique violation.
+const RECEIPT_NUMBER_INDEX = 'orders_receipt_number_uniq';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -27,6 +33,31 @@ function getAllowedTransitions(status, orderType) {
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
+
+// D1 — how an order is named to a human. The row id stays an internal detail; an order
+// that carries a device-issued receipt number is referred to by it, in the activity log
+// as everywhere else. Historical orders (and every order created while the V2.5 client
+// switch is off) have no receipt number and keep reading as '#<id>', exactly as today.
+function orderLabel(order) {
+  return order?.receipt_number ? order.receipt_number : `#${order?.id}`;
+}
+
+// Resolves an order identifier (either numeric DB id or '<station>-<sequence>' receipt number)
+// to the order row id.
+async function resolveOrderId(runner, param) {
+  if (param === undefined || param === null) return null;
+  const str = String(param).trim();
+  if (/^\d{1,9}-\d{1,9}$/.test(str)) {
+    const [station, sequence] = str.split('-').map(Number);
+    const { rows: [row] } = await runner.query(
+      'SELECT id FROM orders WHERE receipt_station = $1 AND receipt_sequence = $2',
+      [station, sequence]
+    );
+    return row ? row.id : null;
+  }
+  const num = Number(str);
+  return Number.isInteger(num) ? num : null;
+}
 
 async function recomputeTotal(client, orderId) {
   const { rows: [ord] } = await client.query('SELECT status FROM orders WHERE id = $1', [orderId]);
@@ -72,7 +103,14 @@ async function sortItemsByCategory(client, items) {
   });
 }
 
-async function insertItems(client, orderId, customerId, orderType, items, userId, draft = false) {
+// Writes the order's lines and nothing else. It deliberately does NOT persist a saved
+// price: `is_price_overridden` records that this line's price was hand-typed on this
+// order, which is not the same as an agreed standing rate for the customer. Saving that
+// rate is the sole job of the explicit "Save Custom Price?" prompt (POST
+// /customers/:id/prices) — before this, order-save wrote a customer_product_prices row on
+// the flag alone, so a one-off price became permanent whatever the operator answered, and
+// there is no delete endpoint to take it back.
+async function insertItems(client, orderId, items, draft = false) {
   items = await sortItemsByCategory(client, items);
   for (const item of items) {
     const {
@@ -93,25 +131,24 @@ async function insertItems(client, orderId, customerId, orderType, items, userId
     // Drafts tolerate a blank quantity/price (e.g. mid-entry). quantity has a
     // CHECK (> 0), so fall back to 1; unit_price may be 0.
     const qty   = draft ? (Number(quantity) > 0 ? Number(quantity) : 1) : quantity;
-    const price = draft ? (Number(unit_price) || 0) : unit_price;
+    // Money never goes negative on a line: a discount is the order-level
+    // `adjustment` (which stays signed), never a negative price. Finalized rows
+    // are rejected outright; drafts, which tolerate half-typed values, clamp.
+    if (!draft && (Number(unit_price) < 0 || Number(unit_deposit_fee) < 0)) {
+      const err = new Error('A price per case and a deposit fee cannot be negative.');
+      err.status = 400;
+      throw err;
+    }
+    const price   = draft ? Math.max(0, Number(unit_price) || 0) : unit_price;
+    const deposit = draft ? Math.max(0, Number(unit_deposit_fee) || 0) : unit_deposit_fee;
 
     await client.query(
       `INSERT INTO order_items
          (order_id, product_id, quantity, unit_price, unit_deposit_fee,
           is_price_overridden, units_per_case, bottles_returned)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
-      [orderId, product_id, qty, price, unit_deposit_fee, is_price_overridden, units_per_case]
+      [orderId, product_id, qty, price, deposit, is_price_overridden, units_per_case]
     );
-
-    if (is_price_overridden) {
-      await client.query(
-        `INSERT INTO customer_product_prices
-           (customer_id, product_id, custom_unit_price, set_by_user_id, notes, order_type)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [customerId, product_id, unit_price, userId,
-         `Set on order #${orderId}`, orderType || 'delivery']
-      );
-    }
   }
 }
 
@@ -137,6 +174,9 @@ async function syncPersonnel(client, orderId, personnelList) {
 }
 
 async function getFullOrder(orderId) {
+  const resolvedId = await resolveOrderId(db, orderId);
+  if (!resolvedId) return null;
+
   const { rows: [order] } = await db.query(
     `SELECT o.*,
             c.name  AS customer_name, c.customer_type,
@@ -148,7 +188,7 @@ async function getFullOrder(orderId) {
      LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
      LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
      WHERE o.id = $1`,
-    [orderId]
+    [resolvedId]
   );
   if (!order) return null;
 
@@ -158,7 +198,7 @@ async function getFullOrder(orderId) {
      JOIN products p ON p.id = oi.product_id
      WHERE oi.order_id = $1
      ORDER BY oi.id`,
-    [orderId]
+    [resolvedId]
   );
 
   const { rows: personnel } = await db.query(
@@ -167,7 +207,7 @@ async function getFullOrder(orderId) {
      JOIN personnel p ON p.id = op.personnel_id
      WHERE op.order_id = $1
      ORDER BY op.id`,
-    [orderId]
+    [resolvedId]
   );
 
   return { ...order, items, personnel };
@@ -178,6 +218,7 @@ async function getFullOrder(orderId) {
 async function deductStock(client, items, orderId, userId, reason) {
   const deltas = {};
   for (const item of items) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) - Number(item.quantity);
   }
   await applyDeltaMap(client, deltas, { actionType: 'order_fulfillment', reason, userId, orderId });
@@ -187,25 +228,29 @@ async function deductStock(client, items, orderId, userId, reason) {
 async function restoreStock(client, items, orderId, userId, reason) {
   const deltas = {};
   for (const item of items) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) + Number(item.quantity);
   }
   await applyDeltaMap(client, deltas, { actionType: 'order_cancel', reason, userId, orderId });
 }
 
-// Reconcile stock after editing a dispatched order (in_transit/completed/done).
+// Reconcile stock after editing an order with deducted stock.
 // oldItems: DB rows before replacement. newItems: req.body items array.
 // Per-product delta = oldQty − newQty (positive = restore, negative = deduct more).
-async function reconcileStock(client, oldItems, newItems, orderId, userId) {
+async function reconcileStock(client, oldItems, newItems, order, userId) {
+  const orderId = order.id;
   const deltas = {};
   for (const item of oldItems) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) + Number(item.quantity);
   }
   for (const item of newItems) {
+    if (!item.product_id) continue;
     deltas[item.product_id] = (deltas[item.product_id] || 0) - Number(item.quantity);
   }
   await applyDeltaMap(client, deltas, {
-    actionType: 'manual_adjustment',
-    reason: `Order #${orderId} edited after dispatch`,
+    actionType: 'order_edit',
+    reason: `Order ${orderLabel(order)} items edited`,
     userId,
     orderId,
   });
@@ -216,7 +261,14 @@ async function reconcileStock(client, oldItems, newItems, orderId, userId) {
 // GET /api/v1/orders
 router.get('/', async (req, res, next) => {
   try {
-    const { status, customer_id, from_date, to_date } = req.query;
+    const { status, customer_id, from_date, to_date, search, q, page: pageQuery, limit: limitQuery } = req.query;
+    const isPaginated = pageQuery !== undefined || limitQuery !== undefined;
+    const page = Math.max(1, parseInt(pageQuery, 10) || 1);
+    const limit = isPaginated
+      ? Math.min(200, Math.max(1, parseInt(limitQuery, 10) || 50))
+      : 200;
+    const offset = (page - 1) * limit;
+
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -238,11 +290,39 @@ router.get('/', async (req, res, next) => {
       params.push(from_date);
     }
     if (to_date) {
-      conditions.push(`o.created_at < $${idx++}`);
-      params.push(to_date);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(to_date).trim())) {
+        conditions.push(`o.created_at < ($${idx++}::date + INTERVAL '1 day')`);
+        params.push(String(to_date).trim());
+      } else {
+        conditions.push(`o.created_at < $${idx++}`);
+        params.push(to_date);
+      }
+    }
+
+    const searchTerm = String(search || q || '').trim();
+    if (searchTerm) {
+      const cleanTerm = searchTerm.replace(/^#/, '');
+      const p1 = `%${searchTerm}%`;
+      const p2 = `%${cleanTerm}%`;
+      if (p1 === p2) {
+        const pIdx = idx++;
+        params.push(p1);
+        conditions.push(`(c.name ILIKE $${pIdx} OR o.id::text ILIKE $${pIdx} OR (o.receipt_number IS NOT NULL AND o.receipt_number ILIKE $${pIdx}))`);
+      } else {
+        const p1Idx = idx++;
+        params.push(p1);
+        const p2Idx = idx++;
+        params.push(p2);
+        conditions.push(`(c.name ILIKE $${p1Idx} OR o.id::text ILIKE $${p2Idx} OR (o.receipt_number IS NOT NULL AND (o.receipt_number ILIKE $${p1Idx} OR o.receipt_number ILIKE $${p2Idx})))`);
+      }
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const limitParamIdx = idx++;
+    params.push(limit);
+    const offsetParamIdx = idx++;
+    params.push(offset);
 
     const { rows } = await db.query(
       `SELECT o.*,
@@ -250,14 +330,33 @@ router.get('/', async (req, res, next) => {
               (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
                FROM order_personnel op
                JOIN personnel per ON per.id = op.personnel_id
-               WHERE op.order_id = o.id) AS personnel_summary
+               WHERE op.order_id = o.id) AS personnel_summary,
+              COUNT(*) OVER()::int AS total_count
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
        ${whereClause}
        ORDER BY o.created_at DESC
-       LIMIT 200`,
+       LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`,
       params
     );
+
+    const totalCount = rows.length > 0 ? (parseInt(rows[0].total_count, 10) || 0) : 0;
+    for (const row of rows) {
+      delete row.total_count;
+    }
+
+    if (isPaginated) {
+      return res.json({
+        orders: rows,
+        pagination: {
+          page,
+          limit,
+          total: totalCount,
+          totalPages: Math.ceil(totalCount / limit) || 1,
+        },
+      });
+    }
+
     res.json(rows);
   } catch (err) {
     next(err);
@@ -265,8 +364,21 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/v1/orders — creates a Pending order; no stock check
+//
+// Two optional fields carry the device's version of the truth when the order was
+// created locally (V2.5, D1/D5/D13). Both are absent for an order created straight
+// from a connected client, which behaves exactly as before:
+//   receipt_number  '<station>-<sequence>' issued on the device at Save. It is the
+//                   record's identity, so a resend of a number already stored is
+//                   answered with the stored order and a 200 rather than a second row.
+//   created_at      the device's clock at Save — the sale time printed on the paper
+//                   the customer is holding, not the moment the outbox drained. Same
+//                   pattern as supplier_deliveries.received_at. No clock policing.
 router.post('/', async (req, res, next) => {
-  const { customer_id, notes, items = [], personnel = [], order_type = 'delivery', status } = req.body;
+  const {
+    customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
+    receipt_number, created_at, adjustment = 0, adjustment_reason,
+  } = req.body;
   const isDraft = status === 'draft';
 
   // Validate input before opening a connection/transaction — an early return after
@@ -274,6 +386,22 @@ router.post('/', async (req, res, next) => {
   if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
   // A finalized order needs at least one item; a draft may be parked while still empty.
   if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
+
+  let receipt = null;
+  if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
+    try {
+      receipt = parseReceiptNumber(receipt_number);
+    } catch (err) {
+      return next(err);
+    }
+    // The ordinary resend: the first attempt committed and only the response was lost.
+    try {
+      const existingId = await findByReceiptNumber(db, 'orders', receipt);
+      if (existingId) return res.json(await getFullOrder(existingId));
+    } catch (err) {
+      return next(err);
+    }
+  }
 
   const client = await db.connect();
   try {
@@ -288,24 +416,34 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: 'Customer not found' });
     }
 
+    const adjNum = Number(adjustment) || 0;
+    const adjReason = adjNum !== 0 && adjustment_reason ? adjustment_reason.trim() : null;
+
     const { rows: [order] } = await client.query(
-      `INSERT INTO orders (customer_id, notes, total_amount, order_type, status)
-       VALUES ($1, $2, 0, $3, $4)
+      `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
+                           receipt_station, receipt_sequence, created_at, adjustment, adjustment_reason)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()), $8, $9)
        RETURNING *`,
-      [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending']
+      [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
+       receipt?.station ?? null, receipt?.sequence ?? null, created_at || null,
+       adjNum, adjReason]
     );
 
-    await insertItems(client, order.id, customer_id, order_type, items, req.user.id, isDraft);
+    await insertItems(client, order.id, items, isDraft);
     await recomputeTotal(client, order.id);
     await syncPersonnel(client, order.id, personnel);
 
     // Drafts are ephemeral — the activity log entry is written when the draft is finalized.
+    //
+    // No stock moves here. ADR 0012 puts deduction back on the dispatch transition
+    // (in_transit for deliveries, completed for pickups), so an order that was saved on a
+    // blind tablet at 2pm and drained at 5pm does not silently move inventory at 5pm.
     if (!isDraft) {
       await logActivity(client, {
         entityType: 'order',
         entityId:   order.id,
         action:     'created',
-        summary:    `Order #${order.id} created for ${customer.name} (${order_type})`,
+        summary:    `Order ${orderLabel(order)} created for ${customer.name} (${order_type})`,
         performedBy: req.user.id,
       });
     }
@@ -314,6 +452,17 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(await getFullOrder(order.id));
   } catch (err) {
     await client.query('ROLLBACK');
+    // Two drain attempts overlapping: both looked, neither found, both inserted. The
+    // partial unique index caught this one, so answer it with the row the winner
+    // wrote — a success, so the device clears it from the outbox and stops retrying.
+    if (receipt && isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX)) {
+      try {
+        const existingId = await findByReceiptNumber(db, 'orders', receipt);
+        if (existingId) return res.json(await getFullOrder(existingId));
+      } catch (lookupErr) {
+        return next(lookupErr);
+      }
+    }
     next(err);
   } finally {
     client.release();
@@ -337,9 +486,15 @@ router.patch('/:id', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -347,7 +502,6 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     const { notes, items, personnel, customer_id, order_type } = req.body;
-    const DISPATCHED_STATUSES = ['in_transit', 'completed', 'done'];
     const isDraft = order.status === 'draft';
 
     const changeNotes = [];
@@ -380,7 +534,7 @@ router.patch('/:id', async (req, res, next) => {
       );
 
       await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
-      await insertItems(client, order.id, order.customer_id, order.order_type, items, req.user.id, isDraft);
+      await insertItems(client, order.id, items, isDraft);
 
       // insertItems resets bottles_returned to 0. For a closed (done) order, carry
       // the previously recorded returns back per product so editing a line (e.g.
@@ -410,8 +564,8 @@ router.patch('/:id', async (req, res, next) => {
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
 
-      if (DISPATCHED_STATUSES.includes(order.status)) {
-        await reconcileStock(client, oldItems, items, order.id, req.user.id);
+      if (!isDraft && order.status !== 'cancelled' && await isStockOut(client, order.id)) {
+        await reconcileStock(client, oldItems, items, order, req.user.id);
       }
     }
 
@@ -426,7 +580,7 @@ router.patch('/:id', async (req, res, next) => {
         entityType: 'order',
         entityId:   order.id,
         action:     'edited',
-        summary:    `Order #${order.id}: ${changeNotes.join('; ')}`,
+        summary:    `Order ${orderLabel(order)}: ${changeNotes.join('; ')}`,
         performedBy: req.user.id,
       });
     }
@@ -447,9 +601,15 @@ router.post('/:id/finalize', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -480,11 +640,12 @@ router.post('/:id/finalize', async (req, res, next) => {
     );
     await recomputeTotal(client, order.id);
 
+    // No stock moves here either — see the note on POST / above (ADR 0012).
     await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
       action:     'created',
-      summary:    `Order #${order.id} created for ${customer?.name || 'customer'} (${order.order_type})`,
+      summary:    `Order ${orderLabel(order)} created for ${customer?.name || 'customer'} (${order.order_type})`,
       performedBy: req.user.id,
     });
 
@@ -504,9 +665,15 @@ router.delete('/:id', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT id, status FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -544,12 +711,17 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       return res.status(400).json({ error: 'adjustment_reason is required when adjustment is non-zero' });
     }
 
-    const { rows: [order] } = await db.query('SELECT id FROM orders WHERE id = $1', [req.params.id]);
+    const orderId = await resolveOrderId(db, req.params.id);
+    if (!orderId) return res.status(404).json({ error: 'Order not found' });
+
+    const { rows: [order] } = await db.query(
+      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
+    );
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     await db.query(
       `UPDATE orders SET adjustment = $1, adjustment_reason = $2, updated_at = NOW() WHERE id = $3`,
-      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, req.params.id]
+      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, orderId]
     );
 
     await logActivity(db, {
@@ -557,12 +729,12 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       entityId:   order.id,
       action:     'adjusted',
       summary:    adjNum !== 0
-        ? `Order #${order.id} adjustment set to ₱${adjNum.toFixed(2)} (reason: ${adjustment_reason.trim()})`
-        : `Order #${order.id} adjustment cleared`,
+        ? `Order ${orderLabel(order)} adjustment set to ₱${adjNum.toFixed(2)} (reason: ${adjustment_reason.trim()})`
+        : `Order ${orderLabel(order)} adjustment cleared`,
       performedBy: req.user.id,
     });
 
-    res.json(await getFullOrder(req.params.id));
+    res.json(await getFullOrder(order.id));
   } catch (err) {
     next(err);
   }
@@ -577,7 +749,12 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
     }
 
-    const { rows: [order] } = await db.query('SELECT id FROM orders WHERE id = $1', [req.params.id]);
+    const orderId = await resolveOrderId(db, req.params.id);
+    if (!orderId) return res.status(404).json({ error: 'Order not found' });
+
+    const { rows: [order] } = await db.query(
+      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
+    );
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     const column = phase === 'pending' ? 'pending_receipt_printed' : 'delivered_receipt_printed';
@@ -590,7 +767,7 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       entityType: 'order',
       entityId:   order.id,
       action:     'receipt_printed',
-      summary:    `Order #${order.id} receipt printed (${phase} phase)`,
+      summary:    `Order ${orderLabel(order)} receipt printed (${phase} phase)`,
       performedBy: req.user.id,
     });
 
@@ -606,9 +783,15 @@ router.post('/:id/status', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -628,25 +811,38 @@ router.post('/:id/status', async (req, res, next) => {
 
     const { rows: items } = await client.query(
       'SELECT * FROM order_items WHERE order_id = $1',
-      [req.params.id]
+      [order.id]
     );
 
-    // Stock deduction: delivery uses in_transit, pickup uses completed
+    // ADR 0012 — stock moves with the goods, not with the paperwork. A delivery deducts
+    // when it is dispatched (in_transit); a pickup when the customer takes it (completed).
+    //
+    // Both directions are guarded by isStockOut rather than by the transition alone,
+    // because the two are not equivalent for every row in the table. Orders created during
+    // the V2 window were deducted at save, so dispatching one now must not deduct it a
+    // second time; orders created before that window were never deducted at all, so
+    // cancelling one must not hand back stock that never left.
+    const stockDeducted = await isStockOut(client, order.id);
+
     const isDeductTransition =
       (order.order_type === 'delivery' && newStatus === 'in_transit') ||
       (order.order_type === 'pickup'   && newStatus === 'completed' && order.status === 'pending');
 
-    if (isDeductTransition) {
-      await deductStock(client, items, order.id, req.user.id, `Order #${order.id} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
+    if (isDeductTransition && !stockDeducted) {
+      await deductStock(client, items, order.id, req.user.id,
+        `Order ${orderLabel(order)} ${order.order_type === 'pickup' ? 'picked up' : 'dispatched'}`);
     }
 
-    // Stock restoration on cancellation, or on stepping back across the deduction boundary
-    if ((newStatus === 'cancelled' || newStatus === 'pending') &&
-        ['in_transit', 'completed'].includes(order.status)) {
+    // Restore on cancellation, and on stepping back behind the deduction boundary.
+    const isRestoreTransition =
+      newStatus === 'cancelled' ||
+      (newStatus === 'pending' && ['in_transit', 'completed'].includes(order.status));
+
+    if (isRestoreTransition && stockDeducted) {
       await restoreStock(client, items, order.id, req.user.id,
         newStatus === 'cancelled'
-          ? `Order #${order.id} cancelled`
-          : `Order #${order.id} status reverted to pending`);
+          ? `Order ${orderLabel(order)} cancelled`
+          : `Order ${orderLabel(order)} status reverted to pending`);
     }
 
     const STEP_BACK = new Set([
@@ -678,7 +874,7 @@ router.post('/:id/status', async (req, res, next) => {
       entityType: 'order',
       entityId:   order.id,
       action:     'status_changed',
-      summary:    `Order #${order.id} status changed from '${order.status}' to '${newStatus}'`,
+      summary:    `Order ${orderLabel(order)} status changed from '${order.status}' to '${newStatus}'`,
       performedBy: req.user.id,
     });
 
@@ -698,9 +894,15 @@ router.post('/:id/close', async (req, res, next) => {
   try {
     await client.query('BEGIN');
 
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
     const { rows: [order] } = await client.query(
       'SELECT * FROM orders WHERE id = $1 FOR UPDATE',
-      [req.params.id]
+      [orderId]
     );
     if (!order) {
       await client.query('ROLLBACK');
@@ -732,7 +934,7 @@ router.post('/:id/close', async (req, res, next) => {
       entityType: 'order',
       entityId:   order.id,
       action:     'closed',
-      summary:    `Order #${order.id} closed; bottle returns recorded for ${items.length} item${items.length === 1 ? '' : 's'}`,
+      summary:    `Order ${orderLabel(order)} closed; bottle returns recorded for ${items.length} item${items.length === 1 ? '' : 's'}`,
       performedBy: req.user.id,
     });
 

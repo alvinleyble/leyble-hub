@@ -2,6 +2,8 @@
 // Mirrors the receipt look (orders/receiptTemplate.js): 72mm body, monospace,
 // LEYBLE GENERAL MERCHANDISE header. Used by usePrintList on web (window.print).
 
+import { customerTypeLabel } from '../../utils/customerTypes';
+
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -87,6 +89,46 @@ export function productListHtml(products) {
   <div class="center" style="font-size:10px">— end of list —</div>${FOOT}`;
 }
 
+// ── Physical stock count sheet ────────────────────────────────────────────────
+// Blank "Counted" line per item for a warehouse walk-through — distinct from the
+// price list above (system stock is shown for reference only, not as the answer).
+export function productCountSheetHtml(products) {
+  const active = (products || []).filter((p) => p.is_active !== false);
+
+  const groups = {};
+  for (const p of active) {
+    const cat = p.category || 'Uncategorised';
+    (groups[cat] ||= []).push(p);
+  }
+  const cats = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+
+  const body = cats.map((cat) => {
+    const items = groups[cat].sort((a, b) =>
+      (a.sku || a.name).localeCompare(b.sku || b.name));
+    const rows = items.map((p) => `
+    <div class="entry">
+      <div class="name">${esc(p.sku || p.name)}</div>
+      ${p.sku ? `<div class="sub">${esc(p.name)}</div>` : ''}
+      <div class="row-between"><span>System stock</span><span>${Number(p.current_stock)} ${esc(p.unit)}</span></div>
+      <div class="row-between"><span>Counted</span><span>________</span></div>
+    </div>`).join('');
+    return `<div class="cat">${esc(cat)}</div>${rows}`;
+  }).join('');
+
+  return `${HEAD('Physical Stock Count Sheet')}
+  <div class="center" style="font-size:10px;margin-top:2px">PHYSICAL STOCK COUNT SHEET</div>
+  <div class="row-between" style="font-size:10px;margin-top:2px">
+    <span>${active.length} item${active.length === 1 ? '' : 's'}</span>
+    <span>${todayStr()}</span>
+  </div>
+  <div class="hr"></div>
+  ${body || '<div class="center">No products.</div>'}
+  <div class="hr"></div>
+  <div style="font-size:10px">Counted by: _______________________</div>
+  <div style="font-size:10px;margin-top:6px">Checked by: _______________________</div>
+  <div class="center" style="font-size:10px;margin-top:6px">— end of list —</div>${FOOT}`;
+}
+
 // ── Customer list ─────────────────────────────────────────────────────────────
 export function customerListHtml(customers) {
   const active = (customers || []).filter((c) => c.is_active !== false)
@@ -95,7 +137,7 @@ export function customerListHtml(customers) {
   const body = active.map((c) => `
   <div class="entry">
     <div class="name">${esc(c.name)}</div>
-    <div class="sub">${c.customer_type === 'wholesaler' ? 'Wholesaler' : 'Regular'}</div>
+    <div class="sub">${customerTypeLabel(c.customer_type)}</div>
     ${c.address ? `<div>${esc(c.address)}</div>` : ''}
   </div>`).join('');
 

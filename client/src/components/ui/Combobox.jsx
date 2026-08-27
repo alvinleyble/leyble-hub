@@ -33,6 +33,7 @@ export default function Combobox({
   inputClassName = INPUT,
   emptyText = 'No matches.',
   maxRows = 50,
+  minChars = 0,
   keepOpenOnSelect = false,
   clearQueryOnSelect = false,
   preserveQueryOnSelect = false, // keep the typed text after a pick (tap same row again to bump)
@@ -124,16 +125,22 @@ export default function Combobox({
     setOpen(keepOpenOnSelect);
   };
 
+  const shouldShowDropdown = open && trimmedQuery.length >= minChars;
+
   const handleKeyDown = (e) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setOpen(true);
-      setActive((a) => Math.min(a + 1, matches.length - 1));
+      if (trimmedQuery.length >= minChars) {
+        setActive((a) => Math.min(a + 1, matches.length - 1));
+      }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setActive((a) => Math.max(a - 1, 0));
+      if (trimmedQuery.length >= minChars) {
+        setActive((a) => Math.max(a - 1, 0));
+      }
     } else if (e.key === 'Enter') {
-      if (open && matches[active]) { e.preventDefault(); select(matches[active]); }
+      if (shouldShowDropdown && matches[active]) { e.preventDefault(); select(matches[active]); }
     } else if (e.key === 'Escape') {
       setOpen(false);
     }
@@ -172,12 +179,12 @@ export default function Combobox({
         placeholder={placeholder}
         autoComplete="off"
         role="combobox"
-        aria-expanded={open}
+        aria-expanded={shouldShowDropdown}
         aria-autocomplete="list"
         {...rest}
       />
 
-      {open && (
+      {shouldShowDropdown && (
         <ul
           className={`${inlineDropdown ? '' : 'absolute z-30 left-0 right-0'} mt-1 bg-white
                       border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto`}

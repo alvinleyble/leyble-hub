@@ -1,0 +1,59 @@
+Product Name,Category,unit,SKU,Bottles Per Case,Initial Stock,Wholesale Price (P / case),Deposit Fee (P / bottle),Returns
+Kasalo Coke,Soft Drinks (Bote),case,C-K,12,100,290,6,TRUE
+Kasalo Royal,Soft Drinks (Bote),case,R-K,12,100,290,6,TRUE
+Kasalo Sprite,Soft Drinks (Bote),case,S-K,12,100,290,6,TRUE
+8oz Coke,Soft Drinks (Bote),case,C-8,24,100,201,2,TRUE
+8oz Royal,Soft Drinks (Bote),case,R-8,24,100,201,2,TRUE
+8oz Sprite,Soft Drinks (Bote),case,S-8,24,100,201,2,TRUE
+8oz Lemon,Soft Drinks (Bote),case,RL-8,24,100,201,2,TRUE
+1.5L Coke,Soft Drinks (PET),case,C-XL,12,100,724,0,FALSE
+1.5L Royal,Soft Drinks (PET),case,R-XL,12,100,724,0,FALSE
+1.5L Sprite,Soft Drinks (PET),case,S-XL,12,100,724,0,FALSE
+1.5L Coke Zero,Soft Drinks (PET),case,CZ-XL,12,100,724,0,FALSE
+1L Coke,Soft Drinks (PET),case,C-1L,12,100,488,0,FALSE
+1L Royal,Soft Drinks (PET),case,R-1L,12,100,488,0,FALSE
+1L Sprite,Soft Drinks (PET),case,S-1L,12,100,488,0,FALSE
+Mismo Coke,Soft Drinks (PET),case,C-M,12,100,198,0,FALSE
+Mismo Royal,Soft Drinks (PET),case,R-M,12,100,198,0,FALSE
+Mismo Sprite,Soft Drinks (PET),case,S-M,12,100,198,0,FALSE
+Mismo Coke Zero,Soft Drinks (PET),case,CZ-M,12,100,198,0,FALSE
+Mismo Royal Lemon,Soft Drinks (PET),case,RL-M,12,100,198,0,FALSE
+Mismo A&W,Soft Drinks (PET),case,AW-M,12,100,198,0,FALSE
+Mismo Royal Grapes,Soft Drinks (PET),case,RG-M,12,100,198,0,FALSE
+Mismo Royal Strawberry,Soft Drinks (PET),case,RSTW-M,12,100,198,0,FALSE
+Swakto Coke,Soft Drinks (PET),case,C-SW,12,100,146,0,FALSE
+Swakto Royal,Soft Drinks (PET),case,R-SW,12,100,146,0,FALSE
+Swakto Sprite,Soft Drinks (PET),case,S-SW,12,100,146,0,FALSE
+Swakto Coke Zero,Soft Drinks (PET),case,CZ-SW,12,100,146,0,FALSE
+Minute Maid Fresh 250ml,Juice Drinks (PET),case,MMF250,12,100,172,0,FALSE
+Minute Maid Fresh 800ml,Juice Drinks (PET),case,MMF800,12,100,450,0,FALSE
+Predator,Energy Drink (PET),case,PRED,12,100,144,0,FALSE
+Coke in Can,Soft Drinks (CAN),case,C-CANS,24,100,778,0,FALSE
+Royal in Can,Soft Drinks (CAN),case,R-CANS,24,100,778,0,FALSE
+Sprite in Can,Soft Drinks (CAN),case,S-CANS,24,100,778,0,FALSE
+Coke Zero in Can,Soft Drinks (CAN),case,CZ-CANS,24,100,778,0,FALSE
+Nutri Boost Choco,Juice Drinks (TETRA),case,CHO-NB,24,100,278,0,FALSE
+Nutri Boost Strawberry,Juice Drinks (TETRA),case,STW-NB,24,100,278,0,FALSE
+Minute Maid Fresh TETRA-PACK Apple,Juice Drinks (TETRA),case,A-MMTETRA,10,100,90,0,FALSE
+Minute Maid Fresh TETRA-PACK Mango,Juice Drinks (TETRA),case,M-MMTETRA,10,100,90,0,FALSE
+Minute Mad Fresh TETRA-PACK Orange ,Juice Drinks (TETRA),case,O-MMTETRA,10,100,90,0,FALSE
+Wilkins 7L,Water,case,W7L,3,100,250,0,FALSE
+Wilkins Pure 1L,Water,case,WP1L,12,100,191,0,FALSE
+Wilkins Pure 500ml,Water,case,WP500,24,100,230,0,FALSE
+Wilkins Pure 330ml,Water,case,WP330-x30,30,100,216,0,FALSE
+Wilkins Pure Distilled 1L,Water,case,WILDIST,12,100,280,0,FALSE
+Wilkins Pure 330ml,Water,case,WP330-x12,12,100,90,0,FALSE
+Absolute 8L,Water,case,ABS8L,2,100,185,0,FALSE
+Cobra Bottles,Energy Drink (Bote),case,Y-COB,24,100,320,2,TRUE
+Cobra Bottles,Energy Drink (Bote),case,G-COB,24,100,320,2,TRUE
+Cobra Bottles,Energy Drink (Bote),case,R-COB,24,100,320,2,TRUE
+Cobra Plastic Bottle,Energy Drink (PET),case,Y-COB-PET,12,100,198,0,FALSE
+Cobra Plastic Bottle,Energy Drink (PET),case,G-COB-PET,12,100,198,0,FALSE
+Cobra Plastic Bottle,Energy Drink (PET),case,R-COB-PET,12,100,198,0,FALSE
+San Miguel Pale Pilsen 320ml,Beer,case,PP320,24,100,930,1.5,TRUE
+San Miguel Pale Pilsen Stallion 330ml,Beer,case,STALLION,24,100,1000,1.5,TRUE
+San Miguel Red Horse 500ml,Beer,case,RH500,12,100,686,2.25,TRUE
+San Miguel Red Horse 1L,Beer,case,RH1000,6,100,664,4.5,TRUE
+San Miguel Red Horse 1L Super,Beer,case,RH1000SUPER,6,100,700,4.5,TRUE
+San Miguel Light,Beer,case,SML,24,100,1065,1.5,TRUE
+San Miguel Light Apple,Beer,case,A-SML,24,100,900,1.5,TRUE

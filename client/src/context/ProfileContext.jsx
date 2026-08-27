@@ -13,10 +13,36 @@ export function ProfileProvider({ children }) {
 
   useEffect(() => {
     (async () => {
-      const [list, persistedKey] = await Promise.all([
-        api.get('/auth/profiles'),
-        api.getActiveProfile(),
-      ]);
+      let list = [];
+      let persistedKey = null;
+      try {
+        [list, persistedKey] = await Promise.all([
+          api.get('/auth/profiles'),
+          api.getActiveProfile(),
+        ]);
+        if (Array.isArray(list) && list.length > 0) {
+          try { localStorage.setItem('cached_profiles', JSON.stringify(list)); } catch {}
+        }
+      } catch {
+        try {
+          const raw = localStorage.getItem('cached_profiles');
+          if (raw) list = JSON.parse(raw);
+          else {
+            list = [
+              { profile_key: 'josie', full_name: 'Josie' },
+              { profile_key: 'luis', full_name: 'Luis' },
+              { profile_key: 'admin', full_name: 'Admin' },
+            ];
+          }
+        } catch {
+          list = [
+            { profile_key: 'josie', full_name: 'Josie' },
+            { profile_key: 'luis', full_name: 'Luis' },
+            { profile_key: 'admin', full_name: 'Admin' },
+          ];
+        }
+        persistedKey = await api.getActiveProfile();
+      }
       setProfiles(list);
       const persisted = list.find((p) => p.profile_key === persistedKey) || null;
       setActiveProfile(persisted);

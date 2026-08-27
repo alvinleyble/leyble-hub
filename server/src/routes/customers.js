@@ -72,7 +72,7 @@ router.get('/:id', async (req, res, next) => {
 
     const { rows: orders } = await db.query(
       `SELECT
-         o.id, o.status, o.total_amount, o.created_at,
+         o.id, o.receipt_number, o.status, o.total_amount, o.adjustment, o.adjustment_reason, o.created_at,
          o.dispatched_at, o.delivered_at, o.closed_at,
          (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
           FROM order_personnel op JOIN personnel per ON per.id = op.personnel_id
@@ -109,10 +109,11 @@ router.patch('/:id', async (req, res, next) => {
       ['is_active', 'Active status'],
     ]);
 
-    // The "save custom price" flow (ADR 0001) always converts regular → wholesaler in the
-    // same action as saving the customer's first custom price; carry that context into the
-    // audit line so a future reader sees *why* the type changed, not just that it did.
-    if (conversion_note && customer_type === 'wholesaler' && existing.customer_type !== 'wholesaler') {
+    // ADR 0009 superseded ADR 0001: saving a custom price no longer converts the customer
+    // to a pricing-bearing type, so no caller sends conversion_note any more. Any note that
+    // does arrive is still folded into the audit line, so a type change made for a stated
+    // reason reads as one rather than as an unexplained edit.
+    if (conversion_note && customer_type && customer_type !== existing.customer_type) {
       const typeChangeIdx = changes.findIndex((c) => c.startsWith('Type changed'));
       if (typeChangeIdx !== -1) {
         changes[typeChangeIdx] = `${changes[typeChangeIdx]} (${conversion_note})`;
@@ -207,6 +208,97 @@ router.delete('/:id', async (req, res, next) => {
     });
     await client.query('COMMIT');
     res.json({ outcome: 'deleted' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/v1/customers/:id/merge — merge source customer into target customer
+router.post('/:id/merge', async (req, res, next) => {
+  const { target_customer_id } = req.body;
+  const sourceId = Number(req.params.id);
+  const targetId = Number(target_customer_id);
+
+  if (!target_customer_id || isNaN(targetId)) {
+    return res.status(400).json({ error: 'target_customer_id is required' });
+  }
+
+  if (isNaN(sourceId)) {
+    return res.status(400).json({ error: 'Invalid source customer id' });
+  }
+
+  if (sourceId === targetId) {
+    return res.status(400).json({ error: 'Source and target customer cannot be the same' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [source] } = await client.query(
+      'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
+      [sourceId]
+    );
+    if (!source) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Source customer not found' });
+    }
+
+    const { rows: [target] } = await client.query(
+      'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
+      [targetId]
+    );
+    if (!target) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Target customer not found' });
+    }
+
+    // 1. Count orders belonging to source
+    const { rows: [{ count }] } = await client.query(
+      'SELECT COUNT(*) AS count FROM orders WHERE customer_id = $1',
+      [sourceId]
+    );
+    const orderCount = Number(count);
+
+    // 2. Reassign all orders
+    await client.query(
+      'UPDATE orders SET customer_id = $1 WHERE customer_id = $2',
+      [targetId, sourceId]
+    );
+
+    // 3. Clean up custom price entries for source
+    await client.query(
+      'DELETE FROM customer_product_prices WHERE customer_id = $1',
+      [sourceId]
+    );
+
+    // 4. Permanently delete the source customer
+    await client.query(
+      'DELETE FROM customers WHERE id = $1',
+      [sourceId]
+    );
+
+    // 5. Log activity in activity_logs
+    await logActivity(client, {
+      entityType: 'customer',
+      entityId: target.id,
+      action: 'merge',
+      summary: `Merged customer '${source.name}' (#${source.id}) into '${target.name}' (#${target.id})`,
+      performedBy: req.user.id,
+    });
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Customer merged successfully',
+      source_customer_id: source.id,
+      target_customer_id: target.id,
+      orders_transferred: orderCount,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
