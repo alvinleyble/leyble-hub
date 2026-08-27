@@ -56,3 +56,89 @@ test('F1: a channel with no custom rate falls back to standard, with no badge', 
   assert.match(r.text(), /₱300\.00/);
   assert.equal(/[−+]₱/.test(r.text()), false, 'no gap badge when the rate is standard');
 });
+
+test('ProductCard button has touch-pan-y and not touch-none so vertical drag can scroll grid', () => {
+  const r = grid();
+  const btn = r.container.querySelector('button[aria-label]');
+  assert.ok(btn.className.includes('touch-pan-y'), 'card button must have touch-pan-y');
+  assert.equal(btn.className.includes('touch-none'), false, 'card button must not have touch-none');
+  r.unmount();
+});
+
+test('quick tap on a card adds one unit', () => {
+  let added = [];
+  const r = grid({ onAdd: (p) => added.push(p) });
+  const card = r.container.querySelector('button[aria-label]');
+  r.pointerDown(card, { clientX: 100, clientY: 100 });
+  r.pointerUp(card, { clientX: 101, clientY: 100 });
+  assert.equal(added.length, 1, 'tap must add one unit');
+  assert.equal(added[0].id, coke.id);
+  r.unmount();
+});
+
+test('quick tap starting on card text/badge adds one unit', () => {
+  let added = [];
+  const r = grid({ onAdd: (p) => added.push(p) });
+  const child = r.container.querySelector('button[aria-label] span');
+  assert.ok(child, 'expected child span element');
+  r.pointerDown(child, { clientX: 100, clientY: 100 });
+  r.pointerUp(child, { clientX: 100, clientY: 101 });
+  assert.equal(added.length, 1, 'tap on child must add one unit');
+  assert.equal(added[0].id, coke.id);
+  r.unmount();
+});
+
+test('pointerdown then move past threshold (> 10px) then up does NOT add anything (scroll gesture)', () => {
+  let added = [];
+  const r = grid({ onAdd: (p) => added.push(p) });
+  const card = r.container.querySelector('button[aria-label]');
+  r.pointerDown(card, { clientX: 100, clientY: 100 });
+  r.pointerMove(card, { clientX: 100, clientY: 85 }); // 15px drag vertically
+  r.pointerUp(card, { clientX: 100, clientY: 85 });
+  assert.equal(added.length, 0, 'drag must not add product so scroll container can scroll');
+  r.unmount();
+});
+
+test('pointerdown-and-drag starting on a child element (text/badge) does NOT add anything', () => {
+  let added = [];
+  const r = grid({ onAdd: (p) => added.push(p) });
+  const child = r.container.querySelector('button[aria-label] span');
+  r.pointerDown(child, { clientX: 100, clientY: 100 });
+  r.pointerMove(child, { clientX: 100, clientY: 120 }); // 20px drag
+  r.pointerUp(child, { clientX: 100, clientY: 120 });
+  assert.equal(added.length, 0, 'drag on child must not add product');
+  r.unmount();
+});
+
+test('pointercancel cancels pending action and does not add', () => {
+  let added = [];
+  const r = grid({ onAdd: (p) => added.push(p) });
+  const card = r.container.querySelector('button[aria-label]');
+  r.pointerDown(card, { clientX: 100, clientY: 100 });
+  r.pointerCancel(card);
+  assert.equal(added.length, 0, 'pointercancel must not add product');
+  r.unmount();
+});
+
+test('press-and-hold in place on a card ramps quantity continuously via repeat behavior', async () => {
+  let count = 0;
+  const r = grid({ onAdd: () => { count++; } });
+  const card = r.container.querySelector('button[aria-label]');
+  r.pointerDown(card, { clientX: 100, clientY: 100 });
+  assert.equal(count, 0, 'should not add synchronously on pointerdown');
+
+  // Wait 400ms delay + 150ms for interval ticks
+  await new Promise((res) => setTimeout(res, 550));
+  assert.ok(count >= 2, `expected at least 2 ticks during hold, got ${count}`);
+
+  const prevCount = count;
+  r.pointerUp(card, { clientX: 100, clientY: 100 });
+  assert.equal(count, prevCount, 'pointerup after hold must not fire extra add');
+
+  // Wait to verify repeat timer stopped
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(count, prevCount, 'repeat must stop after pointerup');
+  r.unmount();
+});
+
+
