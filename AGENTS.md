@@ -232,6 +232,22 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   after Save, not the periodic loop; calling the bare `drainOutbox()` from
   `outbox.js` without also calling `handleDrainCompletion(res)` on a successful send
   is silently correct in every way except that no screen ever hears about it.
+- **`drainOutbox()` self-reruns instead of stranding a skipped call** (Round 3 Fix 5).
+  A `drainOutbox()` call while another pass is already in flight returns
+  `{skipped:true}` immediately (`draining` mutex) — but the record it just enqueued
+  was not necessarily in that in-flight pass's own `records` snapshot (taken at the
+  START of that pass), so without a follow-up it would sit `QUEUED` until whatever
+  unrelated thing next calls `drainOutbox()` (the 30s periodic loop, an `online`
+  event, another save). `outbox.js` now schedules an immediate follow-up pass itself
+  the moment the in-flight one finishes, and routes a successful rerun through
+  `handleDrainCompletion` exactly like every other drain path — this is what the
+  chrome-wide `OfflineMarker` showing "N waiting" for minutes after an unrelated
+  order's own banner had already cleared turned out to be.
+- **G28's real-time offline editing also covers the adjustment** (Round 3 Fix 4) —
+  `OrderDetailPage.jsx`'s `saveAdjustment` writes through `updateLocalOrder()` while
+  `unsynced`, same as the rest of an offline edit, and falls back to the ordinary
+  `PATCH /orders/:id/adjustment` once synced. It was previously the one control left
+  hard-disabled with no offline path of its own, contradicting the rest of G28.
 - **Dev-browser persistence (Round 2 Fix 3):** on a plain desktop browser (not the
   Android APK), `nativeStore.js` backs onto `window.localStorage` when available
   (falling back to an in-memory `Map` only if localStorage throws or is absent, e.g.

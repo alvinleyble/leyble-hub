@@ -11,7 +11,7 @@ import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef } from '../../utils/orderRef';
-import { getReceipt } from '../../offline/index.js';
+import { getReceipt, updateLocalOrder } from '../../offline/index.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -162,6 +162,32 @@ export default function OrderDetailPage() {
     if (adj !== 0 && !adjReason.trim()) { addToast('Adjustment reason is required.', 'error'); return; }
     setSavingAdj(true);
     try {
+      // Round 3 Fix 4 — G28 already lets the rest of an unsynced order be edited in
+      // place via Edit Order/updateLocalOrder; the adjustment shortcut here was the
+      // one control left hard-disabled with no offline path of its own. Mirror
+      // OrderCreateModal's same updateLocalOrder-then-fall-back-to-PATCH pattern:
+      // rewrite the local receipt + queued outbox payload while unsynced, and fall
+      // through to the ordinary server PATCH if it turns out the order already
+      // drained (updateLocalOrder throws once its outbox record is gone).
+      if (unsynced) {
+        try {
+          const updated = await updateLocalOrder({
+            order,
+            items: order.items,
+            notes: order.notes,
+            adjustment: { value: adj, reason: adjReason.trim() },
+            personnel: null,
+          });
+          setOrder(updated);
+          setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
+          setAdjReason(updated.adjustment_reason || '');
+          addToast('Adjustment saved.', 'success');
+          return;
+        } catch {
+          // Already drained — fall through to the online PATCH below.
+        }
+      }
+
       const updated = await api.patch(`/orders/${id}/adjustment`, {
         adjustment: adj,
         adjustment_reason: adjReason.trim(),
@@ -496,8 +522,6 @@ export default function OrderDetailPage() {
           <button
             type="button"
             onClick={() => setAdjExpanded((v) => !v)}
-            disabled={unsynced}
-            title={unsynced ? 'Waiting to sync — use Edit Order to change the adjustment offline.' : undefined}
             className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
           >
@@ -505,7 +529,7 @@ export default function OrderDetailPage() {
           </button>
         </div>
 
-        {adjExpanded && !unsynced && (
+        {adjExpanded && (
           <div className="mt-4 space-y-3">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1">

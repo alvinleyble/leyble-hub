@@ -3,6 +3,7 @@ import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
 import { markOffline } from './status';
+import { handleDrainCompletion } from './drainNotifier.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -170,6 +171,21 @@ function isNetworkFailure(err) {
 
 let draining = false;
 
+// Round 3 Fix 5 — a caller whose drainOutbox() lands while another pass is already
+// running gets an immediate {skipped:true}: fine for that caller, but a record it just
+// enqueued (already in nativeStore by the time it called drainOutbox()) was NOT
+// necessarily in the in-flight pass's own `records` snapshot — that snapshot was taken
+// at the START of the in-flight pass, before this record existed. Without this flag,
+// that record would then sit QUEUED until whatever unrelated thing next calls
+// drainOutbox() (the 30s periodic loop, an 'online' event, another save) — which the
+// captain reported as the chrome-wide OfflineMarker showing "N waiting" for minutes
+// after the record it referred to had, from the operator's point of view, already
+// finished (a different, already-synced order's own banner cleared fine, because that
+// record WAS in the in-flight pass's snapshot). Rather than waiting on the next
+// unrelated trigger, a skipped call now schedules an immediate follow-up pass the
+// moment the in-flight one finishes.
+let queuedRerun = false;
+
 /**
  * Send what is waiting, oldest first, honouring dependencies.
  *
@@ -182,12 +198,20 @@ let draining = false;
  *                    discarded, never guessed at.
  */
 export async function drainOutbox() {
-  if (draining) return { sent: 0, failed: 0, waiting: await waitingCount(), skipped: true };
+  if (draining) {
+    queuedRerun = true;
+    return { sent: 0, failed: 0, waiting: await waitingCount(), skipped: true };
+  }
+  return runDrainPass();
+}
+
+async function runDrainPass() {
   if (isSimulatedOffline()) {
     return { sent: 0, failed: 0, waiting: await waitingCount(), offline: true };
   }
 
   draining = true;
+  queuedRerun = false;
   let sent = 0;
   let failed = 0;
   try {
@@ -254,6 +278,18 @@ export async function drainOutbox() {
     return { sent, failed, waiting };
   } finally {
     draining = false;
+    if (queuedRerun) {
+      queuedRerun = false;
+      // Fire-and-forget: the caller that got skipped already has its own
+      // {skipped:true} result and isn't waiting on this. Route a successful rerun
+      // through the same notifier every other drain path uses, so a record that
+      // only missed this pass by a race still tells OrderDetailPage / the marker
+      // the moment it actually syncs, instead of waiting on the next unrelated
+      // trigger.
+      runDrainPass()
+        .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+        .catch(() => {});
+    }
   }
 }
 

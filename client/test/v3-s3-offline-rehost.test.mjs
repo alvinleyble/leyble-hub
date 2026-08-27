@@ -14,8 +14,8 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { nativeStore, __resetMemoryBackend, __useLocalStorageBackendForTest } from '../src/offline/nativeStore.js';
 import { STATION_KEY } from '../src/offline/keys.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
-import { __clearOutbox, listRecords } from '../src/offline/outbox.js';
-import { putReceipt } from '../src/offline/receiptHistory.js';
+import { __clearOutbox, listRecords, drainOutbox, enqueue } from '../src/offline/outbox.js';
+import { putReceipt, getReceipt } from '../src/offline/receiptHistory.js';
 import { saveOrderLocalFirst, cleanupOrphanedDraftDirect, updateLocalOrder } from '../src/offline/posSave.js';
 import { notifyDrainCompleteWith, handleDrainCompletionWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
 import { startOfflineCore, stopOfflineCore } from '../src/offline/index.js';
@@ -59,7 +59,8 @@ const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 // version throws on plain dispatchEvent alone (`attachEvent is not a function`),
 // which otherwise leaves onChange never firing and Combobox's `open` state stuck.
 function changeInput(input, value) {
-  const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+  const proto = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
   descriptor.set.call(input, value);
   const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps'));
   if (reactPropsKey && input[reactPropsKey]?.onChange) {
@@ -264,6 +265,60 @@ test('Round 2 Fix 1 (real root cause): saveOrderLocalFirst\'s own immediate post
     assert.equal(events.length, 1,
       'the order-create screen must be told this order synced without waiting for the 30s periodic loop');
     assert.equal(events[0].sent, 1);
+  } finally {
+    window.removeEventListener('leyble:drain-complete', handler);
+  }
+});
+
+test('Round 3 Fix 5: a drainOutbox() call skipped because another pass is already in flight is retried automatically once that pass finishes, instead of stranding the record it just enqueued until the next unrelated trigger', async () => {
+  const profileKey = 'josie';
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+  let requestCount = 0;
+  api.request = async () => {
+    requestCount++;
+    if (requestCount === 1) {
+      await firstGate; // hold the first record's send in flight
+      return { id: 9001 };
+    }
+    return { id: 9002 };
+  };
+
+  await enqueue({ entityType: 'order', endpoint: '/orders', method: 'POST', payload: { a: 1 }, profileKey });
+
+  // Starts a pass whose `records` snapshot is just record 1 — it's now blocked
+  // inside api.request(), mid-flight, and hasn't reached the finally block yet.
+  const firstPassPromise = drainOutbox();
+  await flushMicrotasks();
+
+  // Enqueue a second record and try to drain WHILE the first pass is still running —
+  // this reproduces the captain's exact "created one order... the marker kept
+  // showing '1 waiting'" scenario: record 2 was never in the in-flight pass's
+  // snapshot, so this call must be skipped, not silently merged into it.
+  await enqueue({ entityType: 'order', endpoint: '/orders', method: 'POST', payload: { a: 2 }, profileKey });
+  const skippedResult = await drainOutbox();
+  assert.equal(skippedResult.skipped, true, 'a concurrent call while draining must report skipped, not double-run the loop');
+
+  __resetDrainNotifierState();
+  const events = [];
+  const handler = (e) => events.push(e.detail);
+  window.addEventListener('leyble:drain-complete', handler);
+
+  try {
+    releaseFirst();
+    await firstPassPromise;
+
+    // The automatic follow-up rerun is fire-and-forget from drainOutbox()'s own
+    // finally block — give it a few ticks to actually run and finish.
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    const remaining = await listRecords();
+    assert.equal(remaining.length, 0,
+      'record 2 must not be left QUEUED waiting on some unrelated future trigger — this is what showed up live as the OfflineMarker stuck on "1 waiting" for minutes');
+    assert.ok(events.some((e) => e.sent > 0),
+      'the automatic rerun that actually sent record 2 must still notify leyble:drain-complete like every other successful drain, not self-heal silently');
   } finally {
     window.removeEventListener('leyble:drain-complete', handler);
   }
@@ -596,6 +651,61 @@ test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "
   const editBtn = r.all('button').find((b) => b.textContent.trim() === 'Edit Order');
   assert.ok(editBtn);
   assert.equal(editBtn.disabled, false, 'G28: Edit Order must stay enabled while unsynced');
+
+  r.unmount();
+});
+
+test('Round 3 Fix 4: the adjustment can be added while an order is unsynced — writes through updateLocalOrder, never api.patch, and the queued outbox payload + local receipt both reflect it immediately', async () => {
+  await registerStation(9);
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; }; // stays queued, never drains
+
+  const localOrder = await saveOrderLocalFirst({
+    customer: { id: 5, name: 'Aling Nena' },
+    items: [{ product_id: 1, product_name: 'Coke Sakto 200ml', sku: 'C-8', quantity: 1, unit_price: 300 }],
+    profileKey: 'josie',
+  });
+
+  const err404 = new Error('Not found'); err404.status = 404;
+  api.get = async () => { throw err404; };
+  api.patch = async (path) => { throw new Error(`api.patch(${path}) must not be called — the order is still unsynced (Round 3 Fix 4)`); };
+
+  const r = renderAtRoute(`/orders/${localOrder.receipt_number}`, '/orders/:id',
+    React.createElement(ToastProvider, null, React.createElement(OrderDetailPage))
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.match(r.text(), /Waiting to sync/);
+
+  const toggleBtn = r.all('button').find((b) => b.textContent.includes('Add Adjustment'));
+  assert.ok(toggleBtn, '+ Add Adjustment must render while unsynced');
+  assert.equal(toggleBtn.disabled, false,
+    'the adjustment toggle was the one G28 control left hard-disabled with no offline path — must be enabled while unsynced');
+  r.click(toggleBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  const amountInput = r.all('input').find((i) => i.type === 'number');
+  const reasonInput = r.container.querySelector('textarea');
+  assert.ok(amountInput && reasonInput, 'the adjustment form itself must actually render while unsynced, not just the toggle button');
+  act(() => {
+    changeInput(amountInput, '-50');
+    changeInput(reasonInput, 'Negotiated discount');
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  const saveBtn = r.all('button').find((b) => b.textContent.includes('Save Adjustment'));
+  assert.ok(saveBtn);
+  await act(async () => {
+    r.click(saveBtn);
+    await new Promise((res) => setTimeout(res, 50));
+  });
+
+  const record = (await listRecords()).find((rec) => rec.entity_type === 'order');
+  assert.ok(record, 'the order must still be the same queued outbox record');
+  assert.equal(Number(record.payload.adjustment), -50, 'the queued outbox payload must carry the new adjustment');
+  assert.equal(record.payload.adjustment_reason, 'Negotiated discount');
+
+  const stored = await getReceipt(localOrder.receipt_number);
+  assert.equal(Number(stored.adjustment), -50, 'the local receipt must reflect the new adjustment immediately, not just the outbox payload');
 
   r.unmount();
 });
