@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import OfflineMarker from './OfflineMarker';
 
 export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false);
@@ -11,9 +12,11 @@ export default function AppLayout() {
   // portrait and landscape; only real desktops get the permanent sidebar.
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
-      {/* Static sidebar — desktops only */}
+      {/* Static sidebar — desktops only. V1 has no desktop top bar, so the
+          always-visible offline marker (G9) lives in the sidebar's brand
+          header here instead. */}
       <div className="hidden desktop:flex">
-        <Sidebar />
+        <Sidebar offlineMarker={<OfflineMarker variant="v1" />} />
       </div>
 
       {/* Slide-in drawer — phones/tablets, any orientation */}
@@ -49,6 +52,9 @@ export default function AppLayout() {
             </svg>
           </button>
           <p className="text-lg font-bold tracking-tight select-none">Leyble Hub</p>
+          <div className="ml-auto">
+            <OfflineMarker variant="v1" />
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto focus:outline-none" tabIndex={-1} id="main-content">

@@ -11,12 +11,13 @@ import { render, React, act } from './render.mjs';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
-import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
+import { nativeStore, __resetMemoryBackend, __useLocalStorageBackendForTest } from '../src/offline/nativeStore.js';
+import { STATION_KEY } from '../src/offline/keys.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import { __clearOutbox, listRecords } from '../src/offline/outbox.js';
 import { putReceipt } from '../src/offline/receiptHistory.js';
 import { saveOrderLocalFirst, cleanupOrphanedDraftDirect, updateLocalOrder } from '../src/offline/posSave.js';
-import { notifyDrainCompleteWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
+import { notifyDrainCompleteWith, handleDrainCompletionWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
 import { startOfflineCore, stopOfflineCore } from '../src/offline/index.js';
 
 const { createRoot } = await import('react-dom/client');
@@ -203,6 +204,71 @@ test('G27: notifyDrainCompleteWith dispatches leyble:drain-complete only when a 
   window.removeEventListener('leyble:drain-complete', handler);
 });
 
+test('Round 2 Fix 1: handleDrainCompletionWith (the function the real drain path actually calls) dispatches leyble:drain-complete even with V25_OFFLINE_CORE off (production default) and after the toast latch has already fired', async () => {
+  __resetDrainNotifierState();
+  const events = [];
+  const handler = (e) => events.push(e.detail);
+  window.addEventListener('leyble:drain-complete', handler);
+
+  // Reproduces the captain's report: an order synced (confirmed via a direct GET)
+  // but the "Waiting to sync" banner never cleared without a reload. The prior
+  // regression test above only exercised notifyDrainCompleteWith directly, which
+  // already dispatched unconditionally — masking that its actual caller,
+  // handleDrainCompletionWith, gated the call behind `enabled` (off by default in
+  // production) and the once-per-outage toast latch, so the event never reached
+  // the real drain path at all.
+  const result1 = await handleDrainCompletionWith({ sent: 2, waiting: 0 }, false);
+  assert.equal(result1, false, 'the duplicate-detection toast stays flag-gated');
+  assert.equal(events.length, 1, 'but the sync signal must fire regardless of the flag');
+  assert.deepEqual(events[0], { sent: 2, waiting: 0 });
+
+  // A second, later drain (as if the toast latch were already set from an earlier
+  // outage) must still dispatch — OrderDetailPage needs every drain that might
+  // concern it, not just the first.
+  const result2 = await handleDrainCompletionWith({ sent: 1, waiting: 3 }, false);
+  assert.equal(result2, false);
+  assert.equal(events.length, 2, 'must fire on every drain that sent something, not once per outage');
+  assert.deepEqual(events[1], { sent: 1, waiting: 3 });
+
+  window.removeEventListener('leyble:drain-complete', handler);
+});
+
+test('Round 2 Fix 1 (real root cause): saveOrderLocalFirst\'s own immediate post-save drain dispatches leyble:drain-complete once it lands the order on the server, not only the 30s periodic loop in offline/index.js', async () => {
+  await registerStation(65);
+  api.request = async () => ({ id: 4001 }); // drainOutbox's actual send call — a successful order POST
+
+  __resetDrainNotifierState();
+  const events = [];
+  const handler = (e) => events.push(e.detail);
+  window.addEventListener('leyble:drain-complete', handler);
+
+  try {
+    // This is exactly the captain's live repro: create an order (online), and — per
+    // the AGENTS.md doc on offline/index.js — this immediate drain, not the 30s
+    // interval, is what actually lands it on the server within ~1s. It calls the bare
+    // drainOutbox() from outbox.js directly and, before this fix, never routed the
+    // result through handleDrainCompletion — so OrderDetailPage's listener never saw
+    // this drain at all and stayed on "Waiting to sync" until an unrelated later
+    // drain (or a reload) happened to fire the event for an unrelated reason.
+    await saveOrderLocalFirst({
+      customer: { id: 5, name: 'Aling Glo' },
+      items: [{ product_id: 1, product_name: 'Coke', quantity: 1, unit_price: 300 }],
+      profileKey: 'josie',
+    });
+
+    // The drain itself is fire-and-forget (saveOrderLocalFirst does not await it), so
+    // give its promise chain a couple of ticks to resolve.
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    assert.equal(events.length, 1,
+      'the order-create screen must be told this order synced without waiting for the 30s periodic loop');
+    assert.equal(events[0].sent, 1);
+  } finally {
+    window.removeEventListener('leyble:drain-complete', handler);
+  }
+});
+
 // ── G30 — engine/test hygiene ─────────────────────────────────────────────────
 
 test('G30: startOfflineCore registers a station and starts the drain loop without VITE_V25_OFFLINE_CORE set', async () => {
@@ -235,6 +301,35 @@ test('G30: window.__leyble.simulateOffline(true) persists across a same-tab relo
   mod2.setSimulatedOffline(false);
   assert.equal(sessionStorage.getItem('leyble_simulated_offline'), null);
   mod1.setSimulatedOffline(false);
+});
+
+test('Round 2 Fix 3: browser-dev nativeStore persists to window.localStorage (survives a reload), not just an in-memory map that a reload wipes', async () => {
+  window.localStorage.removeItem(STATION_KEY);
+  window.localStorage.setItem('authToken', 'unrelated-session-state-should-not-leak');
+  try {
+    __useLocalStorageBackendForTest();
+
+    await nativeStore.setJson(STATION_KEY, { station_number: 3, device_key: 'dev-abc' });
+
+    // Read the raw browser storage directly, not just through nativeStore — this is
+    // what actually distinguishes "persists across a reload" from an in-memory Map:
+    // a real page reload keeps window.localStorage but would drop a JS Map entirely.
+    const raw = window.localStorage.getItem(STATION_KEY);
+    assert.ok(raw, 'must actually land in window.localStorage, not only an in-memory structure');
+    assert.equal(JSON.parse(raw).station_number, 3);
+
+    const readBack = await nativeStore.getJson(STATION_KEY);
+    assert.equal(readBack.station_number, 3,
+      'ensureStationRegistered() must find this on the next call and skip minting a new station number, which is what let a single login run up station numbers past 40');
+
+    const keys = await nativeStore.keys();
+    assert.ok(keys.includes(STATION_KEY));
+    assert.ok(!keys.includes('authToken'), 'must only ever surface this store\'s own v25.-prefixed keys, never unrelated app/session state sharing the same localStorage');
+  } finally {
+    window.localStorage.removeItem(STATION_KEY);
+    window.localStorage.removeItem('authToken');
+    __resetMemoryBackend();
+  }
 });
 
 // ── G29 — local-* customer guards in OrderCreateModal ────────────────────────

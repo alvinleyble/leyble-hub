@@ -220,17 +220,31 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   wedging "Offline · N waiting" for minutes).
 - **Silent background sync** — `drainNotifier.js` dispatches a
   `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting } })`
-  whenever a drain sends something, independent of the once-per-outage toast latch.
+  whenever a drain sends something, independent of both the `V25_OFFLINE_CORE` flag
+  (this is a sync signal, not a display concern) and the once-per-outage toast latch.
   `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
   touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
-  the synced server row spinner-free.
-- **Dev-browser gotcha:** on a plain desktop browser (not the Android APK),
-  `nativeStore.js` falls back to an in-memory `Map` (D17 forbids WebView storage) —
-  **a page reload wipes the entire outbox and receipt history.** An order or customer
-  created while `window.__leyble.simulateOffline(true)` is on will never sync if you
-  reload before flipping it back off; test offline flows within one tab session
-  without reloading, or on a real device/emulator. This is G2's known, still-open dev-
-  tier gap, not a bug to chase.
+  the synced server row spinner-free. **Every caller of `drainOutbox()` that can fire
+  outside the 30s periodic loop must route its result through `handleDrainCompletion`
+  itself** (Round 2 Fix 1) — `posSave.js`'s three background drains (the immediate
+  post-save drain in `saveOrderLocalFirst`, `queueReceiptPrinted`, and
+  `updateLocalOrder`) are what actually land an order on the server in practice, ~1s
+  after Save, not the periodic loop; calling the bare `drainOutbox()` from
+  `outbox.js` without also calling `handleDrainCompletion(res)` on a successful send
+  is silently correct in every way except that no screen ever hears about it.
+- **Dev-browser persistence (Round 2 Fix 3):** on a plain desktop browser (not the
+  Android APK), `nativeStore.js` backs onto `window.localStorage` when available
+  (falling back to an in-memory `Map` only if localStorage throws or is absent, e.g.
+  private browsing or the Node test runner) — a page reload now survives with the
+  outbox, receipt history, and station registration intact. D17's WebView-storage ban
+  is about the production APK specifically (Android evicts it, "clear data" wipes it);
+  it was never a reason to also wipe a developer's own browser tab on every reload,
+  and doing so caused a real bug: `station.js` only registers a new station when none
+  is stored locally, so every reload looked like a brand-new device and minted a fresh
+  station number from the server (reproduced live as station numbers climbing past 40
+  from one login). Production is unaffected — the APK always uses `preferencesBackend`.
+  Tests are unaffected — every offline test file forces the in-memory backend via
+  `__resetMemoryBackend()` in its own `beforeEach`, regardless of what's available.
 - **The off switch is `V25_OFFLINE_CORE`** in `client/src/config/features.js` — build-time
   (`VITE_V25_OFFLINE_CORE=on`), off by default, reused by every piece. Off must be
   indistinguishable from today. **Migrations are NOT behind it** (Render runs

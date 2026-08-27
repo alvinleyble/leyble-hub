@@ -13,9 +13,21 @@ import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
 // - Needs attention: Red attention badge, clickable to open NeedsAttentionModal.
 //
 // When V25_OFFLINE_CORE is off, renders null.
-export default function OfflineMarker() {
+//
+// G9 — chrome-wide, not just Outgoing Orders: V2Shell renders this on its own
+// dark tokens (`variant="v2"`, the default); AppLayout's V1 chrome (mobile top
+// bar + desktop Sidebar) is `bg-slate-900` but outside `.v2-root`, so the V2
+// `ring-v2-accent`/`ring-offset-v2-bg` classes resolve to unset CSS vars there
+// (a dead, invisible focus ring — a11y non-negotiable). `variant="v1"` swaps to
+// the plain `ring-blue-400` every other AppLayout/Sidebar control already uses.
+// The exact idle-state palette on dark V1 chrome is an open captain-hold item
+// (leyble-hub-v3-s3-code-review-decision-marker-palette-on-dark-chrome); this
+// keeps the same emerald/amber/red/sky palette as V2, which is legible on
+// slate-900 but not yet reviewed for a final call.
+export default function OfflineMarker({ variant = 'v2' }) {
   const [attentionModalOpen, setAttentionModalOpen] = useState(false);
   const { isOnline, waitingCount, needsAttentionCount } = useOfflineStatus();
+  const ringClass = variant === 'v1' ? 'focus-visible:ring-blue-400' : 'focus-visible:ring-v2-accent';
 
   if (!V25_OFFLINE_CORE) return null;
 
@@ -47,7 +59,7 @@ export default function OfflineMarker() {
           if (hasAttention) setAttentionModalOpen(true);
         }}
         className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold tracking-tight select-none
-                   transition-colors duration-150 border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent
+                   transition-colors duration-150 border focus-visible:outline-none focus-visible:ring-2 ${ringClass}
                    ${containerClass}`}
         role="status"
         aria-live="polite"

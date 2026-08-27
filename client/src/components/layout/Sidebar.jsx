@@ -21,7 +21,7 @@ const NAV_ITEMS = [
 const PREFERRED_KEY = 'preferred_ui';
 const LONG_PRESS_MS = 3000;
 
-export default function Sidebar({ onClose }) {
+export default function Sidebar({ onClose, offlineMarker }) {
   const { user, logout } = useAuth();
   const { activeProfile, switchProfile } = useProfile();
   const { addToast } = useToast();
@@ -132,6 +132,7 @@ export default function Sidebar({ onClose }) {
           <p className="text-xs text-slate-400 mt-0.5 truncate" title={user?.full_name}>
             {activeProfile?.full_name || user?.full_name}
           </p>
+          {offlineMarker && <div className="mt-2">{offlineMarker}</div>}
         </div>
         {/* Close button — only rendered in drawer (narrow-screen) mode */}
         {onClose && (

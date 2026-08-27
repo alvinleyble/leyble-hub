@@ -8,6 +8,7 @@ import { orderTotals } from '../components/pos/posMath.js';
 import { V25_OFFLINE_CORE } from '../config/features.js';
 import { checkIsOnline, probeReachability } from './status.js';
 import { triggerOfflineAdvisory, triggerOfflineAdvisoryWith } from './advisory.js';
+import { handleDrainCompletion } from './drainNotifier.js';
 import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
 
 // D2 — The POS is local-first, always.
@@ -150,6 +151,13 @@ export async function saveOrderLocalFirst({
         if (res && res.failed > 0 && !checkIsOnline()) {
           triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
         }
+        // Round 2 Fix 1 — this immediate post-save drain is what actually lands the
+        // order on the server within ~1s (the periodic 30s loop in offline/index.js
+        // is a fallback, not the common case). It called the bare drainOutbox() from
+        // outbox.js and never routed the result through handleDrainCompletion, so the
+        // leyble:drain-complete event never fired for the fast path — OrderDetailPage
+        // stayed on "Waiting to sync" until an unrelated 30s-later drain, or a reload.
+        if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {});
       })
       .catch(() => {
         triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
@@ -250,7 +258,9 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
     dependsOn: order._outboxId ? [order._outboxId] : [],
   });
 
-  drainOutbox().catch(() => {});
+  drainOutbox()
+    .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+    .catch(() => {});
   return updatedOrder;
 }
 
@@ -335,7 +345,9 @@ export async function updateLocalOrder({ order, items, notes, adjustment, person
   }
   await nativeStore.setJson(outboxKey(record.id), record);
 
-  drainOutbox().catch(() => {});
+  drainOutbox()
+    .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+    .catch(() => {});
   return updatedOrder;
 }
 
