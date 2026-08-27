@@ -8,6 +8,7 @@ import { orderTotals } from '../components/pos/posMath.js';
 import { V25_OFFLINE_CORE } from '../config/features.js';
 import { checkIsOnline, probeReachability } from './status.js';
 import { triggerOfflineAdvisory, triggerOfflineAdvisoryWith } from './advisory.js';
+import { handleDrainCompletion } from './drainNotifier.js';
 import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
 
 // D2 — The POS is local-first, always.
@@ -36,6 +37,7 @@ export async function saveOrderLocalFirst({
   notes = '',
   adjustment = { value: 0, reason: '' },
   items = [],
+  personnel = [],
   profileKey = null,
   createdAt = null,
   addToast = null,
@@ -57,13 +59,22 @@ export async function saveOrderLocalFirst({
     ? ref(customer._outboxId, 'id')
     : (customer?.id && !String(customer.id).startsWith('local-') ? Number(customer.id) : null);
 
+  // G28/G29 — the local receipt keeps `local-<outboxId>` (not null) for a still-local
+  // customer, unlike the outbox payload above which needs the server's $ref
+  // placeholder instead. Without this, re-opening Edit Order on such a sale finds no
+  // customer_id to select and the picker renders blank (isLocalCustomer below still
+  // recognises the string, same as everywhere else in this modal).
+  const localCustomerId = customer?._outboxId
+    ? `local-${customer._outboxId}`
+    : (typeof customerId === 'number' ? customerId : null);
+
   const localOrder = {
     receipt_number,
     receipt_station: station,
     receipt_sequence: sequence,
     created_at: saleTime,
     status: 'pending',
-    customer_id: typeof customerId === 'number' ? customerId : null,
+    customer_id: localCustomerId,
     customer_name: customer?.name || 'Customer',
     customer_address: customer?.address || null,
     customer_phone: customer?.phone || null,
@@ -87,6 +98,9 @@ export async function saveOrderLocalFirst({
       is_price_overridden: Boolean(i.is_price_overridden || i._priceEdited),
     })),
     total_amount: totals.goods,
+    // G31 — carried through so a still-local order shows its Driver/Helper on
+    // OrderDetailPage exactly like a synced one (server shape: {id, role, full_name}).
+    personnel: personnel.map((p) => ({ id: p.id, role: p.role || 'Driver', full_name: p.full_name })),
     pending_receipt_printed_at: null,
     pending_receipt_printed_by: null,
   };
@@ -116,6 +130,8 @@ export async function saveOrderLocalFirst({
       })),
       receipt_number,
       created_at: saleTime,
+      // G31 — server's syncPersonnel reads {id, role} per row (server/src/routes/orders.js).
+      personnel: personnel.map((p) => ({ id: p.id, role: p.role || 'Driver' })),
     },
     profileKey: activeProfileKey,
     receiptNumber: receipt_number,
@@ -135,6 +151,13 @@ export async function saveOrderLocalFirst({
         if (res && res.failed > 0 && !checkIsOnline()) {
           triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
         }
+        // Round 2 Fix 1 — this immediate post-save drain is what actually lands the
+        // order on the server within ~1s (the periodic 30s loop in offline/index.js
+        // is a fallback, not the common case). It called the bare drainOutbox() from
+        // outbox.js and never routed the result through handleDrainCompletion, so the
+        // leyble:drain-complete event never fired for the fast path — OrderDetailPage
+        // stayed on "Waiting to sync" until an unrelated 30s-later drain, or a reload.
+        if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {});
       })
       .catch(() => {
         triggerOfflineAdvisoryWith({ addToast }, offlineCoreEnabled).catch(() => {});
@@ -158,6 +181,26 @@ export async function saveOrderLocalFirst({
  * (D13) so a blind print still cleans up once the line returns, and a repeat arrival
  * is harmless (a 404 on a queued DELETE counts as done — see outbox.js).
  */
+/**
+ * Fire-and-forget best-effort cleanup of the server-side draft OrderCreateModal.jsx
+ * itself created via V1's ordinary early POST /orders {status:'draft'} the moment a
+ * customer was picked (see the modal's draft-creation effect) — now superseded by a
+ * local-first Create Order save (G27).
+ *
+ * Deliberately NOT queued through the outbox, unlike cleanupOrphanedDraft above
+ * (built for the old POS screen's blind-print case, where the draft's server row id
+ * is the ONLY way to reach it once the line returns). Here the local-first order is
+ * already the authority and already has its own receipt number — a throwaway draft
+ * delete queued behind it would sit in the outbox ahead of or behind real order
+ * POSTs and wedge the "Offline · N waiting" count on a delete nobody is waiting to
+ * see finish. If this fails (offline, or the draft is already gone), the leftover
+ * draft is harmless clutter in Drafts, not a stuck queue.
+ */
+export function cleanupOrphanedDraftDirect(draftId) {
+  if (draftId === null || draftId === undefined || draftId === '') return;
+  api.del(`/orders/${draftId}`).catch(() => {});
+}
+
 export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {}) {
   if (draftRef === null || draftRef === undefined || draftRef === '') return;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
@@ -215,7 +258,9 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
     dependsOn: order._outboxId ? [order._outboxId] : [],
   });
 
-  drainOutbox().catch(() => {});
+  drainOutbox()
+    .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+    .catch(() => {});
   return updatedOrder;
 }
 
@@ -234,7 +279,7 @@ export async function isOrderUnsynced(receiptNumber) {
  * Updates an unsynced order on the device (D3):
  * Updates its outbox record payload and its receipt in local history.
  */
-export async function updateLocalOrder({ order, items, notes, adjustment, profileKey = null }) {
+export async function updateLocalOrder({ order, items, notes, adjustment, personnel = null, profileKey = null }) {
   if (!order?.receipt_number) throw new Error('updateLocalOrder requires receipt_number');
   const records = await listRecords();
   const record = records.find(
@@ -268,6 +313,11 @@ export async function updateLocalOrder({ order, items, notes, adjustment, profil
       is_price_overridden: Boolean(i.is_price_overridden || i._priceEdited),
     })),
     total_amount: totals.goods,
+    // G31 — carry Driver/Helper edits made while still-local; `null` means the
+    // caller isn't touching personnel this update, so the prior value is kept.
+    ...(personnel !== null
+      ? { personnel: personnel.map((p) => ({ id: p.id, role: p.role || 'Driver', full_name: p.full_name })) }
+      : {}),
   };
 
   await putReceipt(updatedOrder);
@@ -286,13 +336,18 @@ export async function updateLocalOrder({ order, items, notes, adjustment, profil
       units_per_case: Number(i.units_per_case) || 1,
       is_price_overridden: false,
     })),
+    ...(personnel !== null
+      ? { personnel: personnel.map((p) => ({ id: p.id, role: p.role || 'Driver' })) }
+      : {}),
   };
   if (profileKey) {
     record.profile_key = profileKey;
   }
   await nativeStore.setJson(outboxKey(record.id), record);
 
-  drainOutbox().catch(() => {});
+  drainOutbox()
+    .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+    .catch(() => {});
   return updatedOrder;
 }
 

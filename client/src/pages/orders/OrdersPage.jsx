@@ -8,6 +8,7 @@ import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
+import { listRecords, subscribeOutbox, getReceipt } from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -84,6 +85,37 @@ export default function OrdersPage() {
   const [reviewQueue, setReviewQueue]     = useState(null);
 
   const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab);
+
+  // Round 4 Fix 7 — locally-created orders (saveOrderLocalFirst, G27) are not on the
+  // server yet, so the server-driven list above can never include them: navigating
+  // away and back to `/orders` lost a freshly-created offline order entirely, landing
+  // on a stale row's numeric id instead once the operator clicked back in. Same
+  // pattern G29 already established for CustomersPage.jsx — read straight from the
+  // outbox rather than the server, merge in, badge "Waiting to sync", and navigate by
+  // receipt number (never a numeric id, since there isn't one yet).
+  const [localUnsyncedOrders, setLocalUnsyncedOrders] = useState([]);
+
+  const loadLocalUnsyncedOrders = useCallback(async () => {
+    try {
+      const records = await listRecords();
+      // status === 'queued' already covers a record blocked mid-drain behind an
+      // unresolved dependency (Fix 6) — it is exactly as "not yet on the server" as
+      // any other queued order, so no separate check is needed here.
+      const queuedOrders = records.filter((r) => r.entity_type === 'order' && r.status === 'queued' && r.receipt_number);
+      const withReceipts = await Promise.all(queuedOrders.map(async (r) => {
+        const receipt = await getReceipt(r.receipt_number);
+        return receipt ? { ...receipt, id: `local-${r.id}`, _unsynced: true } : null;
+      }));
+      setLocalUnsyncedOrders(withReceipts.filter(Boolean));
+    } catch {
+      // Best-effort only — a local listing failure here should not block the page.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLocalUnsyncedOrders();
+    return subscribeOutbox(() => loadLocalUnsyncedOrders());
+  }, [loadLocalUnsyncedOrders]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -169,6 +201,35 @@ export default function OrdersPage() {
       return true;
     });
   }, [orders, searchQuery, doubleOnly, possibleDoubleIds, printFilter]);
+
+  // Round 4 Fix 7 — same instant client-side matching filteredOrders applies, minus
+  // duplicate detection (that needs the full loaded page of server orders, and a
+  // just-created local order can't meaningfully be flagged against it yet) and date
+  // range (a locally-created order's date is always "now", so it would only ever be
+  // excluded by an unusual from/to combination — not worth the extra complexity for
+  // what this fix is actually about: staying reachable from the list at all).
+  const visibleLocalUnsyncedOrders = useMemo(() => {
+    if (doubleOnly) return [];
+    if (statusTab !== 'all' && statusTab !== 'pending') return [];
+    const q = searchQuery.trim().toLowerCase();
+
+    return localUnsyncedOrders.filter((o) => {
+      const printed = isOrderPrinted(o);
+      if (printFilter === 'printed' && !printed) return false;
+      if (printFilter === 'unprinted' && printed) return false;
+
+      if (q) {
+        const matches = (
+          (o.customer_name || '').toLowerCase().includes(q) ||
+          String(o.receipt_number || '').toLowerCase().includes(q) ||
+          orderRef(o).toLowerCase().includes(q)
+        );
+        if (!matches) return false;
+      }
+
+      return true;
+    });
+  }, [localUnsyncedOrders, statusTab, doubleOnly, searchQuery, printFilter]);
 
   const openDraft = async (o) => {
     try {
@@ -497,7 +558,7 @@ export default function OrdersPage() {
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
-      ) : filteredOrders.length === 0 ? (
+      ) : filteredOrders.length === 0 && visibleLocalUnsyncedOrders.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {orders.length === 0
             ? (statusTab === 'all' ? 'No orders yet.' : `No ${STATUS_LABEL[statusTab]?.toLowerCase()} orders.`)
@@ -546,6 +607,44 @@ export default function OrdersPage() {
               </tr>
             </thead>
             <tbody>
+              {visibleLocalUnsyncedOrders.map((o) => (
+                <tr
+                  key={o.id}
+                  onClick={() => navigate(`/orders/${o.receipt_number}`)}
+                  className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
+                >
+                  {showCheckboxes && (
+                    // Not selectable for bulk actions — there is no server row yet to
+                    // act on (Dispatch/Cancel are disabled on its own detail page for
+                    // exactly the same reason, G28).
+                    <td className="px-5 py-4 w-12" />
+                  )}
+                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">{orderRef(o)}</td>
+                  <td className="px-5 py-4">
+                    <p className="font-semibold text-slate-900">{o.customer_name}</p>
+                  </td>
+                  <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
+                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                  </td>
+                  <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell w-36">
+                    {new Date(o.created_at).toLocaleDateString('en-PH', {
+                      month: 'short', day: 'numeric', year: 'numeric',
+                    })}
+                  </td>
+                  <td className="px-5 py-4 w-64">
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                        ⏳ Waiting to sync
+                      </span>
+                      {o.order_type === 'pickup' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                          Pickup
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
               {filteredOrders.map((o) => (
                 <tr
                   key={o.id}

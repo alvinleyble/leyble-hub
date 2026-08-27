@@ -1,26 +1,53 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { render, React, act } from './render.mjs';
+import { Routes, Route, useParams } from 'react-router-dom';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
+import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
+import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
+import { __clearOutbox } from '../src/offline/outbox.js';
+import { saveOrderLocalFirst } from '../src/offline/posSave.js';
 
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
 
 let originalApiGet;
 let originalApiPost;
 let originalApiDel;
+let originalApiRequest;
 
-beforeEach(() => {
+beforeEach(async () => {
   originalApiGet = api.get;
   originalApiPost = api.post;
   originalApiDel = api.del;
+  originalApiRequest = api.request;
+  await __resetMemoryBackend();
+  __resetIssuance();
+  await __clearOutbox();
+  localStorage.setItem('activeProfile', 'josie');
 });
 
 afterEach(() => {
   api.get = originalApiGet;
   api.post = originalApiPost;
   api.del = originalApiDel;
+  api.request = originalApiRequest;
 });
+
+async function registerStation(number = 1) {
+  api.post = async (path) => (path === '/stations/register'
+    ? { station_number: number, registered_at: '2026-08-26T00:00:00.000Z' }
+    : {});
+  return ensureStationRegistered();
+}
+
+// Same as v3-s3-offline-rehost.test.mjs's renderAtRoute: render.mjs's bare
+// MemoryRouter has no Routes, so it can't tell us where a navigate() call actually
+// landed. This declares a real route for it to match against.
+function OrderIdProbe() {
+  const { id } = useParams();
+  return React.createElement('p', { 'data-testid': 'navigated-order-id' }, `navigated:${id}`);
+}
 
 function changeInput(input, value) {
   const prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype
@@ -434,6 +461,82 @@ test('V3.0 Slice 7: Search input triggers debounced API call with search paramet
   assert.ok(searchApiCall, 'Should make API call with search=Alpha');
   assert.ok(searchApiCall.includes('page=1'), 'Search should request page=1');
   assert.ok(r.text().includes('Showing 1–1 of 1 orders'), 'Pagination should show 1 of 1 orders');
+});
+
+function stubEmptyOrdersApi() {
+  api.get = async (path) => {
+    if (path.startsWith('/orders?status=draft')) return [];
+    if (path.startsWith('/orders')) {
+      return { orders: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 1 } };
+    }
+    return [];
+  };
+}
+
+test('Round 4 Fix 7: a locally-created unsynced order stays reachable from OrdersPage — merged in with a "Waiting to sync" badge and navigated to by receipt number, never a numeric id', async () => {
+  await registerStation(23);
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; }; // stays queued, never drains
+  stubEmptyOrdersApi();
+
+  const localOrder = await saveOrderLocalFirst({
+    customer: { id: 5, name: 'Aling Nena' },
+    items: [{ product_id: 1, product_name: 'Coke Sakto 200ml', sku: 'C-8', quantity: 1, unit_price: 300 }],
+    profileKey: 'josie',
+  });
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(Routes, null,
+        React.createElement(Route, { path: '/', element: React.createElement(OrdersPage) }),
+        React.createElement(Route, { path: '/orders/:id', element: React.createElement(OrderIdProbe) }),
+      )
+    )
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.match(r.text(), /Aling Nena/, 'the locally-created order must be visible even though the server list is empty');
+  assert.match(r.text(), /Waiting to sync/);
+
+  const row = r.all('tr').find((tr) => tr.textContent.includes('Aling Nena'));
+  assert.ok(row);
+  r.click(row);
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  const probe = r.container.querySelector('[data-testid="navigated-order-id"]');
+  assert.ok(probe, 'clicking the row must navigate, not silently no-op');
+  assert.equal(probe.textContent, `navigated:${localOrder.receipt_number}`,
+    'must navigate by receipt number — a numeric id would land on a stale, unrelated order (captain\'s exact repro)');
+
+  r.unmount();
+});
+
+test('Round 4 Fix 7: a locally-created order disappears from OrdersPage the moment its outbox record actually drains', async () => {
+  await registerStation(23);
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
+  stubEmptyOrdersApi();
+
+  await saveOrderLocalFirst({
+    customer: { id: 5, name: 'Aling Nena' },
+    items: [{ product_id: 1, product_name: 'Coke Sakto 200ml', sku: 'C-8', quantity: 1, unit_price: 300 }],
+    profileKey: 'josie',
+  });
+
+  const r = render(
+    React.createElement(ToastProvider, null, React.createElement(OrdersPage))
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+  assert.match(r.text(), /Aling Nena/);
+
+  const { drainOutbox } = await import('../src/offline/outbox.js');
+  api.request = async () => ({ id: 4321 });
+  await act(async () => {
+    await drainOutbox();
+    await new Promise((res) => setTimeout(res, 20));
+  });
+
+  assert.doesNotMatch(r.text(), /Aling Nena/, 'must disappear from the local merge once it actually syncs — the (now-empty) server list already covers it');
+
+  r.unmount();
 });
 
 

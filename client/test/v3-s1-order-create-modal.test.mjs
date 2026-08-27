@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { render, React, act } from './render.mjs';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
+import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
+import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
+import { __clearOutbox } from '../src/offline/outbox.js';
 
 const OrderCreateModal = (await import('../src/pages/orders/OrderCreateModal.jsx')).default;
 
@@ -10,6 +13,7 @@ let originalApiGet;
 let originalApiPost;
 let originalApiPatch;
 let originalApiDel;
+let originalApiRequest;
 
 const products = [
   { id: 1, name: 'Coke Sakto 200ml', sku: 'C-8', category: 'Softdrinks', unit: 'cs', base_wholesale_price: 300, is_active: true },
@@ -22,11 +26,12 @@ const customers = [
   { id: 2, name: 'Buddy Wholesaler', customer_type: 'wholesaler', is_active: true },
 ];
 
-beforeEach(() => {
+beforeEach(async () => {
   originalApiGet = api.get;
   originalApiPost = api.post;
   originalApiPatch = api.patch;
   originalApiDel = api.del;
+  originalApiRequest = api.request;
 
   api.get = async (path) => {
     if (path === '/customers') return customers;
@@ -39,6 +44,19 @@ beforeEach(() => {
   api.post = async () => ({ id: 100 });
   api.patch = async () => ({ id: 100 });
   api.del = async () => ({ status: 'ok' });
+
+  // G27 — the modal's final submit now goes through saveOrderLocalFirst, which
+  // needs an active profile and a registered station (D1/D14) exactly like a real
+  // signed-in, ProfileGate-passed session would already have by the time this modal
+  // can ever mount.
+  localStorage.setItem('activeProfile', 'josie');
+  await __resetMemoryBackend();
+  __resetIssuance();
+  await __clearOutbox();
+  api.post = async (path) => (path === '/stations/register'
+    ? { station_number: 1, registered_at: '2026-08-26T00:00:00.000Z' }
+    : { id: 100 });
+  await ensureStationRegistered();
 });
 
 afterEach(() => {
@@ -46,6 +64,7 @@ afterEach(() => {
   api.post = originalApiPost;
   api.patch = originalApiPatch;
   api.del = originalApiDel;
+  api.request = originalApiRequest;
 });
 
 function changeInput(input, value) {
@@ -231,27 +250,22 @@ test('OrderCreateModal G10 Reset: with 0 lines, resets instantly with NO confirm
   r.unmount();
 });
 
-test('OrderCreateModal: submit calls PATCH draft and POST finalize, then onSaved(orderId)', async () => {
-  let patchCalled = false;
+test('G27: OrderCreateModal submit saves locally first — no PATCH/finalize, onSaved receives the device-issued receipt number', async () => {
   let finalizeCalled = false;
-  let savedOrderId = null;
+  let deletedDraftPath = null;
 
   api.post = async (path) => {
-    if (path === '/orders') return { id: 201 };
-    if (path.includes('/finalize')) {
-      finalizeCalled = true;
-      return { id: 201, status: 'pending' };
-    }
+    if (path === '/orders') return { id: 201 }; // the early server-side draft on customer-pick
+    if (path.includes('/finalize')) { finalizeCalled = true; return { id: 201, status: 'pending' }; }
     return { id: 201 };
   };
+  api.patch = async () => { throw new Error('PATCH must not be called — local-first save never round-trips (G27)'); };
+  api.del = async (path) => { deletedDraftPath = path; return null; };
+  // The background drain attempt inside saveOrderLocalFirst must not affect the
+  // assertions below either way — force it to stay offline and queued.
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
-  api.patch = async (path) => {
-    if (path.startsWith('/orders/')) {
-      patchCalled = true;
-    }
-    return { id: 201 };
-  };
-
+  let savedOrderId = null;
   const r = render(
     React.createElement(ToastProvider, null,
       React.createElement(OrderCreateModal, {
@@ -275,14 +289,15 @@ test('OrderCreateModal: submit calls PATCH draft and POST finalize, then onSaved
   // Click Create Order
   const submitBtn = r.all('button').find((b) => b.textContent.includes('Create Order'));
   assert.ok(submitBtn, 'Create order button should exist');
-  
+
   await act(async () => {
     r.click(submitBtn);
     await new Promise((res) => setTimeout(res, 100));
   });
 
-  assert.ok(finalizeCalled || patchCalled, 'Submit should finalize or patch the order');
-  assert.equal(savedOrderId, 201, 'onSaved should be called with orderId');
+  assert.equal(finalizeCalled, false, 'local-first save must never finalize the early draft — it deletes it instead (G27)');
+  assert.match(savedOrderId, /^1-\d{5}$/, 'onSaved must receive the device-issued receipt number (G27), not the draft row id');
+  assert.equal(deletedDraftPath, '/orders/201', 'the superseded early draft must be cleaned up (best-effort) once the local-first order is the authority');
 
   r.unmount();
 });
@@ -322,25 +337,25 @@ test('OrderCreateModal: Customer Combobox does NOT show dropdown upon focus when
   r.unmount();
 });
 
-test('OrderCreateModal regression: submit before draftId state updates awaits in-flight draft creation and does NOT create a duplicate POST /orders', async () => {
+test('G27: submitting before the early draft-creation POST resolves still saves instantly (0ms checkout) and cleans the draft up once it does', async () => {
   const postCalls = [];
-  const patchCalls = [];
+  const deleteCalls = [];
   let draftResolve;
 
-  // Draft creation intentionally delayed to simulate the race window
+  // Draft creation intentionally delayed to simulate the race window — local-first
+  // save must not wait on it (that is the entire point of G27: no server round trip
+  // gates Create Order, even a slow one already in flight).
   api.post = async (path, body) => {
     postCalls.push(path);
     if (path === '/orders' && body?.status === 'draft') {
       await new Promise((res) => { draftResolve = res; });
       return { id: 999 };
     }
-    if (path.includes('/finalize')) return { id: 999, status: 'pending' };
     return { id: 999 };
   };
-  api.patch = async (path) => {
-    patchCalls.push(path);
-    return { id: 999 };
-  };
+  api.patch = async () => { throw new Error('PATCH must not be called — local-first save never round-trips (G27)'); };
+  api.del = async (path) => { deleteCalls.push(path); return null; };
+  api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   let savedOrderId = null;
   const r = render(
@@ -366,23 +381,29 @@ test('OrderCreateModal regression: submit before draftId state updates awaits in
   // Click Create Order BEFORE the draft creation resolves — this is the race window
   const submitBtn = r.all('button').find((b) => b.textContent.includes('Create Order'));
   assert.ok(submitBtn, 'Create order button should exist');
-  act(() => { r.click(submitBtn); });
-
-  // Now resolve the draft creation — handleSubmit was waiting on draftPromiseRef
   await act(async () => {
-    if (draftResolve) draftResolve();
-    await new Promise((res) => setTimeout(res, 150));
+    r.click(submitBtn);
+    await new Promise((res) => setTimeout(res, 100));
   });
 
-  // Only ONE POST /orders call (the draft creation); no second POST /orders
-  const orderPostCalls = postCalls.filter((p) => p === '/orders');
-  assert.equal(orderPostCalls.length, 1, 'Should only POST /orders once (the draft), not a duplicate pending order');
+  // The order saved immediately — it did not wait for the still-pending draft POST.
+  assert.match(savedOrderId, /^1-\d{5}$/, 'onSaved must fire with the receipt number without waiting on the slow draft creation');
 
-  // Should PATCH + finalize the draft instead of creating a new one
-  assert.ok(patchCalls.some((p) => p.includes('/orders/999')), 'Should PATCH the draft order');
-  assert.ok(postCalls.some((p) => p.includes('/finalize')), 'Should finalize the draft order');
+  // Only ONE POST /orders call so far (the still-pending draft); local-first save
+  // never issues a second POST /orders of its own.
+  assert.equal(postCalls.filter((p) => p === '/orders').length, 1);
+  assert.equal(deleteCalls.length, 0, 'nothing to clean up yet — the draft has not resolved to an id');
 
-  assert.equal(savedOrderId, 999, "onSaved should be called with the draft's order id");
+  // Now resolve the draft creation.
+  await act(async () => {
+    if (draftResolve) draftResolve();
+    await new Promise((res) => setTimeout(res, 30));
+  });
+
+  // The now-superseded draft is cleaned up (best-effort, fire-and-forget) once its id
+  // is known — never re-POSTed, never PATCHed/finalized.
+  assert.deepEqual(deleteCalls, ['/orders/999']);
+  assert.equal(postCalls.filter((p) => p === '/orders').length, 1);
 
   r.unmount();
 });

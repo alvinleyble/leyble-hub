@@ -3,6 +3,7 @@ import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
 import { markOffline } from './status';
+import { handleDrainCompletion } from './drainNotifier.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -130,6 +131,7 @@ async function resolvePayload(value) {
     if (!resolved || resolved[value.field] === undefined) {
       const err = new Error(`Unresolved reference to outbox record ${value.$ref}`);
       err.unresolvedRef = true;
+      err.refId = value.$ref;
       throw err;
     }
     return resolved[value.field];
@@ -144,17 +146,45 @@ async function resolvePayload(value) {
 
 async function rememberResult(id, response) {
   if (response && typeof response === 'object' && response.id !== undefined) {
-    await nativeStore.setJson(`${REF_PREFIX}${id}`, { id: response.id });
+    await nativeStore.setJson(`${REF_PREFIX}${id}`, { id: response.id, remembered_at: Date.now() });
   }
 }
 
-// Drop remembered results nothing still depends on, so they do not accumulate.
+// Round 4 Fix 6 — a remembered ref must not be deleted just because nothing *yet
+// enqueued* depends on it. `stillNeeded` below is derived from whatever happens to be
+// in the outbox at the exact moment this pass finishes — it cannot see a dependent
+// record that is enqueued moments later (e.g. OrderCreateModal quick-creates a
+// customer, which drains and remembers her ref in one pass, and the order that
+// depends on her is only enqueued once the operator finishes the rest of the order
+// and hits Create Order). Pruning on that snapshot alone deleted the ref forever,
+// before the order that would need it even existed — `resolvePayload` then threw
+// `unresolvedRef` on every future pass, permanently, with zero attempts counted and
+// no visible signal (captain's stuck order 23-00020, `v25.outbox.000000000044`).
+//
+// A snapshot of "what's in the outbox right now" can never rule out something being
+// enqueued a moment later, so this is fixed with a grace window instead: a ref
+// survives for REF_PRUNE_GRACE_MS after being remembered regardless of who currently
+// depends on it — long enough that no realistic gap between creating a dependency and
+// saving the record that references it can lose the ref first. The residual case this
+// window can't cover (a dependent enqueued only after the grace window has fully
+// elapsed) is caught by the NEEDS_ATTENTION escalation in the drain loop below, so a
+// ref this stale is never a silent, permanent dead end even if it is pruned.
+const REF_PRUNE_GRACE_MS = 24 * 60 * 60 * 1000; // 24h
+
+// Drop remembered results nothing still depends on, once they're old enough that
+// nothing new could plausibly still need them (see REF_PRUNE_GRACE_MS above).
 async function pruneRefs(remaining) {
   const stillNeeded = new Set(remaining.flatMap((r) => r.depends_on || []));
   const keys = await nativeStore.keysWithPrefix(REF_PREFIX);
+  const now = Date.now();
   for (const key of keys) {
     const id = Number(key.slice(REF_PREFIX.length));
-    if (!stillNeeded.has(id)) await nativeStore.remove(key);
+    if (stillNeeded.has(id)) continue;
+    const remembered = await nativeStore.getJson(key);
+    const rememberedAt = remembered && typeof remembered.remembered_at === 'number' ? remembered.remembered_at : 0;
+    if (now - rememberedAt >= REF_PRUNE_GRACE_MS) {
+      await nativeStore.remove(key);
+    }
   }
 }
 
@@ -170,6 +200,21 @@ function isNetworkFailure(err) {
 
 let draining = false;
 
+// Round 3 Fix 5 — a caller whose drainOutbox() lands while another pass is already
+// running gets an immediate {skipped:true}: fine for that caller, but a record it just
+// enqueued (already in nativeStore by the time it called drainOutbox()) was NOT
+// necessarily in the in-flight pass's own `records` snapshot — that snapshot was taken
+// at the START of the in-flight pass, before this record existed. Without this flag,
+// that record would then sit QUEUED until whatever unrelated thing next calls
+// drainOutbox() (the 30s periodic loop, an 'online' event, another save) — which the
+// captain reported as the chrome-wide OfflineMarker showing "N waiting" for minutes
+// after the record it referred to had, from the operator's point of view, already
+// finished (a different, already-synced order's own banner cleared fine, because that
+// record WAS in the in-flight pass's snapshot). Rather than waiting on the next
+// unrelated trigger, a skipped call now schedules an immediate follow-up pass the
+// moment the in-flight one finishes.
+let queuedRerun = false;
+
 /**
  * Send what is waiting, oldest first, honouring dependencies.
  *
@@ -182,12 +227,20 @@ let draining = false;
  *                    discarded, never guessed at.
  */
 export async function drainOutbox() {
-  if (draining) return { sent: 0, failed: 0, waiting: await waitingCount(), skipped: true };
+  if (draining) {
+    queuedRerun = true;
+    return { sent: 0, failed: 0, waiting: await waitingCount(), skipped: true };
+  }
+  return runDrainPass();
+}
+
+async function runDrainPass() {
   if (isSimulatedOffline()) {
     return { sent: 0, failed: 0, waiting: await waitingCount(), offline: true };
   }
 
   draining = true;
+  queuedRerun = false;
   let sent = 0;
   let failed = 0;
   try {
@@ -204,7 +257,27 @@ export async function drainOutbox() {
       try {
         body = await resolvePayload(record.payload);
       } catch (err) {
-        if (err.unresolvedRef) { blocked.add(record.id); continue; }
+        if (err.unresolvedRef) {
+          // Round 4 Fix 6 safety net — a dependency still present in the outbox
+          // (queued, or itself needing attention) simply hasn't synced yet; block and
+          // self-heal once it does, exactly as before. But if the id it depends on
+          // isn't anywhere in this snapshot at all, that dependency already drained
+          // at some point in the past with no ref left behind (the pruning race
+          // above, or genuine data loss) — there is no future drain pass that could
+          // ever resolve this, so surface it instead of leaving it silently queued
+          // forever with zero attempts and no operator-visible signal.
+          const dependencyStillInOutbox = records.some((r) => r.id === err.refId);
+          if (!dependencyStillInOutbox) {
+            record.status = NEEDS_ATTENTION;
+            record.last_error = `Depends on outbox record ${err.refId}, which no longer exists and left no resolvable reference.`;
+            await saveRecord(record);
+            blocked.add(record.id);
+            failed++;
+            continue;
+          }
+          blocked.add(record.id);
+          continue;
+        }
         throw err;
       }
 
@@ -254,6 +327,18 @@ export async function drainOutbox() {
     return { sent, failed, waiting };
   } finally {
     draining = false;
+    if (queuedRerun) {
+      queuedRerun = false;
+      // Fire-and-forget: the caller that got skipped already has its own
+      // {skipped:true} result and isn't waiting on this. Route a successful rerun
+      // through the same notifier every other drain path uses, so a record that
+      // only missed this pass by a race still tells OrderDetailPage / the marker
+      // the moment it actually syncs, instead of waiting on the next unrelated
+      // trigger.
+      runDrainPass()
+        .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+        .catch(() => {});
+    }
   }
 }
 

@@ -11,6 +11,7 @@ import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef } from '../../utils/orderRef';
+import { getReceipt, updateLocalOrder } from '../../offline/index.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -43,6 +44,10 @@ export default function OrderDetailPage() {
   const [order, setOrder]           = useState(null);
   const [loading, setLoading]       = useState(true);
   const [notFound, setNotFound]     = useState(false);
+  // G27 — true while this order only exists in local receipt history (D9), not yet
+  // drained to the server. Gates the "Waiting to sync" banner and which actions G28
+  // allows offline.
+  const [unsynced, setUnsynced]     = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [editing, setEditing]       = useState(false);
@@ -66,23 +71,55 @@ export default function OrderDetailPage() {
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, setOrder);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  // G27 — silent background sync, zero spinner flashes. `silent` is used for the
+  // re-read triggered by leyble:drain-complete: it must never touch `loading`, or
+  // every background sync would flash the full-page spinner over a screen the
+  // operator is actively looking at.
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     api.get(`/orders/${id}`)
       .then((o) => {
         setOrder(o);
+        setUnsynced(false);
         setAdjValue(Number(o.adjustment) ? String(o.adjustment) : '');
         setAdjReason(o.adjustment_reason || '');
         setAdjExpanded(Number(o.adjustment) !== 0);
       })
-      .catch((err) => {
+      .catch(async (err) => {
+        // A 404 here can mean "never synced yet" (a receipt-numbered order the
+        // server has no row for) just as easily as "genuinely doesn't exist" — and a
+        // network failure (no err.status, same test outbox.js's drain uses) means we
+        // simply cannot ask. Either way, fall back to the device's own 30-day
+        // receipt history (D9) before giving up.
+        const offlineOrMissing = err.status === 404 || !err.status;
+        if (offlineOrMissing) {
+          const local = await getReceipt(id).catch(() => null);
+          if (local) {
+            setOrder(local);
+            setUnsynced(true);
+            setAdjValue(Number(local.adjustment) ? String(local.adjustment) : '');
+            setAdjReason(local.adjustment_reason || '');
+            setAdjExpanded(Number(local.adjustment) !== 0);
+            return;
+          }
+        }
         if (err.status === 404) setNotFound(true);
-        else addToast('Failed to load order.', 'error');
+        else if (!silent) addToast('Failed to load order.', 'error');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [id, addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // G27 — Silent Background Sync. drainNotifier.js dispatches this once a background
+  // drain has actually sent something; re-read quietly so an order that just synced
+  // swaps to its server row and drops the "Waiting to sync" banner without anyone
+  // asking and without a spinner.
+  useEffect(() => {
+    const onDrainComplete = () => load({ silent: true });
+    window.addEventListener('leyble:drain-complete', onDrainComplete);
+    return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
+  }, [load]);
 
   const bottleItems = order
     ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
@@ -125,6 +162,32 @@ export default function OrderDetailPage() {
     if (adj !== 0 && !adjReason.trim()) { addToast('Adjustment reason is required.', 'error'); return; }
     setSavingAdj(true);
     try {
+      // Round 3 Fix 4 — G28 already lets the rest of an unsynced order be edited in
+      // place via Edit Order/updateLocalOrder; the adjustment shortcut here was the
+      // one control left hard-disabled with no offline path of its own. Mirror
+      // OrderCreateModal's same updateLocalOrder-then-fall-back-to-PATCH pattern:
+      // rewrite the local receipt + queued outbox payload while unsynced, and fall
+      // through to the ordinary server PATCH if it turns out the order already
+      // drained (updateLocalOrder throws once its outbox record is gone).
+      if (unsynced) {
+        try {
+          const updated = await updateLocalOrder({
+            order,
+            items: order.items,
+            notes: order.notes,
+            adjustment: { value: adj, reason: adjReason.trim() },
+            personnel: null,
+          });
+          setOrder(updated);
+          setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
+          setAdjReason(updated.adjustment_reason || '');
+          addToast('Adjustment saved.', 'success');
+          return;
+        } catch {
+          // Already drained — fall through to the online PATCH below.
+        }
+      }
+
       const updated = await api.patch(`/orders/${id}/adjustment`, {
         adjustment: adj,
         adjustment_reason: adjReason.trim(),
@@ -240,6 +303,14 @@ export default function OrderDetailPage() {
           </div>
         )}
       </div>
+
+      {/* G27 — static, non-interactive: this is the only sync-state UI on this page. */}
+      {unsynced && (
+        <div className="mb-4 -mt-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
+          <span aria-hidden="true">⏳</span>
+          <span>Waiting to sync — this order is saved on this device and will reach the server once connected.</span>
+        </div>
+      )}
 
       {(order.pending_receipt_printed_at || order.delivered_receipt_printed_at) && (
         <div className="mb-4 -mt-4 space-y-1">
@@ -451,7 +522,7 @@ export default function OrderDetailPage() {
           <button
             type="button"
             onClick={() => setAdjExpanded((v) => !v)}
-            className="text-sm text-blue-700 hover:text-blue-900 font-medium
+            className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
           >
             {adjExpanded ? 'Cancel' : hasAdj ? 'Edit' : '+ Add Adjustment'}
@@ -495,7 +566,13 @@ export default function OrderDetailPage() {
 
       {order.status === 'completed' && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-          <Button className="w-full" onClick={handleCloseOrder} loading={closing}>
+          <Button
+            className="w-full"
+            onClick={handleCloseOrder}
+            loading={closing}
+            disabled={unsynced}
+            title={unsynced ? 'Waiting to sync' : undefined}
+          >
             Close Order
           </Button>
         </div>
@@ -529,7 +606,10 @@ export default function OrderDetailPage() {
           </div>
         ) : (
           <div className="flex flex-wrap gap-3">
-            {/* Edit is always available */}
+            {/* G28 — Edit Order and Print Receipt stay enabled while unsynced; every
+                status transition below (Dispatch/Cancel and their symmetric partners)
+                is online-required and disabled instead, since the server has no row
+                for this order to transition yet. */}
             <Button variant="secondary" onClick={() => setEditing(true)}>
               Edit Order
             </Button>
@@ -537,6 +617,8 @@ export default function OrderDetailPage() {
             {/* Delivery pending: Start Dispatch */}
             {order.status === 'pending' && !isPickup && (
               <Button
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'in_transit',
                   label: 'Start Dispatch',
@@ -550,6 +632,8 @@ export default function OrderDetailPage() {
             {/* Pickup pending: Mark as Picked Up */}
             {order.status === 'pending' && isPickup && (
               <Button
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
                   label: 'Mark as Picked Up',
@@ -563,6 +647,8 @@ export default function OrderDetailPage() {
             {order.status === 'in_transit' && (
               <Button
                 variant="secondary"
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'pending',
                   label: 'Back to Pending',
@@ -576,6 +662,8 @@ export default function OrderDetailPage() {
             {order.status === 'in_transit' && (
               <Button
                 variant="warning"
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
                   label: 'Mark as Delivered',
@@ -589,6 +677,8 @@ export default function OrderDetailPage() {
             {order.status === 'completed' && !isPickup && (
               <Button
                 variant="secondary"
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'in_transit',
                   label: 'Back to In Transit',
@@ -602,6 +692,8 @@ export default function OrderDetailPage() {
             {order.status === 'completed' && isPickup && (
               <Button
                 variant="secondary"
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'pending',
                   label: 'Back to Pending',
@@ -615,6 +707,8 @@ export default function OrderDetailPage() {
             {order.status === 'done' && (
               <Button
                 variant="secondary"
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
                   label: 'Reopen Order',
@@ -628,6 +722,8 @@ export default function OrderDetailPage() {
             {!['done', 'cancelled'].includes(order.status) && (
               <Button
                 variant="danger"
+                disabled={unsynced}
+                title={unsynced ? 'Waiting to sync' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'cancelled',
                   label: 'Cancel Order',
@@ -648,6 +744,7 @@ export default function OrderDetailPage() {
       {editing && (
         <OrderCreateModal
           editOrder={order}
+          offlineUnsynced={unsynced}
           onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); load(); }}
         />

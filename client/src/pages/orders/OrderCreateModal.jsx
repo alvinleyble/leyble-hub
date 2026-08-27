@@ -11,6 +11,10 @@ import { customerTypeBadge, customerTypeLabel, hasCustomPricing } from '../../ut
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import CaseStepper from '../../components/pos/CaseStepper';
 import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
+import {
+  saveOrderLocalFirst, updateLocalOrder, cleanupOrphanedDraftDirect,
+  enqueue, drainOutbox,
+} from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -23,7 +27,12 @@ const customerMatches = (c, q) => {
   return s === '' ? false : c.name.toLowerCase().includes(s);
 };
 
-export default function OrderCreateModal({ onClose, onSaved, editOrder = null }) {
+// G29 — a customer quick-created offline carries a temporary id until its real POST
+// /customers drains and its row exists server-side (D5). Any code path that would hit
+// GET/POST against that id must be skipped, not attempted and swallowed.
+const isLocalCustomer = (id) => typeof id === 'string' && id.startsWith('local-');
+
+export default function OrderCreateModal({ onClose, onSaved, editOrder = null, offlineUnsynced = false }) {
   const { addToast } = useToast();
   const isEdit = Boolean(editOrder);
 
@@ -103,6 +112,21 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
       api.get('/personnel'),
     ])
       .then(([custs, prods, pers]) => {
+        // G28 — editing an order still queued for a still-local customer (G29):
+        // that customer has no server row yet, so GET /customers never returns it.
+        // Without this, the picker would find nothing for editOrder.customer_id and
+        // render blank, even though the order plainly belongs to someone.
+        if (editOrder?.customer_id && isLocalCustomer(editOrder.customer_id)
+            && !custs.some((c) => String(c.id) === String(editOrder.customer_id))) {
+          custs = [...custs, {
+            id: editOrder.customer_id,
+            name: editOrder.customer_name,
+            address: editOrder.customer_address,
+            phone: editOrder.customer_phone,
+            customer_type: editOrder.customer_type || 'regular',
+            is_active: true,
+          }];
+        }
         setCustomers(custs);
         setProducts(prods);
         setActivePersonnel(pers);
@@ -119,7 +143,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   // just the ones tagged wholesaler/discounted/markup — a customer prices as "custom"
   // exactly when rows come back, so an agreed rate can never be saved and then ignored.
   useEffect(() => {
-    if (!customerId) {
+    // G29 — a still-local customer has no server prices to fetch (and no route to
+    // fetch them from, since it has no real id yet); default to base wholesale prices.
+    if (!customerId || isLocalCustomer(customerId)) {
       setCustomPrices({});
       return;
     }
@@ -136,6 +162,10 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   // scoped to one order_type, and the tag is wrong regardless of which channel the rows sit on,
   // so this asks both rather than reusing the single-channel response loaded above.
   const hasAnySavedPrice = async (id) => {
+    // G29 — a still-local customer cannot have saved prices yet (there is nothing
+    // server-side to have saved them against), so the mis-tagged-customer nudge below
+    // must never even ask.
+    if (isLocalCustomer(id)) return false;
     const [delivery, pickup] = await Promise.all([
       api.get(`/customers/${id}/prices?order_type=delivery`),
       api.get(`/customers/${id}/prices?order_type=pickup`),
@@ -163,14 +193,36 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
   const activeCustomers = customers.filter((c) => c.is_active);
   const activeProducts  = products.filter((p) => p.is_active);
 
-  // Quick-add a customer straight from the order's customer picker
+  // Quick-add a customer straight from the order's customer picker.
+  //
+  // G29/G13 — V1's picker already had inline quick-create; what it lacked was an
+  // offline path (unlike V2's POSCustomerSearch, this called api.post directly and
+  // failed outright when the line was down). Unconditional, matching G27's
+  // saveOrderLocalFirst: one code path, online or offline, every day — queue POST
+  // /customers in the outbox and hand back a `local-<outboxId>` customer the rest of
+  // the modal already knows to treat specially (isLocalCustomer above).
   const handleCreateCustomer = async (name) => {
     setCreatingCustomer(true);
     try {
-      const created = await api.post('/customers', { name, customer_type: 'regular' });
-      setCustomers((prev) => [...prev, created]);
-      setCustomerId(String(created.id));
-      addToast(`${created.name} added as Customer.`, 'success');
+      const profileKey = await api.getActiveProfile();
+      const rec = await enqueue({
+        entityType: 'customer',
+        endpoint: '/customers',
+        method: 'POST',
+        payload: { name, customer_type: 'regular' },
+        profileKey,
+      });
+      const localCustomer = {
+        id: `local-${rec.id}`,
+        _outboxId: rec.id,
+        name,
+        customer_type: 'regular',
+        is_active: true,
+      };
+      setCustomers((prev) => [...prev, localCustomer]);
+      setCustomerId(String(localCustomer.id));
+      addToast(`${localCustomer.name} added as Customer.`, 'success');
+      drainOutbox().catch(() => {});
     } catch (err) {
       addToast(err.message || 'Failed to create customer.', 'error');
     } finally {
@@ -293,9 +345,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
     return body;
   };
 
-  // Create the draft the moment a customer is chosen
+  // Create the draft the moment a customer is chosen.
+  // G29 — skipped for a still-local customer: POST /orders with an unresolved
+  // customer_id would either be rejected server-side or need its own $ref plumbing
+  // this early-draft path was never built for. The debounced auto-save below
+  // naturally never fires either, since it requires draftId, which never gets set.
   useEffect(() => {
-    if (!isDraftMode || !customerId || draftIdRef.current || creatingDraftRef.current) return;
+    if (!isDraftMode || !customerId || isLocalCustomer(customerId) || draftIdRef.current || creatingDraftRef.current) return;
     creatingDraftRef.current = true;
     setDraftStatus('saving');
     const promise = api.post('/orders', { ...draftBody(), status: 'draft' })
@@ -384,63 +440,104 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null })
 
     setSaving(true);
 
-    // Cancel any pending debounced auto-save so it can't race with our explicit PATCH below.
+    // Cancel any pending debounced auto-save so it can't race with our explicit save below.
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
 
-    try {
-      const payload = {
-        customer_id: Number(customerId),
-        order_type:  orderType,
-        notes:       notes.trim() || null,
-        items: items.map((i) => ({
-          product_id:          Number(i.product_id),
-          quantity:            Number(i.quantity),
-          unit_price:          Number(i.unit_price),
-          unit_deposit_fee:    Number(i.unit_deposit_fee) || 0,
-          units_per_case:      Number(i.units_per_case) || 1,
-          is_price_overridden: false,
-        })),
-        personnel: assignedPersonnel,
-      };
+    // G31 — resolve full personnel objects (id, role, full_name) once, for both the
+    // local-first save path and the offline-edit path below.
+    const personnelWithNames = assignedPersonnel.map((p) => ({
+      id: p.id,
+      role: p.role,
+      full_name: activePersonnel.find((x) => x.id === p.id)?.full_name,
+    }));
+    const adjNum = Number(adjValue) || 0;
+    const adjReasonTrimmed = adjReason.trim();
 
+    try {
       let orderId;
+
       if (isRealEdit) {
-        await api.patch(`/orders/${editOrder.id}`, payload);
-        orderId = editOrder.id;
+        // G28 — Real-Time Offline Order Editing. An unsynced order has no server row
+        // to PATCH yet; rewrite the local receipt and the still-queued outbox payload
+        // in place instead. If the order actually drained while this modal was open,
+        // updateLocalOrder throws (its outbox record is gone) — fall back to the
+        // ordinary online PATCH below rather than losing the edit.
+        let wroteLocally = false;
+        if (offlineUnsynced) {
+          try {
+            await updateLocalOrder({
+              order: editOrder,
+              items,
+              notes,
+              adjustment: { value: adjNum, reason: adjReasonTrimmed },
+              personnel: personnelWithNames,
+            });
+            orderId = editOrder.receipt_number;
+            wroteLocally = true;
+          } catch {
+            // Already drained — fall through to the online PATCH below.
+          }
+        }
+
+        if (!wroteLocally) {
+          const payload = {
+            customer_id: Number(customerId),
+            order_type:  orderType,
+            notes:       notes.trim() || null,
+            items: items.map((i) => ({
+              product_id:          Number(i.product_id),
+              quantity:            Number(i.quantity),
+              unit_price:          Number(i.unit_price),
+              unit_deposit_fee:    Number(i.unit_deposit_fee) || 0,
+              units_per_case:      Number(i.units_per_case) || 1,
+              is_price_overridden: false,
+            })),
+            personnel: assignedPersonnel,
+          };
+          const targetId = editOrder.id ?? editOrder.receipt_number;
+          await api.patch(`/orders/${targetId}`, payload);
+          orderId = targetId;
+
+          const existingAdjNum    = Number(editOrder.adjustment) || 0;
+          const existingAdjReason = editOrder.adjustment_reason || '';
+          if (adjNum !== existingAdjNum || adjReasonTrimmed !== existingAdjReason) {
+            await api.patch(`/orders/${orderId}/adjustment`, {
+              adjustment: adjNum,
+              adjustment_reason: adjReasonTrimmed,
+            });
+          }
+        }
         addToast('Order updated.', 'success');
       } else {
-        // If a draft creation is still in-flight, wait for it to resolve so we have the draft id.
+        // G27 — single local-first save code path. No server round trip, online or
+        // offline, every day: writes locally, issues the receipt number, queues the
+        // outbox POST, and (below) navigates immediately — 0ms checkout.
+        const saved = await saveOrderLocalFirst({
+          customer: selectedCustomer ?? (customerId ? { id: customerId } : null),
+          orderType,
+          notes,
+          adjustment: { value: adjNum, reason: adjReasonTrimmed },
+          items,
+          personnel: personnelWithNames,
+        });
+        orderId = saved.receipt_number;
+
+        // The early server-side draft this modal created on customer-pick (or the
+        // pre-existing draft being resumed) is now superseded — best-effort cleanup
+        // only, never queued (see cleanupOrphanedDraftDirect).
         if (draftPromiseRef.current) {
-          await draftPromiseRef.current;
+          draftPromiseRef.current.then((id) => cleanupOrphanedDraftDirect(id)).catch(() => {});
+        } else if (draftIdRef.current) {
+          cleanupOrphanedDraftDirect(draftIdRef.current);
         }
-        // Re-read ref after awaiting (state may not have updated yet due to batching).
-        const resolvedDraftId = draftIdRef.current;
-        if (resolvedDraftId) {
-          await api.patch(`/orders/${resolvedDraftId}`, payload);
-          await api.post(`/orders/${resolvedDraftId}/finalize`, {});
-          orderId = resolvedDraftId;
-        } else {
-          // No draft was ever created (e.g. draft creation failed) — fall back to a fresh POST.
-          const created = await api.post('/orders', payload);
-          orderId = created.id;
-        }
+
         addToast('Order created.', 'success');
       }
 
-      const adjNum            = Number(adjValue) || 0;
-      const existingAdjNum    = isRealEdit ? (Number(editOrder.adjustment) || 0) : 0;
-      const existingAdjReason = isRealEdit ? (editOrder.adjustment_reason || '') : '';
-      if (adjNum !== existingAdjNum || adjReason.trim() !== existingAdjReason) {
-        await api.patch(`/orders/${orderId}/adjustment`, {
-          adjustment: adjNum,
-          adjustment_reason: adjReason.trim(),
-        });
-      }
-
-      if (dirtyItems.length && selectedCustomer) {
+      if (dirtyItems.length && selectedCustomer && !isLocalCustomer(customerId)) {
         setPriceSavePrompt({
           step: 'first', orderId, customer: selectedCustomer, orderType,
           dirty: dirtyItems, busy: false,

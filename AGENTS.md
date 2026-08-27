@@ -193,13 +193,99 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   V1's price-list print — blank `Counted:` line per item instead of the system count. No per-row
   `−1`/`+1` steppers (V1 had none in its table either).
 
-### V2.5 offline core (in build — see [docs/product/proposals/v2-5-offline-accessibility.md](docs/product/proposals/v2-5-offline-accessibility.md))
+### V2.5 offline core — re-hosted on V1's screens (Slice 3, see [docs/product/proposals/v2-5-offline-accessibility.md](docs/product/proposals/v2-5-offline-accessibility.md))
 
-The POS becomes local-first every day: the device saves locally, issues its own receipt
+Order-taking is local-first every day: the device saves locally, issues its own receipt
 number, prints, and a background outbox drains when the line is up. Design is closed
-(18 decisions, all in that proposal); ADRs 0003–0008 hold the load-bearing ones.
-Release 1 lands as four pieces, all dark, switched on together.
+(18 decisions, all in that proposal); ADRs 0003–0008 hold the load-bearing ones. What
+was originally built against the V2 POS screens now runs on V1's own screens —
+`OrderCreateModal.jsx` (local-first save + `local-*` quick-created customers),
+`OrderDetailPage.jsx` (local fallback + silent sync + offline editing), and
+`CustomersPage.jsx` (queued-customer visibility). The V2 POS screens (`POSPage.jsx`
+etc.) still exist and still use the same engine underneath, unrelated to the V1 path.
 
+- **The engine itself now starts unconditionally** — `startOfflineCore()` in
+  `client/src/offline/index.js` no longer gates registration/drain on
+  `V25_OFFLINE_CORE`; V1's `OrderCreateModal` calls `saveOrderLocalFirst()`
+  unconditionally too, so the station has to be able to register and the outbox has to
+  be able to drain in every build, flag or no flag. `V25_OFFLINE_CORE` still gates pure
+  UI/display concerns (the marker, `orderRef()`'s receipt-number fallback).
+- **Two differently-shaped draft-cleanup functions live in `posSave.js` — do not
+  confuse them.** `cleanupOrphanedDraft` (outbox-queued, retried indefinitely) is for
+  the V2 POS's blind-print case, where the draft's row id is the only way to reach it
+  later. `cleanupOrphanedDraftDirect` (a bare fire-and-forget `api.del(...).catch(()
+  => {})`, never queued) is what V1's `OrderCreateModal` uses for the early draft it
+  creates on customer-pick — queuing that cleanup through the outbox was the rejected
+  PR #41's exact bug (a throwaway delete stuck ahead of/behind real order POSTs,
+  wedging "Offline · N waiting" for minutes).
+- **Silent background sync** — `drainNotifier.js` dispatches a
+  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting } })`
+  whenever a drain sends something, independent of both the `V25_OFFLINE_CORE` flag
+  (this is a sync signal, not a display concern) and the once-per-outage toast latch.
+  `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
+  touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
+  the synced server row spinner-free. **Every caller of `drainOutbox()` that can fire
+  outside the 30s periodic loop must route its result through `handleDrainCompletion`
+  itself** (Round 2 Fix 1) — `posSave.js`'s three background drains (the immediate
+  post-save drain in `saveOrderLocalFirst`, `queueReceiptPrinted`, and
+  `updateLocalOrder`) are what actually land an order on the server in practice, ~1s
+  after Save, not the periodic loop; calling the bare `drainOutbox()` from
+  `outbox.js` without also calling `handleDrainCompletion(res)` on a successful send
+  is silently correct in every way except that no screen ever hears about it.
+- **`drainOutbox()` self-reruns instead of stranding a skipped call** (Round 3 Fix 5).
+  A `drainOutbox()` call while another pass is already in flight returns
+  `{skipped:true}` immediately (`draining` mutex) — but the record it just enqueued
+  was not necessarily in that in-flight pass's own `records` snapshot (taken at the
+  START of that pass), so without a follow-up it would sit `QUEUED` until whatever
+  unrelated thing next calls `drainOutbox()` (the 30s periodic loop, an `online`
+  event, another save). `outbox.js` now schedules an immediate follow-up pass itself
+  the moment the in-flight one finishes, and routes a successful rerun through
+  `handleDrainCompletion` exactly like every other drain path — this is what the
+  chrome-wide `OfflineMarker` showing "N waiting" for minutes after an unrelated
+  order's own banner had already cleared turned out to be.
+- **G28's real-time offline editing also covers the adjustment** (Round 3 Fix 4) —
+  `OrderDetailPage.jsx`'s `saveAdjustment` writes through `updateLocalOrder()` while
+  `unsynced`, same as the rest of an offline edit, and falls back to the ordinary
+  `PATCH /orders/:id/adjustment` once synced. It was previously the one control left
+  hard-disabled with no offline path of its own, contradicting the rest of G28.
+- **A remembered `$ref` survives 24h regardless of who currently depends on it**
+  (Round 4 Fix 6, `outbox.js`'s `pruneRefs`/`REF_PRUNE_GRACE_MS`). Its old behaviour —
+  deleting a synced dependency's ref the moment nothing *yet enqueued* referenced it —
+  raced a quick-created customer (drains and remembers her ref in one pass) against
+  the order that would depend on her (enqueued moments later, once the operator
+  finishes the rest of the order): the ref was already gone before the order could
+  ever need it, and `resolvePayload` then threw `unresolvedRef` on every future pass,
+  forever, with zero attempts counted and no visible signal — a customer/order created
+  back-to-back is exactly this shape, not a rare edge case. The residual case the
+  grace window can't rule out (a dependent enqueued only after it fully elapses) is
+  caught by the drain loop's `NEEDS_ATTENTION` escalation: a record whose dependency
+  id is nowhere in the current outbox snapshot at all (not queued, not needing
+  attention itself) surfaces immediately in the attention list instead of staying
+  silently `queued` forever — there was previously no in-app recovery path for this at
+  all (a stuck record had to be hand-patched in native storage).
+- **OrdersPage merges in locally-created/unsynced orders** (Round 4 Fix 7), the same
+  `listRecords()`-into-the-server-list pattern G29 already established for
+  `CustomersPage.jsx`. Before this, a purely server-driven list meant navigating away
+  from a freshly-created offline order and back lost it entirely — clicking back in
+  landed on whatever unrelated, already-synced order happened to occupy that stale
+  numeric-id row. Merged rows navigate by `receipt_number`, never a numeric id (there
+  isn't one yet), round-tripping correctly to `OrderDetailPage`'s existing local-
+  receipt-cache fallback. Scoped to the `all`/`pending` tabs and excluded from bulk
+  selection and the duplicates filter — a still-local order has no server row yet to
+  act on or meaningfully flag as a duplicate against.
+- **Dev-browser persistence (Round 2 Fix 3):** on a plain desktop browser (not the
+  Android APK), `nativeStore.js` backs onto `window.localStorage` when available
+  (falling back to an in-memory `Map` only if localStorage throws or is absent, e.g.
+  private browsing or the Node test runner) — a page reload now survives with the
+  outbox, receipt history, and station registration intact. D17's WebView-storage ban
+  is about the production APK specifically (Android evicts it, "clear data" wipes it);
+  it was never a reason to also wipe a developer's own browser tab on every reload,
+  and doing so caused a real bug: `station.js` only registers a new station when none
+  is stored locally, so every reload looked like a brand-new device and minted a fresh
+  station number from the server (reproduced live as station numbers climbing past 40
+  from one login). Production is unaffected — the APK always uses `preferencesBackend`.
+  Tests are unaffected — every offline test file forces the in-memory backend via
+  `__resetMemoryBackend()` in its own `beforeEach`, regardless of what's available.
 - **The off switch is `V25_OFFLINE_CORE`** in `client/src/config/features.js` — build-time
   (`VITE_V25_OFFLINE_CORE=on`), off by default, reused by every piece. Off must be
   indistinguishable from today. **Migrations are NOT behind it** (Render runs
