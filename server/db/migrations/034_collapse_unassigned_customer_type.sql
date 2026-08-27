@@ -7,10 +7,11 @@
 -- coupling gone, 'unassigned' says nothing a reader can act on, so it goes.
 --
 -- Safe to deploy ahead of the server and APK (ADR 0014 / V3-D19). Production's constraint
--- currently permits ('regular','wholesaler') only — migrations 031 and 032 have never been
--- applied there — so the live V1 server cannot be holding or writing an 'unassigned' row.
--- On the development database, where 031/032 did run, the UPDATE below relabels whatever
--- is there before the narrowed constraint is installed.
+-- previously permitted ('regular', 'wholesaler', 'discounted', 'markup', 'unassigned')
+-- via an out-of-band edit in Supabase console, with 0 rows holding 'unassigned' — migrations
+-- 031 and 032 had never been tracked in _migrations there. The live V1 server does not write
+-- 'unassigned'. On the development database where 031/032 did run, the UPDATE below relabels
+-- whatever is there before the narrowed constraint is installed.
 
 -- Relabel any legacy rows first, so the constraint below cannot fail on existing data.
 UPDATE customers SET customer_type = 'regular', updated_at = NOW()
