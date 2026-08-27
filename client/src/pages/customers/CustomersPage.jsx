@@ -9,11 +9,9 @@ import PrinterPicker from '../orders/PrinterPicker';
 import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
+import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
+import { listRecords, subscribeOutbox } from '../../offline/index.js';
 
-const TYPE_BADGE = {
-  regular:    'bg-slate-100 text-slate-600 border-slate-200',
-  wholesaler: 'bg-amber-100 text-amber-800 border-amber-300',
-};
 
 export default function CustomersPage() {
   const { addToast } = useToast();
@@ -25,6 +23,9 @@ export default function CustomersPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+  // G29 — customers quick-created offline (OrderCreateModal), still queued in the
+  // outbox and not yet visible to the server's own /customers list.
+  const [queuedCustomers, setQueuedCustomers] = useState([]);
 
   // Debounce search so we don't fire on every keystroke
   useEffect(() => {
@@ -32,8 +33,8 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (showInactive) params.set('include_inactive', 'true');
     if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
@@ -41,10 +42,47 @@ export default function CustomersPage() {
     api.get(`/customers?${params}`)
       .then(setCustomers)
       .catch(() => addToast('Failed to load customers', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [showInactive, debouncedSearch, addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // G29 — Cross-App Visibility. Reads directly from the outbox rather than the
+  // server, so a customer quick-created offline shows up here immediately, and
+  // disappears the moment its queued POST /customers actually drains — no page
+  // reload, no spinner, matching the same silent-refresh spirit as G27.
+  const loadQueuedCustomers = useCallback(async () => {
+    try {
+      const records = await listRecords();
+      const queued = records
+        .filter((r) => r.entity_type === 'customer' && r.status === 'queued')
+        .map((r) => ({
+          id: `local-${r.id}`,
+          name: r.payload?.name || 'Customer',
+          customer_type: r.payload?.customer_type || 'regular',
+          phone: r.payload?.phone || null,
+          address: r.payload?.address || null,
+          is_active: true,
+          _unsynced: true,
+        }));
+      setQueuedCustomers(queued);
+    } catch {
+      // Best-effort only — a local listing failure here should not block the page.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadQueuedCustomers();
+    return subscribeOutbox(() => loadQueuedCustomers());
+  }, [loadQueuedCustomers]);
+
+  const searchLower = debouncedSearch.trim().toLowerCase();
+  const visibleQueuedCustomers = searchLower
+    ? queuedCustomers.filter((c) => c.name.toLowerCase().includes(searchLower))
+    : queuedCustomers;
+  const displayCustomers = [...visibleQueuedCustomers, ...customers];
 
   const {
     printList, printing,
@@ -92,7 +130,7 @@ export default function CustomersPage() {
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
-      ) : customers.length === 0 ? (
+      ) : displayCustomers.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {search ? 'No customers match your search.' : 'No customers yet. Add one to get started.'}
         </p>
@@ -109,10 +147,19 @@ export default function CustomersPage() {
               </tr>
             </thead>
             <tbody>
-              {customers.map((c) => (
+              {displayCustomers.map((c) => (
                 <tr
                   key={c.id}
-                  onClick={() => setSelectedId(c.id)}
+                  onClick={() => {
+                    // G29 — a still-queued customer has no server row yet: opening the
+                    // edit drawer would 404/500 against a `local-` id, so tell the
+                    // operator why instead of trying.
+                    if (c._unsynced) {
+                      addToast('Customer is queued for sync — details and editing will be available once connected.', 'info');
+                      return;
+                    }
+                    setSelectedId(c.id);
+                  }}
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4">
@@ -121,8 +168,8 @@ export default function CustomersPage() {
                     </p>
                   </td>
                   <td className="px-5 py-4 hidden sm:table-cell">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${TYPE_BADGE[c.customer_type]}`}>
-                      {c.customer_type === 'wholesaler' ? 'Wholesalers' : 'Regular Customer'}
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(c.customer_type)}`}>
+                      {customerTypeLabel(c.customer_type)}
                     </span>
                   </td>
                   <td className="px-5 py-4 text-slate-500 hidden md:table-cell">
@@ -132,7 +179,11 @@ export default function CustomersPage() {
                     <span className="block max-w-[220px] truncate">{c.address ?? '—'}</span>
                   </td>
                   <td className="px-5 py-4">
-                    {c.is_active ? (
+                    {c._unsynced ? (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                        ⏳ Waiting to sync
+                      </span>
+                    ) : c.is_active ? (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
                         Active
                       </span>
@@ -152,7 +203,7 @@ export default function CustomersPage() {
       {creating && (
         <CustomerFormModal
           onClose={() => setCreating(false)}
-          onSaved={() => { setCreating(false); load(); }}
+          onSaved={() => { setCreating(false); load(true); }}
         />
       )}
 
@@ -160,7 +211,7 @@ export default function CustomersPage() {
         <CustomerDetailPanel
           customerId={selectedId}
           onClose={() => setSelectedId(null)}
-          onSaved={load}
+          onSaved={() => load(true)}
         />
       )}
 

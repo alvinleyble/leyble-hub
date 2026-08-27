@@ -1,6 +1,6 @@
 # Database Reference
 
-PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–030` have
+PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–033` have
 been applied — reconstructed from `server/db/migrations/` (not from the archived spec, which is
 stale). When in doubt, the migration files are the source of truth.
 
@@ -43,15 +43,13 @@ script (not run automatically by `migrate.js`/`seed.js`). See
 | `current_stock` | NUMERIC(10,2) | was INT, now decimal (022) |
 | `is_active` | BOOLEAN | soft-delete flag |
 
-### `customers` (003, altered by 015, 025)
-`customer_type` ∈ **`('regular','wholesaler')`** default `'regular'`. (History: started as
-`retail/wholesale/suki` → `wholesale/suki` (015) → current names (025).) Only **wholesaler**
-customers get custom per-product pricing. Fields: `name`, `address`, `phone`, `notes`,
-`is_active`.
+### `customers` (003, altered by 015, 025, 031, 032)
+`customer_type` ∈ **`('regular','wholesaler','discounted','markup')`** default `'regular'`. (History: started as
+`retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032) → `unassigned` collapsed into `regular` (034).) In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`. Fields: `name`, `address`, `phone`, `notes`, `is_active`.
 
 ### `customer_product_prices` (004, altered by 020, 026) — **append-only**
-Custom price history for wholesaler customers. The **most recent row** per
-`(customer_id, product_id, order_type)` is the active price.
+Custom price history. Every save inserts a new row. The **most recent row** per
+`(customer_id, product_id, order_type)` is the active price (queried via `SELECT DISTINCT ON (cpp.product_id) ... ORDER BY cpp.product_id, cpp.created_at DESC`).
 | Column | Notes |
 |---|---|
 | `customer_id`, `product_id` | FK, ON DELETE CASCADE |
@@ -66,7 +64,7 @@ Field workers (drivers/helpers). `full_name`, `remarks` (TEXT — renamed from `
 `phone`, `license_number`, `id_image_base64` + `id_image_mime_type` (ID photo stored inline as
 Base64), `is_active`.
 
-### `orders` (006, altered by 016, 018, 019, 027, 028)
+### `orders` (006, altered by 016, 018, 019, 027, 028, 033)
 | Column | Notes |
 |---|---|
 | `customer_id` | FK |
@@ -77,6 +75,9 @@ Base64), `is_active`.
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
+| `receipt_station`, `receipt_sequence` | the device-issued receipt number, decomposed (033). Nullable — orders predating V2.5 have none and are never backfilled. `CHECK` keeps the pair whole; a **partial** `UNIQUE` index over rows that carry one is the anti-duplicate key for a resent outbox record ([ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)) |
+| `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1-00042'`, derived from the pair above. Never written to |
+| `created_at` | the **sale time**. Supplied by the device on a local-first save (same pattern as `supplier_deliveries.received_at`); defaults to `NOW()` otherwise |
 
 > `driver_id` / `helper_id` FK columns were **dropped** (016) — personnel are now in the
 > `order_personnel` join table.
@@ -104,6 +105,15 @@ quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposi
 ```
 i.e. deposit is charged on the bottles that were *not* returned. With defaults
 (`units_per_case=1, bottles_returned=0`) this reduces to the old `quantity*(price+deposit)`.
+
+### `stations` (033)
+One row per device that has completed the one-time install registration ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
+| Column | Notes |
+|---|---|
+| `device_key` | UNIQUE. Generated on the device; the idempotency key for registration, so a retried register call returns the same station instead of claiming a second number |
+| `station_number` | UNIQUE, defaulted from `station_number_seq`. A sequence rather than `MAX+1`: concurrency-safe without locking, and it never hands the same value out twice. Numbers only creep upward — a wiped device registers afresh and gets a new one |
+| `label` | optional, e.g. `'Honor Pad X8B'` |
+| `registered_at`, `last_seen_at` | |
 
 ### `supplier_deliveries` (008, altered by 029)
 Incoming stock events. `supplier_name`, `notes`, `received_at`, `created_by`. Soft-void columns

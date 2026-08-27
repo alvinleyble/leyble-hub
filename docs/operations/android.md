@@ -19,6 +19,8 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
 - The Render service is **API-only** — it serves `/api/v1/*` and returns a 404 JSON for anything
   else. It does **not** serve a web client, so there is no website to open in a browser; the APK
   is the only way in.
+- **Default Landing & Routing:** In V3.0, the app launches and opens directly on **Outgoing Orders (`/orders`)**, where order creation takes place. The V1/V2 long-press bridge and remembered `preferred_ui` preference were removed (G17); V1 is the sole application.
+- **Orientation:** Screen orientation is locked to **`sensorLandscape`** across the application to provide optimal layout for side-by-side product tiles and order lines.
 - Auth: the **Android app uses a Bearer token** stored in `@capacitor/preferences` (native,
   app-sandboxed storage — *not* browser localStorage). A `SameSite=Strict` cookie path also
   exists but is used only by the local browser dev server (`npm run dev`). Both are handled
@@ -147,5 +149,4 @@ page (`http://<printer-ip>`, e.g. `192.168.1.39`) has no field to send AT comman
 does it: **Wi-Fi tab → "Disable notices & reboot printer."** That runs the Hi-Flying handshake over
 the module's UDP config channel (**port 48899**): `HF-A11ASSISTHREAD` discovery → `+ok` (enter
 command mode) → `AT+EVENT=off` → `AT+Z` (reboot). One-time. Implemented as
-`disableWifiEventNotice()` in PrinterPlugin.java; the button only needs the printer's IP filled in.
-- **Push / offline:** out of scope for v1.
+- **Offline access & local-first storage:** ✅ Done (V2.5/V3.0). Native device storage (`@capacitor/preferences` under `v25.*`) holds station registrations, a rolling 30-day receipt cache, and the waiting outbox queue with automatic background drain upon reconnection.

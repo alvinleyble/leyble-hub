@@ -1,8 +1,9 @@
-import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProfileProvider, useProfile } from './context/ProfileContext';
 import { ToastProvider } from './components/ui/Toast';
+import { PrinterProvider } from './context/PrinterContext';
 import AppLayout from './components/layout/AppLayout';
 import ProfilePickerModal from './components/profile/ProfilePickerModal';
 import Spinner from './components/ui/Spinner';
@@ -16,6 +17,7 @@ import OrderDetailPage from './pages/orders/OrderDetailPage';
 import IncomingPage from './pages/incoming/IncomingPage';
 import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
+import { startOfflineCore, stopOfflineCore } from './offline';
 
 // Layout route: guards all children behind auth check.
 function ProtectedLayout() {
@@ -38,18 +40,27 @@ function ProtectedLayout() {
   );
 }
 
-// Renders the app shell underneath, overlaying the "who's using this" picker on top when
-// no profile has been chosen yet — the app is never hidden behind a separate screen for it.
+// Renders the V1 shell underneath, overlaying the "who's using this" picker on
+// top when no profile has been chosen yet — the app is never hidden behind a
+// separate screen for it.
 function ProfileGate() {
   const { needsPick, loading } = useProfile();
+
+  // V2.5 (D1) — claim this device's station number once, then keep the outbox
+  // draining in the background. A no-op unless the release switch is on (D18), and it
+  // runs after sign-in because registration is an authenticated call.
+  useEffect(() => {
+    startOfflineCore();
+    return stopOfflineCore;
+  }, []);
+
   return (
     <>
-      <AppLayout />
+      <Outlet />
       {!loading && needsPick && <ProfilePickerModal />}
     </>
   );
 }
-
 
 function AppRoutes() {
   return (
@@ -58,17 +69,20 @@ function AppRoutes() {
 
       {/* All authenticated pages live inside ProtectedLayout */}
       <Route element={<ProtectedLayout />}>
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard"    element={<DashboardPage />} />
-        <Route path="/orders"         element={<OrdersPage />} />
-        <Route path="/orders/:id"    element={<OrderDetailPage />} />
-        <Route path="/inventory"    element={<InventoryPage />} />
-        <Route path="/customers/*"  element={<CustomersPage />} />
-        <Route path="/incoming"     element={<IncomingPage />} />
-        <Route path="/personnel/*"  element={<PersonnelPage />} />
-        <Route path="/tickets"      element={<TicketsPage />} />
-        <Route path="/audit"        element={<AuditPage />} />
-        <Route path="*"             element={<Navigate to="/dashboard" replace />} />
+        <Route index element={<Navigate to="/orders" replace />} />
+
+        <Route element={<AppLayout />}>
+          <Route path="/dashboard"    element={<DashboardPage />} />
+          <Route path="/orders"         element={<OrdersPage />} />
+          <Route path="/orders/:id"    element={<OrderDetailPage />} />
+          <Route path="/inventory"    element={<InventoryPage />} />
+          <Route path="/customers/*"  element={<CustomersPage />} />
+          <Route path="/incoming"     element={<IncomingPage />} />
+          <Route path="/personnel/*"  element={<PersonnelPage />} />
+          <Route path="/tickets"      element={<TicketsPage />} />
+          <Route path="/audit"        element={<AuditPage />} />
+          <Route path="*"             element={<Navigate to="/dashboard" replace />} />
+        </Route>
       </Route>
     </Routes>
   );
@@ -78,7 +92,9 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <AppRoutes />
+        <PrinterProvider>
+          <AppRoutes />
+        </PrinterProvider>
       </ToastProvider>
     </AuthProvider>
   );
