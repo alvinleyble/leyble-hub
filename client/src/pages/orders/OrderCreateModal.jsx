@@ -13,7 +13,7 @@ import CaseStepper from '../../components/pos/CaseStepper';
 import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
 import {
   saveOrderLocalFirst, updateLocalOrder, cleanupOrphanedDraftDirect,
-  enqueue, drainOutbox,
+  enqueue, drainOutbox, loadCustomerPrices,
 } from '../../offline/index.js';
 
 const PHP = (n) =>
@@ -142,6 +142,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   // ADR 0009: the saved prices ARE the pricing source. Every customer is asked, not
   // just the ones tagged wholesaler/discounted/markup — a customer prices as "custom"
   // exactly when rows come back, so an agreed rate can never be saved and then ignored.
+  //
+  // Offline pricing gap fix: loadCustomerPrices (client/src/offline/catalogue.js) tries
+  // the live endpoint first and quietly refreshes the device's held copy of this
+  // customer's rates on success; when the tablet is offline or the fetch fails, it
+  // falls back to whatever this device last cached for this customer/order_type, so an
+  // agreed rate still applies instead of silently defaulting to base price.
   useEffect(() => {
     // G29 — a still-local customer has no server prices to fetch (and no route to
     // fetch them from, since it has no real id yet); default to base wholesale prices.
@@ -149,28 +155,33 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
       setCustomPrices({});
       return;
     }
-    api.get(`/customers/${customerId}/prices?order_type=${orderType}`)
-      .then((prices) => {
+    let cancelled = false;
+    loadCustomerPrices(customerId, orderType)
+      .then(({ prices }) => {
+        if (cancelled) return;
         const map = {};
         prices.forEach((p) => { map[p.product_id] = p; });
         setCustomPrices(map);
       })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [customerId, orderType]);
 
   // Does this customer hold ANY saved price, on either channel? `/customers/:id/prices` is
   // scoped to one order_type, and the tag is wrong regardless of which channel the rows sit on,
-  // so this asks both rather than reusing the single-channel response loaded above.
+  // so this asks both rather than reusing the single-channel response loaded above. Routed
+  // through loadCustomerPrices so the nudge still works from the cached copy when offline,
+  // instead of failing silently like the live-only fetch it replaced.
   const hasAnySavedPrice = async (id) => {
     // G29 — a still-local customer cannot have saved prices yet (there is nothing
     // server-side to have saved them against), so the mis-tagged-customer nudge below
     // must never even ask.
     if (isLocalCustomer(id)) return false;
     const [delivery, pickup] = await Promise.all([
-      api.get(`/customers/${id}/prices?order_type=delivery`),
-      api.get(`/customers/${id}/prices?order_type=pickup`),
+      loadCustomerPrices(id, 'delivery'),
+      loadCustomerPrices(id, 'pickup'),
     ]);
-    return hasCustomPricing(delivery) || hasCustomPricing(pickup);
+    return hasCustomPricing(delivery.prices) || hasCustomPricing(pickup.prices);
   };
 
   // Fires on selection, not on order-type switches — hence customerId alone in the deps. Skipped

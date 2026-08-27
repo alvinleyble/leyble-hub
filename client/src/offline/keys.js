@@ -30,3 +30,13 @@ export function outboxKey(id) {
 export function receiptKey(receiptNumber) {
   return `${RECEIPT_PREFIX}${receiptNumber}`;
 }
+
+// One key per (customer, order_type) pair, not a single blob — the device only ever
+// visits a handful of customers between outages, so this fills in with exactly the
+// accounts the tablet actually sold to, rather than every saved price the store has
+// ever recorded.
+export const CUSTOMER_PRICES_PREFIX = `${NS}catalogue.prices.`;
+
+export function customerPricesKey(customerId, orderType) {
+  return `${CUSTOMER_PRICES_PREFIX}${customerId}.${orderType}`;
+}
