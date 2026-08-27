@@ -35,7 +35,7 @@ function ProductCard({ product, quantity, onAdd, disabled, priceFor }) {
                       ? `, Suki price — ${PHP(Math.abs(diff))} ${isCheaper ? 'less' : 'more'} than `
                         + `standard${pct ? ` (${pct}%)` : ''}`
                       : '')}
-      className={`flex h-full w-full touch-none select-none flex-col rounded-xl border p-3 text-left
+      className={`flex h-full w-full touch-pan-y select-none flex-col rounded-xl border p-3 text-left
                   transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2
                   focus-visible:ring-blue-600 disabled:opacity-50
                   ${quantity > 0

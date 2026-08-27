@@ -15,6 +15,7 @@ globalThis.Node     = dom.window.Node;
 globalThis.Event    = dom.window.Event;
 globalThis.KeyboardEvent = dom.window.KeyboardEvent;
 globalThis.MouseEvent    = dom.window.MouseEvent;
+globalThis.PointerEvent = dom.window.PointerEvent;
 globalThis.localStorage = dom.window.localStorage;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,10 +36,25 @@ export function render(element) {
     all: (selector) => [...container.querySelectorAll(selector)],
     byLabel: (label) => container.querySelector(`[aria-label="${label}"]`),
     // The card / dialog buttons all fire on click; useHoldRepeat's pointerdown path is
-    // exercised by the app, not here.
+    // exercised by the app and tested with pointerDown/pointerUp.
     click: (el) => act(() => { el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })); }),
     press: (key) => act(() => {
       dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true }));
+    }),
+    pointerDown: (el, opts = {}) => act(() => {
+      el.dispatchEvent(new dom.window.PointerEvent('pointerdown', { bubbles: true, cancelable: true, ...opts }));
+    }),
+    pointerMove: (el, opts = {}) => act(() => {
+      el.dispatchEvent(new dom.window.PointerEvent('pointermove', { bubbles: true, cancelable: true, ...opts }));
+    }),
+    pointerUp: (el, opts = {}) => act(() => {
+      el.dispatchEvent(new dom.window.PointerEvent('pointerup', { bubbles: true, cancelable: true, ...opts }));
+    }),
+    pointerCancel: (el, opts = {}) => act(() => {
+      el.dispatchEvent(new dom.window.PointerEvent('pointercancel', { bubbles: true, cancelable: true, ...opts }));
+    }),
+    pointerLeave: (el) => act(() => {
+      el.dispatchEvent(new dom.window.PointerEvent('pointerout', { bubbles: true, relatedTarget: document.body }));
     }),
   };
 }
