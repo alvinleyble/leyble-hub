@@ -14,7 +14,7 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { nativeStore, __resetMemoryBackend, __useLocalStorageBackendForTest } from '../src/offline/nativeStore.js';
 import { STATION_KEY } from '../src/offline/keys.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
-import { __clearOutbox, listRecords, drainOutbox, enqueue } from '../src/offline/outbox.js';
+import { __clearOutbox, listRecords, drainOutbox, enqueue, ref, NEEDS_ATTENTION } from '../src/offline/outbox.js';
 import { putReceipt, getReceipt } from '../src/offline/receiptHistory.js';
 import { saveOrderLocalFirst, cleanupOrphanedDraftDirect, updateLocalOrder } from '../src/offline/posSave.js';
 import { notifyDrainCompleteWith, handleDrainCompletionWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
@@ -322,6 +322,67 @@ test('Round 3 Fix 5: a drainOutbox() call skipped because another pass is alread
   } finally {
     window.removeEventListener('leyble:drain-complete', handler);
   }
+});
+
+test('Round 4 Fix 6: a ref must not be pruned before a record enqueued moments later can reference it — a customer that drains to completion (remembering + pruning its ref in the same pass), then an order created afterward depending on that same local id, must still resolve and sync instead of failing forever', async () => {
+  const profileKey = 'josie';
+  let orderPostBody = null;
+  api.request = async (endpoint, opts) => {
+    const body = JSON.parse(opts.body);
+    if (endpoint === '/customers') return { id: 501 };
+    if (endpoint === '/orders') { orderPostBody = body; return { id: 9999 }; }
+    throw new Error(`unexpected endpoint ${endpoint}`);
+  };
+
+  // 1. Enqueue and fully drain the customer on its own — this is exactly the
+  // captain's live repro: OrderCreateModal's quick-create fires its own drain, which
+  // both remembers the customer's ref AND runs pruneRefs, all in one pass, before
+  // anything yet in the outbox depends on her.
+  const customerRecord = await enqueue({
+    entityType: 'customer', endpoint: '/customers', method: 'POST',
+    payload: { name: 'Brand New Sari-Sari', customer_type: 'regular' }, profileKey,
+  });
+  const customerDrain = await drainOutbox();
+  assert.equal(customerDrain.sent, 1, 'the customer record must have actually synced (and pruneRefs must have run) in this pass');
+  assert.equal((await listRecords()).length, 0, 'nothing depends on the customer yet at this point');
+
+  // 2. ONLY NOW enqueue the order that references the customer's local id — this is
+  // the exact interleaving that used to strand the record forever (order 23-00020,
+  // v25.outbox.000000000044, captain-reported): the ref was already gone by the time
+  // this record could ever need it.
+  await enqueue({
+    entityType: 'order', endpoint: '/orders', method: 'POST',
+    payload: { customer_id: ref(customerRecord.id, 'id'), items: [] },
+    profileKey, dependsOn: [customerRecord.id],
+  });
+
+  const orderDrain = await drainOutbox();
+  assert.equal(orderDrain.sent, 1,
+    'the order must resolve and send — before this fix it stayed unresolvedRef-blocked forever, with zero attempts and no visible error');
+  assert.equal(orderPostBody.customer_id, 501, 'the $ref must resolve to the customer\'s real server id');
+  assert.equal((await listRecords()).length, 0, 'nothing should be left queued or needing attention');
+});
+
+test('Round 4 Fix 6 safety net: a record depending on an outbox id that is nowhere in the outbox (its ref already gone, whether pruned or never remembered) is escalated to needs_attention immediately, instead of staying silently queued forever with zero attempts', async () => {
+  const profileKey = 'josie';
+  api.request = async () => { throw new Error('must not be called — this record can never resolve its dependency'); };
+
+  await enqueue({
+    entityType: 'order', endpoint: '/orders', method: 'POST',
+    payload: { customer_id: ref(99999, 'id'), items: [] },
+    profileKey, dependsOn: [99999],
+  });
+
+  const result = await drainOutbox();
+  assert.equal(result.sent, 0);
+  assert.equal(result.failed, 1);
+
+  const records = await listRecords();
+  const stuck = records.find((r) => r.entity_type === 'order');
+  assert.ok(stuck);
+  assert.equal(stuck.status, NEEDS_ATTENTION,
+    'must surface in the attention list immediately — this is the "no in-app recovery path" gap that made firstmate hand-patch the captain\'s stuck record');
+  assert.match(stuck.last_error, /99999/);
 });
 
 // ── G30 — engine/test hygiene ─────────────────────────────────────────────────

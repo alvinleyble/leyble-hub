@@ -248,6 +248,31 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `unsynced`, same as the rest of an offline edit, and falls back to the ordinary
   `PATCH /orders/:id/adjustment` once synced. It was previously the one control left
   hard-disabled with no offline path of its own, contradicting the rest of G28.
+- **A remembered `$ref` survives 24h regardless of who currently depends on it**
+  (Round 4 Fix 6, `outbox.js`'s `pruneRefs`/`REF_PRUNE_GRACE_MS`). Its old behaviour —
+  deleting a synced dependency's ref the moment nothing *yet enqueued* referenced it —
+  raced a quick-created customer (drains and remembers her ref in one pass) against
+  the order that would depend on her (enqueued moments later, once the operator
+  finishes the rest of the order): the ref was already gone before the order could
+  ever need it, and `resolvePayload` then threw `unresolvedRef` on every future pass,
+  forever, with zero attempts counted and no visible signal — a customer/order created
+  back-to-back is exactly this shape, not a rare edge case. The residual case the
+  grace window can't rule out (a dependent enqueued only after it fully elapses) is
+  caught by the drain loop's `NEEDS_ATTENTION` escalation: a record whose dependency
+  id is nowhere in the current outbox snapshot at all (not queued, not needing
+  attention itself) surfaces immediately in the attention list instead of staying
+  silently `queued` forever — there was previously no in-app recovery path for this at
+  all (a stuck record had to be hand-patched in native storage).
+- **OrdersPage merges in locally-created/unsynced orders** (Round 4 Fix 7), the same
+  `listRecords()`-into-the-server-list pattern G29 already established for
+  `CustomersPage.jsx`. Before this, a purely server-driven list meant navigating away
+  from a freshly-created offline order and back lost it entirely — clicking back in
+  landed on whatever unrelated, already-synced order happened to occupy that stale
+  numeric-id row. Merged rows navigate by `receipt_number`, never a numeric id (there
+  isn't one yet), round-tripping correctly to `OrderDetailPage`'s existing local-
+  receipt-cache fallback. Scoped to the `all`/`pending` tabs and excluded from bulk
+  selection and the duplicates filter — a still-local order has no server row yet to
+  act on or meaningfully flag as a duplicate against.
 - **Dev-browser persistence (Round 2 Fix 3):** on a plain desktop browser (not the
   Android APK), `nativeStore.js` backs onto `window.localStorage` when available
   (falling back to an in-memory `Map` only if localStorage throws or is absent, e.g.
