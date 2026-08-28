@@ -11,13 +11,24 @@ const MAX_IMAGE_B64_LENGTH = 2_800_000; // ~2 MB before encoding
 // GET /api/v1/personnel
 router.get('/', async (req, res, next) => {
   try {
-    const { include_inactive } = req.query;
-    const whereClause = include_inactive === 'true' ? '' : 'WHERE is_active = TRUE';
+    const { include_inactive, updated_since } = req.query;
+    const conditions = [];
+    const params = [];
+    if (include_inactive !== 'true') conditions.push('is_active = TRUE');
+    // ADR 0015 §4 / Slice 3.2 — the delta an already-set-up tablet asks for on every
+    // login and reconnect, so it never repeats its one-time full pull. Absent, this
+    // endpoint behaves exactly as it always has.
+    if (updated_since) {
+      conditions.push(`updated_at > $${params.length + 1}::timestamptz`);
+      params.push(updated_since);
+    }
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     // Exclude the heavy image column from list views
     const { rows } = await db.query(
       `SELECT id, full_name, remarks, phone, license_number, is_active, created_at, updated_at
        FROM personnel ${whereClause}
-       ORDER BY full_name`
+       ORDER BY full_name`,
+      params
     );
     res.json(rows);
   } catch (err) {

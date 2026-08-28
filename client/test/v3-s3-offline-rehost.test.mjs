@@ -457,9 +457,9 @@ const products = [
 function stubOrderModalApis({ customers = [] } = {}) {
   const priceFetches = [];
   api.get = async (path) => {
-    if (path === '/customers') return customers;
-    if (path === '/products') return products;
-    if (path === '/personnel') return [];
+    if (path.startsWith('/customers?') || path === '/customers') return customers;
+    if (path.startsWith('/products')) return products;
+    if (path.startsWith('/personnel')) return [];
     if (path.startsWith('/orders?status=draft')) return [];
     if (path.includes('/prices')) { priceFetches.push(path); return []; }
     return [];
@@ -692,8 +692,15 @@ function makeLocalOrder(overrides = {}) {
   };
 }
 
-test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and G28 gates Dispatch while keeping Edit Order enabled', async () => {
+test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and (ADR 0015 §5) now KEEPS Dispatch enabled while unsynced', async () => {
   await putReceipt(makeLocalOrder());
+  // Slice 3.2 — "unsynced" is now the outbox's answer, not "we read this locally", so
+  // the order has to actually be queued for the banner and the offline transitions to
+  // apply. That distinction is the point: the device holds synced orders locally too.
+  await enqueue({
+    entityType: 'order', endpoint: '/orders', method: 'POST',
+    payload: {}, profileKey: 'josie', receiptNumber: '1-00042',
+  });
   const err404 = new Error('Not found'); err404.status = 404;
   api.get = async () => { throw err404; };
 
@@ -707,11 +714,40 @@ test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "
 
   const dispatchBtn = r.all('button').find((b) => b.textContent.includes('Start Dispatch'));
   assert.ok(dispatchBtn, 'Start Dispatch should render for a pending delivery order');
-  assert.equal(dispatchBtn.disabled, true, 'G28: Dispatch must be disabled while unsynced');
+  assert.equal(dispatchBtn.disabled, false,
+    'ADR 0015 §5 reverses G28 here: an order only this tablet knows about can be dispatched offline');
+
+  const cancelBtn = r.all('button').find((b) => b.textContent.trim() === 'Cancel Order');
+  assert.ok(cancelBtn);
+  assert.equal(cancelBtn.disabled, true,
+    'Cancel reverses shared state and stays online-only even while unsynced');
 
   const editBtn = r.all('button').find((b) => b.textContent.trim() === 'Edit Order');
   assert.ok(editBtn);
   assert.equal(editBtn.disabled, false, 'G28: Edit Order must stay enabled while unsynced');
+
+  r.unmount();
+});
+
+test('Slice 3.2: a SYNCED order read from local history offline shows the offline-copy banner, not "Waiting to sync", and gates every transition', async () => {
+  // The order is in local history (the eager sync put it there) but nothing about it
+  // is queued — it exists on the server and other tablets can see it. Flagging it
+  // "unsynced" would hand the operator ADR 0015 §5's offline transitions on an order
+  // another tablet could be transitioning at the same moment.
+  await putReceipt(makeLocalOrder());
+  api.get = async () => { throw new Error('Failed to fetch'); }; // no status: an outage
+
+  const r = renderAtRoute('/orders/1-00042', '/orders/:id',
+    React.createElement(ToastProvider, null, React.createElement(OrderDetailPage))
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.doesNotMatch(r.text(), /Waiting to sync/);
+  assert.match(r.text(), /showing this device's saved copy/);
+  assert.match(r.text(), /Aling Nena/, 'the order itself still opens in full, offline');
+
+  const dispatchBtn = r.all('button').find((b) => b.textContent.includes('Start Dispatch'));
+  assert.equal(dispatchBtn.disabled, true, 'a synced order cannot be transitioned without a connection');
 
   r.unmount();
 });
@@ -781,6 +817,10 @@ test('G27: a silent background re-read on leyble:drain-complete swaps to the ser
     return { ...makeLocalOrder(), id: 777, customer_name: 'Aling Nena (synced)' };
   };
   await putReceipt(makeLocalOrder());
+  await enqueue({
+    entityType: 'order', endpoint: '/orders', method: 'POST',
+    payload: {}, profileKey: 'josie', receiptNumber: '1-00042',
+  });
 
   const r = renderAtRoute('/orders/1-00042', '/orders/:id',
     React.createElement(ToastProvider, null, React.createElement(OrderDetailPage))

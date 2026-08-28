@@ -160,29 +160,42 @@ Each of the 9 decisions above records its specific alternatives and rationale un
 
 ---
 
+## The Sync Model: Eager at Setup, Incremental After That
+
+*(Added 2026-08-28 with Slice 3.2. This supersedes the "cache orders as you visit them" model the original Downstream Delivery Slices text below assumed for Slices 3.2 and 3.3, which were also merged into one delivery because they can only be tested together.)*
+
+Field testing on Slice 3.1 exposed the flaw in caching on visit: an order that had been **viewed** online but never created on this tablet had no local copy at all, so going offline and reopening it — or the Outgoing Orders list — still failed. Caching on visit can only ever protect what the operator happened to open before the line went down, which is not how a counter behaves during a blackout. The tablet therefore pulls **ahead of time**, in two clearly different shapes (`client/src/offline/sync.js`):
+
+1. **First-ever setup of a tablet** (no local cache exists yet): one full pull — the complete product catalogue, all customers, all personnel, and the complete order history. Unavoidably heavy, and it happens exactly once per tablet, ever.
+2. **Every login or reconnect after that** (a normal daily login, an app update, or a forced re-login after a bug or logout): an **incremental delta only** — whatever changed in products, customers, personnel and orders since the last successful sync, *including orders created on other tablets*. Step 1's full pull never runs again.
+3. **The reconnect trigger is throttled.** Coming back online triggers a sync, but a reconnect landing less than ~90 seconds after the previous sync completed is skipped rather than stacked, so a flapping connection cannot fire back-to-back syncs. A deliberate login is never throttled.
+4. **First-setup UX is non-blocking.** Only the three small, fast reference pulls (products, customers, personnel) hold the app; order history streams in behind an already-unlocked screen, newest first, so nobody waits on years of invoices.
+5. **A sync interrupted partway leaves everything it already fetched in place.** Every write merges onto what the device holds — catalogue deltas by id, order snapshots one key per order — and never clears then repopulates, so a cut-off sync can only ever leave the tablet with *more* than it started with. Resumable cursors mean the next attempt continues rather than restarting.
+
+Mechanically: `GET /api/v1/orders/sync` serves complete order snapshots (line items and personnel included, drafts excluded) with keyset pagination on `(updated_at, id)` in both directions — `direction=back` backfills a new tablet resumably, `direction=forward` is the delta from the device's own watermark. `GET /products`, `/customers` and `/personnel` accept an additive `updated_since` for the same purpose. The device's watermarks come from the rows the server sent, so there is no clock-skew comparison anywhere in the loop.
+
+---
+
 ## Downstream Delivery Slices
 
-This ADR serves as the authoritative specification for the four queued delivery tasks:
+This ADR serves as the authoritative specification for the queued delivery tasks. **The Slice 3.2 and 3.3 entries below are superseded by the sync model above** and are kept only as a record of the original plan; Slices 3.1 and 3.4 stand as written.
 
-1. **Slice 3.1: Core Auth Resilience & Defensive UI Hardening (`leyble-hub-offline-slice-3-1-auth-resilience`)**
+1. **Slice 3.1: Core Auth Resilience & Defensive UI Hardening (`leyble-hub-offline-slice-3-1-auth-resilience`)** — *shipped*
    - Native session persistence (`v25.session`) in `AuthContext.jsx`.
    - Automatic zero-prompt session recovery on network errors during `/auth/me`.
    - Friendly offline notice and session resume on `LoginPage.jsx`.
    - Defensive null/undefined guards across `ProductDetailPanel`, `CustomerDetailPanel`, `PersonnelDetailPanel`, and `DeliveryDetailPanel` to eliminate white-screen crashes.
 
-2. **Slice 3.2: Counter POS & Order Creation Full Offline Parity (`leyble-hub-offline-slice-3-2-counter-pos-orders`)**
-   - Wire `loadCatalogue()` to `OrderCreateModal.jsx` (products, customers, prices).
+2. **Slices 3.2 + 3.3, delivered together as Slice 3.2: Counter POS & Orders Full Offline Sync (`leyble-hub-offline-slice-3-2-pos-orders-full-sync`)** — *superseded plan; see the sync model above for what was actually built*
+   - ~~Cache orders as the operator visits them~~ → the tablet syncs the whole history ahead of time.
+   - Wire `loadCatalogue()` to `OrderCreateModal.jsx` (products, customers, personnel, prices).
    - Cache personnel in native storage (`v25.catalogue.personnel`) for driver/helper assignments.
-   - Wire customer directory creation modal (`CustomerFormModal.jsx`) to offline outbox.
-   - Verify 100% offline order creation, price capture, and thermal ESC/POS printing.
+   - Wire the customer directory's creation modal (`CustomerFormModal.jsx`) to the offline outbox.
+   - `OrdersPage.jsx` falls back to the complete local history (no age limit); `OrderDetailPage.jsx` opens **any** order from it.
+   - Dual identifier resolution (receipt number **or** numeric row id) in `getReceipt()`.
+   - Offline status progression (`pending → in_transit → completed`) for unsynced local orders only (§5).
 
-3. **Slice 3.3: Orders Directory & Order Detail Complete Caching (`leyble-hub-offline-slice-3-3-orders-directory`)**
-   - Fall back `OrdersPage.jsx` to complete local receipt cache with no age limit.
-   - Store full line-item snapshots in `putReceipt()` on save and on server fetch.
-   - Dual-key lookup index (`order_id -> receipt_number`) in `getReceipt()`.
-   - Support offline status progression (`pending → in_transit → completed`) for unsynced local orders.
-
-4. **Slice 3.4: Back-Office Graceful Degradation, Stock Mutations & Release 2 Supplies (`leyble-hub-offline-slice-3-4-backoffice-and-stock`)**
+3. **Slice 3.4: Back-Office Graceful Degradation, Stock Mutations & Release 2 Supplies (`leyble-hub-offline-slice-3-4-backoffice-and-stock`)**
    - Full offline CRUD for products, stock adjustments, and batch price edits.
    - Multi-device stock conflict flagging and human reconciliation view.
    - Customer profile editing offline via outbox; online gating for merges and deletions.

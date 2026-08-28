@@ -8,7 +8,8 @@ import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
-import { listRecords, subscribeOutbox, getReceipt } from '../../offline/index.js';
+import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
+import { listRecords, subscribeOutbox, getReceipt, listReceipts } from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -47,6 +48,9 @@ export default function OrdersPage() {
 
   const [orders, setOrders]       = useState([]);
   const [loading, setLoading]     = useState(true);
+  // Slice 3.2 — true when the table below is being served from this device's own
+  // synced order history because the server could not be reached.
+  const [fromLocalHistory, setFromLocalHistory] = useState(false);
   const [statusTab, setStatusTab] = useState('all');
   const [fromDate, setFromDate]   = useState('');
   const [toDate, setToDate]       = useState('');
@@ -84,7 +88,11 @@ export default function OrdersPage() {
   // { ids: number[], mode: 'pending' | 'in_transit' | 'delivered' } | null
   const [reviewQueue, setReviewQueue]     = useState(null);
 
-  const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab);
+  // Slice 3.2 — bulk transitions all POST to the server, so they are meaningless (and
+  // would fail one by one) while the table is being served from local history. Hide the
+  // selection column entirely rather than offering rows the operator cannot act on.
+  const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab)
+    && !fromLocalHistory;
 
   // Round 4 Fix 7 — locally-created orders (saveOrderLocalFirst, G27) are not on the
   // server yet, so the server-driven list above can never include them: navigating
@@ -129,6 +137,7 @@ export default function OrdersPage() {
 
     api.get(`/orders?${params}`)
       .then((res) => {
+        setFromLocalHistory(false);
         if (res && res.orders && res.pagination) {
           setOrders(res.orders);
           setTotalOrders(res.pagination.total);
@@ -143,14 +152,35 @@ export default function OrdersPage() {
           setTotalPages(1);
         }
       })
-      .catch(() => addToast('Failed to load orders', 'error'))
+      .catch(async () => {
+        // Slice 3.2 — the Orders Amnesia fix. This used to be a bare error toast that
+        // left the directory empty, so relaunching the tablet during an outage erased
+        // every past sale from view. The device now syncs the FULL order history ahead
+        // of time (offline/sync.js), so the fallback is a real directory, not a
+        // consolation: the same status/date/search filters applied to the local
+        // snapshots, paginated the same way.
+        try {
+          const local = await listReceipts();
+          const matched = filterLocalHistory(local, {
+            statusTab, fromDate, toDate, search: debouncedSearch,
+          });
+          const start = (page - 1) * pageSize;
+          setOrders(matched.slice(start, start + pageSize));
+          setTotalOrders(matched.length);
+          setTotalPages(Math.max(1, Math.ceil(matched.length / pageSize)));
+          setFromLocalHistory(true);
+        } catch {
+          setFromLocalHistory(false);
+          addToast('Failed to load orders', 'error');
+        }
+      })
       .finally(() => setLoading(false));
   }, [statusTab, fromDate, toDate, debouncedSearch, page, pageSize, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
   const loadDrafts = useCallback(() => {
-    api.get('/orders?status=draft').then(setDrafts).catch(() => {});
+    api.get('/orders?status=draft').then(setDrafts).catch(() => setDrafts([]));
   }, []);
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
@@ -180,8 +210,17 @@ export default function OrdersPage() {
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const qClean = q.replace(/^#/, '');
+    // Slice 3.2 — a still-queued order is written to local history at Save as well as
+    // sitting in the outbox, so when the table is being served FROM local history it
+    // would otherwise appear twice: once here and once in the "Waiting to sync" block
+    // rendered above it. The outbox row is the better one (it carries the badge), so
+    // drop the history copy rather than the other way round.
+    const localUnsyncedRefs = new Set(
+      localUnsyncedOrders.map((o) => String(o.receipt_number)).filter(Boolean)
+    );
 
     return orders.filter((o) => {
+      if (fromLocalHistory && o.receipt_number && localUnsyncedRefs.has(String(o.receipt_number))) return false;
       if (doubleOnly && !possibleDoubleIds.has(o.id)) return false;
 
       const printed = isOrderPrinted(o);
@@ -200,7 +239,7 @@ export default function OrdersPage() {
 
       return true;
     });
-  }, [orders, searchQuery, doubleOnly, possibleDoubleIds, printFilter]);
+  }, [orders, searchQuery, doubleOnly, possibleDoubleIds, printFilter, fromLocalHistory, localUnsyncedOrders]);
 
   // Round 4 Fix 7 — same instant client-side matching filteredOrders applies, minus
   // duplicate detection (that needs the full loaded page of server orders, and a
@@ -367,6 +406,16 @@ export default function OrdersPage() {
         <h1 className="text-2xl font-bold text-slate-900">Outgoing Orders</h1>
         <Button onClick={() => setCreating(true)}>+ New Order</Button>
       </div>
+
+      {/* Slice 3.2 — calm, factual, and never a blocker: the table below IS the real
+          directory, just served from this device (ADR 0015 §9's banner tone). */}
+      {fromLocalHistory && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-5 py-3
+                        text-sm font-medium text-amber-800">
+          <span aria-hidden="true">⏳</span>
+          <span>Offline — showing this device's saved order history. Status changes need a connection.</span>
+        </div>
+      )}
 
       {/* Parked-drafts banner — visible from any tab so an in-progress order is never lost */}
       {drafts.length > 0 && statusTab !== 'draft' && (
@@ -648,7 +697,9 @@ export default function OrdersPage() {
               {filteredOrders.map((o) => (
                 <tr
                   key={o.id}
-                  onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id}`)}
+                  onClick={() => o.status === 'draft'
+                    ? openDraft(o)
+                    : navigate(`/orders/${localOrderRoute(o)}`)}
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   {showCheckboxes && (

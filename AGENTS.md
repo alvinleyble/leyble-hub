@@ -348,17 +348,53 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `DELETE` that 404s (already gone) is treated as success, not a needs-attention item
   (`outbox.js drainOutbox`) — the same retry-safety D13 gives receipt numbers, extended to
   deletes via `queueOrderDeletion`.
-- **The catalogue (piece 3, `client/src/offline/catalogue.js`):** products/customers cache
-  as two whole-value keys (not one-per-record — it's server-replaced reference data, not
-  built up locally), refreshed quietly on every reachable load and a 60s background tick
-  in `POSPage.jsx`. No staleness UI, ever (D16). `loadCatalogue()` never throws — an
-  unreachable server with an empty first-run cache just returns `[]`.
+- **The catalogue (`client/src/offline/catalogue.js`):** products/customers/**personnel**
+  cache as three whole-value keys (not one-per-record — it's server-replaced reference
+  data, not built up locally), refreshed quietly on every reachable load. No staleness UI,
+  ever (D16). `loadCatalogue()` never throws — an unreachable server with an empty
+  first-run cache just returns `[]` — and it is what `OrderCreateModal.jsx` loads its
+  pickers from, online and offline alike. The held copy keeps **inactive** rows (a
+  deactivation is a change a delta has to be able to deliver); the `getCached*` readers
+  filter to active, so callers see the same shape as before.
 - **Testing the switch-on path:** `import.meta.env` is stubbed to `{}` for every test file
   (`client/test/jsx-register.mjs`), so `V25_OFFLINE_CORE` always reads `false` there —
   component-render tests can only exercise the switch-OFF path. Functions that need
   switch-on coverage take an explicit `enabled`/`offlineCoreEnabled` override parameter and
   are unit-tested directly (see `notifyDrainCompleteWith`, `saveOrderLocalFirst`,
   `triggerOfflineAdvisoryWith`) — that is the established pattern, not a gap to fix.
+
+### Full-app offline sync (Slice 3.2, [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md))
+
+The tablet no longer caches what it visits — it syncs **ahead of time**, because an order
+viewed online but never created here had no local copy at all and still failed offline.
+`client/src/offline/sync.js` owns this; read the ADR's "The Sync Model" section for the
+settled rules. What a future session most needs to know:
+
+- **Two shapes, and only two.** A tablet holding nothing does ONE full pull, ever
+  (`setup_complete` in `v25.sync.state` is the only thing that decides). Every later login
+  and reconnect is a delta from the device's own server-issued watermarks. Never add a
+  code path that re-pulls everything on an already-set-up device.
+- **`GET /orders/sync`** (registered above `GET /:id` — Express would read "sync" as an id)
+  serves COMPLETE snapshots, keyset-paginated on `(updated_at, id)`: `direction=back`
+  backfills newest-first and resumably, `direction=forward` is the delta. `/products`,
+  `/customers` and `/personnel` take an additive `updated_since`. Migration 035 indexes
+  both.
+- **Merge, never clear-then-repopulate.** A sync cut off halfway must leave the device
+  with more than it started with, never less.
+- **`pruneReceipts()` is no longer called on start.** ADR 0015 §4 removed the 30-day age
+  limit; re-adding that call deletes the history the first setup spent its one pull
+  fetching.
+- **`getReceipt()` resolves either identifier** — a device receipt number (`1-00042`) or a
+  numeric row id (`1240`, every pre-V2.5 order, never backfilled) — via `v25.orderindex.*`
+  plus a scan fallback. `putOrderSnapshot()` is the writer for server-sourced orders;
+  `putReceipt()` still requires a receipt number and is for local sales.
+- **"Read from the device" ≠ "never synced."** `OrderDetailPage` asks the outbox
+  (`isOrderUnsynced`) rather than inferring it from the local read, because the device now
+  holds synced orders too. Only a genuinely unsynced order gets ADR 0015 §5's offline
+  forward transitions (`transitionLocalOrder` in `posSave.js`, queued as its own
+  `POST /orders/:receipt/status` record behind the order's creation — `POST /orders` cannot
+  express a status, and stock deducts on the transition, ADR 0012). Reversals, Cancel and
+  Close stay online-only in every case.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets

@@ -34,9 +34,9 @@ beforeEach(async () => {
   originalApiRequest = api.request;
 
   api.get = async (path) => {
-    if (path === '/customers') return customers;
-    if (path === '/products') return products;
-    if (path === '/personnel') return [];
+    if (path.startsWith('/customers?') || path === '/customers') return customers;
+    if (path.startsWith('/products')) return products;
+    if (path.startsWith('/personnel')) return [];
     if (path.startsWith('/orders?status=draft')) return [];
     if (path.includes('/prices')) return [];
     return [];

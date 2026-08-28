@@ -1,9 +1,9 @@
 import { ensureStationRegistered, isRegistered } from './station.js';
 import { drainOutbox, waitingCount } from './outbox.js';
-import { pruneReceipts } from './receiptHistory.js';
 import { resetOfflineAdvisory } from './advisory.js';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { nativeStore } from './nativeStore.js';
+import { runSync } from './sync.js';
 
 // The V2.5 offline core's entry point. startOfflineCore() itself runs unconditionally
 // (G30); individual UI surfaces (the marker, orderRef's receipt-number display) still
@@ -19,6 +19,8 @@ export * from './catalogue.js';
 export * from './advisory.js';
 export * from './status.js';
 export * from './drainNotifier.js';
+export * from './sync.js';
+export * from './queuedCustomers.js';
 export { nativeStore } from './nativeStore.js';
 
 const DRAIN_INTERVAL_MS = 30_000;
@@ -28,8 +30,8 @@ let timer = null;
 /**
  * Called once the user is signed in and a profile is chosen.
  *
- * Claims a station number if this device does not have one (D1), prunes the local
- * history past 30 days (D9), and starts the background drain. Registration failing is
+ * Claims a station number if this device does not have one (D1), kicks off this
+ * login's sync (Slice 3.2), and starts the background drain. Registration failing is
  * not an error worth surfacing here: a device that is offline simply has not registered
  * yet, and a brand-new device installed during an outage cannot issue receipts at all —
  * an accepted corner, covered by paper.
@@ -53,7 +55,15 @@ export async function startOfflineCore({ label } = {}) {
   } catch {
     // Offline, or the server refused. Retried on the next start and by the drain loop.
   }
-  await pruneReceipts().catch(() => {});
+
+  // ADR 0015 §4 replaced V2.5 D9's rolling 30-day window with "no age limit", so
+  // pruneReceipts() is deliberately NOT called here any more — this is the line that
+  // would otherwise delete the history the sync below spends its first setup pulling.
+  //
+  // Slice 3.2 — sync on login. Fire-and-forget: the app is not held up by it (a first
+  // setup gates only its own reference pull, via useSyncGate in App.jsx), and a device
+  // with no line yet simply syncs nothing and tries again on the next reconnect.
+  runSync({ trigger: 'login' }).catch(() => {});
 
   async function runDrainPass() {
     try {
@@ -81,10 +91,16 @@ export async function startOfflineCore({ label } = {}) {
   }
 
   // Nudge the drain whenever the browser/WebView says the line is back, rather than
-  // waiting out the interval.
+  // waiting out the interval — and check in for anything that changed elsewhere while
+  // we were blind. runSync throttles the reconnect trigger itself (Slice 3.2): a link
+  // that flaps fires `online` repeatedly, and two of those inside 90s must cost one
+  // sync, not two.
   if (typeof window !== 'undefined' && !startOfflineCore.listening) {
     startOfflineCore.listening = true;
-    window.addEventListener('online', () => { runDrainPass(); });
+    window.addEventListener('online', () => {
+      runDrainPass();
+      runSync({ trigger: 'reconnect' }).catch(() => {});
+    });
   }
 
   return { enabled: true, waiting: await waitingCount() };

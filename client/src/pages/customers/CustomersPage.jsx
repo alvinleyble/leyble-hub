@@ -10,7 +10,7 @@ import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
 import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
-import { listRecords, subscribeOutbox } from '../../offline/index.js';
+import { subscribeOutbox, queuedCustomersFromOutbox } from '../../offline/index.js';
 
 
 export default function CustomersPage() {
@@ -54,23 +54,7 @@ export default function CustomersPage() {
   // disappears the moment its queued POST /customers actually drains — no page
   // reload, no spinner, matching the same silent-refresh spirit as G27.
   const loadQueuedCustomers = useCallback(async () => {
-    try {
-      const records = await listRecords();
-      const queued = records
-        .filter((r) => r.entity_type === 'customer' && r.status === 'queued')
-        .map((r) => ({
-          id: `local-${r.id}`,
-          name: r.payload?.name || 'Customer',
-          customer_type: r.payload?.customer_type || 'regular',
-          phone: r.payload?.phone || null,
-          address: r.payload?.address || null,
-          is_active: true,
-          _unsynced: true,
-        }));
-      setQueuedCustomers(queued);
-    } catch {
-      // Best-effort only — a local listing failure here should not block the page.
-    }
+    setQueuedCustomers(await queuedCustomersFromOutbox());
   }, []);
 
   useEffect(() => {

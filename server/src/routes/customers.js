@@ -9,13 +9,21 @@ router.use(requireAuth);
 // GET /api/v1/customers
 router.get('/', async (req, res, next) => {
   try {
-    const { include_inactive, search } = req.query;
+    const { include_inactive, search, updated_since } = req.query;
     const conditions = [];
     const params = [];
     let idx = 1;
 
     if (include_inactive !== 'true') {
       conditions.push('is_active = TRUE');
+    }
+    // ADR 0015 §4 / Slice 3.2 — the delta an already-set-up tablet asks for on every
+    // login and reconnect, so it never repeats its one-time full pull. Absent, this
+    // endpoint behaves exactly as it always has.
+    if (updated_since) {
+      conditions.push(`updated_at > $${idx}::timestamptz`);
+      params.push(updated_since);
+      idx++;
     }
     if (search) {
       conditions.push(`(name ILIKE $${idx} OR phone ILIKE $${idx})`);

@@ -13,7 +13,7 @@ import CaseStepper from '../../components/pos/CaseStepper';
 import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
 import {
   saveOrderLocalFirst, updateLocalOrder, cleanupOrphanedDraftDirect,
-  enqueue, drainOutbox, loadCustomerPrices,
+  enqueue, drainOutbox, loadCustomerPrices, loadCatalogue, queuedCustomersFromOutbox,
 } from '../../offline/index.js';
 
 const PHP = (n) =>
@@ -105,13 +105,27 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   // is corrected, which is the point.
   const [tagPrompt, setTagPrompt] = useState(null);
 
+  // Slice 3.2 — loadCatalogue() instead of three bare api.get calls.
+  //
+  // This was the single most damaging offline gap in the app: `loadCatalogue()` had
+  // been written in offline/catalogue.js and never called from here, so tapping
+  // "+ New Order" while blind showed "Failed to load form data.", an empty customer
+  // dropdown and a blank product grid — order taking, the one thing the tablet exists
+  // to do during an outage, was impossible. loadCatalogue tries the server first and
+  // quietly refreshes the held copy on success, and falls back to that held copy when
+  // it can't be reached, so there is one code path online and offline (D2/D16).
+  // Personnel comes back with it, which is what makes Driver/Helper assignment work
+  // blind (ADR 0015 §9).
   useEffect(() => {
-    Promise.all([
-      api.get('/customers'),
-      api.get('/products'),
-      api.get('/personnel'),
-    ])
-      .then(([custs, prods, pers]) => {
+    Promise.all([loadCatalogue(), queuedCustomersFromOutbox()])
+      .then(([{ products: prods, customers: served, personnel: pers, fromCache }, queued]) => {
+        // Slice 3.2 — a customer added from the Customers directory while offline is
+        // queued in the outbox, not on the server, so the catalogue above cannot know
+        // about her. Merge those in (same `local-<outboxId>` shape the inline
+        // quick-create below produces) or she would be unpickable until the line
+        // returns — which is the whole point of having added her during an outage.
+        let custs = [...queued, ...served];
+
         // G28 — editing an order still queued for a still-local customer (G29):
         // that customer has no server row yet, so GET /customers never returns it.
         // Without this, the picker would find nothing for editOrder.customer_id and
@@ -130,6 +144,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
         setCustomers(custs);
         setProducts(prods);
         setActivePersonnel(pers);
+
+        // The one corner D16 accepts: a device that has never synced and has no line
+        // now holds nothing to sell. Say so plainly rather than showing a blank grid.
+        if (fromCache && prods.length === 0) {
+          addToast('Offline and this device has no catalogue yet — connect once to set it up.', 'error');
+        }
       })
       .catch(() => addToast('Failed to load form data.', 'error'))
       .finally(() => setLoading(false));
