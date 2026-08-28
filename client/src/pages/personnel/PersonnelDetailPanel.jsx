@@ -134,7 +134,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="personnel-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
-            {loading ? 'Loading…' : person?.full_name}
+            {loading ? 'Loading…' : (person?.full_name ?? 'Personnel')}
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
@@ -148,19 +148,26 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+        ) : !person ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <p className="text-base font-medium text-slate-500">Personnel details not available offline.</p>
+            <Button variant="secondary" className="mt-4" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Summary bar ───────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              {!person.is_active && (
+              {person.is_active === false && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold
                                   bg-red-100 text-red-700 border border-red-300">
                   Inactive
                 </span>
               )}
               <span className="text-sm text-slate-400 ml-auto">
-                {orderHistory.length} order{orderHistory.length !== 1 ? 's' : ''}
+                {(orderHistory || []).length} order{(orderHistory || []).length !== 1 ? 's' : ''}
               </span>
             </div>
 
@@ -246,13 +253,13 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
             {/* ── Order History ─────────────────────────────────── */}
             <div className="px-6 py-5">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
-                Order History ({orderHistory.length})
+                Order History ({(orderHistory || []).length})
               </p>
-              {orderHistory.length === 0 ? (
+              {(orderHistory || []).length === 0 ? (
                 <p className="text-sm text-slate-400">No orders assigned yet.</p>
               ) : (
                 <ol className="space-y-3">
-                  {orderHistory.map((o) => {
+                  {(orderHistory || []).map((o) => {
                     const st = ORDER_STATUS[o.status] ?? {
                       label: o.status,
                       color: 'bg-slate-100 text-slate-600 border-slate-200',

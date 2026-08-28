@@ -6,6 +6,20 @@ import FormField from '../components/ui/FormField';
 import { V25_OFFLINE_CORE } from '../config/features';
 import { waitingCount } from '../offline/outbox';
 
+function isOfflineError(err) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  if (!err) return false;
+  if (err.status) return false;
+  const msg = (err.message || '').toLowerCase();
+  return (
+    err.name === 'TypeError' ||
+    msg.includes('failed to fetch') ||
+    msg.includes('network') ||
+    msg.includes('load failed') ||
+    msg.includes('abort')
+  );
+}
+
 export default function LoginPage() {
   const { login }   = useAuth();
   const navigate    = useNavigate();
@@ -30,7 +44,11 @@ export default function LoginPage() {
       await login(email, password);
       navigate('/dashboard', { replace: true });
     } catch (err) {
-      setError(err.message || 'Login failed. Please check your credentials.');
+      if (isOfflineError(err)) {
+        setError("You're offline. Connect to the internet to sign in.");
+      } else {
+        setError(err.message || 'Login failed. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }

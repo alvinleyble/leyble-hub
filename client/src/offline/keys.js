@@ -7,6 +7,7 @@
 // `activeProfile` by name and must never be widened to a prefix sweep.
 export const NS = 'v25.';
 
+export const SESSION_KEY  = `${NS}session`;   // { id, email, full_name, role }
 export const STATION_KEY  = `${NS}station`;   // { station_number, device_key, registered_at }
 export const SEQUENCE_KEY = `${NS}sequence`;  // last receipt sequence issued on this device
 

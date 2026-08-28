@@ -179,7 +179,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="customer-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
-            {loading ? 'Loading…' : customer?.name}
+            {loading ? 'Loading…' : (customer?.name ?? 'Customer')}
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
@@ -193,21 +193,28 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+        ) : !customer ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <p className="text-base font-medium text-slate-500">Customer details not available offline.</p>
+            <Button variant="secondary" className="mt-4" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
 
             {/* ── Summary bar ──────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(customer.customer_type)}`}>
-                {customerTypeLabel(customer.customer_type)}
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(customer?.customer_type)}`}>
+                {customerTypeLabel(customer?.customer_type)}
               </span>
-              {!customer.is_active && (
+              {customer?.is_active === false && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-300">
                   Inactive
                 </span>
               )}
               <span className="text-sm text-slate-400 ml-auto">
-                {orders.length} order{orders.length !== 1 ? 's' : ''}
+                {(orders || []).length} order{(orders || []).length !== 1 ? 's' : ''}
               </span>
             </div>
 
@@ -387,13 +394,13 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             {/* ── Order history ─────────────────────────────────── */}
             <div className="px-6 py-5">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
-                Order History ({orders.length})
+                Order History ({(orders || []).length})
               </p>
-              {orders.length === 0 ? (
+              {(orders || []).length === 0 ? (
                 <p className="text-sm text-slate-400">No orders yet.</p>
               ) : (
                 <ol className="space-y-3">
-                  {orders.map((o) => {
+                  {(orders || []).map((o) => {
                     const st = ORDER_STATUS[o.status] ?? {
                       label: o.status,
                       color: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -453,7 +460,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       {mergeOpen && customer && (
         <CustomerMergeModal
           customer={customer}
-          orderCount={orders.length}
+          orderCount={(orders || []).length}
           onClose={() => setMergeOpen(false)}
           onMerged={() => {
             setMergeOpen(false);

@@ -311,6 +311,14 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `localStorage`, never IndexedDB (Android evicts them; "clear data" wipes them). It must
   survive logout: the 401 path clears `authToken`/`activeProfile` **by name** and must
   never become a prefix sweep. Browser dev falls back to memory, never to WebView storage.
+- **The login session survives an evicted WebView the same way** — `client/src/context/AuthContext.jsx`
+  reads/writes `@capacitor/preferences` key `v25.session` directly (not through
+  `nativeStore.js`, which is outbox/catalogue state, not auth) on native builds, falling back
+  to `localStorage` on web dev. A `checkAuth()` failure that isn't a genuine 401 (network
+  error, timeout) restores the cached session instead of logging the operator out or
+  surfacing a raw `Failed to fetch` — `LoginPage.jsx` shows a friendly "you're offline"
+  message for the same failure class on the login call itself (Slice 3.1,
+  [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §3.1).
 - **A queued record carries the profile that made it.** `enqueue()` requires a
   `profileKey` captured at Save, and the drain replays it as `X-Active-Profile` per
   record — otherwise the whole outage gets credited to whoever is holding the tablet when

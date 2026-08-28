@@ -127,7 +127,7 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
                       </tr>
                     </thead>
                     <tbody>
-                      {delivery.items.map((item) => (
+                      {(delivery.items || []).map((item) => (
                         <tr key={item.id} className="border-t border-slate-300">
                           <td className="px-4 py-3">
                             <p className="font-semibold text-slate-900">{item.sku || item.product_name}</p>
