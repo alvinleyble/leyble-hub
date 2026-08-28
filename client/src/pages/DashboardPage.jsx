@@ -18,15 +18,45 @@ function SummaryCard({ label, value, colorClass = 'text-slate-900', bgClass = 'b
 }
 
 export default function DashboardPage() {
-  const [data, setData]       = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState('');
+  const [data, setData]             = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState('');
+  const [isOfflineData, setIsOfflineData] = useState(false);
+  const [isOfflineEmpty, setIsOfflineEmpty] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
+    setError('');
+    setIsOfflineEmpty(false);
+
     api.get('/dashboard')
-      .then(setData)
-      .catch((err) => setError(err.message || 'Failed to load dashboard'))
+      .then((res) => {
+        setData(res);
+        setIsOfflineData(false);
+        try {
+          localStorage.setItem('cached_dashboard', JSON.stringify(res));
+        } catch {}
+      })
+      .catch((err) => {
+        // Try recovering cached dashboard data
+        try {
+          const raw = localStorage.getItem('cached_dashboard');
+          if (raw) {
+            setData(JSON.parse(raw));
+            setIsOfflineData(true);
+            return;
+          }
+        } catch {}
+
+        const isNetwork = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+          /failed to fetch|network|load failed/i.test(err?.message || '');
+
+        if (isNetwork) {
+          setIsOfflineEmpty(true);
+        } else {
+          setError(err.message || 'Failed to load dashboard');
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -36,6 +66,34 @@ export default function DashboardPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (isOfflineEmpty) {
+    return (
+      <div className="p-6 max-w-xl mx-auto mt-12 bg-white rounded-xl border border-slate-200 shadow-sm text-center">
+        <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
+          📡
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 mb-2">You are currently offline</h2>
+        <p className="text-slate-600 mb-6 text-base leading-relaxed">
+          Live dashboard metrics are paused while disconnected. Outgoing orders and sales remain fully available.
+        </p>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link
+            to="/orders"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-center focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+          >
+            Go to Outgoing Orders →
+          </Link>
+          <button
+            onClick={load}
+            className="w-full sm:w-auto px-4 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+          >
+            Retry Connection
+          </button>
+        </div>
       </div>
     );
   }
@@ -51,10 +109,26 @@ export default function DashboardPage() {
     );
   }
 
+  if (!data) return null;
+
   const { summary, orders, low_stock } = data;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {isOfflineData && (
+        <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">📡</span>
+            <span className="text-sm font-medium">
+              Showing cached dashboard data. Live statistics will refresh once reconnected.
+            </span>
+          </div>
+          <button onClick={load} className="text-xs font-semibold underline hover:text-amber-950">
+            Refresh
+          </button>
+        </div>
+      )}
+
       <h1 className="text-2xl font-bold text-slate-900 mb-6">Dashboard</h1>
 
       {/* ── Summary cards ─────────────────────────────────────────── */}

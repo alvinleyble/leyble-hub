@@ -8,7 +8,7 @@ import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
-import { listRecords, subscribeOutbox, getReceipt } from '../../offline/index.js';
+import { listRecords, subscribeOutbox, getReceipt, listReceipts, putReceipt, checkIsOnline } from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -129,6 +129,10 @@ export default function OrdersPage() {
 
     api.get(`/orders?${params}`)
       .then((res) => {
+        const orderList = res?.orders || (Array.isArray(res) ? res : []);
+        for (const o of orderList) {
+          if (o?.receipt_number) putReceipt(o).catch(() => {});
+        }
         if (res && res.orders && res.pagination) {
           setOrders(res.orders);
           setTotalOrders(res.pagination.total);
@@ -143,7 +147,27 @@ export default function OrdersPage() {
           setTotalPages(1);
         }
       })
-      .catch(() => addToast('Failed to load orders', 'error'))
+      .catch(async (err) => {
+        try {
+          const cached = await listReceipts();
+          if (cached && cached.length > 0) {
+            const filtered = statusTab === 'all'
+              ? cached
+              : cached.filter((r) => r.status === statusTab);
+            setOrders(filtered);
+            setTotalOrders(filtered.length);
+            setTotalPages(Math.max(1, Math.ceil(filtered.length / pageSize)));
+            return;
+          }
+        } catch {}
+        if (!checkIsOnline() || (err instanceof TypeError) || /failed to fetch|network|load failed/i.test(err?.message || '')) {
+          setOrders([]);
+          setTotalOrders(0);
+          setTotalPages(1);
+          return;
+        }
+        addToast('Failed to load orders', 'error');
+      })
       .finally(() => setLoading(false));
   }, [statusTab, fromDate, toDate, debouncedSearch, page, pageSize, addToast]);
 
@@ -647,8 +671,8 @@ export default function OrdersPage() {
               ))}
               {filteredOrders.map((o) => (
                 <tr
-                  key={o.id}
-                  onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id}`)}
+                  key={o.id || o.receipt_number}
+                  onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id || o.receipt_number}`)}
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   {showCheckboxes && (

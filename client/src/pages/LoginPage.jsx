@@ -28,9 +28,13 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate('/dashboard', { replace: true });
+      navigate('/orders', { replace: true });
     } catch (err) {
-      setError(err.message || 'Login failed. Please check your credentials.');
+      if (err instanceof TypeError || (err?.message && /failed to fetch/i.test(err.message))) {
+        setError('Cannot connect to server. An internet connection is required to sign in.');
+      } else {
+        setError(err.message || 'Login failed. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }
