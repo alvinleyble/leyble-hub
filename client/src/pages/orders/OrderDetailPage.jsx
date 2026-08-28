@@ -121,9 +121,8 @@ export default function OrderDetailPage() {
     return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
   }, [load]);
 
-  const bottleItems = order
-    ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
-    : [];
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const bottleItems = items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0);
   const bottleItemIds = bottleItems.map((i) => i.id).join(',');
 
   // Reset the in-progress bottle-return entries whenever the set of returnable items
@@ -173,7 +172,7 @@ export default function OrderDetailPage() {
         try {
           const updated = await updateLocalOrder({
             order,
-            items: order.items,
+            items: items,
             notes: order.notes,
             adjustment: { value: adj, reason: adjReason.trim() },
             personnel: null,
@@ -254,8 +253,9 @@ export default function OrderDetailPage() {
   const finalTotal = Number(order.total_amount) + Number(order.adjustment || 0);
   const hasAdj     = Number(order.adjustment) !== 0;
 
-  const itemsSubtotal = order.items.reduce(
-    (sum, i) => sum + Number(i.quantity) * Number(i.unit_price), 0);
+  const itemsSubtotal = items.length > 0
+    ? items.reduce((sum, i) => sum + Number(i.quantity) * Number(i.unit_price), 0)
+    : (Number(order.total_amount) || 0) - Number(order.adjustment || 0);
 
   const itemNetDeposit = (item) => {
     if (!isDepositable) return 0;
@@ -270,10 +270,12 @@ export default function OrderDetailPage() {
     return (totalBottles - returned) * dep;
   };
 
-  const depositTotal = order.items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
+  const depositTotal = items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
 
-  const liveTotal   = itemsSubtotal + depositTotal + Number(order.adjustment || 0);
-  const hasDeposits = order.items.some(i => Number(i.unit_deposit_fee) > 0);
+  const liveTotal   = items.length > 0
+    ? itemsSubtotal + depositTotal + Number(order.adjustment || 0)
+    : Number(order.total_amount || 0);
+  const hasDeposits = items.some(i => Number(i.unit_deposit_fee) > 0);
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -357,11 +359,11 @@ export default function OrderDetailPage() {
         </div>
 
         {/* Personnel */}
-        {order.personnel?.length > 0 && (
+        {(order.personnel || []).length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Assigned Personnel</p>
             <div className="flex flex-wrap gap-2">
-              {order.personnel.map((p) => (
+              {(order.personnel || []).map((p) => (
                 <div key={p.id} className="flex items-center gap-1.5">
                   <span className="text-sm font-medium text-slate-700">{p.full_name}</span>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border
@@ -412,7 +414,14 @@ export default function OrderDetailPage() {
             </tr>
           </thead>
           <tbody>
-            {order.items.map((item) => (
+            {items.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-6 text-center text-slate-400">
+                  Line items not available offline
+                </td>
+              </tr>
+            ) : (
+              items.map((item) => (
               <tr key={item.id} className="border-t border-slate-300">
                 <td className="px-5 py-3">
                   <p className="font-medium text-slate-800">{item.sku || item.product_name}</p>
@@ -446,7 +455,7 @@ export default function OrderDetailPage() {
                   )}
                 </td>
               </tr>
-            ))}
+            )))}
           </tbody>
           <tfoot>
             {hasDeposits && isDepositable && (

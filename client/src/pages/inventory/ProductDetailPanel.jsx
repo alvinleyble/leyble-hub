@@ -147,7 +147,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="product-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
-            {loading ? 'Loading…' : product?.name}
+            {loading ? 'Loading…' : (product?.name ?? 'Product')}
           </h2>
           <button
             onClick={onClose}
@@ -162,6 +162,13 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+        ) : !product ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <p className="text-base font-medium text-slate-500">Product details not available offline.</p>
+            <Button variant="secondary" className="mt-4" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
 
@@ -171,13 +178,13 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                 <div>
                   <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Current Stock</p>
                   <p className={`text-5xl font-bold tabular-nums mt-1 ${
-                    Number(product.current_stock) <= 0 ? 'text-red-600' :
-                    Number(product.current_stock) <= 10 ? 'text-amber-600' : 'text-slate-900'
+                    Number(product.current_stock ?? 0) <= 0 ? 'text-red-600' :
+                    Number(product.current_stock ?? 0) <= 10 ? 'text-amber-600' : 'text-slate-900'
                   }`}>
-                    {product.current_stock}
-                    <span className="text-xl font-medium text-slate-400 ml-2">{product.unit}</span>
+                    {product.current_stock != null ? product.current_stock : '—'}
+                    <span className="text-xl font-medium text-slate-400 ml-2">{product.unit || ''}</span>
                   </p>
-                  {product.units_per_case > 1 && (
+                  {Number(product.units_per_case || 1) > 1 && (
                     <p className="text-sm text-slate-400 mt-1">
                       {product.units_per_case} bottles per case
                     </p>
@@ -237,9 +244,9 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                           <span className="block text-xs text-slate-400 mb-0.5">Result</span>
                           <span className="font-bold text-slate-800">
                             {adjMode === 'add'
-                              ? Number(product.current_stock) + (Number(adjQty) || 0)
-                              : Math.max(0, Number(product.current_stock) - (Number(adjQty) || 0))
-                            } {product.unit}
+                              ? Number(product?.current_stock ?? 0) + (Number(adjQty) || 0)
+                              : Math.max(0, Number(product?.current_stock ?? 0) - (Number(adjQty) || 0))
+                            } {product?.unit || ''}
                           </span>
                         </div>
                       </div>
@@ -366,11 +373,11 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
                 Audit Log (last 50)
               </p>
-              {auditLog.length === 0 ? (
+              {(auditLog || []).length === 0 ? (
                 <p className="text-slate-400 text-sm">No audit entries yet.</p>
               ) : (
                 <ol className="relative border-l border-slate-400 ml-2 space-y-5">
-                  {auditLog.map((entry) => (
+                  {(auditLog || []).map((entry) => (
                     <li key={entry.id} className="ml-4">
                       <div className="absolute -left-1.5 mt-1.5 w-3 h-3 rounded-full bg-slate-300 border-2 border-white" />
                       <p className="text-sm font-semibold text-slate-700">
