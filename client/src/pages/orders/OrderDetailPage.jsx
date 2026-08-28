@@ -11,7 +11,7 @@ import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef } from '../../utils/orderRef';
-import { getReceipt, updateLocalOrder } from '../../offline/index.js';
+import { getReceipt, updateLocalOrder, nativeStore } from '../../offline/index.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -84,6 +84,8 @@ export default function OrderDetailPage() {
         setAdjValue(Number(o.adjustment) ? String(o.adjustment) : '');
         setAdjReason(o.adjustment_reason || '');
         setAdjExpanded(Number(o.adjustment) !== 0);
+        if (o?.id) nativeStore.setJson(`v25.order_detail.${o.id}`, o).catch(() => {});
+        if (o?.receipt_number) nativeStore.setJson(`v25.order_detail.${o.receipt_number}`, o).catch(() => {});
       })
       .catch(async (err) => {
         // A 404 here can mean "never synced yet" (a receipt-numbered order the
@@ -93,13 +95,32 @@ export default function OrderDetailPage() {
         // receipt history (D9) before giving up.
         const offlineOrMissing = err.status === 404 || !err.status;
         if (offlineOrMissing) {
-          const local = await getReceipt(id).catch(() => null);
+          let local = await getReceipt(id).catch(() => null);
+          if (!local) {
+            try {
+              const cached = await nativeStore.getJson('v25.cached_orders');
+              local = cached?.find((o) => String(o.id) === String(id) || String(o.receipt_number) === String(id));
+            } catch {}
+            if (!local) {
+              try {
+                const raw = localStorage.getItem('cached_orders');
+                if (raw) {
+                  const cached = JSON.parse(raw);
+                  local = cached?.find((o) => String(o.id) === String(id) || String(o.receipt_number) === String(id));
+                }
+              } catch {}
+            }
+          }
           if (local) {
-            setOrder(local);
+            const normalized = {
+              ...local,
+              items: Array.isArray(local.items) ? local.items : [],
+            };
+            setOrder(normalized);
             setUnsynced(true);
-            setAdjValue(Number(local.adjustment) ? String(local.adjustment) : '');
-            setAdjReason(local.adjustment_reason || '');
-            setAdjExpanded(Number(local.adjustment) !== 0);
+            setAdjValue(Number(normalized.adjustment) ? String(normalized.adjustment) : '');
+            setAdjReason(normalized.adjustment_reason || '');
+            setAdjExpanded(Number(normalized.adjustment) !== 0);
             return;
           }
         }
@@ -121,9 +142,8 @@ export default function OrderDetailPage() {
     return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
   }, [load]);
 
-  const bottleItems = order
-    ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
-    : [];
+  const orderItems = Array.isArray(order?.items) ? order.items : [];
+  const bottleItems = orderItems.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0);
   const bottleItemIds = bottleItems.map((i) => i.id).join(',');
 
   // Reset the in-progress bottle-return entries whenever the set of returnable items
@@ -173,7 +193,7 @@ export default function OrderDetailPage() {
         try {
           const updated = await updateLocalOrder({
             order,
-            items: order.items,
+            items: orderItems,
             notes: order.notes,
             adjustment: { value: adj, reason: adjReason.trim() },
             personnel: null,
@@ -254,7 +274,7 @@ export default function OrderDetailPage() {
   const finalTotal = Number(order.total_amount) + Number(order.adjustment || 0);
   const hasAdj     = Number(order.adjustment) !== 0;
 
-  const itemsSubtotal = order.items.reduce(
+  const itemsSubtotal = orderItems.reduce(
     (sum, i) => sum + Number(i.quantity) * Number(i.unit_price), 0);
 
   const itemNetDeposit = (item) => {
@@ -270,10 +290,12 @@ export default function OrderDetailPage() {
     return (totalBottles - returned) * dep;
   };
 
-  const depositTotal = order.items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
+  const depositTotal = orderItems.reduce((sum, i) => sum + itemNetDeposit(i), 0);
 
-  const liveTotal   = itemsSubtotal + depositTotal + Number(order.adjustment || 0);
-  const hasDeposits = order.items.some(i => Number(i.unit_deposit_fee) > 0);
+  const liveTotal   = orderItems.length > 0
+    ? itemsSubtotal + depositTotal + Number(order.adjustment || 0)
+    : finalTotal;
+  const hasDeposits = orderItems.some(i => Number(i.unit_deposit_fee) > 0);
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -412,7 +434,14 @@ export default function OrderDetailPage() {
             </tr>
           </thead>
           <tbody>
-            {order.items.map((item) => (
+            {orderItems.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-6 text-center text-sm text-slate-500">
+                  Detailed line items are cached when opened online.
+                </td>
+              </tr>
+            ) : (
+              orderItems.map((item) => (
               <tr key={item.id} className="border-t border-slate-300">
                 <td className="px-5 py-3">
                   <p className="font-medium text-slate-800">{item.sku || item.product_name}</p>
@@ -446,7 +475,7 @@ export default function OrderDetailPage() {
                   )}
                 </td>
               </tr>
-            ))}
+            )))}
           </tbody>
           <tfoot>
             {hasDeposits && isDepositable && (

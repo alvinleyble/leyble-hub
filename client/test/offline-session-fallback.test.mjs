@@ -26,7 +26,7 @@ const { default: DashboardPage } = await import('../src/pages/DashboardPage.jsx'
 const { default: OrdersPage } = await import('../src/pages/orders/OrdersPage.jsx');
 const { ToastProvider } = await import('../src/components/ui/Toast.jsx');
 const { putReceipt } = await import('../src/offline/index.js');
-const { __resetMemoryBackend } = await import('../src/offline/nativeStore.js');
+const { nativeStore, __resetMemoryBackend } = await import('../src/offline/nativeStore.js');
 
 test('Regression: Fresh install offline login provides human-friendly connection message instead of Failed to fetch', async () => {
   localStorage.clear();
@@ -268,3 +268,61 @@ test('Regression: OrdersPage falls back to receiptHistory cache when offline ins
     container.remove();
   }
 });
+
+test('Regression: OrdersPage falls back to cached_orders (including server orders with null receipt_number) when offline', async () => {
+  localStorage.clear();
+  __resetMemoryBackend();
+
+  const serverOrderWithoutReceiptNumber = {
+    id: 1963,
+    receipt_number: null,
+    customer_name: 'Teresa Sari Sari',
+    total_amount: 2744,
+    created_at: new Date().toISOString(),
+    status: 'pending',
+    order_type: 'delivery',
+  };
+
+  // Pre-seed nativeStore cached_orders as if previously loaded online
+  await nativeStore.setJson('v25.cached_orders', [serverOrderWithoutReceiptNumber]);
+
+  // Device is offline
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError('Failed to fetch');
+  };
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  try {
+    await act(async () => {
+      root.render(
+        React.createElement(
+          MemoryRouter,
+          null,
+          React.createElement(ToastProvider, null, React.createElement(OrdersPage))
+        )
+      );
+    });
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    assert.ok(
+      container.textContent.includes('Teresa Sari Sari'),
+      'Server orders without receipt_number must be loaded from cache when offline'
+    );
+    assert.ok(
+      !container.textContent.includes('Failed to load orders'),
+      'Must not trigger "Failed to load orders" error toast'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    act(() => root.unmount());
+    container.remove();
+  }
+});
+

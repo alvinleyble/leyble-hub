@@ -8,7 +8,7 @@ import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
-import { listRecords, subscribeOutbox, getReceipt, listReceipts, putReceipt, checkIsOnline } from '../../offline/index.js';
+import { listRecords, subscribeOutbox, getReceipt, listReceipts, putReceipt, checkIsOnline, nativeStore } from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -130,6 +130,12 @@ export default function OrdersPage() {
     api.get(`/orders?${params}`)
       .then((res) => {
         const orderList = res?.orders || (Array.isArray(res) ? res : []);
+        if (orderList.length > 0) {
+          nativeStore.setJson('v25.cached_orders', orderList).catch(() => {});
+          try {
+            localStorage.setItem('cached_orders', JSON.stringify(orderList));
+          } catch {}
+        }
         for (const o of orderList) {
           if (o?.receipt_number) putReceipt(o).catch(() => {});
         }
@@ -148,18 +154,32 @@ export default function OrdersPage() {
         }
       })
       .catch(async (err) => {
+        let cached = null;
         try {
-          const cached = await listReceipts();
-          if (cached && cached.length > 0) {
-            const filtered = statusTab === 'all'
-              ? cached
-              : cached.filter((r) => r.status === statusTab);
-            setOrders(filtered);
-            setTotalOrders(filtered.length);
-            setTotalPages(Math.max(1, Math.ceil(filtered.length / pageSize)));
-            return;
-          }
+          cached = await nativeStore.getJson('v25.cached_orders');
         } catch {}
+        if (!Array.isArray(cached) || cached.length === 0) {
+          try {
+            const raw = localStorage.getItem('cached_orders');
+            if (raw) cached = JSON.parse(raw);
+          } catch {}
+        }
+        if (!Array.isArray(cached) || cached.length === 0) {
+          try {
+            cached = await listReceipts();
+          } catch {}
+        }
+
+        if (Array.isArray(cached) && cached.length > 0) {
+          const filtered = statusTab === 'all'
+            ? cached
+            : cached.filter((r) => r.status === statusTab);
+          setOrders(filtered);
+          setTotalOrders(filtered.length);
+          setTotalPages(Math.max(1, Math.ceil(filtered.length / pageSize)));
+          return;
+        }
+
         if (!checkIsOnline() || (err instanceof TypeError) || /failed to fetch|network|load failed/i.test(err?.message || '')) {
           setOrders([]);
           setTotalOrders(0);
