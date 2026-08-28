@@ -42,4 +42,35 @@ function formatReceiptNumber(station, sequence) {
   return `${Number(station)}-${String(Number(sequence)).padStart(SEQUENCE_PAD, '0')}`;
 }
 
-module.exports = { parseReceiptNumber, formatReceiptNumber, SEQUENCE_PAD };
+// ── Delivery references (ADR 0015 §8) ───────────────────────────────────────
+//
+// `<station>-DEL-<sequence>`, e.g. `1-DEL-00007`. Same role as a receipt number — a
+// device-issued identity that doubles as the anti-duplicate key for a resent outbox
+// record — stored in the same decomposed pair on supplier_deliveries (migration 036).
+// The `DEL` infix keeps the two series from ever being read as one another.
+
+const DELIVERY_REF_RE = /^(\d{1,9})-DEL-(\d{1,9})$/i;
+
+function parseDeliveryRef(value) {
+  if (typeof value !== 'string') {
+    throw badRequest('delivery_ref must be a string of the form <station>-DEL-<sequence>');
+  }
+  const match = DELIVERY_REF_RE.exec(value.trim());
+  if (!match) {
+    throw badRequest(`Malformed delivery_ref '${value}' — expected <station>-DEL-<sequence>, e.g. 1-DEL-00007`);
+  }
+  const station = Number(match[1]);
+  const sequence = Number(match[2]);
+  if (station < 1 || sequence < 1) {
+    throw badRequest(`Malformed delivery_ref '${value}' — station and sequence both start at 1`);
+  }
+  return { station, sequence };
+}
+
+function formatDeliveryRef(station, sequence) {
+  return `${Number(station)}-DEL-${String(Number(sequence)).padStart(SEQUENCE_PAD, '0')}`;
+}
+
+module.exports = {
+  parseReceiptNumber, formatReceiptNumber, parseDeliveryRef, formatDeliveryRef, SEQUENCE_PAD,
+};

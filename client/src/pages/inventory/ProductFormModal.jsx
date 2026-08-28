@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Stepper from '../../components/ui/Stepper';
+import { createProductLocalFirst } from '../../offline/productMutations.js';
 
 const FIELD_CLASS = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                      focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -40,7 +41,12 @@ export default function ProductFormModal({ onClose, onSaved }) {
 
     setSaving(true);
     try {
-      await api.post('/products', {
+      // ADR 0015 §6 — adding a product is additive and conflict-free, so it takes one
+      // code path online and blind: queue it, drain immediately. Connected, that lands
+      // in about a second and the operator sees the ordinary toast; blind, it shows on
+      // the grid as "Waiting to sync" until the line returns.
+      const profileKey = await api.getActiveProfile();
+      const { synced } = await createProductLocalFirst({
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -50,8 +56,13 @@ export default function ProductFormModal({ onClose, onSaved }) {
         current_stock:        Number(form.current_stock),
         units_per_case:       Number(form.units_per_case),
         requires_bottle_return: form.requires_bottle_return,
-      });
-      addToast(`${form.name} added to inventory.`, 'success');
+      }, { profileKey });
+      addToast(
+        synced
+          ? `${form.name} added to inventory.`
+          : `${form.name} saved on this device \u00b7 will sync when connected.`,
+        'success'
+      );
       onSaved();
     } catch (err) {
       addToast(err.message || 'Failed to create product.', 'error');

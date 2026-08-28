@@ -10,6 +10,10 @@ import Combobox from '../../components/ui/Combobox';
 import CustomerMergeModal from '../../components/customers/CustomerMergeModal';
 import { productMatches } from '../../utils/productSearch';
 import { CUSTOMER_TYPE_OPTIONS, customerTypeBadge, customerTypeLabel, normalizeCustomerType } from '../../utils/customerTypes';
+import OfflineBanner from '../../components/ui/OfflineBanner';
+import { getCachedEntity } from '../../offline/catalogue.js';
+import { updateCustomerLocalFirst } from '../../offline/queuedCustomers.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -40,6 +44,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving]         = useState(false);
   const [mergeOpen, setMergeOpen]   = useState(false);
+  const [fromCache, setFromCache]   = useState(false);
 
   const [customPrices, setCustomPrices]     = useState([]);
   const [priceTab, setPriceTab]             = useState('delivery');
@@ -79,11 +84,35 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         // Custom Prices panel. Nothing is hidden behind the descriptive tag.
         await loadCustomPrices(priceTabRef.current);
       })
-      .catch(() => addToast('Failed to load customer.', 'error'))
+      .catch(async () => {
+        // ADR 0015 §7 — the directory this device already holds answers "what's her
+        // address" during an outage. Order history and saved prices still need the
+        // server; the profile itself does not.
+        const held = (await getCachedEntity('customers'))
+          .find((c) => String(c.id) === String(customerId));
+        if (!held) { addToast('Failed to load customer.', 'error'); return; }
+        setCustomer(held);
+        setOrders([]);
+        setFromCache(true);
+        setForm({
+          name:          held.name,
+          customer_type: normalizeCustomerType(held.customer_type),
+          phone:         held.phone ?? '',
+          address:       held.address ?? '',
+          notes:         held.notes ?? '',
+          is_active:     held.is_active,
+        });
+        await loadCustomPrices(priceTabRef.current);
+      })
       .finally(() => {
         if (!silent) setLoading(false);
       });
   }, [customerId, loadCustomPrices, addToast]);
+
+  // §7 — profile edits queue; merges and deletions never do. A merge re-parents order
+  // history, unpaid bottle balances and audit rows irreversibly, and a concurrent one
+  // across two blind devices cannot be untangled afterwards.
+  const sharedMutationsBlocked = fromCache || !checkIsOnline();
 
   useEffect(() => { load(); }, [load]);
 
@@ -100,15 +129,19 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
     setSaving(true);
     try {
-      await api.patch(`/customers/${customerId}`, {
+      const profileKey = await api.getActiveProfile();
+      const { synced } = await updateCustomerLocalFirst(customerId, {
         name:          form.name.trim(),
         customer_type: form.customer_type,
         phone:         form.phone.trim() || null,
         address:       form.address.trim() || null,
         notes:         form.notes.trim() || null,
         is_active:     form.is_active,
-      });
-      addToast('Customer updated.', 'success');
+      }, { profileKey });
+      addToast(
+        synced ? 'Customer updated.' : 'Saved on this device \u00b7 will sync when connected.',
+        'success'
+      );
       onSaved?.();
       await load(true);
     } catch (err) {
@@ -202,6 +235,15 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
+
+            {fromCache && (
+              <div className="px-6 pt-5">
+                <OfflineBanner
+                  className="mb-0"
+                  message="Viewing offline data · Contact details you change here sync when connected"
+                />
+              </div>
+            )}
 
             {/* ── Summary bar ──────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
@@ -441,9 +483,16 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                 variant="secondary"
                 onClick={() => setMergeOpen(true)}
                 className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                disabled={sharedMutationsBlocked}
+                title={sharedMutationsBlocked ? 'Needs a connection' : undefined}
               >
                 🔀 Merge customer
               </Button>
+              {sharedMutationsBlocked && (
+                <p className="text-sm text-slate-500 mt-2">
+                  Merging re-parents order history and bottle balances permanently, so it needs a connection.
+                </p>
+              )}
             </div>
 
             {/* ── Danger Zone ───────────────────────────────────── */}
@@ -451,6 +500,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               endpoint={`/customers/${customerId}`}
               entityLabel="customer"
               onDeleted={() => { onSaved(); onClose(); }}
+              disabled={sharedMutationsBlocked}
+              disabledReason="Deleting a customer needs a connection — it touches order history every device shares."
             />
 
           </div>

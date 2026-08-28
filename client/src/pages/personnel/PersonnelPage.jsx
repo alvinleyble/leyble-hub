@@ -3,9 +3,11 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import OfflineBanner from '../../components/ui/OfflineBanner';
 import PersonnelFormModal from './PersonnelFormModal';
 import PersonnelDetailPanel from './PersonnelDetailPanel';
 import { getCachedPersonnel, getCachedEntity } from '../../offline/catalogue.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 export default function PersonnelPage() {
   const { addToast } = useToast();
@@ -16,6 +18,7 @@ export default function PersonnelPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+  const [fromCache, setFromCache]       = useState(false);
 
   // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
   // personnel (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
@@ -26,7 +29,7 @@ export default function PersonnelPage() {
     if (showInactive) params.set('include_inactive', 'true');
 
     api.get(`/personnel?${params}`)
-      .then(setPersonnel)
+      .then((rows) => { setPersonnel(rows); setFromCache(false); })
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('personnel') : await getCachedPersonnel();
         if (cached.length === 0) {
@@ -34,11 +37,14 @@ export default function PersonnelPage() {
           return;
         }
         setPersonnel(cached);
+        setFromCache(true);
       })
       .finally(() => setLoading(false));
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const mutationsBlocked = fromCache || !checkIsOnline();
 
   const filtered = personnel.filter((p) =>
     p.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -50,8 +56,18 @@ export default function PersonnelPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Personnel</h1>
-        <Button onClick={() => setCreating(true)}>+ Add Personnel</Button>
+        {/* ADR 0015 §9 — personnel is read-only offline: adding, editing, deactivating
+            and photo upload all change a roster every device shares. */}
+        <Button
+          onClick={() => setCreating(true)}
+          disabled={mutationsBlocked}
+          title={mutationsBlocked ? 'Needs a connection' : undefined}
+        >
+          + Add Personnel
+        </Button>
       </div>
+
+      {fromCache && <OfflineBanner />}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -139,6 +155,7 @@ export default function PersonnelPage() {
           personnelId={selectedId}
           onClose={() => setSelectedId(null)}
           onSaved={load}
+          cachedPerson={personnel.find((p) => String(p.id) === String(selectedId)) || null}
         />
       )}
     </div>

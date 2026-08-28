@@ -81,3 +81,38 @@ export const CUSTOMER_PRICES_PREFIX = `${NS}catalogue.prices.`;
 export function customerPricesKey(customerId, orderType) {
   return `${CUSTOMER_PRICES_PREFIX}${customerId}.${orderType}`;
 }
+
+// ── Slice 3.3 (ADR 0015 §9) — back-office reference cache ───────────────────
+//
+// Dashboard, Tickets, the deliveries list and the two audit feeds are read-only
+// reference data that the owners look at, not records this device builds up. They
+// cache as ONE whole value each (same reasoning as the catalogue above), wrapped in
+// `{ cached_at, value }` so the offline banner can name the copy's age — the one
+// place in this app that deliberately shows staleness, because D16's "never tell them
+// how old the catalogue is" is about SELLING, and a back-office figure read during an
+// outage is only meaningful if you know when it was true.
+export const BACKOFFICE_PREFIX = `${NS}cache.`;
+
+export function backOfficeKey(name) {
+  return `${BACKOFFICE_PREFIX}${name}`;
+}
+
+// ── Slice 3.3 (ADR 0015 §8) — device-issued delivery references ─────────────
+//
+// `<station>-DEL-<sequence>`, e.g. `1-DEL-00007`. Its own sequence, deliberately
+// separate from SEQUENCE_KEY: a receipt number is what a customer holds on paper and
+// a delivery reference is warehouse bookkeeping, and sharing one counter would make
+// both series full of gaps that look like lost paperwork.
+export const DELIVERY_SEQUENCE_KEY = `${NS}deliverySequence`;
+
+// ── Slice 3.3 (ADR 0015 §6) — stock/price reconciliation questions ──────────
+//
+// NOT outbox records. An outbox record is something to send; these are something to
+// ASK — two equally valid values for the same physical fact, waiting on a human to
+// say which one is true. Keeping them in their own space is why resolving one can
+// enqueue a fresh, ordinary write instead of mutating a half-sent record in place.
+export const RECONCILE_PREFIX = `${NS}reconcile.`;
+
+export function reconcileKey(id) {
+  return `${RECONCILE_PREFIX}${id}`;
+}

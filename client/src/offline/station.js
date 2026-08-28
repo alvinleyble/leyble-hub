@@ -1,7 +1,7 @@
 import { api } from '../api/client';
 import { nativeStore } from './nativeStore';
-import { STATION_KEY, SEQUENCE_KEY } from './keys';
-import { formatReceiptNumber } from './receiptNumbers';
+import { STATION_KEY, SEQUENCE_KEY, DELIVERY_SEQUENCE_KEY } from './keys';
+import { formatReceiptNumber, formatDeliveryRef } from './receiptNumbers';
 
 // D1 — the device's station number, and the receipt numbers issued from it.
 //
@@ -69,13 +69,13 @@ export async function ensureStationRegistered({ label } = {}) {
 // otherwise read the same value and print the same number twice.
 let issuing = Promise.resolve();
 
-async function nextSequence() {
-  const raw = await nativeStore.getString(SEQUENCE_KEY);
+async function nextSequence(key = SEQUENCE_KEY) {
+  const raw = await nativeStore.getString(key);
   const next = (Number(raw) || 0) + 1;
   // Persist BEFORE returning. If the app dies here the number is skipped, never
   // reused — a gap in the numbering is invisible, a repeat is two customers holding
   // the same receipt number.
-  await nativeStore.setString(SEQUENCE_KEY, next);
+  await nativeStore.setString(key, next);
   return next;
 }
 
@@ -95,6 +95,26 @@ export async function issueReceiptNumber() {
     };
   });
   // Keep the chain alive whatever happens, so one failure does not wedge issuance.
+  issuing = run.catch(() => {});
+  return run;
+}
+
+// Issues the next delivery reference for this device, e.g. '1-DEL-00007' (ADR 0015
+// §8). Same contract as issueReceiptNumber above — no server round trip, serialised
+// through the same promise chain — off its own counter (see DELIVERY_SEQUENCE_KEY).
+export async function issueDeliveryRef() {
+  const run = issuing.then(async () => {
+    const station = await getStation();
+    if (!Number.isInteger(station?.station_number)) {
+      throw new Error('This device has not been assigned a station number yet.');
+    }
+    const sequence = await nextSequence(DELIVERY_SEQUENCE_KEY);
+    return {
+      delivery_ref: formatDeliveryRef(station.station_number, sequence),
+      station: station.station_number,
+      sequence,
+    };
+  });
   issuing = run.catch(() => {});
   return run;
 }

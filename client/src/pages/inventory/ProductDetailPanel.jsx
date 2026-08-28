@@ -6,6 +6,11 @@ import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
+import OfflineBanner from '../../components/ui/OfflineBanner';
+import { getCachedEntity } from '../../offline/catalogue.js';
+import { updateProductLocalFirst } from '../../offline/productMutations.js';
+import { STOCK_FIELD, PRICE_FIELD } from '../../offline/reconcile.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -22,7 +27,7 @@ const ACTION_TYPE_LABELS = {
   order_cancel:      'Order Cancelled',
 };
 
-export default function ProductDetailPanel({ productId, onClose, onSaved }) {
+export default function ProductDetailPanel({ productId, onClose, onSaved, cachedProduct = null }) {
   const { addToast } = useToast();
 
   const [product, setProduct]       = useState(null);
@@ -39,29 +44,42 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
   const [adjReason, setAdjReason]   = useState('');
   const [adjErrors, setAdjErrors]   = useState({});
   const [adjSaving, setAdjSaving]   = useState(false);
+  const [fromCache, setFromCache]   = useState(false);
 
+  const hydrate = (data) => {
+    setProduct(data);
+    setAuditLog(data.audit_log ?? []);
+    setForm({
+      name:                 data.name,
+      category:             data.category ?? '',
+      unit:                 data.unit,
+      sku:                  data.sku ?? '',
+      base_wholesale_price: String(data.base_wholesale_price),
+      deposit_fee:          String(data.deposit_fee),
+      units_per_case:       String(data.units_per_case ?? 1),
+      current_stock:        String(data.current_stock),
+      is_active:            data.is_active,
+      requires_bottle_return: data.requires_bottle_return ?? false,
+    });
+  };
+
+  // ADR 0015 §6 — the panel renders from the held catalogue copy when the line is
+  // down, so stock can still be counted and corrected blind. The audit log is the one
+  // part that genuinely needs the server (it lives only there, append-only), so it
+  // simply shows as unavailable rather than blocking the rest of the panel.
   const load = useCallback(() => {
     setLoading(true);
     api.get(`/products/${productId}`)
-      .then((data) => {
-        setProduct(data);
-        setAuditLog(data.audit_log ?? []);
-        setForm({
-          name:                 data.name,
-          category:             data.category ?? '',
-          unit:                 data.unit,
-          sku:                  data.sku ?? '',
-          base_wholesale_price: String(data.base_wholesale_price),
-          deposit_fee:          String(data.deposit_fee),
-          units_per_case:       String(data.units_per_case ?? 1),
-          current_stock:        String(data.current_stock),
-          is_active:            data.is_active,
-          requires_bottle_return: data.requires_bottle_return ?? false,
-        });
+      .then((data) => { hydrate(data); setFromCache(false); })
+      .catch(async () => {
+        const held = cachedProduct
+          || (await getCachedEntity('products')).find((p) => String(p.id) === String(productId));
+        if (!held) { addToast('Failed to load product.', 'error'); return; }
+        hydrate({ ...held, audit_log: [] });
+        setFromCache(true);
       })
-      .catch(() => addToast('Failed to load product.', 'error'))
       .finally(() => setLoading(false));
-  }, [productId, addToast]);
+  }, [productId, addToast, cachedProduct]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -82,7 +100,8 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
 
     setSaving(true);
     try {
-      await api.patch(`/products/${productId}`, {
+      const profileKey = await api.getActiveProfile();
+      const { synced } = await updateProductLocalFirst(productId, {
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -93,8 +112,17 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
         current_stock:        Number(form.current_stock),
         is_active:            form.is_active,
         requires_bottle_return: form.requires_bottle_return,
+      }, {
+        profileKey,
+        product,
+        // Only these two can be contested by another tablet counting or repricing the
+        // same product; the rest of the form is master data nobody else is racing on.
+        guardFields: [STOCK_FIELD, PRICE_FIELD],
       });
-      addToast('Product updated.', 'success');
+      addToast(
+        synced ? 'Product updated.' : 'Saved on this device \u00b7 will sync when connected.',
+        'success'
+      );
       onSaved();
       load();
     } catch (err) {
@@ -118,11 +146,20 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
 
     setAdjSaving(true);
     try {
-      await api.patch(`/products/${productId}`, {
+      // ADR 0015 §6 supersedes ADR 0005 §2: a physical count correction is exactly the
+      // thing that happens during an outage, so it queues instead of being blocked. If
+      // another tablet corrected the same count in the meantime, the drain lifts this
+      // out into a reconciliation question rather than overwriting theirs.
+      const profileKey = await api.getActiveProfile();
+      const reason = adjReason.trim() || null;
+      const { synced } = await updateProductLocalFirst(productId, {
         current_stock: newStock,
-        reason:        adjReason.trim() || null,
-      });
-      addToast('Stock adjusted.', 'success');
+        reason,
+      }, { profileKey, product, guardFields: [STOCK_FIELD], reason });
+      addToast(
+        synced ? 'Stock adjusted.' : 'Stock count saved on this device \u00b7 will sync when connected.',
+        'success'
+      );
       setAdjMode(false);
       setAdjQty('');
       setAdjReason('');
@@ -171,6 +208,15 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
+
+            {fromCache && (
+              <div className="px-6 pt-5">
+                <OfflineBanner
+                  className="mb-0"
+                  message="Viewing offline data · Stock counts and prices you change here sync when connected"
+                />
+              </div>
+            )}
 
             {/* ── Stock summary ─────────────────────────────────── */}
             <div className="px-6 py-5 bg-slate-50 border-b border-slate-400">
@@ -374,7 +420,11 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
                 Audit Log (last 50)
               </p>
               {(auditLog || []).length === 0 ? (
-                <p className="text-slate-400 text-sm">No audit entries yet.</p>
+                <p className="text-slate-400 text-sm">
+                  {fromCache
+                    ? 'The audit log lives on the server — it needs a connection to read.'
+                    : 'No audit entries yet.'}
+                </p>
               ) : (
                 <ol className="relative border-l border-slate-400 ml-2 space-y-5">
                   {(auditLog || []).map((entry) => (
@@ -421,10 +471,17 @@ export default function ProductDetailPanel({ productId, onClose, onSaved }) {
             </div>
 
             {/* ── Danger Zone ───────────────────────────────────── */}
+            {/* Captain decision, Slice 3.3: product DELETE stays online-only, the same
+                treatment customer merges (§7) and delivery voids (§8) get. Stock counts
+                and prices have a reconciliation path because two tablets can each hold
+                a valid number; "deleted" and "mid-sale on it" have no such middle
+                value, so §6's full-CRUD grant deliberately stops short of this one. */}
             <DangerZoneDelete
               endpoint={`/products/${productId}`}
               entityLabel="product"
               onDeleted={() => { onSaved(); onClose(); }}
+              disabled={fromCache || !checkIsOnline()}
+              disabledReason="Deleting a product needs a connection — another tablet could be selling it right now."
             />
 
           </div>
