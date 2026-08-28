@@ -12,7 +12,41 @@ export const STATION_KEY  = `${NS}station`;   // { station_number, device_key, r
 export const SEQUENCE_KEY = `${NS}sequence`;  // last receipt sequence issued on this device
 
 export const OUTBOX_PREFIX  = `${NS}outbox.`;   // one key per queued record
-export const RECEIPT_PREFIX = `${NS}receipt.`;  // one key per locally held receipt (D9)
+export const RECEIPT_PREFIX = `${NS}receipt.`;  // one key per locally held order snapshot
+
+// ADR 0015 §4 — Dual Identifier Resolution. An order snapshot is stored under its
+// receipt number when it has one, and under `id-<row id>` when it does not (every
+// order created before V2.5 — those are never backfilled, ADR 0010). A second, tiny
+// key per order maps the numeric row id onto whichever of the two the snapshot
+// actually lives under, so a link that only carries `/orders/1240` still resolves
+// offline. It is an index of pointers, not of records: losing one costs a lookup
+// path, never the order itself, and `getReceipt` rebuilds the answer by scanning as
+// a last resort.
+export const ORDER_INDEX_PREFIX = `${NS}orderindex.`;
+
+export function orderIndexKey(orderId) {
+  return `${ORDER_INDEX_PREFIX}${orderId}`;
+}
+
+// The storage identity of an order snapshot: its receipt number when it has one,
+// otherwise `id-<row id>`. Never the bare numeric id — that would collide with a
+// station-issued receipt number the moment receipt numbering reached that value.
+export function snapshotIdentifier(order) {
+  if (order?.receipt_number) return String(order.receipt_number);
+  if (order?.id !== undefined && order?.id !== null) return `id-${order.id}`;
+  return null;
+}
+
+// ADR 0015 §4 / the sync layer's own bookkeeping: when this device last completed a
+// sync, and whether it has ever finished its one-time first setup.
+export const SYNC_STATE_KEY = `${NS}sync.state`;
+
+// Reference data cached whole (server-replaced, not built up locally) — see
+// catalogue.js. Personnel joins products/customers here so Driver/Helper assignment
+// in the order modal works blind (ADR 0015 §9).
+export const PRODUCTS_KEY  = `${NS}catalogue.products`;
+export const CUSTOMERS_KEY = `${NS}catalogue.customers`;
+export const PERSONNEL_KEY = `${NS}catalogue.personnel`;
 
 // Outbox and history keys embed a zero-padded monotonic id, so a plain lexicographic
 // sort of the keys IS insertion order. That removes the need for a separate index
