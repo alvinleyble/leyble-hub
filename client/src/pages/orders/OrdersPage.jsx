@@ -179,8 +179,19 @@ export default function OrdersPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Same local-history fallback load() uses above — otherwise the parked-drafts
+  // banner just disappears offline even though the Drafts tab itself keeps working.
   const loadDrafts = useCallback(() => {
-    api.get('/orders?status=draft').then(setDrafts).catch(() => setDrafts([]));
+    api.get('/orders?status=draft')
+      .then(setDrafts)
+      .catch(async () => {
+        try {
+          const local = await listReceipts();
+          setDrafts(filterLocalHistory(local, { statusTab: 'draft' }));
+        } catch {
+          setDrafts([]);
+        }
+      });
   }, []);
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);

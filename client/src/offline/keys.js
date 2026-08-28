@@ -8,6 +8,12 @@
 export const NS = 'v25.';
 
 export const SESSION_KEY  = `${NS}session`;   // { id, email, full_name, role }
+
+// The last identity this device was ever signed in as, kept distinct from SESSION_KEY
+// above: a normal logout or a genuine 401 correctly clear SESSION_KEY (the live,
+// silently-restorable session), but must never wipe this — it is what makes ADR 0015
+// §3's "Resume Offline Session" login-screen action possible after either of those.
+export const LAST_IDENTITY_KEY = `${NS}lastIdentity`; // { id, email, full_name, role }
 export const STATION_KEY  = `${NS}station`;   // { station_number, device_key, registered_at }
 export const SEQUENCE_KEY = `${NS}sequence`;  // last receipt sequence issued on this device
 

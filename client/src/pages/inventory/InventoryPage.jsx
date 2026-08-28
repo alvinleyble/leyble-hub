@@ -11,6 +11,7 @@ import { usePrintList } from '../shared/usePrintList';
 import { productListHtml } from '../shared/listPrintTemplate';
 import { productListEscPos } from '../shared/listEscPos';
 import { productMatches } from '../../utils/productSearch';
+import { getCachedProducts, getCachedEntity } from '../../offline/catalogue.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -32,11 +33,21 @@ export default function InventoryPage() {
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
   const [batchEditOpen, setBatchEditOpen] = useState(false);
 
+  // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
+  // products (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
+  // from; this page just never asked for it, so a blind tablet showed a blank grid.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
     api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
       .then(setProducts)
-      .catch(() => addToast('Failed to load products', 'error'))
+      .catch(async () => {
+        const cached = showInactive ? await getCachedEntity('products') : await getCachedProducts();
+        if (cached.length === 0) {
+          addToast('Offline and this device has no product catalogue yet — connect once to set it up.', 'error');
+          return;
+        }
+        setProducts(cached);
+      })
       .finally(() => {
         if (!silent) setLoading(false);
       });
