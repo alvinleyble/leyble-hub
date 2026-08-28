@@ -331,7 +331,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   the line returns.
 - **An order's `created_at` is the device's sale time**, passed explicitly (same pattern
   as `supplier_deliveries.received_at`). No clock-skew detection — deliberately.
-- **Parked orders (piece 3, `client/src/offline/parkedOrders.js`):** online, unchanged —
+- **Parked orders (`client/src/offline/parkedOrders.js`):** online, unchanged —
   the pre-2.5 early-draft POST + debounced PATCH. Blind, a draft parks as an ordinary
   queued `order` outbox record (`payload.status: 'draft'`), given its own device-issued
   receipt number purely as a local identity and anti-duplicate key — `server/src/lib/
@@ -346,6 +346,33 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   guarded against, via `client/src/utils/duplicateOrders.js` + the D4 post-drain toast
   pattern (`drainNotifier.js`) and a chip in `POSHistoryModal.jsx` that opens the existing
   order-view flow.
+- **The whole drafts path runs through `loadParkedOrders()`, and drafts are NOT in the
+  sync.** `GET /orders/sync` excludes `status='draft'` on purpose (working state, not
+  history), so a draft can never appear in `listReceipts()` — any offline fallback that
+  reaches for local order history to find drafts is matching against something that
+  cannot be there, which is exactly how the Drafts tab and the purple banner came to
+  empty themselves the moment the line dropped. `loadParkedOrders()` in
+  `parkedOrders.js` is the one code path online and offline for both surfaces: the
+  server's list when it answers (cached whole under `DRAFTS_KEY`, catalogue-style, on
+  the way past), that cache when it does not, unioned either way with
+  `listLocalParkedOrders()` minus `pendingDeletionRefs()`. Cached server drafts are
+  read-only offline (they are synced rows — ADR 0015 §5 / criterion 5.8); the ones this
+  device parked carry `_local: true` and open, edit and discard with no network.
+- **A locally parked draft carries a `display` blob beside its payload.** `payload` is
+  the POST body and stays exactly that, so it has no customer name and no product
+  names; `record.display` holds them, and `recordToDraft` merges the two. Without it a
+  resumed offline draft comes back as nameless lines. `parkOrderLocalFirst`/
+  `updateLocalDraft` write both halves together.
+- **`OrderCreateModal`'s draft ref is a row id OR a receipt number**, and
+  `draftLocalRef` says which. A customer picked while the server is unreachable (or a
+  customer this device quick-created, who has no server id to POST) parks via
+  `parkOrderLocalFirst`; the debounced autosave then rewrites that outbox record via
+  `updateLocalDraft` instead of PATCHing. A local draft that drained mid-edit throws
+  from `updateLocalDraft`, and the modal switches to PATCHing it by receipt number
+  (`resolveOrderId` resolves both). A draft that was created on the SERVER and then
+  loses the line is deliberately NOT parked locally — a second row on drain is worse
+  than a stale draft — so its autosave simply retries with the full body on the next
+  change.
 - **The orphaned-draft trap:** any local-first save (`saveOrderLocalFirst` /
   `parkOrderLocalFirst`) creates an independent order row with its own receipt number —
   it never reuses or finalizes a pre-existing draft row. Whoever calls it MUST separately

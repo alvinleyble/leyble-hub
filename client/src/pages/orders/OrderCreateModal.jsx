@@ -13,6 +13,7 @@ import CaseStepper from '../../components/pos/CaseStepper';
 import { lineTotal, orderTotals, totalCases, roundQty } from '../../components/pos/posMath';
 import {
   saveOrderLocalFirst, updateLocalOrder, cleanupOrphanedDraftDirect,
+  parkOrderLocalFirst, updateLocalDraft, discardLocalDraft,
   enqueue, drainOutbox, loadCustomerPrices, loadCatalogue, queuedCustomersFromOutbox,
 } from '../../offline/index.js';
 
@@ -80,13 +81,18 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   const [adjReason, setAdjReason]     = useState(isRealEdit ? (editOrder?.adjustment_reason ?? '') : '');
 
   // ── Draft auto-save state ──────────────────────────────────────────────────
-  const [draftId, setDraftId]                     = useState(isDraftResume ? editOrder.id : null);
+  // A draft's reference is either a server row id (the ordinary online early POST) or a
+  // device-issued receipt number (a draft parked locally because the line was down).
+  // `draftLocalRef` is which of the two, and it decides every later draft operation.
+  const draftRefOf = (o) => (o?.id ?? o?.receipt_number ?? null);
+  const [draftId, setDraftId]                     = useState(isDraftResume ? draftRefOf(editOrder) : null);
   const [draftStatus, setDraftStatus]             = useState('idle'); // 'idle' | 'saving' | 'saved'
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [confirmingReset, setConfirmingReset]     = useState(false);
   const creatingDraftRef                          = useRef(false);
   // Ref copies for synchronous access in handleSubmit (avoids stale-closure issues with state)
-  const draftIdRef         = useRef(isDraftResume ? editOrder.id : null);
+  const draftIdRef         = useRef(isDraftResume ? draftRefOf(editOrder) : null);
+  const draftLocalRef      = useRef(Boolean(isDraftResume && editOrder?._local));
   const draftPromiseRef    = useRef(null); // in-flight draft creation promise
   const autoSaveTimerRef   = useRef(null); // handle for the debounced PATCH timer
 
@@ -376,22 +382,73 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
     return body;
   };
 
+  // The display half of a locally parked draft (offline/parkedOrders.js): the customer
+  // and product names the POST body has no field for, and without which a resumed
+  // local draft would come back as nameless lines.
+  const draftDisplay = () => ({
+    customer_name: selectedCustomer?.name || '',
+    customer_type: selectedCustomer?.customer_type || 'regular',
+    items: items.filter((i) => i.product_id).map((i) => ({
+      product_id:             Number(i.product_id),
+      product_name:           i.product_name,
+      sku:                    i.sku || '',
+      unit:                   i.unit || 'cs',
+      requires_bottle_return: Boolean(i.requires_bottle_return || Number(i.unit_deposit_fee) > 0),
+    })),
+  });
+
+  const draftAdjustment = () => ({ value: Number(adjValue) || 0, reason: adjReason.trim() });
+
+  // A thrown error with no HTTP status never reached the server — the same rule the
+  // outbox drains by (isNetworkFailure in offline/outbox.js). Only that is an outage;
+  // a 4xx is a refusal and must NOT fall back to a local park (parkedOrders.js).
+  const isOffline = (err) => !err?.status;
+
+  // Park the draft on this device instead of on the server. Criterion 5.13 — "save as
+  // draft" has to work blind — and until Slice 3.2 nothing called
+  // parkOrderLocalFirst() at all, so an order drafted during an outage was written
+  // nowhere: the early POST below failed, draftId never got set, the debounced save
+  // never fired, and closing the modal lost the lot.
+  const parkDraftLocally = async () => {
+    const { receipt_number } = await parkOrderLocalFirst({
+      customer: selectedCustomer ?? (customerId ? { id: customerId } : null),
+      orderType,
+      notes,
+      adjustment: draftAdjustment(),
+      items: items.filter((i) => i.product_id),
+      display: draftDisplay(),
+    });
+    draftIdRef.current = receipt_number;
+    draftLocalRef.current = true;
+    setDraftId(receipt_number);
+    setDraftStatus('saved');
+    return receipt_number;
+  };
+
   // Create the draft the moment a customer is chosen.
-  // G29 — skipped for a still-local customer: POST /orders with an unresolved
-  // customer_id would either be rejected server-side or need its own $ref plumbing
-  // this early-draft path was never built for. The debounced auto-save below
-  // naturally never fires either, since it requires draftId, which never gets set.
+  //
+  // G29 — a still-local customer skips the SERVER draft (POST /orders with an
+  // unresolved customer_id would be rejected) but no longer skips drafting entirely:
+  // parkOrderLocalFirst carries her as the same $ref placeholder a local-first sale
+  // does, so the draft queues behind her and resolves when she syncs (D5).
   useEffect(() => {
-    if (!isDraftMode || !customerId || isLocalCustomer(customerId) || draftIdRef.current || creatingDraftRef.current) return;
+    if (!isDraftMode || !customerId || draftIdRef.current || creatingDraftRef.current) return;
     creatingDraftRef.current = true;
     setDraftStatus('saving');
-    const promise = api.post('/orders', { ...draftBody(), status: 'draft' })
-      .then((created) => {
-        draftIdRef.current = created.id;
-        setDraftId(created.id);
-        setDraftStatus('saved');
-        return created.id;
-      })
+    const promise = (isLocalCustomer(customerId)
+      ? parkDraftLocally()
+      : api.post('/orders', { ...draftBody(), status: 'draft' })
+        .then((created) => {
+          draftIdRef.current = created.id;
+          draftLocalRef.current = false;
+          setDraftId(created.id);
+          setDraftStatus('saved');
+          return created.id;
+        })
+        .catch((err) => {
+          if (!isOffline(err)) throw err;
+          return parkDraftLocally();
+        }))
       .catch(() => {
         creatingDraftRef.current = false;
         setDraftStatus('idle');
@@ -403,19 +460,49 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
     draftPromiseRef.current = promise;
   }, [isDraftMode, customerId, draftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced auto-save on any change once the draft exists
+  // Debounced auto-save on any change once the draft exists.
+  //
+  // A locally parked draft is rewritten in its outbox record instead of PATCHed — no
+  // network, so it saves blind exactly like the rest of the offline path. If it
+  // drained while this modal was open, updateLocalDraft throws (its record is gone)
+  // and the server now holds it under that receipt number, which every order route
+  // resolves (resolveOrderId), so we switch to the ordinary PATCH rather than losing
+  // the edit.
   useEffect(() => {
     if (!isDraftMode || !draftId || saving) return;
     setDraftStatus('saving');
-    const t = setTimeout(() => {
+    const t = setTimeout(async () => {
       autoSaveTimerRef.current = null;
-      api.patch(`/orders/${draftId}`, draftBody())
-        .then(() => setDraftStatus('saved'))
-        .catch(() => setDraftStatus('idle'));
+      try {
+        if (draftLocalRef.current) {
+          try {
+            await updateLocalDraft({
+              receiptNumber: draftIdRef.current,
+              orderType,
+              notes,
+              items: items.filter((i) => i.product_id),
+              adjustment: draftAdjustment(),
+              display: draftDisplay(),
+            });
+          } catch {
+            draftLocalRef.current = false;
+            await api.patch(`/orders/${draftIdRef.current}`, draftBody());
+          }
+        } else {
+          await api.patch(`/orders/${draftIdRef.current}`, draftBody());
+        }
+        setDraftStatus('saved');
+      } catch {
+        // A server-side draft that cannot be reached keeps whatever it last held; the
+        // next change retries with the full body, so nothing is lost once the line is
+        // back. (Only a draft STARTED offline can be parked locally — parking one that
+        // already has a server row would create a second row on drain.)
+        setDraftStatus('idle');
+      }
     }, 800);
     autoSaveTimerRef.current = t;
     return () => { clearTimeout(t); if (autoSaveTimerRef.current === t) autoSaveTimerRef.current = null; };
-  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel, adjValue, adjReason]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reset Button Handler (decisions.md G10) ────────────────────────────────
   // Clears order lines, adjustment, and notes. Keeps customer, orderType, and draft alive.
@@ -450,6 +537,22 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
     if (items.some((i) => Number(i.unit_price) < 0)) e.items = 'Item prices cannot be negative.';
     if (Number(adjValue) !== 0 && !adjReason.trim()) e.adjustment = 'Adjustment reason is required.';
     return e;
+  };
+
+  // Disposes of whichever early draft this modal is holding, without ever queuing a
+  // delete through the outbox (that was rejected PR #41's bug: a throwaway DELETE
+  // stuck in front of real order POSTs wedged the "Offline · N waiting" count).
+  //
+  // A draft parked on this device is simply removed from the outbox — instant, no
+  // network. If it had already drained, the server holds it under its receipt number,
+  // which the direct DELETE below addresses just as well as a row id; a 404 when it
+  // never reached the server is exactly the harmless no-op this is best-effort about.
+  const discardDraftRef = async (draftRef) => {
+    if (draftRef === null || draftRef === undefined || draftRef === '') return;
+    if (draftLocalRef.current) {
+      await discardLocalDraft(draftRef).catch(() => {});
+    }
+    cleanupOrphanedDraftDirect(draftRef);
   };
 
   const handleSubmit = async () => {
@@ -556,13 +659,13 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
         });
         orderId = saved.receipt_number;
 
-        // The early server-side draft this modal created on customer-pick (or the
-        // pre-existing draft being resumed) is now superseded — best-effort cleanup
-        // only, never queued (see cleanupOrphanedDraftDirect).
+        // The early draft this modal created on customer-pick (or the pre-existing
+        // draft being resumed) is now superseded — best-effort cleanup only, never
+        // queued (see cleanupOrphanedDraftDirect / discardDraftRef).
         if (draftPromiseRef.current) {
-          draftPromiseRef.current.then((id) => cleanupOrphanedDraftDirect(id)).catch(() => {});
+          draftPromiseRef.current.then((ref) => discardDraftRef(ref)).catch(() => {});
         } else if (draftIdRef.current) {
-          cleanupOrphanedDraftDirect(draftIdRef.current);
+          discardDraftRef(draftIdRef.current);
         }
 
         addToast('Order created.', 'success');
@@ -642,16 +745,30 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
     }
   };
 
-  // Discard draft completely (distinct from Reset)
+  // Discard draft completely (distinct from Reset).
+  //
+  // A locally parked draft is discarded on the device with no network at all, so
+  // Discard works blind for the drafts an outage actually produces. A server-side
+  // draft still needs the line — it is a synced row, and ADR 0015 §5 keeps deletes
+  // online-only — so say that plainly instead of leaving a dead button.
   const handleDiscard = async () => {
     if (!draftId) { onClose(); return; }
     setSaving(true);
     try {
-      await api.del(`/orders/${draftId}`);
+      if (draftLocalRef.current) {
+        await discardLocalDraft(draftIdRef.current);
+        cleanupOrphanedDraftDirect(draftIdRef.current);
+      } else {
+        await api.del(`/orders/${draftIdRef.current}`);
+      }
       addToast('Draft discarded.', 'success');
       onSaved(); // no orderId -> returns to list
     } catch (err) {
-      addToast(err.message || 'Failed to discard draft.', 'error');
+      addToast(
+        err?.status ? (err.message || 'Failed to discard draft.')
+                    : 'Offline — this draft is on the server and needs a connection to discard.',
+        'error'
+      );
       setSaving(false);
     }
   };
@@ -672,7 +789,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
           <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-200 shrink-0 bg-white">
             <div className="min-w-0">
               <h2 id="order-modal-title" className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? `Draft ${orderRef(editOrder)}` : 'New Order'}</span>
+                <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? `Draft ${editOrder?._local ? editOrder.receipt_number : orderRef(editOrder)}` : 'New Order'}</span>
               </h2>
               {isDraftMode && draftId && (
                 <p className="text-xs font-medium mt-0.5 text-slate-500">

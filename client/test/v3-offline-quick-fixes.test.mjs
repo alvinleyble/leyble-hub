@@ -13,7 +13,7 @@ import { Preferences } from '@capacitor/preferences';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { nativeStore, __resetMemoryBackend } from '../src/offline/nativeStore.js';
-import { PRODUCTS_KEY, CUSTOMERS_KEY, PERSONNEL_KEY, SESSION_KEY, LAST_IDENTITY_KEY } from '../src/offline/keys.js';
+import { PRODUCTS_KEY, CUSTOMERS_KEY, PERSONNEL_KEY, SESSION_KEY, LAST_IDENTITY_KEY, DRAFTS_KEY } from '../src/offline/keys.js';
 import { __clearOutbox, listRecords } from '../src/offline/outbox.js';
 import { putReceipt } from '../src/offline/receiptHistory.js';
 import {
@@ -105,11 +105,20 @@ test('PersonnelPage: falls back to the catalogue personnel cache when GET /perso
 
 // ── 2. OrdersPage parked-drafts banner offline fallback ─────────────────────────
 
-test('OrdersPage: parked-drafts banner falls back to local receipt history when GET /orders?status=draft fails offline', async () => {
-  await putReceipt({
-    receipt_number: '1-00007', id: 7001, status: 'draft',
-    customer_name: 'Parked While Blind', created_at: new Date().toISOString(), items: [],
-  });
+// The banner's offline fallback used to read this device's synced order HISTORY, which
+// by construction can never hold a draft: `GET /orders/sync` excludes them on purpose
+// (a draft is working state, not history), and `putReceipt` is only ever called for a
+// local SALE. So the fallback matched nothing in the field and the banner emptied the
+// moment the line dropped — this test's original fixture hand-wrote a draft into
+// receipt history, a shape no code path actually produces. The drafts the server gave
+// us are now cached in their own key (offline/parkedOrders.js), which is what survives
+// the outage.
+test('OrdersPage: parked-drafts banner serves the cached server drafts when GET /orders?status=draft fails offline', async () => {
+  await nativeStore.setJson(DRAFTS_KEY, [{
+    id: 7001, receipt_number: null, status: 'draft', order_type: 'delivery',
+    customer_name: 'Parked While Blind', total_amount: 0, adjustment: 0,
+    created_at: new Date().toISOString(),
+  }]);
   api.get = async (path) => {
     if (path.startsWith('/orders?status=draft')) return offlineError();
     if (path.startsWith('/orders')) return offlineError();
@@ -122,6 +131,28 @@ test('OrdersPage: parked-drafts banner falls back to local receipt history when 
   assert.match(r.text(), /1 parked draft/);
   assert.match(r.text(), /Parked While Blind/);
   r.unmount();
+});
+
+// The list the banner counts is cached on every reachable load, so the outage that
+// follows has something to show — the catalogue's refresh-quietly rule (D16) applied to
+// drafts.
+test('OrdersPage: a successful draft load caches the server drafts for the next outage', async () => {
+  api.get = async (path) => {
+    if (path.startsWith('/orders?status=draft')) {
+      return [{ id: 7002, status: 'draft', customer_name: 'Cached On The Way Past',
+                total_amount: 0, adjustment: 0, created_at: new Date().toISOString() }];
+    }
+    if (path.startsWith('/orders')) return { orders: [], pagination: { total: 0, totalPages: 1 } };
+    return [];
+  };
+
+  const r = render(React.createElement(ToastProvider, null, React.createElement(OrdersPage)));
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+  r.unmount();
+
+  const cached = await nativeStore.getJson(DRAFTS_KEY);
+  assert.equal(cached.length, 1);
+  assert.equal(cached[0].customer_name, 'Cached On The Way Past');
 });
 
 // ── 3. OrderCreateModal's "Save Custom Price?" dialog routes through the outbox ─

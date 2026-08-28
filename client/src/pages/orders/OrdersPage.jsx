@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -9,7 +9,10 @@ import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
 import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
-import { listRecords, subscribeOutbox, getReceipt, listReceipts } from '../../offline/index.js';
+import {
+  listRecords, subscribeOutbox, getReceipt, listReceipts,
+  loadParkedOrders, discardLocalDraft,
+} from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -102,6 +105,13 @@ export default function OrdersPage() {
   // outbox rather than the server, merge in, badge "Waiting to sync", and navigate by
   // receipt number (never a numeric id, since there isn't one yet).
   const [localUnsyncedOrders, setLocalUnsyncedOrders] = useState([]);
+  const loadDraftsRef = useRef(null);
+  // The Drafts tab's own list is served by load() (it is not a slice of the orders
+  // list), so a drain that turns a local park into a server draft has to re-run THAT,
+  // not just the banner — otherwise the row sits on "Waiting to sync" until the
+  // operator happens to switch tabs.
+  const loadRef       = useRef(null);
+  const statusTabRef  = useRef(null);
 
   const loadLocalUnsyncedOrders = useCallback(async () => {
     try {
@@ -122,11 +132,42 @@ export default function OrdersPage() {
 
   useEffect(() => {
     loadLocalUnsyncedOrders();
-    return subscribeOutbox(() => loadLocalUnsyncedOrders());
+    // A draft parked or drained by the outbox changes the parked-drafts list too, so
+    // the banner and the Drafts tab follow it rather than waiting for a remount.
+    return subscribeOutbox(() => {
+      loadLocalUnsyncedOrders();
+      loadDraftsRef.current?.();
+      if (statusTabRef.current === 'draft') loadRef.current?.();
+    });
   }, [loadLocalUnsyncedOrders]);
 
   const load = useCallback(() => {
     setLoading(true);
+
+    // Criteria 5.1/5.6 — the Drafts tab is not a slice of the orders list, it is the
+    // parked-drafts list, and it has to load blind. `GET /orders/sync` deliberately
+    // never mirrors a draft (working state, not history), so the local-history
+    // fallback the other tabs use could only ever come back empty here — which is
+    // exactly what an offline operator saw. loadParkedOrders() is one code path for
+    // both: the server's drafts when it answers (cached on the way past), the last
+    // cached copy when it does not, unioned either way with the drafts this device
+    // parked itself and still holds.
+    if (statusTab === 'draft') {
+      loadParkedOrders()
+        .then(({ drafts: parked, fromCache }) => {
+          setFromLocalHistory(fromCache);
+          const matched = filterLocalHistory(parked, {
+            statusTab: 'draft', fromDate, toDate, search: debouncedSearch,
+          });
+          const start = (page - 1) * pageSize;
+          setOrders(matched.slice(start, start + pageSize));
+          setTotalOrders(matched.length);
+          setTotalPages(Math.max(1, Math.ceil(matched.length / pageSize)));
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     const params = new URLSearchParams();
     if (statusTab !== 'all') params.set('status', statusTab);
     if (fromDate) params.set('from_date', fromDate);
@@ -178,23 +219,20 @@ export default function OrdersPage() {
   }, [statusTab, fromDate, toDate, debouncedSearch, page, pageSize, addToast]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadRef.current = load; }, [load]);
+  useEffect(() => { statusTabRef.current = statusTab; }, [statusTab]);
 
-  // Same local-history fallback load() uses above — otherwise the parked-drafts
-  // banner just disappears offline even though the Drafts tab itself keeps working.
+  // The purple banner reads the same merged list the Drafts tab does, so it survives an
+  // outage instead of silently emptying (criterion 5.1). It used to fall back to this
+  // device's synced order history, which by construction never contains a draft.
   const loadDrafts = useCallback(() => {
-    api.get('/orders?status=draft')
-      .then(setDrafts)
-      .catch(async () => {
-        try {
-          const local = await listReceipts();
-          setDrafts(filterLocalHistory(local, { statusTab: 'draft' }));
-        } catch {
-          setDrafts([]);
-        }
-      });
+    loadParkedOrders()
+      .then(({ drafts: parked }) => setDrafts(parked))
+      .catch(() => setDrafts([]));
   }, []);
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
+  useEffect(() => { loadDraftsRef.current = loadDrafts; }, [loadDrafts]);
 
   // Reset page to 1 when filters or search criteria change
   useEffect(() => {
@@ -282,11 +320,19 @@ export default function OrdersPage() {
   }, [localUnsyncedOrders, statusTab, doubleOnly, searchQuery, printFilter]);
 
   const openDraft = async (o) => {
+    // A draft this device parked is already complete in hand — it has no server row to
+    // fetch, and it is the one kind of draft that IS editable offline (criterion 5.8:
+    // created here, never synced).
+    if (o._local) { setResumeDraft(o); return; }
     try {
       const full = await api.get(`/orders/${o.id}`);
       setResumeDraft(full);
     } catch (err) {
-      addToast(err.message || 'Failed to open draft.', 'error');
+      addToast(
+        err?.status ? (err.message || 'Failed to open draft.')
+                    : 'Offline — this draft is on the server and needs a connection to open.',
+        'error'
+      );
     }
   };
 
@@ -294,13 +340,24 @@ export default function OrdersPage() {
     if (!discardConfirm) return;
     setDiscarding(true);
     try {
-      await api.del(`/orders/${discardConfirm.id}`);
+      // Same split as opening one: a locally parked draft is removed from this
+      // device's outbox with no network at all; a server draft is a synced row and
+      // deleting it stays online-only (ADR 0015 §5).
+      if (discardConfirm._local) {
+        await discardLocalDraft(discardConfirm.receipt_number);
+      } else {
+        await api.del(`/orders/${discardConfirm.id}`);
+      }
       addToast('Draft discarded.', 'success');
       setDiscardConfirm(null);
       load();
       loadDrafts();
     } catch (err) {
-      addToast(err.message || 'Failed to discard draft.', 'error');
+      addToast(
+        err?.status ? (err.message || 'Failed to discard draft.')
+                    : 'Offline — this draft is on the server and needs a connection to discard.',
+        'error'
+      );
     } finally {
       setDiscarding(false);
     }
@@ -314,10 +371,14 @@ export default function OrdersPage() {
     });
   };
 
-  const allSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
+  // A row still waiting to reach the server has no id to act on — same exclusion the
+  // "Waiting to sync" order rows already carry (Round 4 Fix 7).
+  const selectableOrders = filteredOrders.filter((o) => !o._local);
+
+  const allSelected = selectableOrders.length > 0 && selectableOrders.every((o) => selectedIds.has(o.id));
 
   const toggleSelectAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(filteredOrders.map((o) => o.id)));
+    setSelectedIds(allSelected ? new Set() : new Set(selectableOrders.map((o) => o.id)));
   };
 
   const runBulkTransition = async (targetStatus, pastTenseLabel) => {
@@ -424,7 +485,11 @@ export default function OrdersPage() {
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-5 py-3
                         text-sm font-medium text-amber-800">
           <span aria-hidden="true">⏳</span>
-          <span>Offline — showing this device's saved order history. Status changes need a connection.</span>
+          <span>
+            {statusTab === 'draft'
+              ? "Offline — showing the drafts this device holds. Only drafts started here can be opened or edited."
+              : "Offline — showing this device's saved order history. Status changes need a connection."}
+          </span>
         </div>
       )}
 
@@ -707,13 +772,17 @@ export default function OrdersPage() {
               ))}
               {filteredOrders.map((o) => (
                 <tr
-                  key={o.id}
+                  key={o.id ?? `local-draft-${o._outboxId}`}
                   onClick={() => o.status === 'draft'
                     ? openDraft(o)
                     : navigate(`/orders/${localOrderRoute(o)}`)}
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
-                  {showCheckboxes && (
+                  {showCheckboxes && o._local && (
+                    // Nothing to bulk-act on yet — this draft has no server row.
+                    <td className="px-5 py-4 w-12" />
+                  )}
+                  {showCheckboxes && !o._local && (
                     <td className="px-5 py-4 w-12" onClick={(e) => e.stopPropagation()}>
                       <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                         <input
@@ -727,7 +796,11 @@ export default function OrdersPage() {
                       </label>
                     </td>
                   )}
-                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">{orderRef(o)}</td>
+                  {/* A parked draft has no row id yet, so its device-issued reference IS
+                      its name here — never `#` from an id that does not exist. */}
+                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">
+                    {o._local ? (o.receipt_number || 'Draft') : orderRef(o)}
+                  </td>
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>
@@ -744,6 +817,11 @@ export default function OrdersPage() {
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                         {STATUS_LABEL[o.status] ?? o.status}
                       </span>
+                      {o._local && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                          ⏳ Waiting to sync
+                        </span>
+                      )}
                       {o.order_type === 'pickup' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
                           Pickup

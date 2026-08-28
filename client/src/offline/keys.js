@@ -54,6 +54,12 @@ export const PRODUCTS_KEY  = `${NS}catalogue.products`;
 export const CUSTOMERS_KEY = `${NS}catalogue.customers`;
 export const PERSONNEL_KEY = `${NS}catalogue.personnel`;
 
+// The server's own parked drafts, cached whole the same way (server-replaced, not
+// built up locally). Distinct from the RECEIPT_PREFIX order history, which the sync
+// endpoint deliberately excludes drafts from: a draft is working state, so it is not
+// mirrored by the delta sync and has to be held here to survive an outage at all.
+export const DRAFTS_KEY = `${NS}drafts`;
+
 // Outbox and history keys embed a zero-padded monotonic id, so a plain lexicographic
 // sort of the keys IS insertion order. That removes the need for a separate index
 // blob, which is the one thing in a key-value store that can drift out of step with
