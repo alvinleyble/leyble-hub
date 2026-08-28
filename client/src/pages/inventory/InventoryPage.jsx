@@ -12,6 +12,12 @@ import { productListHtml } from '../shared/listPrintTemplate';
 import { productListEscPos } from '../shared/listEscPos';
 import { productMatches } from '../../utils/productSearch';
 import { getCachedProducts, getCachedEntity } from '../../offline/catalogue.js';
+import OfflineBanner from '../../components/ui/OfflineBanner';
+import StockReconcileModal from './StockReconcileModal';
+import { listConflicts, subscribeConflicts } from '../../offline/reconcile.js';
+import { queuedProductsFromOutbox, pendingProductEditIds } from '../../offline/productMutations.js';
+import { subscribeOutbox } from '../../offline/outbox.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -33,13 +39,19 @@ export default function InventoryPage() {
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
   const [batchEditOpen, setBatchEditOpen] = useState(false);
 
+  const [fromCache, setFromCache]       = useState(false);
+  const [queuedProducts, setQueued]     = useState([]);
+  const [pendingEditIds, setPendingEditIds] = useState(() => new Set());
+  const [conflicts, setConflicts]       = useState([]);
+  const [reconcileOpen, setReconcileOpen] = useState(false);
+
   // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
   // products (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
   // from; this page just never asked for it, so a blind tablet showed a blank grid.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
     api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
-      .then(setProducts)
+      .then((rows) => { setProducts(rows); setFromCache(false); })
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('products') : await getCachedProducts();
         if (cached.length === 0) {
@@ -47,6 +59,7 @@ export default function InventoryPage() {
           return;
         }
         setProducts(cached);
+        setFromCache(true);
       })
       .finally(() => {
         if (!silent) setLoading(false);
@@ -55,18 +68,74 @@ export default function InventoryPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // 7.7 — coming back online has to put the live list back on screen. Without this the
+  // page kept the held copy, and its amber "Viewing offline data" banner, until someone
+  // happened to change a filter — while the chrome marker already said Online. The
+  // reload is silent (no spinner) for the same reason OrderDetailPage's is: the rows
+  // are already correct, only their provenance changed.
+  useEffect(() => {
+    const refresh = () => load(true);
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener('online', refresh);
+    window.addEventListener('leyble:drain-complete', refresh);
+    return () => {
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('leyble:drain-complete', refresh);
+    };
+  }, [load]);
+
+  // ADR 0015 §6 — a product added while blind has no server row yet, so a purely
+  // server-driven grid would simply not show it (same rule as queued customers).
+  // Criteria 7.5 — both halves of the sync-status affordance come from the outbox:
+  // products CREATED here that have no server row yet, and existing products carrying
+  // an EDIT that has not drained. The second was the invisible one — the grid happily
+  // showed the operator's new price with nothing to say it was still sitting on this
+  // tablet.
+  const loadQueued = useCallback(async () => {
+    const [created, editIds] = await Promise.all([
+      queuedProductsFromOutbox(),
+      pendingProductEditIds(),
+    ]);
+    setQueued(created);
+    setPendingEditIds(editIds);
+  }, []);
+
+  useEffect(() => {
+    loadQueued();
+    return subscribeOutbox(() => loadQueued());
+  }, [loadQueued]);
+
+  // §6's mandatory human reconciliation. The prompt lives HERE, on the screen where
+  // stock and prices are actually decided, rather than in the chrome-wide offline
+  // marker: the marker is a display surface gated behind V25_OFFLINE_CORE, and a
+  // pending question about the real contents of the warehouse must not be able to
+  // disappear with a build flag.
+  const refreshConflicts = useCallback(async () => {
+    setConflicts(await listConflicts().catch(() => []));
+  }, []);
+
+  useEffect(() => {
+    refreshConflicts();
+    return subscribeConflicts(() => refreshConflicts());
+  }, [refreshConflicts]);
+
   const {
     printList, printing,
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePicker,
   } = usePrintList();
 
+  const displayProducts = [...queuedProducts, ...products];
+
   // Prints the full active product list (ignores on-screen search/filters) — Dad wants them all.
-  const handlePrintList = () => printList(productListHtml(products), productListEscPos(products));
+  // A product added while blind prints alongside the rest: 7.5 says it is real from the
+  // moment it is saved, and a count sheet that silently omits it is the opposite of that.
+  const handlePrintList = () =>
+    printList(productListHtml(displayProducts), productListEscPos(displayProducts));
 
-  const allCategories = [...new Set(products.map((p) => p.category ?? 'Uncategorised'))].sort();
+  const allCategories = [...new Set(displayProducts.map((p) => p.category ?? 'Uncategorised'))].sort();
 
-  const filtered = products.filter((p) => {
+  const filtered = displayProducts.filter((p) => {
     const matchSearch = productMatches(p, search);
     const matchCategory =
       categoryFilter === 'all' || (p.category ?? 'Uncategorised') === categoryFilter;
@@ -94,14 +163,19 @@ export default function InventoryPage() {
     });
   };
 
-  const allSelected = filtered.length > 0 && filtered.every((p) => selectedIds.has(p.id));
+  // A still-queued product has no server row to batch-edit, so it is excluded from
+  // selection entirely rather than silently failing at save time.
+  const selectableFiltered = filtered.filter((p) => !p._unsynced);
+  const allSelected = selectableFiltered.length > 0 && selectableFiltered.every((p) => selectedIds.has(p.id));
   const toggleSelectAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(filtered.map((p) => p.id)));
+    setSelectedIds(allSelected ? new Set() : new Set(selectableFiltered.map((p) => p.id)));
   };
 
   const exitBatchMode = () => { setBatchMode(false); setSelectedIds(new Set()); };
 
   const selectedProducts = products.filter((p) => selectedIds.has(p.id));
+
+  const conflictCount = conflicts.length;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -109,7 +183,7 @@ export default function InventoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={products.length === 0}>
+          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={displayProducts.length === 0}>
             🖶 Print List
           </Button>
           {batchMode ? (
@@ -122,6 +196,31 @@ export default function InventoryPage() {
           <Button onClick={() => setCreating(true)}>+ Add Product</Button>
         </div>
       </div>
+
+      {/* ── Stock/price reconciliation (ADR 0015 §6) ─────────────── */}
+      {conflictCount > 0 && (
+        <div
+          role="status"
+          className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border-2 border-amber-500
+                     bg-amber-50 px-5 py-4 mb-6"
+        >
+          <span className="text-2xl leading-none shrink-0" aria-hidden="true">⚖️</span>
+          <div className="min-w-0 flex-1">
+            <p className="text-base font-bold text-amber-900">
+              {conflictCount} stock or price {conflictCount === 1 ? 'change needs' : 'changes need'} your confirmation
+            </p>
+            <p className="text-sm text-amber-900 mt-0.5">
+              Another tablet changed the same value while this one was offline. Nothing is
+              saved until you pick the right one.
+            </p>
+          </div>
+          <Button className="shrink-0" onClick={() => setReconcileOpen(true)}>
+            Review now
+          </Button>
+        </div>
+      )}
+
+      {fromCache && <OfflineBanner />}
 
       {/* ── Filters ──────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -260,7 +359,17 @@ export default function InventoryPage() {
                   {grouped[cat].map((p) => (
                     <tr
                       key={p.id}
-                      onClick={() => setSelectedId(p.id)}
+                      onClick={() => {
+                        // A still-queued product has no server row yet, so the detail
+                        // panel would have nothing to GET. Say so, rather than
+                        // swallowing the tap — the same answer the customer directory
+                        // gives for a queued customer.
+                        if (p._unsynced) {
+                          addToast('Product is queued for sync — details and editing will be available once connected.', 'info');
+                          return;
+                        }
+                        setSelectedId(p.id);
+                      }}
                       className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                     >
                       {batchMode && (
@@ -269,6 +378,7 @@ export default function InventoryPage() {
                             <input
                               type="checkbox"
                               checked={selectedIds.has(p.id)}
+                              disabled={p._unsynced}
                               onChange={() => toggleSelected(p.id)}
                               className="w-6 h-6 rounded border-slate-300 text-blue-700
                                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
@@ -280,6 +390,12 @@ export default function InventoryPage() {
                       <td className="px-5 py-4">
                         <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
                           {p.name}
+                          {(p._unsynced || pendingEditIds.has(String(p.id))) && (
+                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs
+                                             font-semibold border bg-amber-100 text-amber-800 border-amber-300">
+                              ⏳ Waiting to sync
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-slate-400 mt-0.5">{p.unit}</p>
                       </td>
@@ -328,6 +444,7 @@ export default function InventoryPage() {
       {/* ── Modals / Panels ──────────────────────────────────────── */}
       {creating && (
         <ProductFormModal
+          offline={fromCache || !checkIsOnline()}
           onClose={() => setCreating(false)}
           onSaved={() => { setCreating(false); load(true); }}
         />
@@ -336,6 +453,7 @@ export default function InventoryPage() {
       {selectedId !== null && (
         <ProductDetailPanel
           productId={selectedId}
+          cachedProduct={products.find((p) => String(p.id) === String(selectedId)) || null}
           onClose={() => setSelectedId(null)}
           onSaved={() => load(true)}
         />
@@ -346,6 +464,13 @@ export default function InventoryPage() {
           products={selectedProducts}
           onClose={() => setBatchEditOpen(false)}
           onSaved={() => { setBatchEditOpen(false); exitBatchMode(); load(true); }}
+        />
+      )}
+
+      {reconcileOpen && (
+        <StockReconcileModal
+          onClose={() => { setReconcileOpen(false); load(true); }}
+          onResolvedAll={() => setReconcileOpen(false)}
         />
       )}
 

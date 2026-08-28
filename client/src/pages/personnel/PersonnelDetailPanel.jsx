@@ -5,6 +5,8 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
+import OfflineBanner from '../../components/ui/OfflineBanner';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -22,7 +24,7 @@ const ORDER_STATUS = {
 
 const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
 
-export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) {
+export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, cachedPerson = null }) {
   const { addToast } = useToast();
   const fileInputRef = useRef(null);
 
@@ -36,6 +38,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
   // Image upload state — separate from form so we only send if changed
   const [imageUpload, setImageUpload] = useState(null); // { b64, mime }
   const [imagePreview, setImagePreview] = useState(null); // data URL
+  const [fromCache, setFromCache]       = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -54,9 +57,31 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
         setImageUpload(null);
         setImagePreview(null);
       })
-      .catch(() => addToast('Failed to load personnel.', 'error'))
+      .catch(() => {
+        // ADR 0015 §9 — the roster this device already holds (catalogue.js) is enough
+        // to answer "what's this driver's phone number" during an outage. The panel
+        // used to show only "Personnel details not available offline"; now it renders
+        // the cached row read-only, and falls back to that message only when the list
+        // genuinely has nothing for this id (order history needs the server either way).
+        if (!cachedPerson) { addToast('Failed to load personnel.', 'error'); return; }
+        setPerson(cachedPerson);
+        setOrderHistory([]);
+        setFromCache(true);
+        setForm({
+          full_name:      cachedPerson.full_name,
+          remarks:        cachedPerson.remarks ?? '',
+          phone:          cachedPerson.phone ?? '',
+          license_number: cachedPerson.license_number ?? '',
+          is_active:      cachedPerson.is_active,
+        });
+        setImageUpload(null);
+        setImagePreview(null);
+      })
       .finally(() => setLoading(false));
-  }, [personnelId, addToast]);
+  }, [personnelId, addToast]); // eslint-disable-line
+
+  const mutationsBlocked = fromCache || !checkIsOnline();
+  const blockedTip = mutationsBlocked ? 'Needs a connection' : undefined;
 
   useEffect(() => { load(); }, [load]);
 
@@ -158,6 +183,15 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
         ) : (
           <div className="flex-1 overflow-y-auto">
 
+            {fromCache && (
+              <div className="px-6 pt-5">
+                <OfflineBanner
+                  className="mb-0"
+                  message="Viewing offline data · Staff details can't be changed until this tablet is back online"
+                />
+              </div>
+            )}
+
             {/* ── Summary bar ───────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
               {person.is_active === false && (
@@ -239,6 +273,8 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
                   variant="secondary"
                   size="sm"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={mutationsBlocked}
+                  title={blockedTip}
                 >
                   {displayImageSrc ? 'Replace Photo' : 'Upload Photo'}
                 </Button>
@@ -246,7 +282,9 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
               </div>
 
               <div className="px-6 py-4 flex justify-end border-b border-slate-400">
-                <Button type="submit" loading={saving}>Save Changes</Button>
+                <Button type="submit" loading={saving} disabled={mutationsBlocked} title={blockedTip}>
+                  Save Changes
+                </Button>
               </div>
             </form>
 
@@ -301,6 +339,8 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) 
               endpoint={`/personnel/${personnelId}`}
               entityLabel="personnel"
               onDeleted={() => { onSaved(); onClose(); }}
+              disabled={mutationsBlocked}
+              disabledReason="Removing someone from the roster needs a connection — every device shares it."
             />
 
           </div>

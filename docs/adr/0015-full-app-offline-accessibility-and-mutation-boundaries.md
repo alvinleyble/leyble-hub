@@ -86,6 +86,7 @@ An order created on this tablet that has **not yet synced** to the server may be
 - **Accepted Operational Risk:** The captain explicitly accepted the business reality that two store tablets could independently correct the same product's stock count or modify prices while both operating offline during an outage, resulting in conflicting values upon reconnection.
 - **Mandatory Human Conflict Reconciliation (No Silent Last-Write-Wins):** Stock discrepancies across tablets must **never** be resolved by silent last-write-wins (which discards physical count truth). When an outbox drain detects that a stock count was adjusted on both tablets during a disconnected window, the discrepancy must be surfaced in a prominent reconciliation view/modal where an operator reviews both inputs and confirms the true physical inventory count.
 - **Supersedes ADR 0005 §2:** This explicitly supersedes ADR 0005's prior stance that manual stock adjustments and batch price edits must be strictly online-only.
+- **Product deletion is the one carve-out from "full CRUD" (captain decision, added during Slice 3.3 delivery, 2026-08-29):** `DELETE /api/v1/products/:id` remains strictly **online-only**, disabled offline with an explanatory tooltip, the same treatment customer merges (§7) and delivery voids (§8) receive. *Rationale:* every other operation in this section has a reconciliation path because two tablets can each hold a value that is honestly true — 50 cases and 40 cases are both real counts, and §6's modal exists to let a person pick between them. "Tablet A deleted this product; tablet B is mid-sale on it" has no second value to weigh and therefore nothing for reconciliation to resolve. The offline grant covers creation, editing, stock corrections and batch reprices; deletion is not part of it.
 
 #### Alternatives Considered / Rejected
 - **Option A: Full Offline CRUD with Post-Sync Human Conflict Reconciliation (Chosen, Overriding ADR 0005 §2, Hold 5.2 Option C Extended)** — Enable full offline product creation, manual stock adjustments (`POST /products/:id/adjust`), and batch price edits (`PATCH /products/batch-price`). Discrepancies between tablets are detected upon reconnect and surfaced in a dedicated reconciliation modal for operator confirmation.
@@ -197,7 +198,7 @@ This ADR serves as the authoritative specification for the queued delivery tasks
    - Dual identifier resolution (receipt number **or** numeric row id) in `getReceipt()`.
    - Offline status progression (`pending → in_transit → completed`) for unsynced local orders only (§5).
 
-3. **Slice 3.4: Back-Office Graceful Degradation, Stock Mutations & Release 2 Supplies (`leyble-hub-offline-slice-3-4-backoffice-and-stock`)**
+3. **Slice 3.3: Back-Office Graceful Degradation, Stock Mutations & Release 2 Supplies (`leyble-hub-offline-slice-3-3-backoffice-and-stock`)** — *shipped* (numbered 3.4 when this ADR was written; renumbered down when the original 3.2 and 3.3 were delivered as one unit above — the scope below is unchanged)
    - Full offline CRUD for products, stock adjustments, and batch price edits.
    - Multi-device stock conflict flagging and human reconciliation view.
    - Customer profile editing offline via outbox; online gating for merges and deletions.

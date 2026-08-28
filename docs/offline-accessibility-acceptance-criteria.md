@@ -11,11 +11,12 @@ list. The captain settled all 7 in a live interview the same day; each settled i
 a **"Settled 2026-08-28"** note. Everything else here is the criteria list as originally given,
 unchanged.
 
-> **Slice 3.4 note:** most of sections 4, 6, and 7–10 below describe
-> [Slice 3.4](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md#downstream-delivery-slices)
-> (full offline CRUD for products/stock, Incoming Supplies, customer profile edits beyond
-> quick-create, back-office read caching) — **not yet started**, per ADR 0015's own delivery-slice
-> scope. Treat those items as scoped-but-not-yet-built, not as bugs in currently shipped code.
+> **Delivery note (updated 2026-08-29):** sections 4, 6, and 7–11 — full offline CRUD for
+> products/stock, Incoming Supplies, customer profile edits beyond quick-create, and
+> back-office read caching — shipped in
+> [Slice 3.3](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md#downstream-delivery-slices).
+> They are live behaviour to validate against, no longer scoped-but-not-yet-built. Sections
+> 1.0 and 12.0 (offline login / resume after logout) shipped in Slice 3.1.
 
 ---
 
@@ -119,6 +120,14 @@ unchanged.
 
 7.4 Inventory: offline users cannot edit "Bottles Per Case".
 
+> **Settled 2026-08-29 (Slice 3.3 review):** 7.3 and 7.4 apply on **both** product
+> screens — Add Product and the product detail panel — and the per-bottle Deposit Fee
+> follows the bottle-return flag it belongs to. A product can still be added blind
+> (7.5); those fields simply keep their defaults until someone with a connection sets
+> them. Disabled-with-a-message, and also withheld from the queued payload so a
+> restated value cannot reverse another tablet's change on a field that has no
+> reconciliation path. *(captain review: slice-3-3-inventory-gaps)*
+
 7.5 Inventory: offline users CAN still freely add products; new offline-added products are treated as real immediately, exactly like offline-created customers and parked orders — no "private to this device until synced" staging.
 
 > **Settled 2026-08-28:** dropped the "visible only to this device until synced" staging concept
@@ -129,6 +138,20 @@ unchanged.
 7.6 Inventory: anything else not mentioned works normally for both.
 
 7.7 Inventory: data loads up.
+
+7.8 Inventory: the product active/inactive toggle is disabled offline with an explanatory message; the rest of the product edit form still saves normally offline.
+
+> **Settled 2026-08-29 (captain, live):** the rule already written for Customers (8.5)
+> and Personnel (9.2) applies identically to products, everywhere the toggle appears.
+> *(captain review: slice-3-3-inventory-gaps)*
+
+7.9 Inventory: a product carrying an unsynced change shows the same "Waiting to sync" affordance offline-created customers and orders already carry — both for a product added offline and for an offline edit to an already-synced product.
+
+> **Settled 2026-08-29 (captain review):** 7.5's "treated as real immediately" needs a
+> visible counterpart, or a blind edit looks identical to a saved one: the held copy
+> already shows the operator's new number. Tapping a still-queued product answers with
+> the reason its detail panel cannot open yet, the same answer the customer directory
+> gives. *(captain review: slice-3-3-inventory-gaps)*
 
 8.0 Customers: offline users can print the list.
 

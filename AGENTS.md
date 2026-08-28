@@ -33,6 +33,13 @@ DB: `DATABASE_URL` (points to the development Supabase database; see [docs/opera
 ```bash
 # API integration suites — run against a throwaway DB, never the dev one
 createdb leyble_hub_v2audit && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit node server/db/migrate.js
+# The V2.5+ suites resolve their acting user by profile_key, so a migrated-only DB
+# cancels them wholesale with "Cannot read properties of undefined (reading 'id')".
+# setup-profiles.js only TAGS existing rows — a fresh DB has none, so insert them:
+psql -d leyble_hub_v2audit -c "INSERT INTO users (email, password_hash, full_name, role, profile_key, is_active) VALUES \
+  ('josie@leyblestore.com','x','Josie','admin','josie',TRUE), \
+  ('luis@leyblestore.com','x','Luis','admin','luis',TRUE), \
+  ('alvin@leyblestore.com','x','Admin','admin','admin',TRUE);"
 cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit \
   JWT_SECRET='test-jwt-secret-key-32-chars-minimum!!' npm test
 
@@ -407,6 +414,81 @@ settled rules. What a future session most needs to know:
   its content offline. The full acceptance-criteria list this governs, with per-item settled
   decisions, is [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md).
 
+### Full-app offline: back office, stock and supplies (Slice 3.3, [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §§6–9)
+
+Every V1 screen now works blind. What a future session most needs to know:
+
+- **Two different caches, deliberately, and they show staleness differently.**
+  `catalogue.js` holds products/customers/personnel (D16: never say how old it is —
+  that is a rule about SELLING). `backOfficeCache.js` holds Dashboard, Tickets, the
+  deliveries list and both audit feeds as `{ cached_at, value }` under `v25.cache.*`,
+  and `OfflineBanner` NAMES the timestamp, because "₱48,200 in transit" means nothing
+  without knowing when it was true. Order history is neither: no age limit, in
+  `receiptHistory.js`.
+- **Only the UNFILTERED read is cached** (`loadWithCache(..., { cacheable })`). Every
+  one of those screens has filters; caching per combination would fragment the copy
+  into whichever slice was last looked at. Offline, the same filters are re-applied to
+  the held copy client-side (`filterInventoryRows`/`filterActivityRows` in
+  `AuditPage.jsx`, `filterDeliveries` in `IncomingPage.jsx`). Tickets went further and
+  fetches all statuses, filtering the tab on the client.
+- **A stock/price conflict is a QUESTION, not a refused record** — `reconcile.js`
+  (`v25.reconcile.*`), never the outbox's `needs_attention` list. That list is for
+  records the server refused: one side is wrong and the fix is to re-point and resend.
+  Here nothing is wrong, both numbers are honest counts, and the answer is not in the
+  app. Answering one ENQUEUES a fresh ordinary write; it never patches a half-sent
+  record. `StockReconcileModal.jsx` offers mine / theirs / **a third value I just
+  counted**, and the prompt lives on the Inventory page (flag-independent) rather than
+  in `OfflineMarker` (which returns null without `V25_OFFLINE_CORE`).
+- **A conflict is another HUMAN's edit, not the server's number moving.** Stock moves
+  all day on its own — every dispatch deducts, every delivery adds. `findCompetingEdit`
+  in `productMutations.js` looks for an `inventory_audit_logs` row with `action_type`
+  `manual_adjustment` on `current_stock` (or `price_change` on `base_wholesale_price`)
+  dated after the record was queued. Widening that to "the value changed" would fire on
+  every sale and teach the owners to tap through the modal without reading it.
+- **`screenProductMutations()` runs BEFORE every drain** (`offline/index.js`), and no
+  guarded record is ever sent unscreened — with no line it returns `{offline:true}` and
+  changes nothing. A conflicting field is lifted OUT of its record (stripped from the
+  PATCH body, or dropped from the batch's `updates`) so the rest of the same edit still
+  lands; a record left carrying nothing is removed.
+- **Product DELETE is online-only**, alone among §6's "full CRUD" — captain carve-out
+  recorded in the ADR §6. Two valid counts have a reconciliation path; "deleted" vs
+  "mid-sale on it" has no second value to weigh. Same gate as customer merge/delete
+  (§7), delivery edit/void (§8), ticket resolve and every personnel mutation (§9), all
+  via `DangerZoneDelete`'s `disabled`/`disabledReason` or a `title` tooltip.
+- **Deliveries are the second table on ADR 0006's idempotency mechanism.**
+  `<station>-DEL-<seq>` (`issueDeliveryRef`, its OWN counter — `v25.deliverySequence`),
+  stored on `supplier_deliveries.receipt_station/receipt_sequence` (migration 036, same
+  column names on purpose so `lib/idempotency.js` needs one whitelist entry). Without
+  it a resent record is a second truckload of stock in the ledger.
+- **Queued rows are merged into three lists now**, all the same `local-<outboxId>`
+  shape G29 established: customers (`queuedCustomersFromOutbox`), products
+  (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +
+  `mergeDeliveries`, deduped by delivery ref). A merged row is excluded from anything
+  needing a server id — batch price selection, opening a detail panel.
+- **Ticket creation has no offline path** and that is deliberate: no ADR decision grants
+  it one, unlike order/customer/delivery creation which are each explicitly
+  additive-and-safe. It is blocked with an explanation, never left to fail as a fetch
+  error.
+- **§6's "full CRUD" has four locked fields, not just DELETE** — and they come from the
+  captain's acceptance criteria, which are MORE SPECIFIC than the ADR prose for Inventory:
+  [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md)
+  §7. `units_per_case` (7.4), `requires_bottle_return` + its `deposit_fee` (7.3) and
+  `is_active` (7.8) are disabled offline on **both** `ProductFormModal` and
+  `ProductDetailPanel`, and stripped from the queued payload. The reason they are not
+  reconcilable like a stock count: `units_per_case` is an input to the GENERATED
+  `order_items.line_total`, the bottle-return flag decides whether the deposit ledger
+  applies at all, and `is_active` decides what every other tablet can sell — none has a
+  second honest value for `StockReconcileModal` to offer. `is_active` follows the same
+  rule on Customers (8.5). **Always validate an Inventory change against §7 of that doc,
+  not the ADR alone.**
+- **"Waiting to sync" has two sources on Inventory, not one.** `queuedProductsFromOutbox`
+  covers products CREATED blind (no server row, merged in as `local-<outboxId>`);
+  `pendingProductEditIds()` covers existing products carrying an undrained EDIT
+  (`product_update` / `product_batch_price` / the two `*_confirm` types). The second is the
+  one that hides: `applyLocalProductPatch` writes the operator's new number onto the held
+  copy, so a blind edit renders identically to a saved one. The badge and the panel banner
+  both read the outbox, so they clear themselves on drain.
+
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
 - 16px+ fonts
@@ -456,6 +538,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
 | no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |
+| `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_sequence` pair + partial unique index, and a `GENERATED` `delivery_ref` (`1-DEL-00007`) added (migration 036) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8) |
 
 ### `order_personnel` join table (migration 016)
 ```sql

@@ -4,6 +4,7 @@ import { resetOfflineAdvisory } from './advisory.js';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { nativeStore } from './nativeStore.js';
 import { runSync } from './sync.js';
+import { screenProductMutations } from './productMutations.js';
 
 // The V2.5 offline core's entry point. startOfflineCore() itself runs unconditionally
 // (G30); individual UI surfaces (the marker, orderRef's receipt-number display) still
@@ -21,6 +22,10 @@ export * from './status.js';
 export * from './drainNotifier.js';
 export * from './sync.js';
 export * from './queuedCustomers.js';
+export * from './backOfficeCache.js';
+export * from './reconcile.js';
+export * from './productMutations.js';
+export * from './deliveries.js';
 export { nativeStore } from './nativeStore.js';
 
 const DRAIN_INTERVAL_MS = 30_000;
@@ -67,6 +72,12 @@ export async function startOfflineCore({ label } = {}) {
 
   async function runDrainPass() {
     try {
+      // ADR 0015 §6 — nothing guarded is sent unscreened. A queued stock count or
+      // price edit is checked against the server first, and any value another tablet
+      // corrected in the meantime is lifted out into a question for a human rather
+      // than quietly overwriting theirs. Offline this is a no-op and everything
+      // simply stays queued.
+      await screenProductMutations().catch(() => {});
       const res = await drainOutbox();
       if (res && res.sent > 0) {
         resetOfflineAdvisory();

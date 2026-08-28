@@ -3,23 +3,40 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import OfflineBanner from '../../components/ui/OfflineBanner';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDeleted }) {
+export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDeleted, cachedDelivery = null }) {
   const { addToast } = useToast();
   const [delivery, setDelivery]     = useState(null);
   const [loading, setLoading]       = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [voiding, setVoiding]       = useState(false);
+  const [fromCache, setFromCache]   = useState(false);
 
+  // ADR 0015 §9 — the panel used to answer a blind tap with "Delivery not found",
+  // which is untrue: the row is right there in the list's own cached copy. It renders
+  // that instead, read-only. Line items only show when the cached row carries them
+  // (the list endpoint returns a count, not the lines), so the items block below has to
+  // tolerate their absence rather than assume the full shape.
   useEffect(() => {
     api.get(`/incoming/${deliveryId}`)
-      .then(setDelivery)
-      .catch(() => addToast('Failed to load delivery.', 'error'))
+      .then((data) => { setDelivery(data); setFromCache(false); })
+      .catch(() => {
+        if (cachedDelivery) { setDelivery(cachedDelivery); setFromCache(true); return; }
+        addToast('Failed to load delivery.', 'error');
+      })
       .finally(() => setLoading(false));
   }, [deliveryId]); // eslint-disable-line
+
+  // §8 — voiding reverses stock movements on a shared record, and editing an
+  // already-logged delivery reconciles them. Both stay online-only; only LOGGING a new
+  // truck works blind.
+  const mutationsBlocked = fromCache || !checkIsOnline();
+  const blockedTip = mutationsBlocked ? 'Needs a connection' : undefined;
 
   const handleVoid = async () => {
     setVoiding(true);
@@ -78,6 +95,15 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
         ) : (
           <div className="flex-1 overflow-y-auto">
 
+            {fromCache && (
+              <div className="px-6 pt-5">
+                <OfflineBanner
+                  className="mb-0"
+                  message="Viewing offline data · Editing or deleting a delivery needs a connection"
+                />
+              </div>
+            )}
+
             {/* ── Meta ──────────────────────────────────────────────── */}
             <div className="px-6 py-5 border-b border-slate-400 space-y-3">
               <div>
@@ -111,10 +137,16 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
             {/* ── Items ─────────────────────────────────────────────── */}
             <div className="px-6 py-5">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-                Products Received ({delivery.items?.length ?? 0})
+                Products Received ({delivery.items?.length ?? delivery.item_count ?? 0})
               </p>
 
-              {delivery.items?.length === 0 ? (
+              {!delivery.items ? (
+                <p className="text-slate-400 text-sm">
+                  {delivery.item_count
+                    ? `${delivery.item_count} product${delivery.item_count === 1 ? '' : 's'} — the line items need a connection to open.`
+                    : 'Line items not available offline.'}
+                </p>
+              ) : delivery.items.length === 0 ? (
                 <p className="text-slate-400 text-sm">No items on this delivery.</p>
               ) : (
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -152,9 +184,19 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
 
             {/* ── Actions ───────────────────────────────────────────── */}
             <div className="px-6 py-5 border-t border-slate-400">
-              <Button variant="secondary" onClick={() => onEdit(delivery)}>
+              <Button
+                variant="secondary"
+                onClick={() => onEdit(delivery)}
+                disabled={mutationsBlocked}
+                title={blockedTip}
+              >
                 Edit Delivery
               </Button>
+              {mutationsBlocked && (
+                <p className="text-sm text-slate-500 mt-2">
+                  Editing a logged delivery re-reconciles stock, so it needs a connection.
+                </p>
+              )}
             </div>
 
             {/* ── Danger Zone (delete = void + reverse stock) ───────── */}
@@ -162,9 +204,21 @@ export default function DeliveryDetailPanel({ deliveryId, onClose, onEdit, onDel
               <p className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</p>
 
               {!confirming ? (
-                <Button variant="danger" onClick={() => setConfirming(true)}>
-                  Delete delivery
-                </Button>
+                <>
+                  <Button
+                    variant="danger"
+                    onClick={() => setConfirming(true)}
+                    disabled={mutationsBlocked}
+                    title={blockedTip}
+                  >
+                    Delete delivery
+                  </Button>
+                  {mutationsBlocked && (
+                    <p className="text-sm text-slate-500 mt-2">
+                      Deleting a delivery reverses stock on a record every device shares — it needs a connection.
+                    </p>
+                  )}
+                </>
               ) : (
                 <div className="p-4 bg-red-50 rounded-lg border border-red-200">
                   <p className="text-base font-semibold text-red-900 mb-1">
