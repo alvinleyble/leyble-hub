@@ -28,7 +28,7 @@ Antipolo, Philippines. This folder is the single home for project documentation.
   - Offline core & receipt numbering:
     [0003](adr/0003-device-issued-receipt-numbers.md) device-issued receipt numbers,
     [0004](adr/0004-local-first-pos.md) local-first POS,
-    [0005](adr/0005-offline-scope-by-operation.md) offline scope by operation,
+    [0005](adr/0005-offline-scope-by-operation.md) offline scope by operation *(partially superseded by 0015)*,
     [0006](adr/0006-receipt-number-as-idempotency-key.md) receipt number as idempotency key,
     [0007](adr/0007-native-storage-for-device-state.md) native storage for device state,
     [0008](adr/0008-release-switch-for-the-offline-core.md) release switch *(superseded by 0013)*.
@@ -39,6 +39,8 @@ Antipolo, Philippines. This folder is the single home for project documentation.
     [0012](adr/0012-stock-deducts-at-dispatch-not-at-save.md) stock deducts at dispatch *(provisional)*,
     [0013](adr/0013-unswitched-offline-core-no-flag-rollback.md) unswitched offline core *(supersedes 0008)*,
     [0014](adr/0014-v3-release-sequencing.md) release sequencing (database before server/APK).
+  - Full-app offline accessibility:
+    [0015](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) full-app offline accessibility & mutation boundaries *(partially supersedes 0005)*.
 
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally.
