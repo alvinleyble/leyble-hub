@@ -397,3 +397,43 @@ export async function queuedProductsFromOutbox() {
     return [];
   }
 }
+
+// ── Queued EDITS to products that already exist on the server ───────────────
+//
+// Distinct from queuedProductsFromOutbox above, and the distinction is the whole
+// point: a queued CREATE has no server row to show, so it is merged into the list as
+// a `local-` row; a queued EDIT belongs to a row that is already on screen, showing
+// the operator's new number (applyLocalProductPatch wrote it to the held copy), with
+// nothing at all to say that number has not reached anyone else yet.
+//
+// Criteria 7.5 asks for the same "Waiting to sync" affordance offline-created
+// customers and orders already carry, in BOTH directions — the freshly-added product
+// and the freshly-edited one.
+const PRODUCT_EDIT_ENTITY_TYPES = new Set([
+  'product_update',
+  'product_batch_price',
+  'product_stock_confirm',
+  'product_price_confirm',
+]);
+
+/** Ids (as strings) of existing products carrying an edit that has not drained yet. */
+export async function pendingProductEditIds() {
+  try {
+    const records = await listRecords();
+    const ids = new Set();
+    for (const r of records) {
+      if (r.status !== QUEUED || !PRODUCT_EDIT_ENTITY_TYPES.has(r.entity_type)) continue;
+      if (r.entity_type === 'product_batch_price') {
+        for (const u of r.payload?.updates || []) ids.add(String(u.id));
+        continue;
+      }
+      const id = String(r.endpoint || '').split('/').pop();
+      if (id) ids.add(id);
+    }
+    return ids;
+  } catch {
+    // Best-effort, exactly like queuedProductsFromOutbox — a badge is never worth
+    // failing the screen that asked for it.
+    return new Set();
+  }
+}

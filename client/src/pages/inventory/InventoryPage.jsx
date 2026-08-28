@@ -15,8 +15,9 @@ import { getCachedProducts, getCachedEntity } from '../../offline/catalogue.js';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import StockReconcileModal from './StockReconcileModal';
 import { listConflicts, subscribeConflicts } from '../../offline/reconcile.js';
-import { queuedProductsFromOutbox } from '../../offline/productMutations.js';
+import { queuedProductsFromOutbox, pendingProductEditIds } from '../../offline/productMutations.js';
 import { subscribeOutbox } from '../../offline/outbox.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -40,6 +41,7 @@ export default function InventoryPage() {
 
   const [fromCache, setFromCache]       = useState(false);
   const [queuedProducts, setQueued]     = useState([]);
+  const [pendingEditIds, setPendingEditIds] = useState(() => new Set());
   const [conflicts, setConflicts]       = useState([]);
   const [reconcileOpen, setReconcileOpen] = useState(false);
 
@@ -66,10 +68,36 @@ export default function InventoryPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // 7.7 — coming back online has to put the live list back on screen. Without this the
+  // page kept the held copy, and its amber "Viewing offline data" banner, until someone
+  // happened to change a filter — while the chrome marker already said Online. The
+  // reload is silent (no spinner) for the same reason OrderDetailPage's is: the rows
+  // are already correct, only their provenance changed.
+  useEffect(() => {
+    const refresh = () => load(true);
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener('online', refresh);
+    window.addEventListener('leyble:drain-complete', refresh);
+    return () => {
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('leyble:drain-complete', refresh);
+    };
+  }, [load]);
+
   // ADR 0015 §6 — a product added while blind has no server row yet, so a purely
   // server-driven grid would simply not show it (same rule as queued customers).
+  // Criteria 7.5 — both halves of the sync-status affordance come from the outbox:
+  // products CREATED here that have no server row yet, and existing products carrying
+  // an EDIT that has not drained. The second was the invisible one — the grid happily
+  // showed the operator's new price with nothing to say it was still sitting on this
+  // tablet.
   const loadQueued = useCallback(async () => {
-    setQueued(await queuedProductsFromOutbox());
+    const [created, editIds] = await Promise.all([
+      queuedProductsFromOutbox(),
+      pendingProductEditIds(),
+    ]);
+    setQueued(created);
+    setPendingEditIds(editIds);
   }, []);
 
   useEffect(() => {
@@ -97,10 +125,13 @@ export default function InventoryPage() {
     savePrinter, scanWifi, testPrint, closePicker,
   } = usePrintList();
 
-  // Prints the full active product list (ignores on-screen search/filters) — Dad wants them all.
-  const handlePrintList = () => printList(productListHtml(products), productListEscPos(products));
-
   const displayProducts = [...queuedProducts, ...products];
+
+  // Prints the full active product list (ignores on-screen search/filters) — Dad wants them all.
+  // A product added while blind prints alongside the rest: 7.5 says it is real from the
+  // moment it is saved, and a count sheet that silently omits it is the opposite of that.
+  const handlePrintList = () =>
+    printList(productListHtml(displayProducts), productListEscPos(displayProducts));
 
   const allCategories = [...new Set(displayProducts.map((p) => p.category ?? 'Uncategorised'))].sort();
 
@@ -152,7 +183,7 @@ export default function InventoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={products.length === 0}>
+          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={displayProducts.length === 0}>
             🖶 Print List
           </Button>
           {batchMode ? (
@@ -328,7 +359,17 @@ export default function InventoryPage() {
                   {grouped[cat].map((p) => (
                     <tr
                       key={p.id}
-                      onClick={() => { if (!p._unsynced) setSelectedId(p.id); }}
+                      onClick={() => {
+                        // A still-queued product has no server row yet, so the detail
+                        // panel would have nothing to GET. Say so, rather than
+                        // swallowing the tap — the same answer the customer directory
+                        // gives for a queued customer.
+                        if (p._unsynced) {
+                          addToast('Product is queued for sync — details and editing will be available once connected.', 'info');
+                          return;
+                        }
+                        setSelectedId(p.id);
+                      }}
                       className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                     >
                       {batchMode && (
@@ -349,10 +390,10 @@ export default function InventoryPage() {
                       <td className="px-5 py-4">
                         <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
                           {p.name}
-                          {p._unsynced && (
+                          {(p._unsynced || pendingEditIds.has(String(p.id))) && (
                             <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs
                                              font-semibold border bg-amber-100 text-amber-800 border-amber-300">
-                              Waiting to sync
+                              ⏳ Waiting to sync
                             </span>
                           )}
                         </p>
@@ -403,6 +444,7 @@ export default function InventoryPage() {
       {/* ── Modals / Panels ──────────────────────────────────────── */}
       {creating && (
         <ProductFormModal
+          offline={fromCache || !checkIsOnline()}
           onClose={() => setCreating(false)}
           onSaved={() => { setCreating(false); load(true); }}
         />

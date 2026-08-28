@@ -469,6 +469,25 @@ Every V1 screen now works blind. What a future session most needs to know:
   it one, unlike order/customer/delivery creation which are each explicitly
   additive-and-safe. It is blocked with an explanation, never left to fail as a fetch
   error.
+- **§6's "full CRUD" has four locked fields, not just DELETE** — and they come from the
+  captain's acceptance criteria, which are MORE SPECIFIC than the ADR prose for Inventory:
+  [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md)
+  §7. `units_per_case` (7.4), `requires_bottle_return` + its `deposit_fee` (7.3) and
+  `is_active` (7.8) are disabled offline on **both** `ProductFormModal` and
+  `ProductDetailPanel`, and stripped from the queued payload. The reason they are not
+  reconcilable like a stock count: `units_per_case` is an input to the GENERATED
+  `order_items.line_total`, the bottle-return flag decides whether the deposit ledger
+  applies at all, and `is_active` decides what every other tablet can sell — none has a
+  second honest value for `StockReconcileModal` to offer. `is_active` follows the same
+  rule on Customers (8.5). **Always validate an Inventory change against §7 of that doc,
+  not the ADR alone.**
+- **"Waiting to sync" has two sources on Inventory, not one.** `queuedProductsFromOutbox`
+  covers products CREATED blind (no server row, merged in as `local-<outboxId>`);
+  `pendingProductEditIds()` covers existing products carrying an undrained EDIT
+  (`product_update` / `product_batch_price` / the two `*_confirm` types). The second is the
+  one that hides: `applyLocalProductPatch` writes the operator's new number onto the held
+  copy, so a blind edit renders identically to a saved one. The badge and the panel banner
+  both read the outbox, so they clear themselves on drain.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets

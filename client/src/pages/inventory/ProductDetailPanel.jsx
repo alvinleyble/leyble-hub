@@ -8,7 +8,8 @@ import Stepper from '../../components/ui/Stepper';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import { getCachedEntity } from '../../offline/catalogue.js';
-import { updateProductLocalFirst } from '../../offline/productMutations.js';
+import { updateProductLocalFirst, pendingProductEditIds } from '../../offline/productMutations.js';
+import { subscribeOutbox } from '../../offline/outbox.js';
 import { STOCK_FIELD, PRICE_FIELD } from '../../offline/reconcile.js';
 import { checkIsOnline } from '../../offline/status.js';
 
@@ -45,6 +46,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
   const [adjErrors, setAdjErrors]   = useState({});
   const [adjSaving, setAdjSaving]   = useState(false);
   const [fromCache, setFromCache]   = useState(false);
+  const [pendingSync, setPendingSync] = useState(false);
 
   const hydrate = (data) => {
     setProduct(data);
@@ -83,6 +85,27 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
 
   useEffect(() => { load(); }, [load]);
 
+  // Criteria 7.5's sync-status affordance, panel side: an edit saved blind writes
+  // straight onto the held copy, so this panel re-renders showing the operator's own
+  // number with nothing to say it has not left the tablet yet. Read it from the outbox
+  // rather than from the save's return value, so re-opening the panel later says the
+  // same thing, and so the badge clears itself the moment the record drains.
+  const refreshPendingSync = useCallback(async () => {
+    const ids = await pendingProductEditIds();
+    setPendingSync(ids.has(String(productId)));
+  }, [productId]);
+
+  useEffect(() => {
+    refreshPendingSync();
+    return subscribeOutbox(() => refreshPendingSync());
+  }, [refreshPendingSync]);
+
+  // Criteria 7.3 / 7.4 (bottle return, bottles per case) and the captain's 2026-08-29
+  // clarification extending 8.5 / 9.2's active-toggle rule to products. Everything
+  // else on this panel — name, category, SKU, price, stock — still saves blind.
+  const mutationsBlocked = fromCache || !checkIsOnline();
+  const blockedTip = mutationsBlocked ? 'Needs a connection' : undefined;
+
   const set = (field) => (e) => {
     const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setForm((f) => ({ ...f, [field]: val }));
@@ -101,7 +124,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
     setSaving(true);
     try {
       const profileKey = await api.getActiveProfile();
-      const { synced } = await updateProductLocalFirst(productId, {
+      const patch = {
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -112,7 +135,19 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
         current_stock:        Number(form.current_stock),
         is_active:            form.is_active,
         requires_bottle_return: form.requires_bottle_return,
-      }, {
+      };
+      // The three locked controls are disabled above, so these carry the values the
+      // product already had — but a PATCH that restates them would still overwrite a
+      // change another tablet made while this one was blind, on exactly the fields that
+      // have no reconciliation path. The visible disable is the UX contract; leaving
+      // them out of the body is what makes it true on the wire.
+      if (mutationsBlocked) {
+        delete patch.units_per_case;
+        delete patch.requires_bottle_return;
+        delete patch.deposit_fee;
+        delete patch.is_active;
+      }
+      const { synced } = await updateProductLocalFirst(productId, patch, {
         profileKey,
         product,
         // Only these two can be contested by another tablet counting or repricing the
@@ -215,6 +250,21 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                   className="mb-0"
                   message="Viewing offline data · Stock counts and prices you change here sync when connected"
                 />
+              </div>
+            )}
+
+            {pendingSync && (
+              <div className="px-6 pt-5">
+                <div
+                  role="status"
+                  className="flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3"
+                >
+                  <span className="text-xl leading-none shrink-0" aria-hidden="true">⏳</span>
+                  <p className="text-sm font-semibold text-amber-900">
+                    Waiting to sync — changes saved on this tablet have not reached the other
+                    devices yet.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -351,9 +401,12 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                     <input type="text" value={form.sku} onChange={set('sku')} className={INPUT} />
                   </FormField>
 
-                  <FormField label="Bottles per Case" required error={formErrors.units_per_case}>
+                  <FormField label="Bottles per Case" required error={formErrors.units_per_case}
+                    hint={mutationsBlocked ? 'Needs a connection' : undefined}>
                     <input type="number" min="1" step="1" value={form.units_per_case}
-                      onChange={set('units_per_case')} className={INPUT} />
+                      onChange={set('units_per_case')}
+                      disabled={mutationsBlocked} title={blockedTip}
+                      className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
                   </FormField>
 
                   <FormField label="Current Stock" required error={formErrors.current_stock}
@@ -362,14 +415,27 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                       onChange={set('current_stock')} className={INPUT} />
                   </FormField>
 
-                  <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
-                    <input
-                      type="checkbox" id="is_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700"
-                    />
-                    <label htmlFor="is_active" className="text-base font-medium text-slate-700 cursor-pointer">
-                      Active (visible when creating orders)
-                    </label>
+                  <div className="sm:col-span-2 min-h-[48px]" title={blockedTip}>
+                    <div className="flex items-center gap-3 min-h-[48px]">
+                      <input
+                        type="checkbox" id="is_active" checked={form.is_active}
+                        onChange={set('is_active')} disabled={mutationsBlocked}
+                        className="w-6 h-6 accent-blue-700 disabled:opacity-50"
+                      />
+                      <label
+                        htmlFor="is_active"
+                        className={`text-base font-medium ${mutationsBlocked
+                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                      >
+                        Active (visible when creating orders)
+                      </label>
+                    </div>
+                    {mutationsBlocked && (
+                      <p className="text-sm text-slate-500">
+                        Hiding or restoring a product needs a connection — it decides what every
+                        other tablet can sell right now.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -381,10 +447,11 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                     <input type="number" min="0" step="0.01" value={form.base_wholesale_price}
                       onChange={set('base_wholesale_price')} className={INPUT} />
                   </FormField>
-                  <FormField label="Deposit Fee (₱ / bottle)" hint="Only for returnable-bottle products">
+                  <FormField label="Deposit Fee (₱ / bottle)"
+                    hint={mutationsBlocked ? 'Needs a connection' : 'Only for returnable-bottle products'}>
                     <input type="number" min="0" step="0.01" value={form.deposit_fee}
-                      disabled={!form.requires_bottle_return}
-                      onChange={set('deposit_fee')}
+                      disabled={mutationsBlocked || !form.requires_bottle_return}
+                      onChange={set('deposit_fee')} title={blockedTip}
                       className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
                   </FormField>
                 </div>
@@ -392,21 +459,32 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
 
               <div className="px-6 py-5 border-b border-slate-400">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
-                <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+                <label
+                  className={`flex items-center gap-3 min-h-[48px] select-none
+                              ${mutationsBlocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  title={blockedTip}
+                >
                   <input
                     type="checkbox" id="requires_bottle_return" checked={form.requires_bottle_return}
+                    disabled={mutationsBlocked}
                     onChange={(e) => setForm((f) => ({
                       ...f,
                       requires_bottle_return: e.target.checked,
                       deposit_fee: e.target.checked ? f.deposit_fee : '0',
                     }))}
-                    className="w-6 h-6 accent-blue-700"
+                    className="w-6 h-6 accent-blue-700 disabled:opacity-50"
                   />
-                  <span className="text-base text-slate-700">
+                  <span className={`text-base ${mutationsBlocked ? 'text-slate-400' : 'text-slate-700'}`}>
                     Requires bottle return
                     <span className="block text-sm text-slate-400">Off for plastic / non-returnable products</span>
                   </span>
                 </label>
+                {mutationsBlocked && (
+                  <p className="text-sm text-slate-500 mt-2">
+                    Bottle return and its deposit need a connection — turning them on or off
+                    changes what every past and future order line owes.
+                  </p>
+                )}
               </div>
 
               <div className="px-6 py-4 flex justify-end border-b border-slate-400">
@@ -480,7 +558,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
               endpoint={`/products/${productId}`}
               entityLabel="product"
               onDeleted={() => { onSaved(); onClose(); }}
-              disabled={fromCache || !checkIsOnline()}
+              disabled={mutationsBlocked}
               disabledReason="Deleting a product needs a connection — another tablet could be selling it right now."
             />
 

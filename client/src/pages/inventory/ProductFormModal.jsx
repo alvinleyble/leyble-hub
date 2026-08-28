@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Stepper from '../../components/ui/Stepper';
 import { createProductLocalFirst } from '../../offline/productMutations.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 const FIELD_CLASS = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                      focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -16,8 +17,19 @@ const DEFAULT_FORM = {
   requires_bottle_return: false,
 };
 
-export default function ProductFormModal({ onClose, onSaved }) {
+export default function ProductFormModal({ onClose, onSaved, offline = false }) {
   const { addToast } = useToast();
+
+  // Criteria 7.3 / 7.4 — "Bottles per Case" and "Requires bottle return" are the two
+  // fields a blind device may not decide. They are not per-device facts like a stock
+  // count: units_per_case is baked into every line total ever computed from this
+  // product (order_items.line_total is GENERATED from it) and requires_bottle_return
+  // decides whether the whole bottle-deposit ledger applies. Criteria 7.5 still lets
+  // the product be added right now — these two simply keep their defaults until
+  // someone with a connection sets them. Disabled-with-a-message, never a silent drop
+  // from the payload (the 8.5 / 9.2 contract).
+  const lockedOffline = offline || !checkIsOnline();
+
   const [form, setForm]     = useState(DEFAULT_FORM);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -116,9 +128,14 @@ export default function ProductFormModal({ onClose, onSaved }) {
             </FormField>
 
             <FormField label="Bottles per Case" required error={errors.units_per_case}
-              hint="How many bottles inside one case">
+              hint={lockedOffline
+                ? 'Needs a connection — stays at 1 until then'
+                : 'How many bottles inside one case'}>
               <input type="number" min="1" step="1" value={form.units_per_case}
-                onChange={set('units_per_case')} className={FIELD_CLASS} />
+                onChange={set('units_per_case')}
+                disabled={lockedOffline}
+                title={lockedOffline ? 'Needs a connection' : undefined}
+                className={FIELD_CLASS + ' disabled:bg-slate-100 disabled:text-slate-400'} />
             </FormField>
 
             <FormField label="Initial Stock" error={errors.current_stock}>
@@ -149,22 +166,34 @@ export default function ProductFormModal({ onClose, onSaved }) {
 
             <div className="sm:col-span-2 border-t border-slate-300 pt-4">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
-              <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+              <label
+                className={`flex items-center gap-3 min-h-[48px] select-none
+                            ${lockedOffline ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                title={lockedOffline ? 'Needs a connection' : undefined}
+              >
                 <input
                   type="checkbox"
                   checked={form.requires_bottle_return}
+                  disabled={lockedOffline}
                   onChange={(e) => setForm((f) => ({
                     ...f,
                     requires_bottle_return: e.target.checked,
                     deposit_fee: e.target.checked ? f.deposit_fee : '0',
                   }))}
-                  className="w-6 h-6 accent-blue-700"
+                  className="w-6 h-6 accent-blue-700 disabled:opacity-50"
                 />
-                <span className="text-base text-slate-700">
+                <span className={`text-base ${lockedOffline ? 'text-slate-400' : 'text-slate-700'}`}>
                   Requires bottle return
                   <span className="block text-sm text-slate-400">Off for plastic / non-returnable products</span>
                 </span>
               </label>
+              {lockedOffline && (
+                <p className="text-sm text-slate-500 mt-2">
+                  Bottle return and bottles-per-case need a connection — they change how every
+                  order line and bottle deposit is calculated. Add the product now and set them
+                  once you are back online.
+                </p>
+              )}
             </div>
 
           </div>

@@ -136,7 +136,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         phone:         form.phone.trim() || null,
         address:       form.address.trim() || null,
         notes:         form.notes.trim() || null,
-        is_active:     form.is_active,
+        // 8.5 — the toggle is disabled offline (below), so this would only ever restate
+        // the value already stored. Leaving it out of the body is what stops a blind
+        // save from reversing a deactivation another tablet just made.
+        ...(sharedMutationsBlocked ? {} : { is_active: form.is_active }),
       }, { profileKey });
       addToast(
         synced ? 'Customer updated.' : 'Saved on this device \u00b7 will sync when connected.',
@@ -293,12 +296,28 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                  focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none" />
                   </FormField>
 
-                  <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
-                    <input type="checkbox" id="cust_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700" />
-                    <label htmlFor="cust_active" className="text-base font-medium text-slate-700 cursor-pointer">
-                      Active
-                    </label>
+                  {/* 8.5 — everything else on this form still saves blind; only the
+                      active flag waits, because it decides what every other tablet can
+                      sell to and there is no second value to reconcile. */}
+                  <div className="sm:col-span-2 min-h-[48px]" title={sharedMutationsBlocked ? 'Needs a connection' : undefined}>
+                    <div className="flex items-center gap-3 min-h-[48px]">
+                      <input type="checkbox" id="cust_active" checked={form.is_active}
+                        onChange={set('is_active')} disabled={sharedMutationsBlocked}
+                        className="w-6 h-6 accent-blue-700 disabled:opacity-50" />
+                      <label
+                        htmlFor="cust_active"
+                        className={`text-base font-medium ${sharedMutationsBlocked
+                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                      >
+                        Active
+                      </label>
+                    </div>
+                    {sharedMutationsBlocked && (
+                      <p className="text-sm text-slate-500">
+                        Deactivating or restoring a customer needs a connection — the rest of
+                        this form still saves offline.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
