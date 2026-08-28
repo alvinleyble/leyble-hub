@@ -395,6 +395,11 @@ settled rules. What a future session most needs to know:
   `POST /orders/:receipt/status` record behind the order's creation — `POST /orders` cannot
   express a status, and stock deducts on the transition, ADR 0012). Reversals, Cancel and
   Close stay online-only in every case.
+- **Content edits (price, quantity, customer, adjustment, notes) follow the same unsynced-local
+  boundary as status transitions** — ADR 0015 §5, settled 2026-08-28. A synced order (which
+  includes every Closed order, since Close is online-only) always requires a connection to edit
+  its content offline. The full acceptance-criteria list this governs, with per-item settled
+  decisions, is [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md).
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
