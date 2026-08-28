@@ -364,7 +364,11 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   the way past), that cache when it does not, unioned either way with
   `listLocalParkedOrders()` minus `pendingDeletionRefs()`. Cached server drafts are
   read-only offline (they are synced rows — ADR 0015 §5 / criterion 5.8); the ones this
-  device parked carry `_local: true` and open, edit and discard with no network.
+  device parked carry `_local: true` and open, edit and discard with no network. That
+  read-only half is slated to change: the captain settled on 2026-08-29 that a synced draft
+  SHOULD open, edit and move forward offline (discarding stays session-local either way) —
+  scoped, not built, backlog item `leyble-hub-offline-historical-drafts-edit`, ADR 0015 §5 /
+  criterion 5.15. Until it lands, the `_local` split above is the shipped behaviour.
 - **A locally parked draft carries a `display` blob beside its payload.** `payload` is
   the POST body and stays exactly that, so it has no customer name and no product
   names; `record.display` holds them, and `recordToDraft` merges the two. Without it a
@@ -492,6 +496,17 @@ Every V1 screen now works blind. What a future session most needs to know:
   (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +
   `mergeDeliveries`, deduped by delivery ref). A merged row is excluded from anything
   needing a server id — batch price selection, opening a detail panel.
+- **Saving a custom price is offline-capable in ONE of its two entry points.** The
+  *"Save Custom Price?"* prompt at the end of a sale (`persistPriceSave` in
+  `OrderCreateModal.jsx`) enqueues; the Customers module's standalone *Add Custom Price*
+  (`handleSetPrice` in `CustomerDetailPanel.jsx`) is a bare `api.post` and fails blind, as
+  do that panel's price list and its product picker. Do not read ADR 0015 §7 as covering
+  both — it used to claim that, and the claim was false. Open work, criterion 8.4.
+- **Before filing an offline bug, read the Known Gaps table** at the end of
+  [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md).
+  Several places where the app and the criteria disagree are deliberate and captain-parked
+  (all of Personnel's edit form, delivery edits, ticket creation), and two cosmetic gaps are
+  already acknowledged. That table, not this file, is the running list.
 - **Ticket creation has no offline path** and that is deliberate: no ADR decision grants
   it one, unlike order/customer/delivery creation which are each explicitly
   additive-and-safe. It is blocked with an explanation, never left to fail as a fetch
