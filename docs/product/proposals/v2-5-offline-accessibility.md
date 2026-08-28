@@ -1,10 +1,10 @@
-# Proposal: Leyble Hub V2.5 — Offline Accessibility & Local-First POS
+# Proposal: Leyble Hub V2.5 — Full-App Offline Accessibility & Local-First Architecture
 
-**Status:** Settled (Grill completed 2026-08-23; D13–D18 added the same day). Covers all eighteen decisions. Release 1 is in build as four pieces (see §4).  
-**Origin:** Alvin & Firstmate (2026-08-23).  
+**Status:** Settled Specification (Updated 2026-08-28 following the Full-App Offline Accessibility Audit & Captain Grill Session; all 9 decisions incorporated). Authoritative spec for downstream implementation Slices 3.1–3.4.  
+**Origin:** Alvin & Firstmate (Initial POS core 2026-08-23; expanded to full-app offline accessibility 2026-08-28).  
 **Target Hardware:** **Honor Pad X8B** (11.0" Android Tablet, landscape orientation, Station 1) and secondary Android phone/tablet (Station 2).  
 **Target Users:** Store owners in Antipolo, Rizal, Philippines (late 50s).  
-**See also:** [PRD.md](../PRD.md), [ARCHITECTURE.md](../../architecture/ARCHITECTURE.md), [DATABASE.md](../../architecture/DATABASE.md), [glossary.md](../glossary.md), [v2-tablet-pos-overhaul.md](v2-tablet-pos-overhaul.md), [ADR 0003](../../adr/0003-device-issued-receipt-numbers.md), [ADR 0004](../../adr/0004-local-first-pos.md), [ADR 0005](../../adr/0005-offline-scope-by-operation.md), [ADR 0006](../../adr/0006-receipt-number-as-idempotency-key.md), [ADR 0007](../../adr/0007-native-storage-for-device-state.md), [ADR 0008](../../adr/0008-release-switch-for-the-offline-core.md).
+**See also:** [Full-App Offline Accessibility Audit Report](/Users/lovzay/alvin-workspace/data/leyble-hub-full-offline-accessibility-audit/report.md), [PRD.md](../PRD.md), [ARCHITECTURE.md](../../architecture/ARCHITECTURE.md), [DATABASE.md](../../architecture/DATABASE.md), [glossary.md](../glossary.md), [v2-tablet-pos-overhaul.md](v2-tablet-pos-overhaul.md), [v3-0-pos-order-creation-in-v1.md](v3-0-pos-order-creation-in-v1.md), [ADR 0003](../../adr/0003-device-issued-receipt-numbers.md), [ADR 0004](../../adr/0004-local-first-pos.md), [ADR 0005](../../adr/0005-offline-scope-by-operation.md), [ADR 0006](../../adr/0006-receipt-number-as-idempotency-key.md), [ADR 0007](../../adr/0007-native-storage-for-device-state.md), [ADR 0008](../../adr/0008-release-switch-for-the-offline-core.md), [ADR 0010](../../adr/0010-receipt-number-addresses-order-across-sync-boundary.md), [ADR 0012](../../adr/0012-stock-deducts-at-dispatch-not-at-save.md), [ADR 0013](../../adr/0013-unswitched-offline-core-no-flag-rollback.md), [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
 ---
 
@@ -14,20 +14,20 @@
 Leyble General Merchandise operates in Antipolo, Philippines, where the physical store faces infrastructure realities that dictate software requirements:
 
 1. **Frequent Network Outages:** Internet connectivity drops roughly **weekly**, for a random duration ranging from **hours to days at worst**.
-2. **Current Failure Mode:** Leyble Hub V1 and V2.0 are entirely cloud-dependent. When an outage occurs, the app becomes unusable. Store owners currently fall back to a physical, pre-numbered paper receipt booklet.
+2. **Current Failure Mode:** Leyble Hub was historically cloud-dependent. During counter testing under simulated and real outages in Antipolo (documented in the [Full-App Offline Accessibility Audit](/Users/lovzay/alvin-workspace/data/leyble-hub-full-offline-accessibility-audit/report.md)), the app broke down across screens: cold launches failed with raw alerts (`Failed to fetch`), the Orders list suffered amnesia, order detail views and inventory/customer/delivery/personnel panels crashed to white screens (`TypeError: Cannot read properties of undefined/null`), and order creation modals failed to load catalogue form data.
 3. **Prevalence of Hand-Written Paper Receipts:** Even during normal online operations, **approximately 25% of daily transactions are hand-written on paper** and never entered into Leyble Hub. Physical booklet numbering operates independently and will not collide with app receipt numbering (accepted by the product owner).
 4. **Stock Accuracy is Approximate by Design:** Because ~25% of sales bypass the app entirely on paper, inventory stock figures in the database are already approximate by business reality. Therefore, offline software must **never introduce complex blocking machinery to defend theoretical stock precision** (e.g. no offline stock locking, no negative-stock transaction blocks).
-5. **Two Concurrent Devices:** The store uses two devices to create sales: the primary counter tablet (**Honor Pad X8B**) and a secondary tablet/phone. Simultaneous order creation across both devices is possible.
-6. **Authentication Token Persistence:** The JWT authentication token has **no expiry set in code** (`JWT_EXPIRES_IN` remains unset). Consequently, multi-day outages do not log devices out. *(Constraint: `JWT_EXPIRES_IN` must remain unset in production, or the offline architecture must explicitly handle token expiration).*
+5. **Two Concurrent Devices:** The store uses two devices to create sales: the primary counter tablet (**Honor Pad X8B**, Station 1) and a secondary tablet/phone (Station 2). Simultaneous operations across both devices during an outage are expected.
+6. **Authentication Token Persistence:** The JWT authentication token has **no expiry set in code** (`JWT_EXPIRES_IN` remains unset). Multi-day outages must never log devices out.
 
 ### Core Objective
-Transform Leyble Hub POS into a **local-first system** where counter operations (creating orders, quick-creating customers, capturing custom prices, and printing thermal receipts) operate with 100% speed and reliability in all network states: online, offline, or experiencing high-latency network timeouts.
+Transform Leyble Hub into a **complete local-first application where EVERY screen and action works offline** without crashes, lockouts, or data amnesia. Counter operations (order creation, customer quick-creates, customer pricing, thermal printing), historical order exploration, stock count corrections, batch price edits, incoming restock delivery logging, and back-office review must operate with 100% reliability regardless of network reachability.
 
 ```mermaid
 graph TD
-    subgraph Counter POS Workflow (Local-First Always)
-        A[Create Order / Quick Customer] --> B[Save Order to Native Device Storage]
-        B --> C[Assign Device Receipt Number e.g. 1-00042]
+    subgraph Counter POS & Store Workflow (Local-First Always)
+        A[Create Order / Adjust Stock / Log Delivery] --> B[Save Record to Native Device Storage]
+        B --> C[Assign Device Identifier e.g. 1-00042 / 1-DEL-0001]
         C --> D[Print 80mm 2-Copy Thermal Receipt Instantly]
         B --> E[Enqueue Record in Local Outbox]
     end
@@ -35,10 +35,10 @@ graph TD
     subgraph Background Sync Worker
         E --> F{Network Available?}
         F -- Yes --> G[Drain Outbox via FIFO Dependency Order]
-        G --> H[Cloud API: POST /api/v1/orders<br/>keyed by receipt number]
+        G --> H[Cloud API: POST /orders, /incoming, /products/adjust<br/>keyed by idempotency keys]
         H --> I[PostgreSQL on Supabase]
         F -- No --> J[Keep in Outbox: Show Marker 'Offline · N waiting']
-        H -- Rejected / Conflict --> K[Move to 'Needs Attention' Queue]
+        H -- Rejected / Conflict --> K[Move to 'Needs Attention' / Stock Reconciliation Queue]
     end
 ```
 
@@ -46,15 +46,15 @@ graph TD
 
 ## 2. Locked Business Rules & Architecture (D1 – D18)
 
-### D1 — Receipt Number is Decoupled from the Database Row ID [SETTLED]
+### D1 — Receipt Number Decoupled from Row ID & First Login Exception [SETTLED]
 * **Per-Device Station Number Spaces:** `receipt_number` becomes a first-class domain concept issued locally by the device at the moment of Save, executing the exact same code path online and offline.
 * **Format:** `<station>-<sequence>`, e.g., `1-00042`, `2-00042`.
 * **Row ID Stays Internal:** PostgreSQL `orders.id` integer primary key remains an internal database identifier. The user interface, order history, and thermal receipts display `receipt_number` everywhere `#<id>` was previously shown.
 * **One-Time Station Registration:** A device registers with the cloud server once upon initial app installation (`POST /api/v1/stations/register`), receives the next sequential station number (1, 2, ...), and permanently stores it in native storage (`@capacitor/preferences`). Scales to N devices.
 * **Station Numbering Invariant:** A wiped or reinstalled device receives a NEW station number upon re-registration, never reclaiming its old station number. Station numbers only creep upward.
 * **Existing Orders Backlog:** Approximately 1,300 pre-existing orders retain their plain numeric sequence IDs without a station prefix. This one-time step in numbering is accepted.
-* **Offline Installation Edge Case:** A brand-new device installed during an active outage cannot issue receipts until it connects to the internet once to register. Store paper receipt booklets cover this corner case.
-* **See also:** [ADR 0003](../../adr/0003-device-issued-receipt-numbers.md).
+* **First-Ever Login is the One Standing Exception (Decision 2):** A brand-new tablet that has never once connected to the internet needs exactly one online connection, one time, to verify credentials and claim its unique station number. The instant after that succeeds — even seconds later — the device must work with zero connection, forever. This single exception prevents two tablets from silently colliding on the same register number, and is never generalized to any other flow.
+* **See also:** [ADR 0003](../../adr/0003-device-issued-receipt-numbers.md), [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
 ### D2 — The POS is Local-First, Always [SETTLED]
 * **Local-First in Every Case:** Every order creation, customer quick-create, and price capture writes immediately to the app's native device storage before touching the network (see D17 for why not the WebView's).
@@ -62,15 +62,15 @@ graph TD
 * **Single Code Path:** Online and offline transactions run the exact same code path every day. This eliminates untested "outage-only" fallback branches and avoids the ambiguity of degraded, hanging network connections.
 * **See also:** [ADR 0004](../../adr/0004-local-first-pos.md).
 
-### D3 — Offline Scope is Decided by OPERATION, Not by Module [SETTLED]
-Scope is determined strictly by the mathematical nature of the operation rather than UI module boundaries:
+### D3 — Offline Scope Determined by Operation Type Rather Than Module [SETTLED, EXPANDED]
+Scope is determined strictly by the transactional and conflict properties of the operation across the entire application ([ADR 0005](../../adr/0005-offline-scope-by-operation.md), updated by [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md)):
 
 | Category | Operations | Handling |
 | :--- | :--- | :--- |
-| **Works Offline**<br>*(Additive Creates of Self-Contained Records)* | • Build, save, and print POS receipt (`POST /orders`)<br>• Quick-create customer mid-order (`POST /customers`)<br>• Capture customer custom price (`POST /customers/:id/prices`)<br>• Record incoming supplier delivery (`POST /incoming`)<br>• Park an order draft<br>• Reprint receipts from local 30-day cache | Allowed offline. Records are saved to native device storage and queued in the outbox. Concurrent entries across devices merge cleanly upon sync. |
-| **Requires Online Connection**<br>*(Reversals & Overwrites of Shared State)* | • Cancelling a synced order (restores stock)<br>• Voiding a supplier delivery (reverses restock)<br>• Editing an order or delivery that has already synced<br>• Manual stock adjustments and batch price edits | Blocked offline with an explicit online-required message. *(Note: Unsynced local drafts or outbox orders that have not yet left the device may be freely edited or discarded locally).* |
+| **Works Offline**<br>*(Local Creates, Unsynced Transitions & Reconciled Mutations)* | • Build, save, and print POS orders (`POST /orders`)<br>• Customer quick-create mid-order (`POST /customers`)<br>• Capture customer custom prices (`POST /customers/:id/prices`)<br>• Edit customer profile details (`PATCH /customers/:id`)<br>• Advance status of local unsynced orders (`in_transit`, `completed`)<br>• Manual stock count adjustments (`POST /products/:id/adjust`)<br>• Batch price edits (`PATCH /products/batch-price`)<br>• Log incoming supplier delivery restock (`POST /incoming`)<br>• Park an order draft (`status: 'draft'`)<br>• Explore & reprint full order history (no age limit)<br>• Read-only browsing of Dashboard, Personnel, Tickets, Audit Log | **Allowed offline.** Records are written to native device storage (`@capacitor/preferences`) and queued in the outbox. Unsynced local orders update status in-place before sync. Stock count and price discrepancies between disconnected tablets are surfaced in a human reconciliation view upon reconnect (D19). Back-office views degrade gracefully from native reference cache. |
+| **Requires Online Connection**<br>*(Destructive Merges, Deletions & Synced State Reversals)* | • Cancelling an already-synced order (reverses stock)<br>• Voiding an incoming supplier delivery (reverses stock)<br>• Editing line items on an already-synced order or delivery<br>• Advancing status / closing an already-synced order (`POST /close`)<br>• Merging duplicate customer accounts (`POST /customers/merge`)<br>• Deleting a customer record (`DELETE /customers/:id`)<br>• Deleting or resolving deposit tickets (`DELETE`/`PATCH /tickets/:id`)<br>• Creating, editing, or deactivating personnel records | **Blocked offline with explicit, calm UI tooltips.** Merging accounts and deleting records are destructive operations that affect relational history across the entire distributor; they must be executed one at a time with live server validation. |
 
-* **See also:** [ADR 0005](../../adr/0005-offline-scope-by-operation.md).
+* **See also:** [ADR 0005](../../adr/0005-offline-scope-by-operation.md), [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
 ### D4 — Duplicates Land; They are Surfaced, Never Auto-Merged [SETTLED]
 When two disconnected devices create customers with identical or similar names offline, both records land in the database upon reconnection. The system surfaces duplicates using the **4 + 3 + 2 combination** (approved via Lavish review):
@@ -115,9 +115,13 @@ When two disconnected devices create customers with identical or similar names o
 * **Operator Resolution:** The receipt is moved to a "Needs Attention" queue with a plain-language explanation (e.g., *"Customer Aling Nena was merged into Nena Santos — select destination customer"*). The store owner points the receipt to the correct record in two taps.
 * **Rationale:** The physical receipt is already in the customer's hands; silent dropping or guessing customer identity corrupts financial and operational truth.
 
-### D9 — 30-Day Rolling Local History Cache [SETTLED]
-* Each device maintains a rolling 30-day cache of past receipts and catalogue records in native device storage (D17).
-* The local cache is silently updated in the background whenever the device is online, enabling instant search and receipt reprinting during outages without bloating storage.
+### D9 — Complete Order Snapshot Local Storage (No Age Limit) [SETTLED, EXPANDED]
+* **Complete Snapshots Stored Locally:** Every order the tablet has ever seen — created locally on this device or fetched from the server while browsing — is stored in full in native storage (`@capacitor/preferences` under `v25.receipt.<receipt_number>`), with **no age limit**.
+* **Line Items Included:** Caching includes complete `items` arrays with line totals, unit prices, deposit fees, returned bottle counts, and assigned personnel. Summary-only caching is strictly prohibited to prevent runtime crashes in `OrderDetailPage.jsx` when computing order totals.
+* **Any Date Opens Fully Offline:** Operators can search and open any historical order from any date while completely offline. This supersedes the previous rolling 30-day window and rejects arbitrary limits (such as a 50-order cap).
+* **Dual-Key Indexing:** `getReceipt(identifier)` resolves both device-issued receipt numbers (`1-00042`) and PostgreSQL integer IDs (`1240`) via a native secondary mapping index (`v25.order_id_map.<id>`), ensuring links from audit logs or tickets work offline.
+* **No SQLite Required:** The per-key layout in `@capacitor/preferences` comfortably stores thousands of order JSON records (a few megabytes total) without requiring a SQLite native plugin.
+* **See also:** [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
 ### D10 — Zero Rehearsal for Store Owners [SETTLED]
 * **No User Outage Drills:** Store owners (in their late 50s) will not be asked to rehearse or execute outage drills.
@@ -153,39 +157,62 @@ The device-issued receipt number (D1) is not only what the customer reads off th
 * **Applies To:** Receipts, parked orders, receipt-printed marks, quick-created customers, and Release 2's deliveries. A record cannot be queued without a profile — there is no sensible default, since the only available fallback is the exact bug the rule exists to prevent.
 * **No Server Change Required:** The header already does the identity swap. The change is that the outbox sets it per record rather than per session.
 
-### D15 — A Lost Connection May Never Log the Tablet Out [SETTLED]
-* **The Problem It Solves:** `client/src/api/client.js` treats **any** 401 by clearing the stored token and active profile and hard-redirecting to `/login`, and logging back in requires the server. An authentication hiccup while the outbox holds unsent receipts would lock the owners out of an app that is holding their sales, with no way back in until the line returns.
-* **A Network Failure is Not a 401:** Only a real 401 response from the server counts. A timeout, a dropped connection or a DNS failure never reached the server and must never be read as a rejected session.
-* **Device State Outlives the Session:** Waiting receipts, the local receipt history and the device's station number **survive logout and re-login**. They belong to the tablet, not to whoever is signed in. Concretely: every one of them lives under the `v25.` native-storage prefix, and the logout path clears `authToken` and `activeProfile` **by name** — it must never become a prefix sweep.
-* **The Login Screen Says So:** When the device holds unsent receipts, the login screen says as much rather than looking like an empty app.
-* **Standing Constraint:** `JWT_EXPIRES_IN` remains unset.
+### D15 — Session Resilience & Automatic Recovery (Decision 3) [SETTLED, EXPANDED]
+* **Native Session Persistence:** The authenticated user session (`{ id, email, full_name, role }`) and active operator profile are persisted in native app storage (`@capacitor/preferences` under `v25.session`), **never** in WebView storage (`localStorage`/`IndexedDB`) which Android silently evicts under memory pressure ([ADR 0007](../../adr/0007-native-storage-for-device-state.md)).
+* **Automatic Silent Session Recovery:** On app launch or foregrounding, if the verification request (`GET /api/v1/auth/me`) fails due to a network error or dropped connection, `AuthContext` automatically restores the authenticated session from native storage without presenting any login prompt or error toast.
+* **A Network Failure is Not a 401:** Only an explicit HTTP 401 response from the server clears tokens. Timeouts, unreachable hosts, and DNS failures never reached the server and must never lock operators out of an app holding unsynced sales.
+* **Device State Outlives the Session:** Waiting receipts, complete local order snapshots, station registration, and reference caches survive user logout and re-login. The logout path clears `authToken`, `activeProfile`, and `v25.session` **by name** — it must never perform a `v25.` prefix sweep.
+* **Friendly Offline Login State:** If launched completely unauthenticated while offline (e.g. after manual logout), the login screen detects offline connectivity and displays an informative notice: *"Offline — Connect to the internet to sign in for the first time."* If prior station registration and profile data exist, a *"Resume Offline Session"* action is provided.
+* **Standing Constraint:** `JWT_EXPIRES_IN` remains unset in production.
+* **See also:** [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
 ### D16 — The Tablet Sells Only What It Already Holds [SETTLED]
-* **Quiet Refresh, No Announcement:** The whole catalogue — products, prices, customers — refreshes silently whenever the tablet is online. No staleness warning, no "last updated" age indicator, nothing shown.
-* **A Product Added While Blind Cannot Be Sold:** Until the line returns, the tablet sells from the copy it holds. Accepted by the product owner.
-* **Prices Print as Held:** The paper is the truth — the same principle as D5. The server already accepts the printed `unit_price` per line rather than recomputing from the catalogue.
+* **Quiet Refresh, No Announcement:** The whole catalogue — products, prices, customers, personnel — refreshes silently whenever the tablet is online. No staleness warning, no "last updated" age indicator, nothing shown.
+* **A Product Added While Blind Cannot Be Sold on Other Devices:** Until the line returns, each tablet sells from the copy it holds. Accepted by the product owner.
+* **Prices Print as Held:** The paper is the truth — the same principle as D5. The server accepts the printed `unit_price` per line rather than recomputing from current catalogue tables.
 * **An Invisible Customer Gets Quick-Created Twice:** A customer added on the other tablet during an outage is invisible to this one, so she is created a second time. That is D4's duplicate surfacing doing its job, and is the accepted outcome rather than a defect.
 
-### D17 — Waiting Receipts Live in the App's Native Storage [SETTLED]
-* **Never WebView Storage:** The outbox, the station number and sequence, and the 30-day local receipt history (D9) must **not** live in `localStorage` or IndexedDB. Android evicts WebView storage under pressure, and a routine "clear data" tap wipes it — which is exactly the silent loss of unsent sales that D7's marker exists to make visible.
-* **Chosen Mechanism: `@capacitor/preferences`, one key per record.** The same native, app-sandboxed store the auth token already uses (Android `SharedPreferences` underneath). What makes it hold 30 days of receipts rather than buckle under them is the **layout**: one key per record, never one growing JSON blob.
-  * A blob would be re-serialised and rewritten on every save, and a write interrupted mid-receipt would tear the whole history. A key per record writes only the record that changed, and a torn write can cost at most that one record.
-  * Keys are enumerable, and outbox and history keys embed a zero-padded monotonic id, so a plain lexicographic sort of the keys **is** insertion order. That removes the need for a separate index — the one thing in a key-value store that can drift out of step with the records it points at.
-  * Sizing: at this shop's volume, 30 days is on the order of a thousand receipts of a couple of KB each — low single-digit MB across a thousand-odd keys, well inside what `SharedPreferences` handles.
-  * The alternative, `@capacitor-community/sqlite`, was not adopted: it adds a native plugin and a build step to solve a problem the per-key layout already solves. If the local history ever outgrows key-value, **that** is the answer — never a fall back to WebView storage. `client/src/offline/nativeStore.js` is the seam for that swap: everything above it speaks only get / set / remove / keys.
-* **Key Layout:** everything sits under a single `v25.` prefix, which is what makes D15's "survives logout" auditable at a glance.
-* **Local Browser Dev:** `npm run dev` has no native store, and D17 forbids reaching for the WebView one, so dev falls back to an **in-memory** map. The machinery runs and can be exercised, but nothing survives a page reload. That is a deliberate dev-only limitation, not a storage tier — production is the APK.
-* **See also:** [ADR 0007](../../adr/0007-native-storage-for-device-state.md).
+### D17 — Device State, Order Snapshots, and Session Live in Native Storage [SETTLED]
+* **Never WebView Storage:** The outbox queue, station registration and sequence, complete order snapshot history (D9), catalogue reference caches, and authenticated session credentials must **not** live in `localStorage` or IndexedDB. Android evicts WebView storage under pressure, and a routine "clear data" tap wipes it — which is exactly the silent loss of unsent sales and session lockout this release prevents.
+* **Chosen Mechanism: `@capacitor/preferences`, one key per record.** Native, app-sandboxed storage backed by Android `SharedPreferences`. What makes it scale to thousands of records is the **one key per record** layout, never one growing JSON blob.
+  * A single JSON blob would be re-serialized on every save; an interrupted write would tear the entire store. One key per record isolates writes.
+  * Keys embed zero-padded monotonic IDs, so lexicographical sort matches insertion order. No separate index that could drift out of sync.
+  * Sizing: thousands of order records require single-digit megabytes, well within Android `SharedPreferences` capacity.
+  * `@capacitor-community/sqlite` was evaluated and rejected: per-key native preferences already solves persistence without adding native plugin build complexity.
+* **Key Layout:** Everything sits under the `v25.` prefix, making logout safety auditable at a glance.
+* **Local Browser Dev:** `npm run dev` has no native Capacitor layer; dev browser persists to `localStorage` solely for dev testing ([ADR 0011](../../adr/0011-tablets-as-stations-browser-as-dev-tier.md)). Production APK uses native preferences exclusively.
+* **See also:** [ADR 0007](../../adr/0007-native-storage-for-device-state.md), [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
-### D18 — Built in Pieces, Released as One [SETTLED]
-Refines D12 without changing it: D12's core remains one indivisible **release**, but it does not have to be one pull request.
+### D18 — Unswitched Offline Core Permanently Enabled [SETTLED]
+* The original build-time release switch (`V25_OFFLINE_CORE` per ADR 0008) was retired in V3.0 ([ADR 0013](../../adr/0013-unswitched-offline-core-no-flag-rollback.md)). The offline local-first engine is permanently active in all production builds.
+* The test verification toggle `VITE_V25_SIMULATE_OFFLINE` (`window.__leyble.simulateOffline()`) is retained strictly for automated and developer testing.
 
-* **Four Reviewable Pieces, One Release:** The core lands as four separately reviewable pull requests, each dark on arrival, all switched on together as the single release D12 requires.
-* **One Switch, Reused by Every Piece:** `client/src/config/features.js` exports `V25_OFFLINE_CORE`, read once at module load from the build environment (`VITE_V25_OFFLINE_CORE=on`). Off by default, and with it off no piece of the core may change what the app does.
-* **Why Build-Time Rather Than a Setting:** The switch has to be readable when the device is blind, so it cannot depend on the server; and a switch that could flip mid-session could make a half-drained outbox appear or vanish under the owners' hands, which is the one thing D7 exists to prevent. A release is a new APK either way, so a build-time flag costs nothing.
-* **The Database is Not Behind the Switch:** Migrations run at deploy time regardless. Every migration in this release is therefore additive and correct standing alone, with the switch off and no client yet issuing receipt numbers.
-* **The Server is Dark by Data, Not by Flag:** The API's new behaviour is reachable only when a request actually carries a `receipt_number` or a device `created_at`, which only a switched-on client sends. There is no server-side flag to keep in step with the client's.
-* **See also:** [ADR 0008](../../adr/0008-release-switch-for-the-offline-core.md).
+### D19 — Product Catalogue & Stock Mutations: Full Offline CRUD with Human Reconciliation (Decision 6) [SETTLED]
+* **Full Offline CRUD for Inventory:** Operators can perform full CRUD on products, including manual stock count corrections (`POST /api/v1/products/:id/adjust`) and batch price edits (`PATCH /api/v1/products/batch-price`), while completely offline.
+* **Accepted Operational Risk:** The captain explicitly accepted the reality that two disconnected tablets may independently "correct" the same stock count or edit prices during an outage and disagree upon reconnect.
+* **Mandatory Human Conflict Reconciliation (No Silent Last-Write-Wins):** Discrepancies between tablets must **never** be resolved by silent last-write-wins (which discards physical count truth). When an outbox drain detects conflicting adjustments from different tablets, the conflict is flagged and surfaced in a dedicated reconciliation view/modal where an operator confirms the true physical inventory count.
+* **Supersedes ADR 0005 §2:** This explicitly supersedes ADR 0005's prior online-only restriction on stock adjustments and batch price edits.
+* **See also:** [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
+
+### D20 — Customer Mutations: Offline Profile Edits vs. Online-Only Merges & Deletions (Decision 7) [SETTLED]
+* **Offline Profile Edits:** Editing existing customer contact numbers, delivery addresses, notes, and descriptive tags (`PATCH /api/v1/customers/:id`) works offline, enqueued in native outbox storage and replayed upon reconnection.
+* **Merges and Deletions Remain Strictly Online-Only:** Merging duplicate accounts (`POST /api/v1/customers/merge`) and deleting customers (`DELETE /api/v1/customers/:id`) remain strictly online-only, executed one at a time with clear explanatory tooltips when offline.
+  * *Rationale:* Customer merges destructively re-parent complete order histories, unpaid bottle balances, and audit records. A concurrent or erroneous merge is destructive and unrecoverable.
+* **Additive Customer Operations (Unchanged):** Customer quick-creates (`POST /customers`) and custom price captures (`POST /customers/:id/prices`) remain 100% offline-capable via the outbox dependency pipeline.
+* **See also:** [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
+
+### D21 — Order Status Transitions for Unsynced Local Orders (Decision 5) [SETTLED]
+* **Offline Lifecycle for Local Unsynced Orders:** An order created on this tablet that has **not yet synced** to the cloud server may be dispatched (`in_transit`) and marked delivered/completed (`completed`) while offline.
+  * *Rationale:* Because the order was created locally on this tablet during an outage, no other device knows about it. Mutating its status updates the queued outbox payload locally before it drains to the cloud.
+* **Synced Orders Require Online Connectivity:** The moment an order has synced to the central database, it becomes visible to other tablets and affects central warehouse stock accounting. At that point, status changes (dispatching, marking delivered, cancelling, or reopening) require an active online connection to prevent multi-device race conditions ([ADR 0005](../../adr/0005-offline-scope-by-operation.md), [ADR 0012](../../adr/0012-stock-deducts-at-dispatch-not-at-save.md)).
+* **Order Settlement & Bottle Returns:** Order settlement (`POST /orders/:id/close` to status `done`), which calculates returned bottle counts and reconciles deposit balances, remains online-only for synced orders to protect central deposit accounting.
+* **See also:** [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
+
+### D22 — Back-Office Screens: Quiet Local Cache & Read-Only Degradation (Decision 9) [SETTLED]
+* **Graceful Read-Only Views:** Administrative back-office screens (**Dashboard, Personnel, Tickets, Audit Log**) are fully accessible and viewable offline in read-only mode, backed by a quietly-refreshed local cache of reference data in native storage (`v25.cache.*`, `v25.catalogue.personnel`).
+* **Calm Offline Notice:** When disconnected, these views render from local cache with a calm amber banner: *"Viewing offline data · Changes sync when connected."*
+* **Shared Mutations Gated Online:** Actions that mutate shared operational records — resolving or deleting a deposit ticket (`PATCH /tickets/:id/resolve`, `DELETE /tickets/:id`), deactivating personnel, or updating staff profiles — are cleanly disabled offline with explicit explanatory tooltips, matching the safety model of customer merges.
+* **See also:** [ADR 0015](../../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 
 ---
 
@@ -193,15 +220,15 @@ Refines D12 without changing it: D12's core remains one indivisible **release**,
 
 To maintain design integrity and prevent over-engineering, the following items are explicitly out of scope:
 
-1. **Defending Stock Accuracy Offline:** No offline stock reservations, warning dialogs for zero/negative stock, or stock locking mechanisms.
-2. **Clock-Skew Policing:** No NTP synchronization checks, clock-drift warning modals, or transaction blocking based on device timestamps.
-3. **Automatic Duplicate Merging:** No automatic merging of customer profiles based on name similarity.
-4. **Distributed Database Engine / CRDTs:** No multi-master distributed consensus protocol.
-5. **Hard Station Lockouts:** No hard software barrier preventing Station 2 from creating orders while offline.
-6. **User Outage Drills:** No operational rehearsal requirements for store owners.
-7. **Dual-Path POS Branches:** No separate "offline mode" UI or distinct fallback execution path.
-8. **Server-Issued Number Pre-Allocation:** No server-allocated sequential receipt number blocks.
-9. **WebView Storage of Any Kind:** No `localStorage`, no IndexedDB, no Cache Storage for device state (D17). Not as a primary store, and not as a fallback.
+1. **Defending Stock Accuracy via Distributed Locks / Silent Auto-Resolution:** No distributed consensus protocol, pessimistic locks, or silent last-write-wins. Discrepancies from concurrent offline stock corrections are surfaced for human reconciliation (D19).
+2. **Clock-Skew Policing:** No NTP synchronization checks, clock-drift warning modals, or transaction blocking based on device timestamps (D5).
+3. **Automatic Duplicate Merging:** No automatic merging of customer profiles based on name similarity (D4).
+4. **Distributed Database Engine / CRDTs:** No complex distributed CRDT database layer; simple outbox queues and native key-value storage handle all operations.
+5. **Hard Station Lockouts:** No hard software barrier preventing Station 2 from creating orders or logging deliveries while offline (D11).
+6. **User Outage Drills:** No operational rehearsal requirements for store owners (D10).
+7. **Dual-Path POS Branches:** No separate "offline mode" UI or distinct fallback execution path (D2).
+8. **Server-Issued Number Pre-Allocation:** No server-allocated sequential receipt number blocks (D1).
+9. **WebView Storage of Any Kind:** No `localStorage`, no IndexedDB, no Cache Storage for device state, session tokens, or cached entities (D15, D17).
 10. **Catalogue Staleness Surfacing:** No "last updated" age indicator, no stale-data warning, no refusal to sell from a held catalogue (D16).
 11. **Logging Out on a Network Failure:** No treating a timeout, a dropped connection or a DNS failure as an expired session (D15).
 12. **Backfilling Historical Receipt Numbers:** The ~1,300 pre-existing orders are never assigned station-prefixed numbers (D1).
@@ -209,33 +236,25 @@ To maintain design integrity and prevent over-engineering, the following items a
 
 ---
 
-## 4. Delivery Shape — Four Pieces, One Release (D18)
+## 4. Delivery Shape — Four Implementation Slices
 
-Release 1 is one release and four pull requests. Each piece lands **dark** behind
-`V25_OFFLINE_CORE` (D18) and is reviewed on its own; the switch is turned on once, when
-all four are in.
+The full-app offline accessibility architecture is implemented across **four coherent, reviewable slices**:
 
 ```mermaid
-graph LR
-    subgraph Release 1: Indivisible Core POS
-        P1[Piece 1: Foundations] --> P2[Piece 2: Local-First Save]
-        P2 --> P3[Piece 3: Parked Orders & Catalogue]
-        P3 --> P4[Piece 4: What the Owners See]
-        P4 --> SW((Switch on — one release))
-    end
-
-    subgraph Release 2: Back-Office Offline
-        SW --> R2[Offline Incoming Supplies]
+graph TD
+    subgraph Full-App Offline Roadmap
+        S1[Slice 3.1: Auth Resilience & Defensive UI Hardening] --> S2[Slice 3.2: Counter POS & Order Creation Full Parity]
+        S2 --> S3[Slice 3.3: Orders Directory & Complete Order Caching]
+        S3 --> S4[Slice 3.4: Back-Office Degradation, Stock Mutations & Release 2 Supplies]
     end
 ```
 
-| Piece | Scope |
-| :--- | :--- |
-| **Piece 1 — Foundations** | Station registration (`POST /api/v1/stations/register`) and device-issued receipt numbers (D1); the native local store and the outbox skeleton with its drain (D17, D5 ordering); the server's unique receipt number and idempotent resend (D13); per-record profile capture (D14); device-supplied sale time (D5); the release switch itself (D18); the display migration from `#<id>` to the receipt number. |
-| **Piece 2 — Local-First Save** | The POS save path writing locally first and printing without waiting (D2); the 30-day local receipt history and reprint (D9); the queued not-printed mark. |
-| **Piece 3 — Parked Orders & Catalogue** | Parked orders staying shared while online and degrading quietly while blind (D6); the quiet catalogue refresh (D16). |
-| **Piece 4 — What the Owners See** | The top-bar offline marker (D7); the advisory toast (D11); duplicate surfacing (D4); the attention list (D8); the API client's 401-versus-network-failure fix (D15). |
-| **Release 2** | Offline incoming supplier deliveries (`POST /api/v1/incoming`), adopting piece 1's idempotency mechanism. |
+| Slice | Backlog Task | Scope & Key Deliverables |
+| :--- | :--- | :--- |
+| **Slice 3.1** | `leyble-hub-offline-slice-3-1-auth-resilience` | • Native session persistence (`v25.session`) in `AuthContext.jsx`<br>• Automatic silent session recovery on `/auth/me` network error<br>• Friendly offline login notice and session resume on `LoginPage.jsx`<br>• Defensive null/undefined guards across `ProductDetailPanel`, `CustomerDetailPanel`, `PersonnelDetailPanel`, and `DeliveryDetailPanel` to eliminate white-screen crashes. |
+| **Slice 3.2** | `leyble-hub-offline-slice-3-2-counter-pos-orders` | • Wire `loadCatalogue()` to `OrderCreateModal.jsx` (products, customers, prices)<br>• Cache personnel in native storage (`v25.catalogue.personnel`) for driver/helper assignments<br>• Wire customer directory creation modal (`CustomerFormModal.jsx`) to offline outbox<br>• Verify 100% offline order creation, price capture, and thermal ESC/POS printing. |
+| **Slice 3.3** | `leyble-hub-offline-slice-3-3-orders-directory` | • Fall back `OrdersPage.jsx` to complete local receipt cache with no age limit<br>• Store full line-item snapshots in `putReceipt()` on save and on server fetch<br>• Dual-key lookup index (`order_id -> receipt_number`) in `getReceipt()`<br>• Support offline status progression (`pending → in_transit → completed`) for unsynced local orders. |
+| **Slice 3.4** | `leyble-hub-offline-slice-3-4-backoffice-and-stock` | • Full offline CRUD for products, stock adjustments, and batch price edits<br>• Multi-device stock conflict flagging and human reconciliation view<br>• Customer profile editing offline via outbox; online gating for merges and deletions<br>• Graceful read-only fallback and calm offline banners for Dashboard, Personnel, Tickets, and Audit Log<br>• Release 2: Offline logging of incoming supplier deliveries (`POST /incoming`) via outbox. |
 
 ---
 
@@ -255,12 +274,20 @@ requirement auditable at a glance — the logout path clears `authToken` and
 `activeProfile` **by name** and never sweeps a prefix.
 
 ```
-v25.station                 # { device_key, station_number, registered_at }   — D1
+v25.session                 # { id, email, full_name, role }                  — D15 (Decision 3)
+v25.station                 # { device_key, station_number, registered_at }   — D1 (Decision 2)
 v25.sequence                # last receipt sequence issued on this device     — D1
 v25.outbox.nextId           # monotonic record id
 v25.outbox.<paddedId>       # one queued record per key, sorted = FIFO        — D2/D5
 v25.ref.<outboxId>          # a synced dependency's real server id            — D5
-v25.receipt.<receiptNumber> # one locally held receipt per key, 30 days       — D9
+v25.receipt.<receiptNumber> # complete order snapshot (full lines, no age limit) — D9 (Decision 4)
+v25.order_id_map.<orderId>  # index mapping server order_id -> receipt_number — D9
+v25.catalogue.products      # cached product catalogue                        — D16
+v25.catalogue.customers     # cached customer directory                       — D16
+v25.catalogue.personnel     # cached driver & helper roster                   — D22 (Decision 9)
+v25.cache.dashboard         # cached operational summary & low-stock alerts   — D22 (Decision 9)
+v25.cache.tickets           # cached open bottle deposit tickets              — D22 (Decision 9)
+v25.cache.incoming          # cached recent incoming supplier deliveries      — D12 (Decision 8)
 ```
 
 | Module | Responsibility |
@@ -269,8 +296,9 @@ v25.receipt.<receiptNumber> # one locally held receipt per key, 30 days       �
 | `client/src/offline/keys.js` | The key layout above, in one place. |
 | `client/src/offline/station.js` | One-time registration; serialised receipt-number issuance. |
 | `client/src/offline/outbox.js` | Enqueue, ordering, dependency references, drain. |
-| `client/src/offline/receiptHistory.js` | The 30-day local history and its pruning. |
-| `client/src/config/features.js` | The release switch (D18) and the build-side offline simulation switch (D10). |
+| `client/src/offline/receiptHistory.js` | The complete local history (no age limit) and dual-key resolution. |
+| `client/src/offline/catalogue.js` | Local catalogue and reference caching (products, customers, personnel). |
+| `client/src/config/features.js` | Developer simulation toggle (`simulateOffline`). |
 
 ### Receipt Number Issuance (D1)
 

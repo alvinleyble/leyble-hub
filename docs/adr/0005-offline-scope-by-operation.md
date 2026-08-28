@@ -1,8 +1,15 @@
 # Offline Scope Determined by Operation Type Rather Than Module
 
-**Status:** Settled (2026-08-23)  
+**Status:** Partially Superseded (2026-08-28 by [ADR 0015: Full-App Offline Accessibility and Mutation Boundaries](0015-full-app-offline-accessibility-and-mutation-boundaries.md))  
 **Origin:** Captain decision D3 (2026-08-23)  
-**See also:** [docs/product/proposals/v2-5-offline-accessibility.md](../product/proposals/v2-5-offline-accessibility.md), [docs/product/glossary.md](../product/glossary.md), [docs/architecture/DATABASE.md](../architecture/DATABASE.md)
+**See also:** [ADR 0015: Full-App Offline Accessibility and Mutation Boundaries](0015-full-app-offline-accessibility-and-mutation-boundaries.md), [docs/product/proposals/v2-5-offline-accessibility.md](../product/proposals/v2-5-offline-accessibility.md), [docs/product/glossary.md](../product/glossary.md), [docs/architecture/DATABASE.md](../architecture/DATABASE.md)
+
+*(Preserved for architectural context: the core foundation of this ADR — partitioning offline support by the mathematical properties of operations rather than UI module boundaries — remains fully active. However, following the 2026-08-28 full-app offline accessibility audit and captain grill session, several operational boundaries were revised in [ADR 0015](0015-full-app-offline-accessibility-and-mutation-boundaries.md):*
+*1. **Stock adjustments and batch price edits** are now supported offline with human conflict reconciliation upon sync, explicitly overriding the online-only restriction in §2.*
+*2. **Status transitions for local unsynced orders** (`in_transit`, `completed`) are allowed offline before sync.*
+*3. **Customer profile edits** (phone, address, notes, tags) queue offline; only merges and deletions remain strictly online-only.*
+*4. **Order history retention** is expanded from a 30-day rolling cache to all seen orders with complete line items, with no age limit.*
+*5. **Back-office screens** (Dashboard, Personnel, Tickets, Audit Log) are accessible offline in read-only mode from native cache).*
 
 ## Context
 
@@ -21,14 +28,15 @@ Operations that append new independent rows and only increase inventory or recor
 - **Capture Customer Custom Price** (`POST /api/v1/customers/:id/prices`): Appends customer product price overrides.
 - **Record Incoming Supplier Delivery** (`POST /api/v1/incoming`): Verified in backend code — `POST /incoming` only ever adds inventory stock and appends a self-contained delivery record with items; concurrent blind delivery entries merge additively without conflicts.
 - **Park an Order Draft**: Saved locally in client storage during an outage.
-- **Reprint Receipts**: Reprints any receipt available in the device's local 30-day cache.
+- **Reprint Receipts**: Reprints any receipt available in the device's local cache *(superseded by [ADR 0015](0015-full-app-offline-accessibility-and-mutation-boundaries.md) Decision 4: expanded to full snapshots with no age limit)*.
 
 ### 2. Requires Online Connection: Reversals, Deletions, and Overwrites of Shared State
 Operations that mutate existing shared records, reverse previously confirmed stock, or modify global catalogue baselines:
 - **Cancelling a Synced Order** (`POST /api/v1/orders/:id/status` with `status: 'cancelled'`): Restores inventory to the shared pool; requires online connectivity to verify current server state.
 - **Voiding a Supplier Delivery** (`POST /api/v1/incoming/:id/void`): Soft-deletes a delivery and reverses restocked quantities; requires online connectivity.
-- **Editing a Synced Order or Delivery**: Modifying line items on a record that has already been uploaded to the backend. *(Note: Unsynced local drafts or outbox orders that have not yet left the device may be freely edited or discarded locally).*
-- **Inventory Stock Adjustments & Batch Price Edits** (`PATCH /api/v1/products/:id`, `PATCH /api/v1/products/batch-price`): Overwrites baseline pricing or forces manual stock levels across devices.
+- **Editing a Synced Order or Delivery**: Modifying line items on a record that has already been uploaded to the backend. *(Note: Unsynced local drafts or outbox orders that have not yet left the device may be freely edited or discarded locally, and can advance status offline per [ADR 0015](0015-full-app-offline-accessibility-and-mutation-boundaries.md) Decision 5).*
+- **Inventory Stock Adjustments & Batch Price Edits** (`PATCH /api/v1/products/:id`, `PATCH /api/v1/products/batch-price`): *(Superseded by [ADR 0015](0015-full-app-offline-accessibility-and-mutation-boundaries.md) Decision 6: full offline CRUD is now supported with post-sync conflict flagging and human reconciliation; silent last-write-wins is forbidden).*
+- **Customer Merges & Deletions** (`POST /api/v1/customers/merge`, `DELETE /api/v1/customers/:id`): Destructive shared mutations that remain strictly online-only per [ADR 0015](0015-full-app-offline-accessibility-and-mutation-boundaries.md) Decision 7 (customer profile edits queue offline).
 
 ## Considered Options
 
