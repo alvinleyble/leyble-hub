@@ -11,6 +11,8 @@ import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
 import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
 import { subscribeOutbox, queuedCustomersFromOutbox } from '../../offline/index.js';
+import { getCachedCustomers, getCachedEntity } from '../../offline/catalogue.js';
+import { customerMatches } from '../../utils/customerSearch';
 
 
 export default function CustomersPage() {
@@ -33,6 +35,9 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
+  // customers (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
+  // from; this page just never asked for it, so a blind tablet showed a blank table.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
     const params = new URLSearchParams();
@@ -41,7 +46,16 @@ export default function CustomersPage() {
 
     api.get(`/customers?${params}`)
       .then(setCustomers)
-      .catch(() => addToast('Failed to load customers', 'error'))
+      .catch(async () => {
+        const cached = showInactive ? await getCachedEntity('customers') : await getCachedCustomers();
+        if (cached.length === 0) {
+          addToast('Offline and this device has no customer directory yet — connect once to set it up.', 'error');
+          return;
+        }
+        setCustomers(debouncedSearch.trim()
+          ? cached.filter((c) => customerMatches(c, debouncedSearch))
+          : cached);
+      })
       .finally(() => {
         if (!silent) setLoading(false);
       });

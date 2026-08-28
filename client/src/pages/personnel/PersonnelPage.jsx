@@ -5,6 +5,7 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import PersonnelFormModal from './PersonnelFormModal';
 import PersonnelDetailPanel from './PersonnelDetailPanel';
+import { getCachedPersonnel, getCachedEntity } from '../../offline/catalogue.js';
 
 export default function PersonnelPage() {
   const { addToast } = useToast();
@@ -16,6 +17,9 @@ export default function PersonnelPage() {
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
 
+  // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
+  // personnel (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
+  // from; this page just never asked for it, so a blind tablet showed a blank table.
   const load = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
@@ -23,7 +27,14 @@ export default function PersonnelPage() {
 
     api.get(`/personnel?${params}`)
       .then(setPersonnel)
-      .catch(() => addToast('Failed to load personnel', 'error'))
+      .catch(async () => {
+        const cached = showInactive ? await getCachedEntity('personnel') : await getCachedPersonnel();
+        if (cached.length === 0) {
+          addToast('Offline and this device has no personnel roster yet — connect once to set it up.', 'error');
+          return;
+        }
+        setPersonnel(cached);
+      })
       .finally(() => setLoading(false));
   }, [showInactive, addToast]);
 

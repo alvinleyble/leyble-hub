@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, getLastKnownIdentity } from '../context/AuthContext';
 import Button from '../components/ui/Button';
 import FormField from '../components/ui/FormField';
 import { V25_OFFLINE_CORE } from '../config/features';
@@ -21,18 +21,26 @@ function isOfflineError(err) {
 }
 
 export default function LoginPage() {
-  const { login }   = useAuth();
+  const { login, resumeOfflineSession } = useAuth();
   const navigate    = useNavigate();
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
   const [unsentCount, setUnsentCount] = useState(0);
+  const [resuming, setResuming] = useState(false);
+  // ADR 0015 §3 — "Resume Offline Session". A last-known identity survives an
+  // explicit logout or a 401 (client/src/context/AuthContext.jsx's LAST_IDENTITY_KEY),
+  // so a device that has signed in before can get back in without connectivity.
+  const [lastIdentity, setLastIdentity] = useState(null);
 
   useEffect(() => {
     if (!V25_OFFLINE_CORE) return;
     waitingCount()
       .then((count) => setUnsentCount(count))
+      .catch(() => {});
+    getLastKnownIdentity()
+      .then(setLastIdentity)
       .catch(() => {});
   }, []);
 
@@ -51,6 +59,21 @@ export default function LoginPage() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResumeOffline = async () => {
+    setError('');
+    setResuming(true);
+    try {
+      const identity = await resumeOfflineSession();
+      if (identity) {
+        navigate('/dashboard', { replace: true });
+      } else {
+        setError('No offline session found on this device yet — connect once to sign in first.');
+      }
+    } finally {
+      setResuming(false);
     }
   };
 
@@ -114,6 +137,23 @@ export default function LoginPage() {
             Sign in
           </Button>
         </form>
+
+        {V25_OFFLINE_CORE && lastIdentity && (
+          <div className="mt-5 pt-5 border-t border-slate-200 text-center">
+            <p className="text-sm text-slate-500 mb-3">
+              Signed in before as {lastIdentity.full_name || lastIdentity.email} on this device.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              loading={resuming}
+              onClick={handleResumeOffline}
+              className="w-full"
+            >
+              Resume Offline Session
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -319,6 +319,12 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   surfacing a raw `Failed to fetch` — `LoginPage.jsx` shows a friendly "you're offline"
   message for the same failure class on the login call itself (Slice 3.1,
   [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §3.1).
+- **A last-known identity survives logout, distinct from `v25.session` above** — ADR 0015
+  §3's "Resume Offline Session" login action (`LoginPage.jsx`). `AuthContext.jsx`'s
+  `setStoredSession` also writes `LAST_IDENTITY_KEY` (`v25.lastIdentity`); a normal
+  logout or a genuine 401 still clear `v25.session` as before but never touch this second
+  key, so `getLastKnownIdentity()`/`resumeOfflineSession()` can restore the user (and
+  re-populate `v25.session`) with zero server round trip after either.
 - **A queued record carries the profile that made it.** `enqueue()` requires a
   `profileKey` captured at Save, and the drain replays it as `X-Active-Profile` per
   record — otherwise the whole outage gets credited to whoever is holding the tablet when

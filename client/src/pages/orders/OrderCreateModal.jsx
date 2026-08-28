@@ -592,17 +592,31 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   // ADR 0009: saving a price is a pricing action, not a re-tagging action. It writes to
   // customer_product_prices and touches nothing else — the second "pick a customer type"
   // step V1 forced on the operator is gone with the coupling that needed it.
+  //
+  // Routed through the outbox (matching handleCreateCustomer above) rather than a bare
+  // api.post — this prompt fires from inside saveOrderLocalFirst's otherwise fully
+  // offline-safe save flow, so a price agreed during an outage used to vanish silently
+  // instead of queuing like the rest of the order. priceSavePrompt.customer is always a
+  // real (non-local) customer — the prompt only opens when isLocalCustomer is false.
   const persistPriceSave = async () => {
     setPriceSavePrompt((p) => ({ ...p, busy: true }));
     try {
+      const profileKey = await api.getActiveProfile();
       await Promise.all(priceSavePrompt.dirty.map((d) =>
-        api.post(`/customers/${priceSavePrompt.customer.id}/prices`, {
-          product_id:        d.product_id,
-          custom_unit_price: d.unit_price,
-          order_type:        priceSavePrompt.orderType,
+        enqueue({
+          entityType: 'customer_price',
+          endpoint:   `/customers/${priceSavePrompt.customer.id}/prices`,
+          method:     'POST',
+          payload: {
+            product_id:        d.product_id,
+            custom_unit_price: d.unit_price,
+            order_type:        priceSavePrompt.orderType,
+          },
+          profileKey,
         })
       ));
       addToast('Custom price saved.', 'success');
+      drainOutbox().catch(() => {});
     } catch (err) {
       addToast(err.message || 'Failed to save custom price.', 'error');
     } finally {
