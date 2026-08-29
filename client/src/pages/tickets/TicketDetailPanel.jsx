@@ -4,14 +4,12 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
-import OfflineBanner from '../../components/ui/OfflineBanner';
 import { orderRefFromId } from '../../utils/orderRef';
-import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function TicketDetailPanel({ ticketId, onClose, onResolved, cachedTicket = null }) {
+export default function TicketDetailPanel({ ticketId, onClose, onResolved }) {
   const { addToast } = useToast();
 
   const [ticket, setTicket]               = useState(null);
@@ -20,26 +18,13 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [showResolveForm, setShowResolveForm] = useState(false);
   const [saving, setSaving]               = useState(false);
-  const [fromCache, setFromCache]         = useState(false);
 
-  // ADR 0015 §9 — the panel already degraded gracefully to "Ticket not found", which
-  // is a lie when the real reason is that the tablet is blind. The list has the row in
-  // its own cached copy, so it hands it down and the panel renders the real ticket
-  // read-only instead.
   useEffect(() => {
     api.get(`/tickets/${ticketId}`)
-      .then((data) => { setTicket(data); setFromCache(false); })
-      .catch(() => {
-        if (cachedTicket) { setTicket(cachedTicket); setFromCache(true); return; }
-        addToast('Failed to load ticket.', 'error');
-      })
+      .then(setTicket)
+      .catch(() => addToast('Failed to load ticket.', 'error'))
       .finally(() => setLoading(false));
   }, [ticketId]); // eslint-disable-line
-
-  // §9's shared-mutation gate: resolving a ticket writes to a record every device can
-  // see, so it needs a connection — the same rule as customer merges and delivery voids.
-  // A read that fell back to the cached row is the reliable signal; see TicketsPage.
-  const mutationsBlocked = fromCache || !checkIsOnline();
 
   const handleResolve = async () => {
     setSaving(true);
@@ -114,12 +99,6 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
-
-            {fromCache && (
-              <div className="px-6 pt-5">
-                <OfflineBanner className="mb-0" />
-              </div>
-            )}
 
             {/* ── Title + Description ──────────────────────────────── */}
             <div className="px-6 py-5 border-b border-slate-400 space-y-3">
@@ -234,16 +213,10 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
                 <Button
                   variant="warning"
                   onClick={() => setShowResolveForm(true)}
-                  disabled={mutationsBlocked}
-                  title={mutationsBlocked ? 'Needs a connection' : undefined}
                 >
                   Resolve Ticket
                 </Button>
-                <p className="text-xs text-slate-400 mt-2">
-                  {mutationsBlocked
-                    ? 'Resolving a ticket needs a connection — it changes a record every device shares.'
-                    : 'Resolved tickets cannot be reopened or edited.'}
-                </p>
+                <p className="text-xs text-slate-400 mt-2">Resolved tickets cannot be reopened or edited.</p>
               </div>
             )}
 

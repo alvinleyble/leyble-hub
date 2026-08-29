@@ -8,13 +8,7 @@ import Button from './Button';
 // { outcome: 'deleted' | 'deactivated' }. `entityLabel` is a lowercase noun
 // (e.g. 'customer') used in the confirmation copy and toasts. `onDeleted`
 // fires after success so the caller can refresh its list and close the panel.
-//
-// ADR 0015 §§6–9 — deletion is online-only everywhere it appears. Unlike a stock count
-// or a price, there is no second value to weigh when two tablets disagree about
-// whether a row should exist, so there is nothing for §6's reconciliation to resolve.
-// `disabled` + `disabledReason` render the same explanatory gate customer merges and
-// delivery voids get, instead of letting the tap fail as a raw fetch error.
-export default function DangerZoneDelete({ endpoint, entityLabel, onDeleted, disabled = false, disabledReason }) {
+export default function DangerZoneDelete({ endpoint, entityLabel, onDeleted }) {
   const { addToast } = useToast();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -44,21 +38,9 @@ export default function DangerZoneDelete({ endpoint, entityLabel, onDeleted, dis
       <p className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</p>
 
       {!confirming ? (
-        <>
-          <Button
-            variant="danger"
-            onClick={() => setConfirming(true)}
-            disabled={disabled}
-            title={disabled ? (disabledReason || 'Needs a connection') : undefined}
-          >
-            Delete {entityLabel}
-          </Button>
-          {disabled && (
-            <p className="text-sm text-slate-500 mt-2">
-              {disabledReason || `Deleting a ${entityLabel} needs a connection.`}
-            </p>
-          )}
-        </>
+        <Button variant="danger" onClick={() => setConfirming(true)}>
+          Delete {entityLabel}
+        </Button>
       ) : (
         <div className="p-4 bg-red-50 rounded-lg border border-red-200">
           <p className="text-base font-semibold text-red-900 mb-1">

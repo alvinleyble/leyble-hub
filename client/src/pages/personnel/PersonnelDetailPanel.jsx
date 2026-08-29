@@ -5,8 +5,6 @@ import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
-import OfflineBanner from '../../components/ui/OfflineBanner';
-import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -24,7 +22,7 @@ const ORDER_STATUS = {
 
 const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
 
-export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, cachedPerson = null }) {
+export default function PersonnelDetailPanel({ personnelId, onClose, onSaved }) {
   const { addToast } = useToast();
   const fileInputRef = useRef(null);
 
@@ -38,7 +36,6 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
   // Image upload state — separate from form so we only send if changed
   const [imageUpload, setImageUpload] = useState(null); // { b64, mime }
   const [imagePreview, setImagePreview] = useState(null); // data URL
-  const [fromCache, setFromCache]       = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -57,31 +54,9 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
         setImageUpload(null);
         setImagePreview(null);
       })
-      .catch(() => {
-        // ADR 0015 §9 — the roster this device already holds (catalogue.js) is enough
-        // to answer "what's this driver's phone number" during an outage. The panel
-        // used to show only "Personnel details not available offline"; now it renders
-        // the cached row read-only, and falls back to that message only when the list
-        // genuinely has nothing for this id (order history needs the server either way).
-        if (!cachedPerson) { addToast('Failed to load personnel.', 'error'); return; }
-        setPerson(cachedPerson);
-        setOrderHistory([]);
-        setFromCache(true);
-        setForm({
-          full_name:      cachedPerson.full_name,
-          remarks:        cachedPerson.remarks ?? '',
-          phone:          cachedPerson.phone ?? '',
-          license_number: cachedPerson.license_number ?? '',
-          is_active:      cachedPerson.is_active,
-        });
-        setImageUpload(null);
-        setImagePreview(null);
-      })
+      .catch(() => addToast('Failed to load personnel.', 'error'))
       .finally(() => setLoading(false));
-  }, [personnelId, addToast]); // eslint-disable-line
-
-  const mutationsBlocked = fromCache || !checkIsOnline();
-  const blockedTip = mutationsBlocked ? 'Needs a connection' : undefined;
+  }, [personnelId, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -159,7 +134,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="personnel-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
-            {loading ? 'Loading…' : (person?.full_name ?? 'Personnel')}
+            {loading ? 'Loading…' : person?.full_name}
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
@@ -173,35 +148,19 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
-        ) : !person ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-            <p className="text-base font-medium text-slate-500">Personnel details not available offline.</p>
-            <Button variant="secondary" className="mt-4" onClick={onClose}>
-              Close
-            </Button>
-          </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
 
-            {fromCache && (
-              <div className="px-6 pt-5">
-                <OfflineBanner
-                  className="mb-0"
-                  message="Viewing offline data · Staff details can't be changed until this tablet is back online"
-                />
-              </div>
-            )}
-
             {/* ── Summary bar ───────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              {person.is_active === false && (
+              {!person.is_active && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold
                                   bg-red-100 text-red-700 border border-red-300">
                   Inactive
                 </span>
               )}
               <span className="text-sm text-slate-400 ml-auto">
-                {(orderHistory || []).length} order{(orderHistory || []).length !== 1 ? 's' : ''}
+                {orderHistory.length} order{orderHistory.length !== 1 ? 's' : ''}
               </span>
             </div>
 
@@ -273,8 +232,6 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
                   variant="secondary"
                   size="sm"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={mutationsBlocked}
-                  title={blockedTip}
                 >
                   {displayImageSrc ? 'Replace Photo' : 'Upload Photo'}
                 </Button>
@@ -282,22 +239,20 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
               </div>
 
               <div className="px-6 py-4 flex justify-end border-b border-slate-400">
-                <Button type="submit" loading={saving} disabled={mutationsBlocked} title={blockedTip}>
-                  Save Changes
-                </Button>
+                <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
 
             {/* ── Order History ─────────────────────────────────── */}
             <div className="px-6 py-5">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
-                Order History ({(orderHistory || []).length})
+                Order History ({orderHistory.length})
               </p>
-              {(orderHistory || []).length === 0 ? (
+              {orderHistory.length === 0 ? (
                 <p className="text-sm text-slate-400">No orders assigned yet.</p>
               ) : (
                 <ol className="space-y-3">
-                  {(orderHistory || []).map((o) => {
+                  {orderHistory.map((o) => {
                     const st = ORDER_STATUS[o.status] ?? {
                       label: o.status,
                       color: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -339,8 +294,6 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
               endpoint={`/personnel/${personnelId}`}
               entityLabel="personnel"
               onDeleted={() => { onSaved(); onClose(); }}
-              disabled={mutationsBlocked}
-              disabledReason="Removing someone from the roster needs a connection — every device shares it."
             />
 
           </div>

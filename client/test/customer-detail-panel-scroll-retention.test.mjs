@@ -3,22 +3,16 @@ import assert from 'node:assert/strict';
 import { render, React, act } from './render.mjs';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
-import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
-import { __clearOutbox } from '../src/offline/outbox.js';
 
 const CustomerDetailPanel = (await import('../src/pages/customers/CustomerDetailPanel.jsx')).default;
 
-let originalApiGet, originalApiPatch, originalApiPost, originalApiDel, originalApiRequest;
+let originalApiGet, originalApiPatch, originalApiPost, originalApiDel;
 
-beforeEach(async () => {
+beforeEach(() => {
   originalApiGet = api.get;
   originalApiPatch = api.patch;
   originalApiPost = api.post;
   originalApiDel = api.del;
-  originalApiRequest = api.request;
-  await __resetMemoryBackend();
-  await __clearOutbox();
-  localStorage.setItem('activeProfile', 'josie');
 });
 
 afterEach(() => {
@@ -26,8 +20,6 @@ afterEach(() => {
   api.patch = originalApiPatch;
   api.post = originalApiPost;
   api.del = originalApiDel;
-  api.request = originalApiRequest;
-  localStorage.clear();
 });
 
 function changeInput(input, value) {
@@ -66,19 +58,10 @@ test('CustomerDetailPanel (V1): saving customer edits refreshes silently without
     return [];
   };
 
-  // Slice 3.3 / ADR 0015 §7 — the profile edit goes through the offline outbox now
-  // (the same move Slice 3.2 made for Add Customer), so the write arrives as an
-  // api.request drain rather than a bare api.patch. The subject of this test is
-  // unchanged: the panel must refresh silently, without unmounting its scroll
-  // container, whichever transport carries the save.
-  api.request = async (path, options = {}) => {
-    if (options.method === 'PATCH' && path === '/customers/5') {
-      const body = JSON.parse(options.body);
-      patchCalls.push({ path, body });
-      customerData = { ...customerData, ...body };
-      return customerData;
-    }
-    return {};
+  api.patch = async (path, body) => {
+    patchCalls.push({ path, body });
+    customerData = { ...customerData, ...body };
+    return customerData;
   };
 
   const r = render(
@@ -110,7 +93,7 @@ test('CustomerDetailPanel (V1): saving customer edits refreshes silently without
   r.click(saveBtn);
   await act(async () => { await new Promise((res) => setTimeout(res, 50)); });
 
-  assert.equal(patchCalls.length, 1, 'exactly one PATCH reached the server, via the outbox drain');
+  assert.equal(patchCalls.length, 1);
   assert.equal(patchCalls[0].path, '/customers/5');
   assert.equal(patchCalls[0].body.name, 'Tindahan ni Juan Updated');
   assert.equal(onSavedCalled, true);

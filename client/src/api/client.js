@@ -71,9 +71,7 @@ async function request(path, options = {}) {
     if (window.location.pathname !== '/login') {
       window.location.href = '/login';
     }
-    const err = new Error('Unauthenticated');
-    err.status = 401;
-    throw err;
+    throw new Error('Unauthenticated');
   }
 
   const contentType = res.headers.get('Content-Type') || '';

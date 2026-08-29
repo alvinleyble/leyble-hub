@@ -67,15 +67,7 @@ export default function TicketFormModal({ onClose, onSaved }) {
       addToast('Ticket created.', 'success');
       onSaved();
     } catch (err) {
-      // ADR 0015 §9 — ticket creation is not one of the additive operations the ADR
-      // grants an offline path (unlike orders, customers and deliveries), so a blind
-      // attempt is refused with an explanation rather than a raw "Failed to fetch".
-      addToast(
-        err?.status
-          ? (err.message || 'Failed to create ticket.')
-          : "No connection — a ticket can't be raised offline. Try again once the tablet is back online.",
-        'error'
-      );
+      addToast(err.message || 'Failed to create ticket.', 'error');
     } finally {
       setSaving(false);
     }

@@ -33,13 +33,6 @@ DB: `DATABASE_URL` (points to the development Supabase database; see [docs/opera
 ```bash
 # API integration suites — run against a throwaway DB, never the dev one
 createdb leyble_hub_v2audit && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit node server/db/migrate.js
-# The V2.5+ suites resolve their acting user by profile_key, so a migrated-only DB
-# cancels them wholesale with "Cannot read properties of undefined (reading 'id')".
-# setup-profiles.js only TAGS existing rows — a fresh DB has none, so insert them:
-psql -d leyble_hub_v2audit -c "INSERT INTO users (email, password_hash, full_name, role, profile_key, is_active) VALUES \
-  ('josie@leyblestore.com','x','Josie','admin','josie',TRUE), \
-  ('luis@leyblestore.com','x','Luis','admin','luis',TRUE), \
-  ('alvin@leyblestore.com','x','Admin','admin','admin',TRUE);"
 cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit \
   JWT_SECRET='test-jwt-secret-key-32-chars-minimum!!' npm test
 
@@ -300,22 +293,6 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   V2.5 migration must be additive and correct standing alone. The server needs no flag:
   its new behaviour is reachable only when a request carries a `receipt_number` or a
   device `created_at`, which only a switched-on client sends.
-- **The station component is one of three fixed slots — 1 Alvin, 2 Josie, 3 Luis**
-  ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md), migration 037). A device is
-  *assigned* a slot by `POST /stations/register` (lowest free one) or moved onto one by
-  `POST /stations/slots/:slot/assign`, the device-replacement action on the `/devices`
-  screen; a fourth device gets `slot_number: null` and cannot issue receipts at all.
-  Owner names are a constant in `server/src/lib/stationSlots.js`; who holds each slot is
-  `stations.slot_number`. `stations.station_number` still exists and still auto-increments
-  but is now only the registry's internal id for a device — never the receipt station.
-  Registration re-confirms on every start (and every 10 min while running) because the
-  server is authoritative on who holds a slot, and the register/assign response carries
-  `next_sequence`/`next_delivery_sequence` so a replacement tablet continues that person's
-  numbering instead of restarting at `00001` — seeded upward only, never back behind
-  receipts the device has already issued. `assertIssuableStation` in the `POST /orders`
-  and `POST /incoming` paths is the backstop against a pre-0016 client. Nothing already
-  numbered is backfilled, and dev/CI is deliberately not special-cased (a fresh worktree
-  takes a slot on `/devices` like any other device).
 - **Receipt numbers are device-issued** (`<station>-<sequence>`, e.g. `1-00042`) at Save,
   with no server round trip. `client/src/offline/station.js` issues them; display goes
   through `orderRef()` in `client/src/utils/orderRef.js` — use it anywhere an order was
@@ -334,27 +311,13 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `localStorage`, never IndexedDB (Android evicts them; "clear data" wipes them). It must
   survive logout: the 401 path clears `authToken`/`activeProfile` **by name** and must
   never become a prefix sweep. Browser dev falls back to memory, never to WebView storage.
-- **The login session survives an evicted WebView the same way** — `client/src/context/AuthContext.jsx`
-  reads/writes `@capacitor/preferences` key `v25.session` directly (not through
-  `nativeStore.js`, which is outbox/catalogue state, not auth) on native builds, falling back
-  to `localStorage` on web dev. A `checkAuth()` failure that isn't a genuine 401 (network
-  error, timeout) restores the cached session instead of logging the operator out or
-  surfacing a raw `Failed to fetch` — `LoginPage.jsx` shows a friendly "you're offline"
-  message for the same failure class on the login call itself (Slice 3.1,
-  [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §3.1).
-- **A last-known identity survives logout, distinct from `v25.session` above** — ADR 0015
-  §3's "Resume Offline Session" login action (`LoginPage.jsx`). `AuthContext.jsx`'s
-  `setStoredSession` also writes `LAST_IDENTITY_KEY` (`v25.lastIdentity`); a normal
-  logout or a genuine 401 still clear `v25.session` as before but never touch this second
-  key, so `getLastKnownIdentity()`/`resumeOfflineSession()` can restore the user (and
-  re-populate `v25.session`) with zero server round trip after either.
 - **A queued record carries the profile that made it.** `enqueue()` requires a
   `profileKey` captured at Save, and the drain replays it as `X-Active-Profile` per
   record — otherwise the whole outage gets credited to whoever is holding the tablet when
   the line returns.
 - **An order's `created_at` is the device's sale time**, passed explicitly (same pattern
   as `supplier_deliveries.received_at`). No clock-skew detection — deliberately.
-- **Parked orders (`client/src/offline/parkedOrders.js`):** online, unchanged —
+- **Parked orders (piece 3, `client/src/offline/parkedOrders.js`):** online, unchanged —
   the pre-2.5 early-draft POST + debounced PATCH. Blind, a draft parks as an ordinary
   queued `order` outbox record (`payload.status: 'draft'`), given its own device-issued
   receipt number purely as a local identity and anti-duplicate key — `server/src/lib/
@@ -369,37 +332,6 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   guarded against, via `client/src/utils/duplicateOrders.js` + the D4 post-drain toast
   pattern (`drainNotifier.js`) and a chip in `POSHistoryModal.jsx` that opens the existing
   order-view flow.
-- **The whole drafts path runs through `loadParkedOrders()`, and drafts are NOT in the
-  sync.** `GET /orders/sync` excludes `status='draft'` on purpose (working state, not
-  history), so a draft can never appear in `listReceipts()` — any offline fallback that
-  reaches for local order history to find drafts is matching against something that
-  cannot be there, which is exactly how the Drafts tab and the purple banner came to
-  empty themselves the moment the line dropped. `loadParkedOrders()` in
-  `parkedOrders.js` is the one code path online and offline for both surfaces: the
-  server's list when it answers (cached whole under `DRAFTS_KEY`, catalogue-style, on
-  the way past), that cache when it does not, unioned either way with
-  `listLocalParkedOrders()` minus `pendingDeletionRefs()`. Cached server drafts are
-  read-only offline (they are synced rows — ADR 0015 §5 / criterion 5.8); the ones this
-  device parked carry `_local: true` and open, edit and discard with no network. That
-  read-only half is slated to change: the captain settled on 2026-08-29 that a synced draft
-  SHOULD open, edit and move forward offline (discarding stays session-local either way) —
-  scoped, not built, backlog item `leyble-hub-offline-historical-drafts-edit`, ADR 0015 §5 /
-  criterion 5.15. Until it lands, the `_local` split above is the shipped behaviour.
-- **A locally parked draft carries a `display` blob beside its payload.** `payload` is
-  the POST body and stays exactly that, so it has no customer name and no product
-  names; `record.display` holds them, and `recordToDraft` merges the two. Without it a
-  resumed offline draft comes back as nameless lines. `parkOrderLocalFirst`/
-  `updateLocalDraft` write both halves together.
-- **`OrderCreateModal`'s draft ref is a row id OR a receipt number**, and
-  `draftLocalRef` says which. A customer picked while the server is unreachable (or a
-  customer this device quick-created, who has no server id to POST) parks via
-  `parkOrderLocalFirst`; the debounced autosave then rewrites that outbox record via
-  `updateLocalDraft` instead of PATCHing. A local draft that drained mid-edit throws
-  from `updateLocalDraft`, and the modal switches to PATCHing it by receipt number
-  (`resolveOrderId` resolves both). A draft that was created on the SERVER and then
-  loses the line is deliberately NOT parked locally — a second row on drain is worse
-  than a stale draft — so its autosave simply retries with the full body on the next
-  change.
 - **The orphaned-draft trap:** any local-first save (`saveOrderLocalFirst` /
   `parkOrderLocalFirst`) creates an independent order row with its own receipt number —
   it never reuses or finalizes a pre-existing draft row. Whoever calls it MUST separately
@@ -408,144 +340,17 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `DELETE` that 404s (already gone) is treated as success, not a needs-attention item
   (`outbox.js drainOutbox`) — the same retry-safety D13 gives receipt numbers, extended to
   deletes via `queueOrderDeletion`.
-- **The catalogue (`client/src/offline/catalogue.js`):** products/customers/**personnel**
-  cache as three whole-value keys (not one-per-record — it's server-replaced reference
-  data, not built up locally), refreshed quietly on every reachable load. No staleness UI,
-  ever (D16). `loadCatalogue()` never throws — an unreachable server with an empty
-  first-run cache just returns `[]` — and it is what `OrderCreateModal.jsx` loads its
-  pickers from, online and offline alike. The held copy keeps **inactive** rows (a
-  deactivation is a change a delta has to be able to deliver); the `getCached*` readers
-  filter to active, so callers see the same shape as before.
+- **The catalogue (piece 3, `client/src/offline/catalogue.js`):** products/customers cache
+  as two whole-value keys (not one-per-record — it's server-replaced reference data, not
+  built up locally), refreshed quietly on every reachable load and a 60s background tick
+  in `POSPage.jsx`. No staleness UI, ever (D16). `loadCatalogue()` never throws — an
+  unreachable server with an empty first-run cache just returns `[]`.
 - **Testing the switch-on path:** `import.meta.env` is stubbed to `{}` for every test file
   (`client/test/jsx-register.mjs`), so `V25_OFFLINE_CORE` always reads `false` there —
   component-render tests can only exercise the switch-OFF path. Functions that need
   switch-on coverage take an explicit `enabled`/`offlineCoreEnabled` override parameter and
   are unit-tested directly (see `notifyDrainCompleteWith`, `saveOrderLocalFirst`,
   `triggerOfflineAdvisoryWith`) — that is the established pattern, not a gap to fix.
-
-### Full-app offline sync (Slice 3.2, [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md))
-
-The tablet no longer caches what it visits — it syncs **ahead of time**, because an order
-viewed online but never created here had no local copy at all and still failed offline.
-`client/src/offline/sync.js` owns this; read the ADR's "The Sync Model" section for the
-settled rules. What a future session most needs to know:
-
-- **Two shapes, and only two.** A tablet holding nothing does ONE full pull, ever
-  (`setup_complete` in `v25.sync.state` is the only thing that decides). Every later login
-  and reconnect is a delta from the device's own server-issued watermarks. Never add a
-  code path that re-pulls everything on an already-set-up device.
-- **`GET /orders/sync`** (registered above `GET /:id` — Express would read "sync" as an id)
-  serves COMPLETE snapshots, keyset-paginated on `(updated_at, id)`: `direction=back`
-  backfills newest-first and resumably, `direction=forward` is the delta. `/products`,
-  `/customers` and `/personnel` take an additive `updated_since`. Migration 035 indexes
-  both.
-- **Merge, never clear-then-repopulate.** A sync cut off halfway must leave the device
-  with more than it started with, never less.
-- **`pruneReceipts()` is no longer called on start.** ADR 0015 §4 removed the 30-day age
-  limit; re-adding that call deletes the history the first setup spent its one pull
-  fetching.
-- **`getReceipt()` resolves either identifier** — a device receipt number (`1-00042`) or a
-  numeric row id (`1240`, every pre-V2.5 order, never backfilled) — via `v25.orderindex.*`
-  plus a scan fallback. `putOrderSnapshot()` is the writer for server-sourced orders;
-  `putReceipt()` still requires a receipt number and is for local sales.
-- **"Read from the device" ≠ "never synced."** `OrderDetailPage` asks the outbox
-  (`isOrderUnsynced`) rather than inferring it from the local read, because the device now
-  holds synced orders too. Only a genuinely unsynced order gets ADR 0015 §5's offline
-  forward transitions (`transitionLocalOrder` in `posSave.js`, queued as its own
-  `POST /orders/:receipt/status` record behind the order's creation — `POST /orders` cannot
-  express a status, and stock deducts on the transition, ADR 0012). Reversals, Cancel and
-  Close stay online-only in every case.
-- **Content edits (price, quantity, customer, adjustment, notes) follow the same unsynced-local
-  boundary as status transitions** — ADR 0015 §5, settled 2026-08-28. A synced order (which
-  includes every Closed order, since Close is online-only) always requires a connection to edit
-  its content offline. The full acceptance-criteria list this governs, with per-item settled
-  decisions, is [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md).
-
-### Full-app offline: back office, stock and supplies (Slice 3.3, [ADR 0015](docs/adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §§6–9)
-
-Every V1 screen now works blind. What a future session most needs to know:
-
-- **Two different caches, deliberately, and they show staleness differently.**
-  `catalogue.js` holds products/customers/personnel (D16: never say how old it is —
-  that is a rule about SELLING). `backOfficeCache.js` holds Dashboard, Tickets, the
-  deliveries list and both audit feeds as `{ cached_at, value }` under `v25.cache.*`,
-  and `OfflineBanner` NAMES the timestamp, because "₱48,200 in transit" means nothing
-  without knowing when it was true. Order history is neither: no age limit, in
-  `receiptHistory.js`.
-- **Only the UNFILTERED read is cached** (`loadWithCache(..., { cacheable })`). Every
-  one of those screens has filters; caching per combination would fragment the copy
-  into whichever slice was last looked at. Offline, the same filters are re-applied to
-  the held copy client-side (`filterInventoryRows`/`filterActivityRows` in
-  `AuditPage.jsx`, `filterDeliveries` in `IncomingPage.jsx`). Tickets went further and
-  fetches all statuses, filtering the tab on the client.
-- **A stock/price conflict is a QUESTION, not a refused record** — `reconcile.js`
-  (`v25.reconcile.*`), never the outbox's `needs_attention` list. That list is for
-  records the server refused: one side is wrong and the fix is to re-point and resend.
-  Here nothing is wrong, both numbers are honest counts, and the answer is not in the
-  app. Answering one ENQUEUES a fresh ordinary write; it never patches a half-sent
-  record. `StockReconcileModal.jsx` offers mine / theirs / **a third value I just
-  counted**, and the prompt lives on the Inventory page (flag-independent) rather than
-  in `OfflineMarker` (which returns null without `V25_OFFLINE_CORE`).
-- **A conflict is another HUMAN's edit, not the server's number moving.** Stock moves
-  all day on its own — every dispatch deducts, every delivery adds. `findCompetingEdit`
-  in `productMutations.js` looks for an `inventory_audit_logs` row with `action_type`
-  `manual_adjustment` on `current_stock` (or `price_change` on `base_wholesale_price`)
-  dated after the record was queued. Widening that to "the value changed" would fire on
-  every sale and teach the owners to tap through the modal without reading it.
-- **`screenProductMutations()` runs BEFORE every drain** (`offline/index.js`), and no
-  guarded record is ever sent unscreened — with no line it returns `{offline:true}` and
-  changes nothing. A conflicting field is lifted OUT of its record (stripped from the
-  PATCH body, or dropped from the batch's `updates`) so the rest of the same edit still
-  lands; a record left carrying nothing is removed.
-- **Product DELETE is online-only**, alone among §6's "full CRUD" — captain carve-out
-  recorded in the ADR §6. Two valid counts have a reconciliation path; "deleted" vs
-  "mid-sale on it" has no second value to weigh. Same gate as customer merge/delete
-  (§7), delivery edit/void (§8), ticket resolve and every personnel mutation (§9), all
-  via `DangerZoneDelete`'s `disabled`/`disabledReason` or a `title` tooltip.
-- **Deliveries are the second table on ADR 0006's idempotency mechanism.**
-  `<station>-DEL-<seq>` (`issueDeliveryRef`, its OWN counter — `v25.deliverySequence`),
-  stored on `supplier_deliveries.receipt_station/receipt_sequence` (migration 036, same
-  column names on purpose so `lib/idempotency.js` needs one whitelist entry). Without
-  it a resent record is a second truckload of stock in the ledger.
-- **Queued rows are merged into three lists now**, all the same `local-<outboxId>`
-  shape G29 established: customers (`queuedCustomersFromOutbox`), products
-  (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +
-  `mergeDeliveries`, deduped by delivery ref). A merged row is excluded from anything
-  needing a server id — batch price selection, opening a detail panel.
-- **Saving a custom price is offline-capable in ONE of its two entry points.** The
-  *"Save Custom Price?"* prompt at the end of a sale (`persistPriceSave` in
-  `OrderCreateModal.jsx`) enqueues; the Customers module's standalone *Add Custom Price*
-  (`handleSetPrice` in `CustomerDetailPanel.jsx`) is a bare `api.post` and fails blind, as
-  do that panel's price list and its product picker. Do not read ADR 0015 §7 as covering
-  both — it used to claim that, and the claim was false. Open work, criterion 8.4.
-- **Before filing an offline bug, read the Known Gaps table** at the end of
-  [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md).
-  Several places where the app and the criteria disagree are deliberate and captain-parked
-  (all of Personnel's edit form, delivery edits, ticket creation), and two cosmetic gaps are
-  already acknowledged. That table, not this file, is the running list.
-- **Ticket creation has no offline path** and that is deliberate: no ADR decision grants
-  it one, unlike order/customer/delivery creation which are each explicitly
-  additive-and-safe. It is blocked with an explanation, never left to fail as a fetch
-  error.
-- **§6's "full CRUD" has four locked fields, not just DELETE** — and they come from the
-  captain's acceptance criteria, which are MORE SPECIFIC than the ADR prose for Inventory:
-  [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md)
-  §7. `units_per_case` (7.4), `requires_bottle_return` + its `deposit_fee` (7.3) and
-  `is_active` (7.8) are disabled offline on **both** `ProductFormModal` and
-  `ProductDetailPanel`, and stripped from the queued payload. The reason they are not
-  reconcilable like a stock count: `units_per_case` is an input to the GENERATED
-  `order_items.line_total`, the bottle-return flag decides whether the deposit ledger
-  applies at all, and `is_active` decides what every other tablet can sell — none has a
-  second honest value for `StockReconcileModal` to offer. `is_active` follows the same
-  rule on Customers (8.5). **Always validate an Inventory change against §7 of that doc,
-  not the ADR alone.**
-- **"Waiting to sync" has two sources on Inventory, not one.** `queuedProductsFromOutbox`
-  covers products CREATED blind (no server row, merged in as `local-<outboxId>`);
-  `pendingProductEditIds()` covers existing products carrying an undrained EDIT
-  (`product_update` / `product_batch_price` / the two `*_confirm` types). The second is the
-  one that hides: `applyLocalProductPatch` writes the operator's new number onto the held
-  copy, so a blind edit renders identically to a saved one. The badge and the panel banner
-  both read the outbox, so they clear themselves on drain.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
@@ -566,7 +371,6 @@ Every V1 screen now works blind. What a future session most needs to know:
 | Outgoing Orders | ✅ Done | Delivery + pickup types; editable at all statuses (inventory auto-reconciles, incl. Edit/Cancel inside the batch-review queues); price adjustment field; per-bottle deposit + bottle-return close flow (Review Deliveries queue); 80mm thermal receipt |
 | Incoming Supplies | ✅ Done | Log deliveries, auto-restock; supports 0.5-case quantities |
 | Tickets | ✅ Done | Create, view, resolve |
-| Devices | ✅ Done | Which tablet holds each of the three receipt-number slots, and the device-replacement action ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md)) |
 | Audit Log | ✅ Done | Read-only, filterable. Two append-only sources: `inventory_audit_logs` (stock deltas, `GET /api/v1/audit`) and `activity_logs` (cross-entity change log for orders/customers/products/personnel/tickets, `GET /api/v1/audit/activity`) |
 
 > **Order totals:** an order's stored `total_amount` is **goods-only (qty × price) while it is open**; the bottle deposit on un-returned bottles is folded into the total only when the order is closed and returns are counted (`recomputeTotal` in [server/src/routes/orders.js](server/src/routes/orders.js)). This is intentional — pre-close totals deliberately exclude the refundable deposit.
@@ -597,8 +401,6 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
 | no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |
-| `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots. `activity_logs.entity_type` widened to accept `'station'` in the same migration |
-| `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_sequence` pair + partial unique index, and a `GENERATED` `delivery_ref` (`1-DEL-00007`) added (migration 036) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8) |
 
 ### `order_personnel` join table (migration 016)
 ```sql

@@ -9,18 +9,8 @@ router.use(requireAuth);
 // GET /api/v1/products
 router.get('/', async (req, res, next) => {
   try {
-    const { include_inactive, updated_since } = req.query;
-    const conditions = [];
-    const params = [];
-    if (include_inactive !== 'true') conditions.push('p.is_active = TRUE');
-    // ADR 0015 §4 / Slice 3.2 — the delta a already-set-up tablet asks for on every
-    // login and reconnect, so it never repeats its one-time full pull. Absent, this
-    // endpoint behaves exactly as it always has.
-    if (updated_since) {
-      conditions.push(`p.updated_at > $${params.length + 1}::timestamptz`);
-      params.push(updated_since);
-    }
-    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { include_inactive } = req.query;
+    const whereClause = include_inactive === 'true' ? '' : 'WHERE p.is_active = TRUE';
     const { rows } = await db.query(
       `SELECT p.*,
        COALESCE(pop.order_count, 0)::INT AS order_count
@@ -33,8 +23,7 @@ LEFT JOIN (
   GROUP BY oi.product_id
 ) pop ON pop.product_id = p.id
 ${whereClause}
-ORDER BY category NULLS LAST, name`,
-      params
+ORDER BY category NULLS LAST, name`
     );
     res.json(rows.map((r) => ({ ...r, order_count: Number(r.order_count) || 0 })));
 

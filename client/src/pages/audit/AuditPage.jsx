@@ -3,12 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
-import OfflineBanner from '../../components/ui/OfflineBanner';
 import { orderRefFromId } from '../../utils/orderRef';
-import { getCachedEntity } from '../../offline/catalogue.js';
-import {
-  loadWithCache, AUDIT_INVENTORY_CACHE, AUDIT_ACTIVITY_CACHE,
-} from '../../offline/backOfficeCache.js';
 
 const ACTION_LABELS = {
   manual_adjustment: 'Manual Adjustment',
@@ -36,7 +31,6 @@ const ENTITY_LABELS = {
   product:   'Product',
   personnel: 'Personnel',
   ticket:    'Ticket',
-  station:   'Tablet',
 };
 
 const ENTITY_TYPES = Object.keys(ENTITY_LABELS);
@@ -49,7 +43,6 @@ const ACTIVITY_ACTION_LABELS = {
   closed:         'Closed',
   resolved:       'Resolved',
   price_set:      'Price Set',
-  slot_assigned:  'Slot Assigned',
 };
 
 const ACTIVITY_ACTION_COLORS = {
@@ -97,34 +90,6 @@ function EntityRef({ entry }) {
   );
 }
 
-// The filters the server applies to a live read, applied here instead when the rows
-// came out of the local cache. Same predicates, same meaning — the only difference is
-// that the cached copy can't reach further back than the window it holds.
-function withinDates(createdAt, fromDate, toDate) {
-  const t = Date.parse(createdAt);
-  if (Number.isNaN(t)) return true;
-  if (fromDate && t < Date.parse(fromDate)) return false;
-  // Inclusive of the whole "to" day, matching the server's `created_at <= to_date`
-  // applied against a date-only string.
-  if (toDate && t > Date.parse(toDate) + 24 * 60 * 60 * 1000 - 1) return false;
-  return true;
-}
-
-export function filterInventoryRows(rows, { productId, actionType, fromDate, toDate }) {
-  return rows.filter((e) =>
-    (!productId  || String(e.product_id) === String(productId)) &&
-    (!actionType || e.action_type === actionType) &&
-    withinDates(e.created_at, fromDate, toDate)
-  );
-}
-
-export function filterActivityRows(rows, { entityType, fromDate, toDate }) {
-  return rows.filter((e) =>
-    (!entityType || e.entity_type === entityType) &&
-    withinDates(e.created_at, fromDate, toDate)
-  );
-}
-
 export default function AuditPage() {
   const { addToast } = useToast();
 
@@ -140,22 +105,12 @@ export default function AuditPage() {
   const [fromDate, setFromDate]       = useState('');
   const [toDate, setToDate]           = useState('');
 
-  const [fromCache, setFromCache] = useState(false);
-  const [cachedAt, setCachedAt]   = useState(null);
-
-  // Load product list once (including inactive — old logs may reference them).
-  // Offline this comes from the catalogue the tablet already holds, so the product
-  // filter still names things instead of collapsing to "All Products".
+  // Load product list once (including inactive — old logs may reference them)
   useEffect(() => {
     api.get('/products?include_inactive=true')
       .then((p) => setProducts(p.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(async () => {
-        const cached = await getCachedEntity('products');
-        setProducts([...cached].sort((a, b) => a.name.localeCompare(b.name)));
-      });
+      .catch(() => {});
   }, []);
-
-  const hasFilters = Boolean(productId || actionType || fromDate || toDate);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -167,25 +122,15 @@ export default function AuditPage() {
     params.set('limit', '500');
     const qs = params.toString();
 
-    // ADR 0015 §9 supersedes the audit report's older "Audit Log requires internet"
-    // recommendation: the log is readable offline like every other back-office screen.
-    //
-    // Only the UNFILTERED baseline is cached (see backOfficeCache.js) — a bounded,
-    // quietly-refreshed window rather than a mirror of an append-only table that grows
-    // forever. When the live call fails, the held copy is filtered here instead, so
-    // the same filter controls keep working on the copy.
-    loadWithCache(AUDIT_INVENTORY_CACHE, () => api.get(`/audit?${qs}`), { cacheable: !hasFilters })
-      .then(({ data, fromCache: cached, cachedAt: at }) => {
-        const rows = Array.isArray(data) ? data : [];
-        setEntries(cached ? filterInventoryRows(rows, { productId, actionType, fromDate, toDate }) : rows);
-        setFromCache(cached);
-        setCachedAt(at);
-      })
-      .catch(() => addToast('Offline and this device has no audit log saved yet — connect once to set it up.', 'error'))
+    api.get(`/audit?${qs}`)
+      .then(setEntries)
+      .catch(() => addToast('Failed to load audit log.', 'error'))
       .finally(() => setLoading(false));
-  }, [productId, actionType, fromDate, toDate, hasFilters, addToast]);
+  }, [productId, actionType, fromDate, toDate, addToast]);
 
   useEffect(() => { if (tab === 'inventory') load(); }, [tab, load]);
+
+  const hasFilters = productId || actionType || fromDate || toDate;
 
   const clearFilters = () => {
     setProductId('');
@@ -202,8 +147,6 @@ export default function AuditPage() {
   const [activityFromDate, setActivityFromDate] = useState('');
   const [activityToDate, setActivityToDate]     = useState('');
 
-  const hasActivityFilters = Boolean(entityType || activityFromDate || activityToDate);
-
   const loadActivity = useCallback(() => {
     setActivityLoading(true);
     const params = new URLSearchParams();
@@ -213,20 +156,15 @@ export default function AuditPage() {
     params.set('limit', '500');
     const qs = params.toString();
 
-    loadWithCache(AUDIT_ACTIVITY_CACHE, () => api.get(`/audit/activity?${qs}`), { cacheable: !hasActivityFilters })
-      .then(({ data, fromCache: cached, cachedAt: at }) => {
-        const rows = Array.isArray(data) ? data : [];
-        setActivityEntries(cached
-          ? filterActivityRows(rows, { entityType, fromDate: activityFromDate, toDate: activityToDate })
-          : rows);
-        setFromCache(cached);
-        setCachedAt(at);
-      })
-      .catch(() => addToast('Offline and this device has no activity log saved yet — connect once to set it up.', 'error'))
+    api.get(`/audit/activity?${qs}`)
+      .then(setActivityEntries)
+      .catch(() => addToast('Failed to load activity log.', 'error'))
       .finally(() => setActivityLoading(false));
-  }, [entityType, activityFromDate, activityToDate, hasActivityFilters, addToast]);
+  }, [entityType, activityFromDate, activityToDate, addToast]);
 
   useEffect(() => { if (tab === 'activity') loadActivity(); }, [tab, loadActivity]);
+
+  const hasActivityFilters = entityType || activityFromDate || activityToDate;
 
   const clearActivityFilters = () => {
     setEntityType('');
@@ -268,8 +206,6 @@ export default function AuditPage() {
           Activity
         </button>
       </div>
-
-      {fromCache && <OfflineBanner cachedAt={cachedAt} />}
 
       {tab === 'inventory' ? (
         <>

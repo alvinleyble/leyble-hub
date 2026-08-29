@@ -10,9 +10,7 @@ import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
 import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
-import { subscribeOutbox, queuedCustomersFromOutbox } from '../../offline/index.js';
-import { getCachedCustomers, getCachedEntity } from '../../offline/catalogue.js';
-import { customerMatches } from '../../utils/customerSearch';
+import { listRecords, subscribeOutbox } from '../../offline/index.js';
 
 
 export default function CustomersPage() {
@@ -35,9 +33,6 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
-  // customers (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
-  // from; this page just never asked for it, so a blind tablet showed a blank table.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
     const params = new URLSearchParams();
@@ -46,16 +41,7 @@ export default function CustomersPage() {
 
     api.get(`/customers?${params}`)
       .then(setCustomers)
-      .catch(async () => {
-        const cached = showInactive ? await getCachedEntity('customers') : await getCachedCustomers();
-        if (cached.length === 0) {
-          addToast('Offline and this device has no customer directory yet — connect once to set it up.', 'error');
-          return;
-        }
-        setCustomers(debouncedSearch.trim()
-          ? cached.filter((c) => customerMatches(c, debouncedSearch))
-          : cached);
-      })
+      .catch(() => addToast('Failed to load customers', 'error'))
       .finally(() => {
         if (!silent) setLoading(false);
       });
@@ -68,7 +54,23 @@ export default function CustomersPage() {
   // disappears the moment its queued POST /customers actually drains — no page
   // reload, no spinner, matching the same silent-refresh spirit as G27.
   const loadQueuedCustomers = useCallback(async () => {
-    setQueuedCustomers(await queuedCustomersFromOutbox());
+    try {
+      const records = await listRecords();
+      const queued = records
+        .filter((r) => r.entity_type === 'customer' && r.status === 'queued')
+        .map((r) => ({
+          id: `local-${r.id}`,
+          name: r.payload?.name || 'Customer',
+          customer_type: r.payload?.customer_type || 'regular',
+          phone: r.payload?.phone || null,
+          address: r.payload?.address || null,
+          is_active: true,
+          _unsynced: true,
+        }));
+      setQueuedCustomers(queued);
+    } catch {
+      // Best-effort only — a local listing failure here should not block the page.
+    }
   }, []);
 
   useEffect(() => {

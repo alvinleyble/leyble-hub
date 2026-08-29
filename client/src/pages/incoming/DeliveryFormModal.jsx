@@ -6,8 +6,6 @@ import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Stepper from '../../components/ui/Stepper';
 import ProductSearchBar from '../../components/ui/ProductSearchBar';
-import { getCachedProducts } from '../../offline/catalogue.js';
-import { logDeliveryLocalFirst } from '../../offline/deliveries.js';
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -47,21 +45,10 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
   const flashTimer                      = useRef(null);
   const [errors, setErrors]             = useState({});
 
-  // ADR 0015 §8 — the product picker falls back to the catalogue this device already
-  // holds (Slice 3.2's sync populates it), so a truck can be unloaded and logged with
-  // no line at all. It used to fail here with "Failed to load products" and leave the
-  // modal permanently empty.
   useEffect(() => {
     api.get('/products')
       .then((prods) => setProducts(prods.filter((p) => p.is_active)))
-      .catch(async () => {
-        const cached = await getCachedProducts();
-        if (cached.length === 0) {
-          addToast('Offline and this device has no product list yet — connect once to set it up.', 'error');
-          return;
-        }
-        setProducts(cached);
-      })
+      .catch(() => addToast('Failed to load products.', 'error'))
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line
 
@@ -141,23 +128,11 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
     };
     try {
       if (isEdit) {
-        // §8 keeps editing an already-logged delivery online-only: it reconciles stock
-        // on a record other devices can already see, which is the shape of a void, not
-        // the shape of logging a truck.
         await api.patch(`/incoming/${delivery.id}`, payload);
         addToast('Delivery updated.', 'success');
       } else {
-        // One code path online and blind: issue this device's delivery reference,
-        // queue it, drain. Connected, that lands in about a second and the operator
-        // sees the ordinary toast.
-        const profileKey = await api.getActiveProfile();
-        const { synced, deliveryRef } = await logDeliveryLocalFirst(payload, { profileKey });
-        addToast(
-          synced
-            ? 'Delivery logged.'
-            : `Delivery ${deliveryRef} saved on this device \u00b7 will sync when connected.`,
-          'success'
-        );
+        await api.post('/incoming', payload);
+        addToast('Delivery logged.', 'success');
       }
       onSaved();
     } catch (err) {

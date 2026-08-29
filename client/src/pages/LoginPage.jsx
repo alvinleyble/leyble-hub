@@ -1,46 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth, getLastKnownIdentity } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
 import FormField from '../components/ui/FormField';
 import { V25_OFFLINE_CORE } from '../config/features';
 import { waitingCount } from '../offline/outbox';
 
-function isOfflineError(err) {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
-  if (!err) return false;
-  if (err.status) return false;
-  const msg = (err.message || '').toLowerCase();
-  return (
-    err.name === 'TypeError' ||
-    msg.includes('failed to fetch') ||
-    msg.includes('network') ||
-    msg.includes('load failed') ||
-    msg.includes('abort')
-  );
-}
-
 export default function LoginPage() {
-  const { login, resumeOfflineSession } = useAuth();
+  const { login }   = useAuth();
   const navigate    = useNavigate();
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
   const [unsentCount, setUnsentCount] = useState(0);
-  const [resuming, setResuming] = useState(false);
-  // ADR 0015 §3 — "Resume Offline Session". A last-known identity survives an
-  // explicit logout or a 401 (client/src/context/AuthContext.jsx's LAST_IDENTITY_KEY),
-  // so a device that has signed in before can get back in without connectivity.
-  const [lastIdentity, setLastIdentity] = useState(null);
 
   useEffect(() => {
     if (!V25_OFFLINE_CORE) return;
     waitingCount()
       .then((count) => setUnsentCount(count))
-      .catch(() => {});
-    getLastKnownIdentity()
-      .then(setLastIdentity)
       .catch(() => {});
   }, []);
 
@@ -52,28 +30,9 @@ export default function LoginPage() {
       await login(email, password);
       navigate('/dashboard', { replace: true });
     } catch (err) {
-      if (isOfflineError(err)) {
-        setError("You're offline. Connect to the internet to sign in.");
-      } else {
-        setError(err.message || 'Login failed. Please check your credentials.');
-      }
+      setError(err.message || 'Login failed. Please check your credentials.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleResumeOffline = async () => {
-    setError('');
-    setResuming(true);
-    try {
-      const identity = await resumeOfflineSession();
-      if (identity) {
-        navigate('/dashboard', { replace: true });
-      } else {
-        setError('No offline session found on this device yet — connect once to sign in first.');
-      }
-    } finally {
-      setResuming(false);
     }
   };
 
@@ -137,23 +96,6 @@ export default function LoginPage() {
             Sign in
           </Button>
         </form>
-
-        {V25_OFFLINE_CORE && lastIdentity && (
-          <div className="mt-5 pt-5 border-t border-slate-200 text-center">
-            <p className="text-sm text-slate-500 mb-3">
-              Signed in before as {lastIdentity.full_name || lastIdentity.email} on this device.
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              loading={resuming}
-              onClick={handleResumeOffline}
-              className="w-full"
-            >
-              Resume Offline Session
-            </Button>
-          </div>
-        )}
       </div>
     </div>
   );
