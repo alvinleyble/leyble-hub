@@ -97,6 +97,51 @@ test('a replacement tablet continues the slot\'s numbering instead of restarting
   assert.equal((await issueReceiptNumber()).receipt_number, '2-00152');
 });
 
+// The captain's on-device repro: reassigning ONE tablet 2 -> 1 -> 3 in a row printed
+// 2-00056, 1-00057, 3-00058 — the prefix moved but the count kept running, because one
+// device-wide counter meant "never downwards" was comparing the incoming slot's number
+// against the outgoing slot's high-water mark. Each slot now carries its own count.
+test('a device moved between slots resumes each slot\'s own count, not the last one it worked', async () => {
+  const answer = (slot, nextSeq) => { api.post = async () => ({ slot_number: slot, next_sequence: nextSeq, registered_at: '2026-08-29T00:00:00.000Z' }); };
+
+  // Slot 2 is at 55 on the server; this tablet takes it and sells one.
+  answer(2, 56);
+  await ensureStationRegistered();
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00056');
+
+  // Moved to slot 1, which has only ever issued one receipt. Its own count resumes —
+  // the device does NOT carry slot 2's 56 across.
+  answer(1, 2);
+  await ensureStationRegistered();
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00002');
+
+  // And to slot 3, which has issued nothing at all.
+  answer(3, 1);
+  await ensureStationRegistered();
+  assert.equal((await issueReceiptNumber()).receipt_number, '3-00001');
+
+  // Back to slot 2: it picks up where IT left off, not where slot 3 did.
+  answer(2, 56);
+  await ensureStationRegistered();
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00057');
+});
+
+test('a tablet upgrading from the single-counter build keeps its count under the slot it was working', async () => {
+  // What a pre-fix device holds: one bare scalar, and the slot it was selling under.
+  await nativeStore.setJson(STATION_KEY, { device_key: 'upgrading-tablet', station_number: 2 });
+  await nativeStore.setString(SEQUENCE_KEY, 55);
+
+  // It launches blind and sells before it can re-register. The scalar is read as slot
+  // 2's count — restarting at 00001 here would reprint numbers already on paper.
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00056');
+
+  // The line returns and the owner has since given this tablet slot 1. The carried-over
+  // count stays filed under slot 2; slot 1 starts from slot 1's own server count.
+  api.post = async () => ({ slot_number: 1, next_sequence: 3, registered_at: '2026-08-29T00:00:00.000Z' });
+  await ensureStationRegistered();
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00003');
+});
+
 test('re-confirming never winds a device back behind receipts it has already issued', async () => {
   await registerStation(1);
   assert.equal((await issueReceiptNumber()).receipt_number, '1-00001');
@@ -141,7 +186,8 @@ test('the sequence is stored before the number is handed out, so a crash skips r
   await registerStation(1);
   const issued = await issueReceiptNumber();
   assert.equal(issued.sequence, 1);
-  assert.equal(await nativeStore.getString(SEQUENCE_KEY), '1');
+  // Stored per slot (ADR 0016), so the key holds a map rather than a bare number.
+  assert.deepEqual(await nativeStore.getJson(SEQUENCE_KEY), { 1: 1 });
 });
 
 test('concurrent Saves never receive the same number', async () => {

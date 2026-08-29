@@ -44,22 +44,67 @@ export async function isRegistered() {
   return Number.isInteger(station?.station_number);
 }
 
-// Seeds the local counters from the server's view of this slot, never downwards.
+// ── Sequence counters, one per slot ─────────────────────────────────────────
+//
+// Both sequence keys hold a MAP of slot -> last issued, not a single device-wide
+// number. A device that has sold under slot 2 and is then given slot 1 has to resume
+// slot 1's own count; under one shared counter it kept advancing slot 2's, so three
+// reassignments in a row printed 2-00056, 1-00057, 3-00058 — one running series
+// wearing three different prefixes. seedSequence's "never downwards" guard was doing
+// that: it compared the incoming slot's number against whatever slot was last active
+// on this device. Per-slot, the guard still does its real job (protecting a tablet
+// holding receipts the server has not seen for THAT slot) without leaking across
+// slots.
+
+// Reads the counter map. A device from before per-slot counters holds a bare scalar
+// here — `getJson` parses it back as a number — which is that device's count under the
+// slot it is working right now, so it is adopted for `station` rather than dropped.
+// Dropping it would restart at 00001 and re-issue numbers already on paper.
+// `migrateLegacyCounter` below handles the one case where "right now" is the wrong
+// answer.
+async function readCounters(key, station) {
+  const stored = await nativeStore.getJson(key);
+  if (typeof stored === 'number') {
+    return Number.isInteger(station) ? { [station]: stored } : {};
+  }
+  return (stored && typeof stored === 'object') ? stored : {};
+}
+
+// The one-time upgrade, run at registration BEFORE the new slot is seeded.
+//
+// A legacy scalar belongs to the slot this device was working BEFORE this
+// registration, never the one it is being handed now. Filing it under the new slot
+// would be the original bug all over again — the incoming slot would inherit the
+// outgoing slot's count on the very reassignment this feature exists for.
+async function migrateLegacyCounter(key, previousStation) {
+  const stored = await nativeStore.getJson(key);
+  if (typeof stored !== 'number') return;
+  await nativeStore.setJson(
+    key,
+    Number.isInteger(previousStation) ? { [previousStation]: stored } : {}
+  );
+}
+
+// Seeds one slot's counter from the server's view of that slot, never downwards.
 //
 // This is what makes a replacement tablet continue Josie's numbering instead of
 // restarting it at 00001 — restarting would re-issue numbers the old tablet already
 // printed, and the idempotency check (ADR 0006) would then answer each new order with
 // the OLD order stored under that number. Taking the max also protects the ordinary
-// re-confirmation: a tablet holding receipts it has not drained yet is AHEAD of the
-// server, and must keep its own counter.
-async function seedSequence(key, next) {
-  if (!Number.isInteger(next) || next < 1) return;
-  const current = Number(await nativeStore.getString(key)) || 0;
+// re-confirmation: a tablet holding receipts for THIS slot that it has not drained yet
+// is AHEAD of the server, and must keep its own counter.
+async function seedSequence(key, station, next) {
+  if (!Number.isInteger(station) || !Number.isInteger(next) || next < 1) return;
+  const counters = await readCounters(key, station);
   const floor = next - 1;
-  if (floor > current) await nativeStore.setString(key, floor);
+  if (floor > (Number(counters[station]) || 0)) {
+    counters[station] = floor;
+    await nativeStore.setJson(key, counters);
+  }
 }
 
 async function persistRegistration(deviceKey, registered) {
+  const previousStation = (await getStation())?.station_number;
   // Pre-ADR-0016 servers answer with station_number and no slot. Honoured only when it
   // is already inside 1-3, so a new client keeps working against an old server during
   // the deploy window without ever being able to print a station this store does not
@@ -80,8 +125,10 @@ async function persistRegistration(deviceKey, registered) {
   await nativeStore.setJson(STATION_KEY, station);
 
   if (slot !== null) {
-    await seedSequence(SEQUENCE_KEY, registered?.next_sequence);
-    await seedSequence(DELIVERY_SEQUENCE_KEY, registered?.next_delivery_sequence);
+    await migrateLegacyCounter(SEQUENCE_KEY, previousStation);
+    await migrateLegacyCounter(DELIVERY_SEQUENCE_KEY, previousStation);
+    await seedSequence(SEQUENCE_KEY, slot, registered?.next_sequence);
+    await seedSequence(DELIVERY_SEQUENCE_KEY, slot, registered?.next_delivery_sequence);
   }
   return station;
 }
@@ -142,13 +189,14 @@ let issuing = Promise.resolve();
 export const NO_SLOT_MESSAGE =
   'This tablet has not been given a station number yet. Open the menu → Devices and assign it a slot (1, 2 or 3).';
 
-async function nextSequence(key = SEQUENCE_KEY) {
-  const raw = await nativeStore.getString(key);
-  const next = (Number(raw) || 0) + 1;
+async function nextSequence(station, key = SEQUENCE_KEY) {
+  const counters = await readCounters(key, station);
+  const next = (Number(counters[station]) || 0) + 1;
+  counters[station] = next;
   // Persist BEFORE returning. If the app dies here the number is skipped, never
   // reused — a gap in the numbering is invisible, a repeat is two customers holding
   // the same receipt number.
-  await nativeStore.setString(key, next);
+  await nativeStore.setJson(key, counters);
   return next;
 }
 
@@ -160,7 +208,7 @@ export async function issueReceiptNumber() {
     if (!Number.isInteger(station?.station_number)) {
       throw new Error(NO_SLOT_MESSAGE);
     }
-    const sequence = await nextSequence();
+    const sequence = await nextSequence(station.station_number);
     return {
       receipt_number: formatReceiptNumber(station.station_number, sequence),
       station: station.station_number,
@@ -181,7 +229,7 @@ export async function issueDeliveryRef() {
     if (!Number.isInteger(station?.station_number)) {
       throw new Error(NO_SLOT_MESSAGE);
     }
-    const sequence = await nextSequence(DELIVERY_SEQUENCE_KEY);
+    const sequence = await nextSequence(station.station_number, DELIVERY_SEQUENCE_KEY);
     return {
       delivery_ref: formatDeliveryRef(station.station_number, sequence),
       station: station.station_number,
