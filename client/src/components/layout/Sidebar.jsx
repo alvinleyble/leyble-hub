@@ -15,6 +15,9 @@ const NAV_ITEMS = [
   { path: '/personnel', label: 'Personnel' },
   { path: '/tickets',   label: 'Tickets' },
   { path: '/audit',     label: 'Audit Log' },
+  // ADR 0016 — which tablet holds which of the three receipt-number slots, and the
+  // device-replacement action that moves one. Back office, so V1 UI, bottom of the list.
+  { path: '/devices',   label: 'Devices' },
 ];
 
 export default function Sidebar({ onClose, offlineMarker }) {

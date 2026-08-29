@@ -77,10 +77,11 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
     });
   }
 
-  // Each test picks its own station so a re-run against a reused database cannot
-  // collide with a delivery an earlier run already stored.
-  let stationSeed = Math.floor(Date.now() / 1000) % 90000;
-  const nextStation = () => ++stationSeed;
+  // ADR 0016 caps the station component at this store's three slots, so each test
+  // varies its SEQUENCE (not its station) to keep a re-run against a reused database
+  // from colliding with a delivery an earlier run already stored.
+  let sequenceSeed = Math.floor(Date.now() / 1000) % 80000;
+  const nextSequence = () => ++sequenceSeed;
 
   const body = (over = {}) => ({
     supplier_name: 'TEST_S33 San Miguel Brewery',
@@ -106,7 +107,7 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
   });
 
   it('stores the device-issued reference and returns it on the delivery', async () => {
-    const ref = formatDeliveryRef(nextStation(), 1);
+    const ref = formatDeliveryRef(1, nextSequence());
     const res = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) });
     assert.equal(res.status, 201);
     const delivery = await res.json();
@@ -115,7 +116,7 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
   });
 
   it('a second arrival of the same reference is a SUCCESS and leaves exactly one row', async () => {
-    const ref = formatDeliveryRef(nextStation(), 1);
+    const ref = formatDeliveryRef(1, nextSequence());
     const first = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) })).json();
     deliveryIds.push(first.id);
 
@@ -132,7 +133,7 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
   });
 
   it('a resend does not restock a second time', async () => {
-    const ref = formatDeliveryRef(nextStation(), 1);
+    const ref = formatDeliveryRef(1, nextSequence());
     const before = await stockNow();
 
     const first = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) })).json();
@@ -144,7 +145,7 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
   });
 
   it('two overlapping drains of the same reference still leave one row', async () => {
-    const ref = formatDeliveryRef(nextStation(), 1);
+    const ref = formatDeliveryRef(1, nextSequence());
     const before = await stockNow();
 
     // Both look, neither finds, both insert: the partial unique index catches the
@@ -162,6 +163,17 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
 
   it('a malformed reference is refused rather than silently dropped', async () => {
     const res = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: 'not-a-ref' })) });
+    assert.equal(res.status, 400);
+  });
+
+  // ADR 0016 — the station component is one of this store's three slots and nothing
+  // else. A tablet still running a pre-0016 build carries the number it claimed under
+  // the old unbounded scheme; its deliveries are refused rather than stored under a
+  // station that does not exist.
+  it('a reference from a station above 3 is refused', async () => {
+    const res = await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body({ delivery_ref: formatDeliveryRef(8, nextSequence()) })),
+    });
     assert.equal(res.status, 400);
   });
 

@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 async function registerStation(number = 1) {
-  api.post = async () => ({ station_number: number, registered_at: '2026-08-23T00:00:00.000Z' });
+  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
   return ensureStationRegistered();
 }
 

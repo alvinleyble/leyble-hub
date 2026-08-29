@@ -300,6 +300,22 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   V2.5 migration must be additive and correct standing alone. The server needs no flag:
   its new behaviour is reachable only when a request carries a `receipt_number` or a
   device `created_at`, which only a switched-on client sends.
+- **The station component is one of three fixed slots — 1 Alvin, 2 Josie, 3 Luis**
+  ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md), migration 037). A device is
+  *assigned* a slot by `POST /stations/register` (lowest free one) or moved onto one by
+  `POST /stations/slots/:slot/assign`, the device-replacement action on the `/devices`
+  screen; a fourth device gets `slot_number: null` and cannot issue receipts at all.
+  Owner names are a constant in `server/src/lib/stationSlots.js`; who holds each slot is
+  `stations.slot_number`. `stations.station_number` still exists and still auto-increments
+  but is now only the registry's internal id for a device — never the receipt station.
+  Registration re-confirms on every start (and every 10 min while running) because the
+  server is authoritative on who holds a slot, and the register/assign response carries
+  `next_sequence`/`next_delivery_sequence` so a replacement tablet continues that person's
+  numbering instead of restarting at `00001` — seeded upward only, never back behind
+  receipts the device has already issued. `assertIssuableStation` in the `POST /orders`
+  and `POST /incoming` paths is the backstop against a pre-0016 client. Nothing already
+  numbered is backfilled, and dev/CI is deliberately not special-cased (a fresh worktree
+  takes a slot on `/devices` like any other device).
 - **Receipt numbers are device-issued** (`<station>-<sequence>`, e.g. `1-00042`) at Save,
   with no server round trip. `client/src/offline/station.js` issues them; display goes
   through `orderRef()` in `client/src/utils/orderRef.js` — use it anywhere an order was
@@ -550,6 +566,7 @@ Every V1 screen now works blind. What a future session most needs to know:
 | Outgoing Orders | ✅ Done | Delivery + pickup types; editable at all statuses (inventory auto-reconciles, incl. Edit/Cancel inside the batch-review queues); price adjustment field; per-bottle deposit + bottle-return close flow (Review Deliveries queue); 80mm thermal receipt |
 | Incoming Supplies | ✅ Done | Log deliveries, auto-restock; supports 0.5-case quantities |
 | Tickets | ✅ Done | Create, view, resolve |
+| Devices | ✅ Done | Which tablet holds each of the three receipt-number slots, and the device-replacement action ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md)) |
 | Audit Log | ✅ Done | Read-only, filterable. Two append-only sources: `inventory_audit_logs` (stock deltas, `GET /api/v1/audit`) and `activity_logs` (cross-entity change log for orders/customers/products/personnel/tickets, `GET /api/v1/audit/activity`) |
 
 > **Order totals:** an order's stored `total_amount` is **goods-only (qty × price) while it is open**; the bottle deposit on un-returned bottles is folded into the total only when the order is closed and returns are counted (`recomputeTotal` in [server/src/routes/orders.js](server/src/routes/orders.js)). This is intentional — pre-close totals deliberately exclude the refundable deposit.
@@ -580,6 +597,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
 | no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |
+| `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots. `activity_logs.entity_type` widened to accept `'station'` in the same migration |
 | `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_sequence` pair + partial unique index, and a `GENERATED` `delivery_ref` (`1-DEL-00007`) added (migration 036) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8) |
 
 ### `order_personnel` join table (migration 016)

@@ -90,7 +90,7 @@ afterEach(() => {
 });
 
 async function registerStation(number = 1) {
-  api.post = async () => ({ station_number: number, registered_at: '2026-08-23T00:00:00.000Z' });
+  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
   await ensureStationRegistered();
 }
 
@@ -126,7 +126,7 @@ test('loadParkedOrders never throws on a first-run device with no cache and no l
 });
 
 test('loadParkedOrders unions this device\'s own parks with the cached server drafts, deduped by receipt number', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = offline;                 // the park's background drain gets nowhere
   api.getActiveProfile = async () => 'josie';
 
@@ -155,7 +155,7 @@ test('loadParkedOrders unions this device\'s own parks with the cached server dr
 // ── 2. A locally parked draft carries enough to be shown and resumed ───────────
 
 test('a locally parked draft keeps the names the POST body has no field for', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = offline;
   api.getActiveProfile = async () => 'josie';
 
@@ -186,7 +186,7 @@ test('a locally parked draft keeps the names the POST body has no field for', as
 });
 
 test('a draft parked behind a customer created on this device exposes her local id', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = offline;
   api.getActiveProfile = async () => 'josie';
 
@@ -208,7 +208,7 @@ test('a draft parked behind a customer created on this device exposes her local 
 });
 
 test('updateLocalDraft rewrites the same record, names included, rather than queueing a second draft', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = offline;
   api.getActiveProfile = async () => 'josie';
 
@@ -244,7 +244,7 @@ test('updateLocalDraft rewrites the same record, names included, rather than que
 // ── 3. The modal parks a draft when the early POST cannot get out ──────────────
 
 test('OrderCreateModal parks the draft on this device when picking a customer while the server is unreachable', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.get = async (path) => {
     if (path.startsWith('/products'))  return PRODUCTS;
     if (path.startsWith('/customers')) return CUSTOMERS;
@@ -277,7 +277,7 @@ test('OrderCreateModal parks the draft on this device when picking a customer wh
 });
 
 test('OrderCreateModal keeps parking into the same draft record as the order is built', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.get = async (path) => {
     if (path.startsWith('/products'))  return PRODUCTS;
     if (path.startsWith('/customers')) return CUSTOMERS;
@@ -316,7 +316,7 @@ test('OrderCreateModal keeps parking into the same draft record as the order is 
 // ── 4. The Drafts tab itself ──────────────────────────────────────────────────
 
 test('OrdersPage Drafts tab lists the cached server drafts and this device\'s own parks while offline', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = offline;
   api.getActiveProfile = async () => 'josie';
 
@@ -352,7 +352,7 @@ test('OrdersPage Drafts tab lists the cached server drafts and this device\'s ow
 });
 
 test('OrdersPage parked-drafts banner counts both halves of the list', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = offline;
   api.getActiveProfile = async () => 'josie';
 

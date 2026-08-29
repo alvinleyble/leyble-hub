@@ -117,7 +117,7 @@ test('advisory toast fires ONCE per outage and persists in nativeStore across re
 });
 
 test('advisory toast fires from the real saveOrderLocalFirst code path when saving while offline', async () => {
-  api.post = async () => ({ station_number: 1 });
+  api.post = async () => ({ slot_number: 1, next_sequence: 1 });
   await ensureStationRegistered();
 
   const toasts = [];

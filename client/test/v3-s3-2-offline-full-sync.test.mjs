@@ -156,7 +156,7 @@ function stubServer({ orders = [], products = PRODUCTS, customers = CUSTOMERS, p
     return since ? pick.filter((r) => String(r.updated_at) > since) : pick;
   };
   api.post = async (path) => (path === '/stations/register'
-    ? { station_number: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
+    ? { slot_number: 1, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
   return calls;
 }
 
@@ -425,7 +425,7 @@ test('OrdersPage falls back to the full local history when the server cannot be 
 
 test('OrdersPage shows a still-queued order once, not twice, when the table is served from local history', async () => {
   api.post = async (path) => (path === '/stations/register'
-    ? { station_number: 3, registered_at: '2026-08-26T00:00:00.000Z' } : {});
+    ? { slot_number: 3, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
   await ensureStationRegistered();
   api.request = async () => { throw new Error('Failed to fetch'); };
 
@@ -568,7 +568,7 @@ test('canTransitionOffline allows the forward lifecycle and nothing else', () =>
 
 test('dispatching an unsynced order offline updates it locally and queues the transition behind its own creation', async () => {
   api.post = async (path) => (path === '/stations/register'
-    ? { station_number: 7, registered_at: '2026-08-26T00:00:00.000Z' } : {});
+    ? { slot_number: 3, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
   await ensureStationRegistered();
   api.request = async () => { throw new Error('Failed to fetch'); }; // nothing drains
 

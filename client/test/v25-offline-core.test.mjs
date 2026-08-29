@@ -41,29 +41,72 @@ afterEach(() => {
 });
 
 async function registerStation(number = 1) {
-  api.post = async () => ({ station_number: number, registered_at: '2026-08-23T00:00:00.000Z' });
+  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
   return ensureStationRegistered();
 }
 
 // ── D1: station registration ────────────────────────────────────────────────
 
-test('registers once and keeps the station number it was given', async () => {
-  let calls = 0;
+test('registers with one device_key and keeps the slot it was given', async () => {
+  const keys = [];
   api.post = async (path, body) => {
-    calls++;
     assert.equal(path, '/stations/register');
     assert.ok(body.device_key, 'a device_key is sent so the server can be idempotent');
-    return { station_number: 2, registered_at: '2026-08-23T00:00:00.000Z' };
+    keys.push(body.device_key);
+    return { slot_number: 2, owner_name: 'Josie', next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' };
   };
 
   const first = await ensureStationRegistered();
   assert.equal(first.station_number, 2);
   assert.equal(await isRegistered(), true);
 
-  // Every later start is a no-op: the device never asks for a second number.
+  // ADR 0016 — a later start re-confirms rather than short-circuiting (the server is
+  // authoritative on who holds which slot), but sends the SAME device_key and so can
+  // never be handed a second number.
   const second = await ensureStationRegistered();
   assert.equal(second.station_number, 2);
-  assert.equal(calls, 1);
+  assert.equal(new Set(keys).size, 1);
+});
+
+// ── ADR 0016: three fixed slots, captain-reassignable ───────────────────────
+
+test('a server answer of "no slot" stops this device issuing receipt numbers', async () => {
+  await registerStation(3);
+  assert.equal(await isRegistered(), true);
+
+  // The replacement tablet has been given slot 3; this one is told it holds nothing.
+  api.post = async () => ({ slot_number: null, unassigned: true, registered_at: '2026-08-23T00:00:00.000Z' });
+  await ensureStationRegistered();
+
+  assert.equal(await isRegistered(), false);
+  assert.equal((await getStation()).station_number, null);
+  await assert.rejects(() => issueReceiptNumber(), /station number/);
+});
+
+test('a replacement tablet continues the slot\'s numbering instead of restarting it', async () => {
+  api.post = async () => ({
+    slot_number: 2, owner_name: 'Josie', next_sequence: 151, next_delivery_sequence: 9,
+    registered_at: '2026-08-29T00:00:00.000Z',
+  });
+  await ensureStationRegistered();
+
+  // Seeded from the server's high-water mark plus its reassignment reserve — never
+  // back at 00001, which would re-issue numbers the old tablet already printed and
+  // make every one of them collide with a stored order under ADR 0006.
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00151');
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00152');
+});
+
+test('re-confirming never winds a device back behind receipts it has already issued', async () => {
+  await registerStation(1);
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00001');
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00002');
+
+  // The server has seen neither of those yet (still queued), so it answers with 1.
+  api.post = async () => ({ slot_number: 1, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
+  await ensureStationRegistered();
+
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00003');
 });
 
 test('a device_key is persisted before registering, so a lost response cannot burn a second number', async () => {
