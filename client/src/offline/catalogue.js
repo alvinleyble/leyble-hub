@@ -1,128 +1,55 @@
 import { nativeStore } from './nativeStore.js';
-import { PRODUCTS_KEY, CUSTOMERS_KEY, PERSONNEL_KEY, customerPricesKey } from './keys.js';
+import { NS, customerPricesKey } from './keys.js';
 import { api } from '../api/client.js';
 
 // D16 — the tablet sells only what it already holds.
 //
-// The catalogue (products, customers, personnel) refreshes quietly whenever the tablet
-// is online, into native storage (D17). No staleness warning, no age indicator, nothing
+// The catalogue (products, customers) refreshes quietly whenever the tablet is
+// online, into native storage (D17). No staleness warning, no age indicator, nothing
 // shown — the owners are never told how old the copy is. When the live fetch fails,
-// order creation falls back to this held copy and keeps selling. A product added while
-// the tablet was blind cannot be sold until the line returns — accepted (D16).
+// the POS falls back to this held copy and keeps selling. A product added while the
+// tablet was blind cannot be sold until the line returns — accepted (D16).
 //
-// Whole-value keys, not one key per item: unlike the outbox and order history (D9/D17),
-// this is reference data the server sends in full, not built up locally record by
-// record, so there is nothing to lose from a torn write beyond one refresh cycle.
-//
-// ADR 0015 §9 adds personnel to the same store, because Driver/Helper assignment in
-// OrderCreateModal is part of taking an order and must work blind like the rest of it.
-//
-// Two shapes of refresh live here, and they are not interchangeable:
-//   refreshCatalogue()  — the FULL pull. Every row, active and inactive. Used once,
-//                         on a tablet that holds nothing yet (sync.js's first setup).
-//   applyCatalogueDelta()— the INCREMENTAL merge. Only rows the server says changed
-//                         since our last sync, merged onto what we already hold. This
-//                         is what a normal daily login and every reconnect do.
-// The cache deliberately holds INACTIVE rows too: a deactivation is a change we have
-// to be able to learn about from a delta (soft delete bumps `updated_at`), and the
-// readers below filter to active themselves, so the shape callers see is unchanged.
+// Whole-catalogue replace, not one key per item: unlike the outbox and receipt
+// history (D9/D17), this is reference data the server always sends in full, not
+// built up locally record by record, so there is nothing to lose from a torn write
+// beyond one refresh cycle.
 
-const ENTITY_KEYS = {
-  products:  PRODUCTS_KEY,
-  customers: CUSTOMERS_KEY,
-  personnel: PERSONNEL_KEY,
-};
+const PRODUCTS_KEY  = `${NS}catalogue.products`;
+const CUSTOMERS_KEY = `${NS}catalogue.customers`;
 
-const ENTITY_ENDPOINTS = {
-  products:  '/products',
-  customers: '/customers',
-  personnel: '/personnel',
-};
-
-const activeOnly = (rows) => rows.filter((r) => r?.is_active !== false);
-
-async function readCached(entity) {
-  return (await nativeStore.getJson(ENTITY_KEYS[entity])) || [];
+export async function getCachedProducts() {
+  return (await nativeStore.getJson(PRODUCTS_KEY)) || [];
 }
 
-export async function getCachedProducts()  { return activeOnly(await readCached('products')); }
-export async function getCachedCustomers() { return activeOnly(await readCached('customers')); }
-export async function getCachedPersonnel() { return activeOnly(await readCached('personnel')); }
-
-// Everything held for an entity, inactive rows included — what the delta merge works
-// against, and what a caller that genuinely needs the full roster (an order referencing
-// a since-deactivated driver) can read.
-export async function getCachedEntity(entity) {
-  return readCached(entity);
-}
-
-/**
- * Full pull of one reference entity, inactive rows included. Replaces the held copy
- * outright — correct only because the server answers with the complete set.
- */
-export async function refreshEntity(entity) {
-  const rows = await api.get(`${ENTITY_ENDPOINTS[entity]}?include_inactive=true`);
-  const list = Array.isArray(rows) ? rows : [];
-  await nativeStore.setJson(ENTITY_KEYS[entity], list);
-  return list;
-}
-
-/**
- * Merges a server delta (rows changed since `since`) onto the held copy, by id.
- *
- * Merge, never replace: a delta is by definition a fragment, so writing it over the
- * cache would leave the tablet holding LESS than it did before the sync — the exact
- * failure the interrupted-sync rule exists to prevent. A row present in the delta wins
- * over the held one (that is what "changed" means); everything else is left alone.
- */
-export async function applyCatalogueDelta(entity, changedRows) {
-  const rows = Array.isArray(changedRows) ? changedRows : [];
-  if (rows.length === 0) return readCached(entity);
-
-  const held = await readCached(entity);
-  const byId = new Map(held.map((r) => [String(r.id), r]));
-  for (const row of rows) {
-    if (row?.id === undefined || row?.id === null) continue;
-    byId.set(String(row.id), row);
-  }
-  const merged = [...byId.values()];
-  await nativeStore.setJson(ENTITY_KEYS[entity], merged);
-  return merged;
+export async function getCachedCustomers() {
+  return (await nativeStore.getJson(CUSTOMERS_KEY)) || [];
 }
 
 async function refreshCatalogue() {
-  const [products, customers, personnel] = await Promise.all([
-    refreshEntity('products'),
-    refreshEntity('customers'),
-    refreshEntity('personnel'),
+  const [products, customers] = await Promise.all([
+    api.get('/products'),
+    api.get('/customers'),
   ]);
-  return { products, customers, personnel };
+  await nativeStore.setJson(PRODUCTS_KEY, products);
+  await nativeStore.setJson(CUSTOMERS_KEY, customers);
+  return { products, customers };
 }
 
 /**
- * Loads the catalogue for order creation: tries the live server first (and quietly
- * refreshes the held copy on success), and falls back to whatever this device already
- * holds when the server cannot be reached. Never throws — a brand-new device with an
- * empty cache and no connectivity yet is the one corner D16 explicitly accepts (it
- * simply cannot sell, same as it has nothing to number a receipt with either, D1).
- *
- * Returns ACTIVE rows only, which is what every picker in the app wants; the held copy
- * underneath keeps the inactive ones so a delta can still learn about reactivation.
+ * Loads the catalogue for the POS: tries the live server first (and quietly refreshes
+ * the held copy on success), and falls back to whatever this device already holds
+ * when the server cannot be reached. Never throws — a brand-new device with an empty
+ * cache and no connectivity yet is the one corner D16 explicitly accepts (it simply
+ * cannot sell, same as it has nothing to number a receipt with either, D1).
  */
 export async function loadCatalogue() {
   try {
-    const { products, customers, personnel } = await refreshCatalogue();
-    return {
-      products:  activeOnly(products),
-      customers: activeOnly(customers),
-      personnel: activeOnly(personnel),
-      fromCache: false,
-    };
+    const { products, customers } = await refreshCatalogue();
+    return { products, customers, fromCache: false };
   } catch {
-    const [products, customers, personnel] = await Promise.all([
-      getCachedProducts(), getCachedCustomers(), getCachedPersonnel(),
-    ]);
-    return { products, customers, personnel, fromCache: true };
+    const [products, customers] = await Promise.all([getCachedProducts(), getCachedCustomers()]);
+    return { products, customers, fromCache: true };
   }
 }
 

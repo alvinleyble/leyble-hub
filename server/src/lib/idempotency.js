@@ -9,14 +9,13 @@
 //
 // The mechanism is deliberately table-agnostic. Any table that carries the
 // `receipt_station` / `receipt_sequence` pair and the matching partial unique index
-// can use it: `orders` (receipts and parked orders alike, since a parked order is an
-// orders row) and, since ADR 0015 §8 / migration 036, `supplier_deliveries` — a
-// delivery logged on a blind tablet is queued and can be resent exactly like a
-// receipt. Adding a table here is the whole integration.
+// can use it: `orders` today (receipts and parked orders alike, since a parked order
+// is an orders row), `supplier_deliveries` when Release 2 adds offline incoming
+// deliveries. Adding a table here is the whole integration.
 
 // Whitelist, because the table name is interpolated into SQL. Never take this from
 // a request body.
-const RECEIPT_TABLES = new Set(['orders', 'supplier_deliveries']);
+const RECEIPT_TABLES = new Set(['orders']);
 
 const UNIQUE_VIOLATION = '23505';
 

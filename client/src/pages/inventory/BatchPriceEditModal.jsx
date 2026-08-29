@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
-import { batchPriceLocalFirst } from '../../offline/productMutations.js';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 
@@ -116,20 +115,11 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
 
     setSaving(true);
     try {
-      // ADR 0015 §6 supersedes ADR 0005 §2 — a batch reprice goes through the outbox
-      // like everything else. One record, but one guard check per product: a price
-      // another tablet already changed is lifted out into a reconciliation question
-      // and the other 40 still land, rather than the whole batch waiting on one row.
-      const profileKey = await api.getActiveProfile();
-      const { synced } = await batchPriceLocalFirst(updates, reason.trim() || null, {
-        profileKey, products,
+      const res = await api.patch('/products/batch-price', {
+        updates,
+        reason: reason.trim() || null,
       });
-      addToast(
-        synced
-          ? `${updates.length} product price${updates.length === 1 ? '' : 's'} updated.`
-          : `${updates.length} price${updates.length === 1 ? '' : 's'} saved on this device \u00b7 will sync when connected.`,
-        'success'
-      );
+      addToast(`${res.count} product price${res.count === 1 ? '' : 's'} updated.`, 'success');
       onSaved();
     } catch (err) {
       addToast(err.message || 'Failed to update prices.', 'error');

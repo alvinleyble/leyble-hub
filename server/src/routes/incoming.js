@@ -2,12 +2,6 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { applyStockDelta, applyDeltaMap } = require('../lib/inventory');
-const { parseDeliveryRef } = require('../lib/receiptNumbers');
-const { assertIssuableStation } = require('../lib/stationSlots');
-const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
-
-// Matches the partial unique index created by migration 036.
-const DELIVERY_REF_INDEX = 'supplier_deliveries_receipt_number_uniq';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -92,16 +86,8 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/v1/incoming — log delivery and restock products
-//
-// One optional field carries the device's version of the truth when the delivery was
-// logged locally (ADR 0015 §8). It is absent for a delivery logged from a connected
-// client, which behaves exactly as before:
-//   delivery_ref  '<station>-DEL-<sequence>' issued on the device at Save. It is the
-//                 record's identity, so a resend of a reference already stored is
-//                 answered with the stored delivery and a 200 rather than a second
-//                 truckload of stock (ADR 0006's mechanism, second table).
 router.post('/', async (req, res, next) => {
-  const { supplier_name, notes, received_at, items, delivery_ref } = req.body;
+  const { supplier_name, notes, received_at, items } = req.body;
 
   // Validate input before opening a connection/transaction — an early return after
   // BEGIN would release the client mid-transaction (pg won't auto-rollback).
@@ -111,36 +97,15 @@ router.post('/', async (req, res, next) => {
     return res.status(400).json({ error: 'Each item requires product_id and quantity_received' });
   }
 
-  let ref = null;
-  if (delivery_ref !== undefined && delivery_ref !== null && delivery_ref !== '') {
-    try {
-      ref = parseDeliveryRef(delivery_ref);
-      // ADR 0016 — same three-slot cap the receipt numbers carry; a delivery reference
-      // is issued off the same station number.
-      assertIssuableStation(ref.station, { field: 'delivery_ref' });
-    } catch (err) {
-      return next(err);
-    }
-    // The ordinary resend: the first attempt committed and only the response was lost.
-    try {
-      const existingId = await findByReceiptNumber(db, 'supplier_deliveries', ref);
-      if (existingId) return res.json(await getFullDelivery(existingId));
-    } catch (err) {
-      return next(err);
-    }
-  }
-
   const client = await db.connect();
   try {
     await client.query('BEGIN');
 
     const { rows: [delivery] } = await client.query(
-      `INSERT INTO supplier_deliveries
-         (supplier_name, notes, received_at, created_by, receipt_station, receipt_sequence)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO supplier_deliveries (supplier_name, notes, received_at, created_by)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [supplier_name, notes || null, received_at || new Date().toISOString(), req.user.id,
-       ref?.station ?? null, ref?.sequence ?? null]
+      [supplier_name, notes || null, received_at || new Date().toISOString(), req.user.id]
     );
 
     for (const item of items) {
@@ -166,17 +131,6 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(await getFullDelivery(delivery.id));
   } catch (err) {
     await client.query('ROLLBACK');
-    // Two drain attempts overlapping: both looked, neither found, both inserted. The
-    // partial unique index caught this one, so answer it with the row the winner
-    // wrote — a success, so the device clears it from the outbox and stops retrying.
-    if (ref && isDuplicateReceiptNumber(err, DELIVERY_REF_INDEX)) {
-      try {
-        const existingId = await findByReceiptNumber(db, 'supplier_deliveries', ref);
-        if (existingId) return res.json(await getFullDelivery(existingId));
-      } catch (lookupErr) {
-        return next(lookupErr);
-      }
-    }
     next(err);
   } finally {
     client.release();

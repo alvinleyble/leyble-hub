@@ -1,6 +1,6 @@
 import { issueReceiptNumber } from './station.js';
-import { enqueue, listRecords, drainOutbox, pendingDeletionRefs, QUEUED, ref } from './outbox.js';
-import { outboxKey, DRAFTS_KEY } from './keys.js';
+import { enqueue, listRecords, drainOutbox, QUEUED, ref } from './outbox.js';
+import { outboxKey } from './keys.js';
 import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
 
@@ -34,7 +34,6 @@ export async function parkOrderLocalFirst({
   notes = '',
   adjustment = { value: 0, reason: '' },
   items = [],
-  display = null,
   profileKey = null,
   createdAt = null,
 }) {
@@ -85,78 +84,24 @@ export async function parkOrderLocalFirst({
     createdAt: saleTime,
   });
 
-  // The payload is the request body and must stay exactly that. Everything a SCREEN
-  // needs to show or resume this draft while it is still local — the customer's name,
-  // each line's product name/SKU/unit — is server-derived and simply absent from it,
-  // so it rides alongside as `display` instead of being smuggled into the body.
-  await attachDisplay(record, display, customer);
-
   drainOutbox().catch(() => {});
 
   return { receipt_number, outboxId: record.id };
 }
 
-// The display half of a parked draft (see attachDisplay): the customer's name and the
-// per-line product names the payload has no room for. Written next to the record, never
-// inside `payload`.
-function displayFor(display, customer) {
-  const source = display || {};
-  return {
-    customer_name: source.customer_name || customer?.name || 'Customer',
-    customer_type: source.customer_type || customer?.customer_type || 'regular',
-    items: Array.isArray(source.items) ? source.items : [],
-  };
-}
-
-async function attachDisplay(record, display, customer) {
-  record.display = displayFor(display, customer);
-  await nativeStore.setJson(outboxKey(record.id), record);
-  return record;
-}
-
-// Merges a line's display fields onto the payload line it belongs to. Matched by
-// position first (park/update always write both halves together) and by product id as
-// a fallback, so a display blob written by an older build still lines up.
-function mergeItems(payloadItems, displayItems) {
-  return (payloadItems || []).map((line, idx) => {
-    const shown = displayItems[idx]?.product_id === line.product_id
-      ? displayItems[idx]
-      : displayItems.find((d) => Number(d.product_id) === Number(line.product_id));
-    return {
-      ...line,
-      id: line.product_id,
-      product_name: shown?.product_name || '',
-      sku: shown?.sku || '',
-      unit: shown?.unit || 'cs',
-      requires_bottle_return: Boolean(shown?.requires_bottle_return),
-      bottles_returned: 0,
-    };
-  });
-}
-
 function recordToDraft(record) {
   const p = record.payload || {};
-  const shown = displayFor(record.display, null);
   const items = (p.items || []).reduce((sum, i) => sum + Number(i.quantity || 0) * Number(i.unit_price || 0), 0);
   return {
     id: null,
-    _local: true,
     _outboxId: record.id,
     receipt_number: p.receipt_number || record.receipt_number || null,
-    // A draft queued behind a customer this device also created offline carries a $ref
-    // placeholder, not a number — the same `local-<outboxId>` string the rest of the
-    // app (posSave's localCustomerId, OrderCreateModal's isLocalCustomer) reads.
-    customer_id: typeof p.customer_id === 'number'
-      ? p.customer_id
-      : (p.customer_id?.$ref !== undefined ? `local-${p.customer_id.$ref}` : null),
-    customer_name: shown.customer_name,
-    customer_type: shown.customer_type,
+    customer_id: typeof p.customer_id === 'number' ? p.customer_id : null,
     order_type: p.order_type || 'delivery',
     notes: p.notes || null,
     adjustment: p.adjustment || 0,
     adjustment_reason: p.adjustment_reason || null,
-    items: mergeItems(p.items, shown.items),
-    personnel: [],
+    items: p.items || [],
     status: 'draft',
     created_at: record.created_at,
     total_amount: items,
@@ -185,9 +130,9 @@ export async function listLocalParkedOrders() {
 // counting) until the queued DELETE actually reaches the server, which a genuinely
 // offline device may not do for hours: the owner already sees a completed sale, not
 // a phantom draft waiting on a network call they cannot see.
-export function mergeParkedOrders(serverDrafts, localDrafts, deletionRefs = new Set()) {
-  const live = deletionRefs.size
-    ? serverDrafts.filter((d) => !deletionRefs.has(String(d.id)) && !deletionRefs.has(String(d.receipt_number)))
+export function mergeParkedOrders(serverDrafts, localDrafts, pendingDeletionRefs = new Set()) {
+  const live = pendingDeletionRefs.size
+    ? serverDrafts.filter((d) => !pendingDeletionRefs.has(String(d.id)) && !pendingDeletionRefs.has(String(d.receipt_number)))
     : serverDrafts;
   const serverNums = new Set(live.map((d) => d.receipt_number).filter(Boolean));
   const unsynced = localDrafts.filter((d) => !serverNums.has(d.receipt_number));
@@ -212,7 +157,7 @@ export async function isDraftUnsynced(receiptNumber) {
  * Updates a still-local draft in place (D3/D6). Does not touch receipt history —
  * a draft is not a receipt (D9) until it is actually finalized into a real order.
  */
-export async function updateLocalDraft({ receiptNumber, orderType, notes, items, adjustment, display = null, profileKey = null }) {
+export async function updateLocalDraft({ receiptNumber, orderType, notes, items, adjustment, profileKey = null }) {
   if (!receiptNumber) throw new Error('updateLocalDraft requires a receipt number');
   const records = await listRecords();
   const record = findQueuedDraftRecord(records, receiptNumber);
@@ -236,7 +181,6 @@ export async function updateLocalDraft({ receiptNumber, orderType, notes, items,
       is_price_overridden: false,
     })),
   };
-  if (display) record.display = displayFor(display, null);
   if (profileKey) record.profile_key = profileKey;
   await nativeStore.setJson(outboxKey(record.id), record);
 
@@ -255,64 +199,4 @@ export async function discardLocalDraft(receiptNumber) {
   for (const r of matching) {
     await nativeStore.remove(outboxKey(r.id));
   }
-}
-
-
-// ── The server's own drafts, held for the blind case ────────────────────────
-//
-// The Drafts tab and the purple parked-drafts banner used to be purely server-driven,
-// so an outage emptied them both: `GET /orders?status=draft` failed and the fallback
-// (this device's synced order history) can never contain a draft, because
-// `GET /orders/sync` deliberately excludes them — a draft is working state, not
-// history. Criteria 5.1/5.6 want drafts to LOAD offline, so the list the server last
-// gave us is cached whole, exactly like the catalogue: server-replaced reference data,
-// refreshed on every reachable load, with no staleness UI (D16).
-//
-// Held drafts are read-only offline, which is not a limitation invented here: a draft
-// on the server has synced, and ADR 0015 §5 / criterion 5.8 already restrict offline
-// content editing to orders this device created and has not yet handed over. The
-// drafts this device parked itself (listLocalParkedOrders) ARE editable offline, and
-// they are merged in below.
-
-export async function cacheServerDrafts(drafts) {
-  const list = Array.isArray(drafts) ? drafts : [];
-  await nativeStore.setJson(DRAFTS_KEY, list);
-  return list;
-}
-
-export async function getCachedServerDrafts() {
-  return (await nativeStore.getJson(DRAFTS_KEY)) || [];
-}
-
-/**
- * The parked-drafts list, one code path online and offline: the server's drafts when
- * it answers (cached on the way past), the last cached copy when it does not, unioned
- * either way with this device's still-queued local parks and minus anything already
- * queued for deletion.
- *
- * Never throws — a first-run device with no cache and no line simply has no drafts,
- * the same contract loadCatalogue() gives order taking.
- *
- * @returns {Promise<{drafts: object[], fromCache: boolean}>}
- */
-export async function loadParkedOrders() {
-  let serverDrafts;
-  let fromCache = false;
-  try {
-    const rows = await api.get('/orders?status=draft');
-    serverDrafts = await cacheServerDrafts(Array.isArray(rows) ? rows : []);
-  } catch {
-    serverDrafts = await getCachedServerDrafts();
-    fromCache = true;
-  }
-
-  let local = [];
-  let deletionRefs = new Set();
-  try {
-    [local, deletionRefs] = await Promise.all([listLocalParkedOrders(), pendingDeletionRefs()]);
-  } catch {
-    // A local read failure must not be the reason the server's own drafts vanish.
-  }
-
-  return { drafts: mergeParkedOrders(serverDrafts, local, deletionRefs), fromCache };
 }

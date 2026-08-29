@@ -36,7 +36,7 @@ afterEach(() => {
 
 async function registerStation(number = 1) {
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: number, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }
+    ? { station_number: number, registered_at: '2026-08-26T00:00:00.000Z' }
     : {});
   return ensureStationRegistered();
 }
@@ -474,7 +474,7 @@ function stubEmptyOrdersApi() {
 }
 
 test('Round 4 Fix 7: a locally-created unsynced order stays reachable from OrdersPage — merged in with a "Waiting to sync" badge and navigated to by receipt number, never a numeric id', async () => {
-  await registerStation(1);
+  await registerStation(23);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; }; // stays queued, never drains
   stubEmptyOrdersApi();
 
@@ -511,7 +511,7 @@ test('Round 4 Fix 7: a locally-created unsynced order stays reachable from Order
 });
 
 test('Round 4 Fix 7: a locally-created order disappears from OrdersPage the moment its outbox record actually drains', async () => {
-  await registerStation(1);
+  await registerStation(23);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
   stubEmptyOrdersApi();
 

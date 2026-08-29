@@ -34,9 +34,9 @@ beforeEach(async () => {
   originalApiRequest = api.request;
 
   api.get = async (path) => {
-    if (path.startsWith('/customers?') || path === '/customers') return customers;
-    if (path.startsWith('/products')) return products;
-    if (path.startsWith('/personnel')) return [];
+    if (path === '/customers') return customers;
+    if (path === '/products') return products;
+    if (path === '/personnel') return [];
     if (path.startsWith('/orders?status=draft')) return [];
     if (path.includes('/prices')) return [];
     return [];
@@ -54,7 +54,7 @@ beforeEach(async () => {
   __resetIssuance();
   await __clearOutbox();
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: 1, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }
+    ? { station_number: 1, registered_at: '2026-08-26T00:00:00.000Z' }
     : { id: 100 });
   await ensureStationRegistered();
 });

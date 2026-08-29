@@ -3,11 +3,8 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
-import OfflineBanner from '../../components/ui/OfflineBanner';
 import PersonnelFormModal from './PersonnelFormModal';
 import PersonnelDetailPanel from './PersonnelDetailPanel';
-import { getCachedPersonnel, getCachedEntity } from '../../offline/catalogue.js';
-import { checkIsOnline } from '../../offline/status.js';
 
 export default function PersonnelPage() {
   const { addToast } = useToast();
@@ -18,33 +15,19 @@ export default function PersonnelPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
-  const [fromCache, setFromCache]       = useState(false);
 
-  // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
-  // personnel (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
-  // from; this page just never asked for it, so a blind tablet showed a blank table.
   const load = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
     if (showInactive) params.set('include_inactive', 'true');
 
     api.get(`/personnel?${params}`)
-      .then((rows) => { setPersonnel(rows); setFromCache(false); })
-      .catch(async () => {
-        const cached = showInactive ? await getCachedEntity('personnel') : await getCachedPersonnel();
-        if (cached.length === 0) {
-          addToast('Offline and this device has no personnel roster yet — connect once to set it up.', 'error');
-          return;
-        }
-        setPersonnel(cached);
-        setFromCache(true);
-      })
+      .then(setPersonnel)
+      .catch(() => addToast('Failed to load personnel', 'error'))
       .finally(() => setLoading(false));
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
-
-  const mutationsBlocked = fromCache || !checkIsOnline();
 
   const filtered = personnel.filter((p) =>
     p.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -56,18 +39,8 @@ export default function PersonnelPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Personnel</h1>
-        {/* ADR 0015 §9 — personnel is read-only offline: adding, editing, deactivating
-            and photo upload all change a roster every device shares. */}
-        <Button
-          onClick={() => setCreating(true)}
-          disabled={mutationsBlocked}
-          title={mutationsBlocked ? 'Needs a connection' : undefined}
-        >
-          + Add Personnel
-        </Button>
+        <Button onClick={() => setCreating(true)}>+ Add Personnel</Button>
       </div>
-
-      {fromCache && <OfflineBanner />}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -155,7 +128,6 @@ export default function PersonnelPage() {
           personnelId={selectedId}
           onClose={() => setSelectedId(null)}
           onSaved={load}
-          cachedPerson={personnel.find((p) => String(p.id) === String(selectedId)) || null}
         />
       )}
     </div>

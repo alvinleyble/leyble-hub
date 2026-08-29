@@ -98,7 +98,7 @@ async function enqueueCustomer(profileKey, name) {
 
 async function registerStation(number = 1) {
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: number, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }
+    ? { station_number: number, registered_at: '2026-08-26T00:00:00.000Z' }
     : {});
   return ensureStationRegistered();
 }
@@ -106,7 +106,7 @@ async function registerStation(number = 1) {
 // ── G31 — personnel plumbing ─────────────────────────────────────────────────
 
 test('G31: saveOrderLocalFirst carries personnel onto the local receipt (display shape) and the outbox payload (server shape)', async () => {
-  await registerStation(1);
+  await registerStation(4);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   const order = await saveOrderLocalFirst({
@@ -235,7 +235,7 @@ test('Round 2 Fix 1: handleDrainCompletionWith (the function the real drain path
 });
 
 test('Round 2 Fix 1 (real root cause): saveOrderLocalFirst\'s own immediate post-save drain dispatches leyble:drain-complete once it lands the order on the server, not only the 30s periodic loop in offline/index.js', async () => {
-  await registerStation(2);
+  await registerStation(65);
   api.request = async () => ({ id: 4001 }); // drainOutbox's actual send call — a successful order POST
 
   __resetDrainNotifierState();
@@ -390,7 +390,7 @@ test('Round 4 Fix 6 safety net: a record depending on an outbox id that is nowhe
 test('G30: startOfflineCore registers a station and starts the drain loop without VITE_V25_OFFLINE_CORE set', async () => {
   let registerCalled = false;
   api.post = async (path) => {
-    if (path === '/stations/register') { registerCalled = true; return { slot_number: 3, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }; }
+    if (path === '/stations/register') { registerCalled = true; return { station_number: 7, registered_at: '2026-08-26T00:00:00.000Z' }; }
     return {};
   };
 
@@ -457,9 +457,9 @@ const products = [
 function stubOrderModalApis({ customers = [] } = {}) {
   const priceFetches = [];
   api.get = async (path) => {
-    if (path.startsWith('/customers?') || path === '/customers') return customers;
-    if (path.startsWith('/products')) return products;
-    if (path.startsWith('/personnel')) return [];
+    if (path === '/customers') return customers;
+    if (path === '/products') return products;
+    if (path === '/personnel') return [];
     if (path.startsWith('/orders?status=draft')) return [];
     if (path.includes('/prices')) { priceFetches.push(path); return []; }
     return [];
@@ -568,7 +568,7 @@ test('G28: editing an unsynced order writes through updateLocalOrder and never c
 // on the local receipt) and OrderCreateModal.jsx (synthesises a picker entry from
 // editOrder when GET /customers can't have it yet).
 test('G28/G29 REGRESSION: editing an order placed for a still-local customer keeps that customer selected, not blank', async () => {
-  await registerStation(3);
+  await registerStation(9);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   const profileKey = await api.getActiveProfile();
@@ -612,7 +612,7 @@ test('G28/G29 REGRESSION: editing an order placed for a still-local customer kee
 });
 
 test('G28: if the order already drained while the edit modal was open, submit falls back to the ordinary online PATCH', async () => {
-  await registerStation(2);
+  await registerStation(6);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   const localOrder = await saveOrderLocalFirst({
@@ -692,15 +692,8 @@ function makeLocalOrder(overrides = {}) {
   };
 }
 
-test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and (ADR 0015 §5) now KEEPS Dispatch enabled while unsynced', async () => {
+test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and G28 gates Dispatch while keeping Edit Order enabled', async () => {
   await putReceipt(makeLocalOrder());
-  // Slice 3.2 — "unsynced" is now the outbox's answer, not "we read this locally", so
-  // the order has to actually be queued for the banner and the offline transitions to
-  // apply. That distinction is the point: the device holds synced orders locally too.
-  await enqueue({
-    entityType: 'order', endpoint: '/orders', method: 'POST',
-    payload: {}, profileKey: 'josie', receiptNumber: '1-00042',
-  });
   const err404 = new Error('Not found'); err404.status = 404;
   api.get = async () => { throw err404; };
 
@@ -714,13 +707,7 @@ test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "
 
   const dispatchBtn = r.all('button').find((b) => b.textContent.includes('Start Dispatch'));
   assert.ok(dispatchBtn, 'Start Dispatch should render for a pending delivery order');
-  assert.equal(dispatchBtn.disabled, false,
-    'ADR 0015 §5 reverses G28 here: an order only this tablet knows about can be dispatched offline');
-
-  const cancelBtn = r.all('button').find((b) => b.textContent.trim() === 'Cancel Order');
-  assert.ok(cancelBtn);
-  assert.equal(cancelBtn.disabled, true,
-    'Cancel reverses shared state and stays online-only even while unsynced');
+  assert.equal(dispatchBtn.disabled, true, 'G28: Dispatch must be disabled while unsynced');
 
   const editBtn = r.all('button').find((b) => b.textContent.trim() === 'Edit Order');
   assert.ok(editBtn);
@@ -729,31 +716,8 @@ test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "
   r.unmount();
 });
 
-test('Slice 3.2: a SYNCED order read from local history offline shows the offline-copy banner, not "Waiting to sync", and gates every transition', async () => {
-  // The order is in local history (the eager sync put it there) but nothing about it
-  // is queued — it exists on the server and other tablets can see it. Flagging it
-  // "unsynced" would hand the operator ADR 0015 §5's offline transitions on an order
-  // another tablet could be transitioning at the same moment.
-  await putReceipt(makeLocalOrder());
-  api.get = async () => { throw new Error('Failed to fetch'); }; // no status: an outage
-
-  const r = renderAtRoute('/orders/1-00042', '/orders/:id',
-    React.createElement(ToastProvider, null, React.createElement(OrderDetailPage))
-  );
-  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
-
-  assert.doesNotMatch(r.text(), /Waiting to sync/);
-  assert.match(r.text(), /showing this device's saved copy/);
-  assert.match(r.text(), /Aling Nena/, 'the order itself still opens in full, offline');
-
-  const dispatchBtn = r.all('button').find((b) => b.textContent.includes('Start Dispatch'));
-  assert.equal(dispatchBtn.disabled, true, 'a synced order cannot be transitioned without a connection');
-
-  r.unmount();
-});
-
 test('Round 3 Fix 4: the adjustment can be added while an order is unsynced — writes through updateLocalOrder, never api.patch, and the queued outbox payload + local receipt both reflect it immediately', async () => {
-  await registerStation(3);
+  await registerStation(9);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; }; // stays queued, never drains
 
   const localOrder = await saveOrderLocalFirst({
@@ -817,10 +781,6 @@ test('G27: a silent background re-read on leyble:drain-complete swaps to the ser
     return { ...makeLocalOrder(), id: 777, customer_name: 'Aling Nena (synced)' };
   };
   await putReceipt(makeLocalOrder());
-  await enqueue({
-    entityType: 'order', endpoint: '/orders', method: 'POST',
-    payload: {}, profileKey: 'josie', receiptNumber: '1-00042',
-  });
 
   const r = renderAtRoute('/orders/1-00042', '/orders/:id',
     React.createElement(ToastProvider, null, React.createElement(OrderDetailPage))

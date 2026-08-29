@@ -4,7 +4,6 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import { CUSTOMER_TYPE_OPTIONS } from '../../utils/customerTypes';
-import { enqueue, drainOutbox, listRecords } from '../../offline/index.js';
 
 const FIELD = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -29,42 +28,14 @@ export default function CustomerFormModal({ onClose, onSaved }) {
 
     setSaving(true);
     try {
-      // Slice 3.2 / ADR 0015 §7 — the directory's Add Customer goes through the outbox.
-      //
-      // It used to be a bare api.post that simply failed offline ("Failed to fetch",
-      // nothing queued, the typing lost), which is a different bug from the order
-      // modal's inline quick-create — that one was wired to the outbox in G29, this
-      // form never was. Creating a customer is additive and conflict-free (ADR 0005
-      // §1), so it takes the same single code path online and offline: queue it, then
-      // drain immediately. On a connected tablet the drain lands it within about a
-      // second and the operator sees the ordinary "added" toast; blind, it sits in the
-      // outbox, shows on the directory as "Waiting to sync" (G29's merge, which reads
-      // this same record), and is pickable in a new order straight away.
-      const profileKey = await api.getActiveProfile();
-      const record = await enqueue({
-        entityType: 'customer',
-        endpoint:   '/customers',
-        method:     'POST',
-        payload: {
-          name:          form.name.trim(),
-          customer_type: form.customer_type,
-          phone:         form.phone.trim() || null,
-          address:       form.address.trim() || null,
-          notes:         form.notes.trim() || null,
-        },
-        profileKey,
+      await api.post('/customers', {
+        name:          form.name.trim(),
+        customer_type: form.customer_type,
+        phone:         form.phone.trim() || null,
+        address:       form.address.trim() || null,
+        notes:         form.notes.trim() || null,
       });
-
-      await drainOutbox().catch(() => {});
-      const stillQueued = (await listRecords().catch(() => []))
-        .some((r) => r.id === record.id);
-
-      addToast(
-        stillQueued
-          ? `${form.name.trim()} saved on this device \u00b7 will sync when connected.`
-          : `${form.name.trim()} added.`,
-        'success'
-      );
+      addToast(`${form.name} added.`, 'success');
       onSaved();
     } catch (err) {
       addToast(err.message || 'Failed to create customer.', 'error');

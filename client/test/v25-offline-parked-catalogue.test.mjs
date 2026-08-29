@@ -33,7 +33,7 @@ import {
   findPossibleDoubleGroups, getPossibleDoubleOrderIds, countPossibleDoubleOrders,
 } from '../src/utils/duplicateOrders.js';
 import { notifyDrainCompleteWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
-import { getCachedProducts, getCachedCustomers, getCachedEntity, loadCatalogue } from '../src/offline/catalogue.js';
+import { getCachedProducts, getCachedCustomers, loadCatalogue } from '../src/offline/catalogue.js';
 import { V25_OFFLINE_CORE } from '../src/config/features.js';
 
 let savedApi;
@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 async function registerStation(number = 1) {
-  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
+  api.post = async () => ({ station_number: number, registered_at: '2026-08-23T00:00:00.000Z' });
   return ensureStationRegistered();
 }
 
@@ -386,28 +386,15 @@ test('post-drain toast reuses D4\'s exact shape, appending an orders-may-be-doub
 
 // ── Deliverable 3: the quiet catalogue (D16) ────────────────────────────────────
 
-// Slice 3.2 widened this: personnel joins the quiet refresh (Driver/Helper assignment
-// has to work blind too), and the held copy keeps INACTIVE rows so a later delta can
-// learn about a deactivation — the readers filter to active themselves, so what the
-// caller sees is unchanged.
-const catalogueStub = ({ products = [], customers = [], personnel = [] }) => async (path) => {
-  if (path.startsWith('/products'))  return products;
-  if (path.startsWith('/customers')) return customers;
-  if (path.startsWith('/personnel')) return personnel;
-  return [];
-};
-
 test('loadCatalogue refreshes the held copy when the server is reachable', async () => {
   const products = [{ id: 1, name: 'Coke', is_active: true }];
   const customers = [{ id: 1, name: 'Aling Nena', is_active: true }];
-  const personnel = [{ id: 1, full_name: 'Luis', is_active: true }];
-  api.get = catalogueStub({ products, customers, personnel });
+  api.get = async (path) => (path === '/products' ? products : customers);
 
   const result = await loadCatalogue();
   assert.equal(result.fromCache, false);
   assert.deepEqual(result.products, products);
   assert.deepEqual(result.customers, customers);
-  assert.deepEqual(result.personnel, personnel);
 
   assert.deepEqual(await getCachedProducts(), products);
   assert.deepEqual(await getCachedCustomers(), customers);
@@ -416,8 +403,7 @@ test('loadCatalogue refreshes the held copy when the server is reachable', async
 test('loadCatalogue falls back to the held copy when the server is unreachable — no error, no staleness signal returned', async () => {
   const products = [{ id: 9, name: 'Sprite', is_active: true }];
   const customers = [{ id: 9, name: 'Mang Juan', is_active: true }];
-  const personnel = [{ id: 9, full_name: 'Josie', is_active: true }];
-  api.get = catalogueStub({ products, customers, personnel });
+  api.get = async (path) => (path === '/products' ? products : customers);
   await loadCatalogue(); // primes the cache
 
   api.get = async () => { throw new Error('Failed to fetch'); };
@@ -425,20 +411,6 @@ test('loadCatalogue falls back to the held copy when the server is unreachable �
   assert.equal(result.fromCache, true);
   assert.deepEqual(result.products, products);
   assert.deepEqual(result.customers, customers);
-  assert.deepEqual(result.personnel, personnel);
-});
-
-test('loadCatalogue hides inactive rows from callers while keeping them in the held copy', async () => {
-  const products = [
-    { id: 1, name: 'Coke', is_active: true },
-    { id: 2, name: 'Discontinued', is_active: false },
-  ];
-  api.get = catalogueStub({ products });
-  const result = await loadCatalogue();
-
-  assert.deepEqual(result.products.map((p) => p.id), [1], 'pickers only ever see active rows');
-  assert.deepEqual((await getCachedEntity('products')).map((p) => p.id), [1, 2],
-    'but the held copy keeps the inactive one, so a delta can still learn it came back');
 });
 
 test('loadCatalogue on a brand-new device with an empty cache and no connectivity returns empty, never throws', async () => {
@@ -447,7 +419,6 @@ test('loadCatalogue on a brand-new device with an empty cache and no connectivit
   assert.equal(result.fromCache, true);
   assert.deepEqual(result.products, []);
   assert.deepEqual(result.customers, []);
-  assert.deepEqual(result.personnel, []);
 });
 
 // ── D18: the release switch ─────────────────────────────────────────────────────

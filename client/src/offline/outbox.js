@@ -198,15 +198,6 @@ function isNetworkFailure(err) {
   return !err?.status;
 }
 
-// Comfortably longer than the drain loop's own 30s period, so the loop's screen is
-// always fresh enough for the drain that immediately follows it.
-const SCREEN_FRESHNESS_MS = 90_000;
-
-function isFreshlyScreened(guard) {
-  const at = guard?.screened_at;
-  return typeof at === 'number' && (Date.now() - at) < SCREEN_FRESHNESS_MS;
-}
-
 let draining = false;
 
 // Round 3 Fix 5 — a caller whose drainOutbox() lands while another pass is already
@@ -261,15 +252,6 @@ async function runDrainPass() {
       // A dependency that has not synced blocks its dependants but not unrelated
       // receipts behind them.
       if ((record.depends_on || []).some((id) => blocked.has(id))) continue;
-      // ADR 0015 §6 — a record carrying a `guard` holds a stock count or a price that
-      // another tablet may have corrected in the meantime, and §6 forbids resolving
-      // that silently. `screenProductMutations()` (productMutations.js) is what asks
-      // the server and stamps `screened_at`; this skip is the fail-safe that makes
-      // "never sent unscreened" true of EVERY drain path, not just the two that
-      // remember to screen first. The freshness window matters because a stamp from an
-      // hour ago says nothing about now: the periodic loop screens immediately before
-      // it drains, so anything genuinely ready is stamped seconds ago.
-      if (record.guard && !isFreshlyScreened(record.guard)) continue;
 
       let body;
       try {
