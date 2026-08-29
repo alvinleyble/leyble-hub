@@ -30,7 +30,13 @@ export { nativeStore } from './nativeStore.js';
 
 const DRAIN_INTERVAL_MS = 30_000;
 
+// ADR 0016 — how often a device that already holds a slot re-asks the server whether it
+// still does. Only ever costs one small request; a slot reassignment reaches a tablet
+// that is left running within this window rather than at its next restart.
+const RECONFIRM_INTERVAL_MS = 10 * 60_000;
+
 let timer = null;
+let lastConfirmedAt = 0;
 
 /**
  * Called once the user is signed in and a profile is chosen.
@@ -57,6 +63,7 @@ export async function startOfflineCore({ label } = {}) {
 
   try {
     await ensureStationRegistered({ label: effectiveLabel });
+    lastConfirmedAt = Date.now();
   } catch {
     // Offline, or the server refused. Retried on the next start and by the drain loop.
   }
@@ -89,9 +96,18 @@ export async function startOfflineCore({ label } = {}) {
   if (!timer && typeof setInterval === 'function') {
     timer = setInterval(() => {
       // Registration is retried here too: a device that installed during an outage
-      // claims its station the moment the line returns.
+      // gets its slot the moment the line returns. A device that already holds one
+      // re-confirms on the slow cadence below — ADR 0016 makes the server authoritative
+      // on who holds which slot, so a tablet whose slot was moved to its replacement has
+      // to find out without waiting for a restart. Confirming on every 30s tick would be
+      // a pointless request a minute; RECONFIRM_INTERVAL_MS is the compromise.
       isRegistered()
-        .then((ok) => (ok ? null : ensureStationRegistered({ label: effectiveLabel })))
+        .then((ok) => {
+          if (!ok) return ensureStationRegistered({ label: effectiveLabel });
+          if (Date.now() - lastConfirmedAt < RECONFIRM_INTERVAL_MS) return null;
+          return ensureStationRegistered({ label: effectiveLabel })
+            .then((station) => { lastConfirmedAt = Date.now(); return station; });
+        })
         .catch(() => {})
         .then(runDrainPass)
         .catch(() => {});
@@ -119,4 +135,5 @@ export async function startOfflineCore({ label } = {}) {
 
 export function stopOfflineCore() {
   if (timer) { clearInterval(timer); timer = null; }
+  lastConfirmedAt = 0;
 }

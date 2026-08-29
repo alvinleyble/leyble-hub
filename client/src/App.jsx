@@ -17,6 +17,7 @@ import OrderDetailPage from './pages/orders/OrderDetailPage';
 import IncomingPage from './pages/incoming/IncomingPage';
 import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
+import StationsPage from './pages/stations/StationsPage';
 import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 
 // Layout route: guards all children behind auth check.
@@ -102,6 +103,7 @@ function AppRoutes() {
           <Route path="/personnel/*"  element={<PersonnelPage />} />
           <Route path="/tickets"      element={<TicketsPage />} />
           <Route path="/audit"        element={<AuditPage />} />
+          <Route path="/devices"      element={<StationsPage />} />
           <Route path="*"             element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Route>

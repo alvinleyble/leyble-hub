@@ -98,7 +98,7 @@ async function enqueueCustomer(profileKey, name) {
 
 async function registerStation(number = 1) {
   api.post = async (path) => (path === '/stations/register'
-    ? { station_number: number, registered_at: '2026-08-26T00:00:00.000Z' }
+    ? { slot_number: number, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }
     : {});
   return ensureStationRegistered();
 }
@@ -106,7 +106,7 @@ async function registerStation(number = 1) {
 // ── G31 — personnel plumbing ─────────────────────────────────────────────────
 
 test('G31: saveOrderLocalFirst carries personnel onto the local receipt (display shape) and the outbox payload (server shape)', async () => {
-  await registerStation(4);
+  await registerStation(1);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   const order = await saveOrderLocalFirst({
@@ -235,7 +235,7 @@ test('Round 2 Fix 1: handleDrainCompletionWith (the function the real drain path
 });
 
 test('Round 2 Fix 1 (real root cause): saveOrderLocalFirst\'s own immediate post-save drain dispatches leyble:drain-complete once it lands the order on the server, not only the 30s periodic loop in offline/index.js', async () => {
-  await registerStation(65);
+  await registerStation(2);
   api.request = async () => ({ id: 4001 }); // drainOutbox's actual send call — a successful order POST
 
   __resetDrainNotifierState();
@@ -390,7 +390,7 @@ test('Round 4 Fix 6 safety net: a record depending on an outbox id that is nowhe
 test('G30: startOfflineCore registers a station and starts the drain loop without VITE_V25_OFFLINE_CORE set', async () => {
   let registerCalled = false;
   api.post = async (path) => {
-    if (path === '/stations/register') { registerCalled = true; return { station_number: 7, registered_at: '2026-08-26T00:00:00.000Z' }; }
+    if (path === '/stations/register') { registerCalled = true; return { slot_number: 3, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }; }
     return {};
   };
 
@@ -568,7 +568,7 @@ test('G28: editing an unsynced order writes through updateLocalOrder and never c
 // on the local receipt) and OrderCreateModal.jsx (synthesises a picker entry from
 // editOrder when GET /customers can't have it yet).
 test('G28/G29 REGRESSION: editing an order placed for a still-local customer keeps that customer selected, not blank', async () => {
-  await registerStation(9);
+  await registerStation(3);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   const profileKey = await api.getActiveProfile();
@@ -612,7 +612,7 @@ test('G28/G29 REGRESSION: editing an order placed for a still-local customer kee
 });
 
 test('G28: if the order already drained while the edit modal was open, submit falls back to the ordinary online PATCH', async () => {
-  await registerStation(6);
+  await registerStation(2);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
 
   const localOrder = await saveOrderLocalFirst({
@@ -753,7 +753,7 @@ test('Slice 3.2: a SYNCED order read from local history offline shows the offlin
 });
 
 test('Round 3 Fix 4: the adjustment can be added while an order is unsynced — writes through updateLocalOrder, never api.patch, and the queued outbox payload + local receipt both reflect it immediately', async () => {
-  await registerStation(9);
+  await registerStation(3);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; }; // stays queued, never drains
 
   const localOrder = await saveOrderLocalFirst({

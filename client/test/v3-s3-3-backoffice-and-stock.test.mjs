@@ -99,7 +99,7 @@ async function seedCatalogue(products = [PRODUCT]) {
 }
 
 async function registerStation(number = 3) {
-  api.post = async () => ({ station_number: number, registered_at: '2026-08-29T00:00:00.000Z' });
+  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-29T00:00:00.000Z' });
   await ensureStationRegistered();
 }
 

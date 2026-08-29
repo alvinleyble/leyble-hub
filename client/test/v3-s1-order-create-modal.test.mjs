@@ -54,7 +54,7 @@ beforeEach(async () => {
   __resetIssuance();
   await __clearOutbox();
   api.post = async (path) => (path === '/stations/register'
-    ? { station_number: 1, registered_at: '2026-08-26T00:00:00.000Z' }
+    ? { slot_number: 1, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }
     : { id: 100 });
   await ensureStationRegistered();
 });

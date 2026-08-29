@@ -36,6 +36,7 @@ const ENTITY_LABELS = {
   product:   'Product',
   personnel: 'Personnel',
   ticket:    'Ticket',
+  station:   'Tablet',
 };
 
 const ENTITY_TYPES = Object.keys(ENTITY_LABELS);
@@ -48,6 +49,7 @@ const ACTIVITY_ACTION_LABELS = {
   closed:         'Closed',
   resolved:       'Resolved',
   price_set:      'Price Set',
+  slot_assigned:  'Slot Assigned',
 };
 
 const ACTIVITY_ACTION_COLORS = {

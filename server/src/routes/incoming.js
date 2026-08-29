@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { applyStockDelta, applyDeltaMap } = require('../lib/inventory');
 const { parseDeliveryRef } = require('../lib/receiptNumbers');
+const { assertIssuableStation } = require('../lib/stationSlots');
 const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
 
 // Matches the partial unique index created by migration 036.
@@ -114,6 +115,9 @@ router.post('/', async (req, res, next) => {
   if (delivery_ref !== undefined && delivery_ref !== null && delivery_ref !== '') {
     try {
       ref = parseDeliveryRef(delivery_ref);
+      // ADR 0016 — same three-slot cap the receipt numbers carry; a delivery reference
+      // is issued off the same station number.
+      assertIssuableStation(ref.station, { field: 'delivery_ref' });
     } catch (err) {
       return next(err);
     }

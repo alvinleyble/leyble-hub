@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber } = require('../lib/receiptNumbers');
+const { assertIssuableStation } = require('../lib/stationSlots');
 const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
 
 // Name of the partial unique index from migration 033. Used to tell a genuine
@@ -520,6 +521,11 @@ router.post('/', async (req, res, next) => {
   if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
     try {
       receipt = parseReceiptNumber(receipt_number);
+      // ADR 0016 — the station component must be one of this store's three slots.
+      // The allocator already guarantees it for any device on a current build; this is
+      // the backstop for a tablet still carrying a station number it claimed under the
+      // old unbounded scheme, which would otherwise store (and print) e.g. '8-00001'.
+      assertIssuableStation(receipt.station);
     } catch (err) {
       return next(err);
     }
