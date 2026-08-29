@@ -106,12 +106,15 @@ quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposi
 i.e. deposit is charged on the bottles that were *not* returned. With defaults
 (`units_per_case=1, bottles_returned=0`) this reduces to the old `quantity*(price+deposit)`.
 
-### `stations` (033)
-One row per device that has completed the one-time install registration ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
+### `stations` (033, altered by 037)
+One row per device that has registered ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md),
+[ADR 0016](../adr/0016-three-fixed-station-slots.md)).
 | Column | Notes |
 |---|---|
-| `device_key` | UNIQUE. Generated on the device; the idempotency key for registration, so a retried register call returns the same station instead of claiming a second number |
-| `station_number` | UNIQUE, defaulted from `station_number_seq`. A sequence rather than `MAX+1`: concurrency-safe without locking, and it never hands the same value out twice. Numbers only creep upward — a wiped device registers afresh and gets a new one |
+| `device_key` | UNIQUE. Generated on the device; the idempotency key for registration, so a retried register call returns the same station instead of claiming a second one |
+| `slot_number` | (037) 1, 2 or 3 — the receipt number's station component. CHECK-bounded, partial UNIQUE over non-NULL, so exactly one device holds each slot and a fourth device holds none. Slot 1 is Alvin's tablet, 2 Josie's, 3 Luis's; the owner names are a constant in `server/src/lib/stationSlots.js` |
+| `slot_assigned_at`, `slot_assigned_by` | (037) when the slot moved onto this device, and who moved it. Every assignment also writes an `activity_logs` row (`entity_type = 'station'`, `action = 'slot_assigned'`) |
+| `station_number` | UNIQUE, defaulted from `station_number_seq`. Since 037 this is only the registry's internal id for a device — it is **not** the receipt station, which is `slot_number` |
 | `label` | optional, e.g. `'Honor Pad X8B'` |
 | `registered_at`, `last_seen_at` | |
 

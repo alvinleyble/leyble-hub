@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/ui/Badge';
 import Spinner from '../components/ui/Spinner';
+import OfflineBanner from '../components/ui/OfflineBanner';
 import { orderRef } from '../utils/orderRef';
+import { loadWithCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
 
 const PHP = (amount) =>
   `₱${Number(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -21,12 +23,23 @@ export default function DashboardPage() {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+  const [fromCache, setFromCache] = useState(false);
+  const [cachedAt, setCachedAt]   = useState(null);
 
+  // ADR 0015 §9 — the Dashboard reads from a quietly-kept local copy when the line is
+  // down. It used to render the raw fetch failure ("Failed to fetch") as the whole
+  // screen, which is both alarming and useless: the owner opening it during a blackout
+  // wants last night's figures and a way through to the counter, not an error string.
   const load = useCallback(() => {
     setLoading(true);
-    api.get('/dashboard')
-      .then(setData)
-      .catch((err) => setError(err.message || 'Failed to load dashboard'))
+    setError('');
+    loadWithCache(DASHBOARD_CACHE, () => api.get('/dashboard'))
+      .then(({ data: payload, fromCache: cached, cachedAt: at }) => {
+        setData(payload);
+        setFromCache(cached);
+        setCachedAt(at);
+      })
+      .catch(() => setError('offline-no-cache'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -40,22 +53,55 @@ export default function DashboardPage() {
     );
   }
 
-  if (error) {
+  // Nothing live and nothing held: a clean placeholder pointing at the one screen that
+  // works with no connection at all, never the raw failure text.
+  if (error || !data) {
     return (
-      <div className="p-8">
-        <p className="text-red-700 text-base font-medium">{error}</p>
-        <button onClick={load} className="mt-3 text-blue-700 underline text-base">
-          Retry
+      <div className="p-6 max-w-3xl mx-auto">
+        <h1 className="text-2xl font-bold text-slate-900 mb-6">Dashboard</h1>
+        <OfflineBanner message="No connection, and this device has no dashboard figures saved yet.">
+          <Link
+            to="/orders"
+            className="inline-flex items-center justify-center min-h-[48px] px-5 rounded-lg
+                       bg-amber-600 text-white text-base font-semibold hover:bg-amber-700
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+          >
+            Go to Outgoing Orders
+          </Link>
+        </OfflineBanner>
+        <p className="text-base text-slate-600">
+          Taking orders works with no internet. Figures here fill in the next time this
+          tablet reaches the server.
+        </p>
+        <button onClick={load} className="mt-4 text-blue-700 underline text-base min-h-[48px]">
+          Try again
         </button>
       </div>
     );
   }
 
-  const { summary, orders, low_stock } = data;
+  // Defensive: the cached copy is our own payload, but this screen exists to stop a
+  // blackout ever producing a white screen, so a partial one degrades rather than throws.
+  const summary = data.summary ?? {};
+  const orders = data.orders ?? [];
+  const low_stock = data.low_stock ?? [];
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold text-slate-900 mb-6">Dashboard</h1>
+
+      {fromCache && (
+        <OfflineBanner cachedAt={cachedAt}>
+          <Link
+            to="/orders"
+            className="inline-flex items-center justify-center min-h-[48px] px-5 rounded-lg
+                       bg-amber-600 text-white text-base font-semibold hover:bg-amber-700
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+          >
+            Go to Outgoing Orders
+          </Link>
+        </OfflineBanner>
+      )}
 
       {/* ── Summary cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">

@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber } = require('../lib/receiptNumbers');
+const { assertIssuableStation } = require('../lib/stationSlots');
 const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
 
 // Name of the partial unique index from migration 033. Used to tell a genuine
@@ -363,6 +364,135 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// GET /api/v1/orders/sync — full order snapshots for a tablet's local history.
+//
+// ADR 0015 §4 / Slice 3.2. This is NOT the list endpoint above with extra fields: the
+// list is what a screen paginates through, this is what a device mirrors. Two things
+// make it its own route rather than a flag on `GET /`:
+//
+//   Complete snapshots. Every row carries its line items (with deposit fees and
+//   returned-bottle counts) and its assigned personnel, because a summary row is
+//   precisely what used to crash the offline order detail page. Three batched queries
+//   per page, never one per order.
+//
+//   The SERVER mints the cursors. A client cannot build one from the `updated_at` it
+//   receives: JSON timestamps are millisecond-precision, Postgres stores microseconds,
+//   and a cursor rebuilt from the truncated value sits fractionally BEFORE the row it
+//   was meant to mark — so that row comes back on every future delta forever, and a
+//   page full of such rows never advances at all. `first_cursor`/`next_cursor` below
+//   are rendered with full microsecond precision and are the only cursors anyone
+//   should ever send back.
+//
+//   Keyset pagination on (updated_at, id), in both directions. `direction=back` walks
+//   newest → oldest and is how a brand-new tablet backfills history it has never seen,
+//   resumably: a stream cut off halfway resumes from its last cursor instead of
+//   starting over. `direction=forward` walks oldest → newest from the newest row the
+//   device already holds, and is the delta every later login and reconnect asks for —
+//   including orders created on OTHER tablets, which is the whole reason a device
+//   cannot just remember its own writes.
+//
+// Drafts are excluded, matching the list endpoint's default: a parked draft is device-
+// local working state (client/src/offline/parkedOrders.js), not history.
+//
+// MUST stay above `GET /:id`, or Express reads "sync" as an order id.
+router.get('/sync', async (req, res, next) => {
+  try {
+    const { cursor, direction = 'back' } = req.query;
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const forward = String(direction) === 'forward';
+
+    const conditions = [`o.status <> 'draft'`];
+    const params = [];
+    let idx = 1;
+
+    if (cursor) {
+      const sep = String(cursor).lastIndexOf('|');
+      const cursorAt = sep === -1 ? String(cursor) : String(cursor).slice(0, sep);
+      const cursorId = sep === -1 ? null : Number(String(cursor).slice(sep + 1));
+      if (!cursorAt || !Number.isFinite(cursorId)) {
+        return res.status(400).json({ error: 'cursor must be "<updated_at>|<id>"' });
+      }
+      // Row-value comparison, so an id tie inside the same microsecond still advances
+      // rather than looping on the same page forever.
+      conditions.push(
+        `(o.updated_at, o.id) ${forward ? '>' : '<'} ($${idx++}::timestamptz, $${idx++}::int)`
+      );
+      params.push(cursorAt, cursorId);
+    }
+
+    const limitIdx = idx++;
+    params.push(limit + 1); // one extra row purely to answer has_more
+
+    const { rows } = await db.query(
+      `SELECT o.*,
+              to_char(o.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sync_cursor_at,
+              c.name    AS customer_name, c.customer_type,
+              c.address AS customer_address, c.phone AS customer_phone,
+              up.full_name AS pending_receipt_printed_by_name,
+              ud.full_name AS delivered_receipt_printed_by_name
+       FROM orders o
+       JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
+       LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY o.updated_at ${forward ? 'ASC' : 'DESC'}, o.id ${forward ? 'ASC' : 'DESC'}
+       LIMIT $${limitIdx}`,
+      params
+    );
+
+    const hasMore = rows.length > limit;
+    const orders = hasMore ? rows.slice(0, limit) : rows;
+    const ids = orders.map((o) => o.id);
+
+    let items = [];
+    let personnel = [];
+    if (ids.length > 0) {
+      ({ rows: items } = await db.query(
+        `SELECT oi.*, p.name AS product_name, p.sku, p.unit, p.category, p.requires_bottle_return
+         FROM order_items oi
+         JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ANY($1::int[])
+         ORDER BY oi.order_id, oi.id`,
+        [ids]
+      ));
+      ({ rows: personnel } = await db.query(
+        `SELECT op.order_id, op.id, op.personnel_id, op.role, p.full_name, p.phone
+         FROM order_personnel op
+         JOIN personnel p ON p.id = op.personnel_id
+         WHERE op.order_id = ANY($1::int[])
+         ORDER BY op.order_id, op.id`,
+        [ids]
+      ));
+    }
+
+    const itemsByOrder = new Map(ids.map((id) => [id, []]));
+    for (const item of items) itemsByOrder.get(item.order_id)?.push(item);
+    const personnelByOrder = new Map(ids.map((id) => [id, []]));
+    for (const p of personnel) {
+      const { order_id, ...rest } = p;
+      personnelByOrder.get(order_id)?.push(rest);
+    }
+
+    const cursorFor = (row) => (row ? `${row.sync_cursor_at}|${row.id}` : null);
+
+    res.json({
+      orders: orders.map(({ sync_cursor_at, ...o }) => ({
+        ...o,
+        items: itemsByOrder.get(o.id) || [],
+        personnel: personnelByOrder.get(o.id) || [],
+      })),
+      has_more: hasMore,
+      // Where this page starts and ends, in the direction it was walked. A backward
+      // page's `first_cursor` is the newest row there is, which is exactly what seeds
+      // a device's forward delta watermark on its first setup.
+      first_cursor: cursorFor(orders[0]),
+      next_cursor: cursorFor(orders[orders.length - 1]),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/orders — creates a Pending order; no stock check
 //
 // Two optional fields carry the device's version of the truth when the order was
@@ -391,6 +521,11 @@ router.post('/', async (req, res, next) => {
   if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
     try {
       receipt = parseReceiptNumber(receipt_number);
+      // ADR 0016 — the station component must be one of this store's three slots.
+      // The allocator already guarantees it for any device on a current build; this is
+      // the backstop for a tablet still carrying a station number it claimed under the
+      // old unbounded scheme, which would otherwise store (and print) e.g. '8-00001'.
+      assertIssuableStation(receipt.station);
     } catch (err) {
       return next(err);
     }

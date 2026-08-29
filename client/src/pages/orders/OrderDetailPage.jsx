@@ -11,12 +11,24 @@ import OrderCloseForm from './OrderCloseForm';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef } from '../../utils/orderRef';
-import { getReceipt, updateLocalOrder } from '../../offline/index.js';
+import {
+  getReceipt, putOrderSnapshot, updateLocalOrder, transitionLocalOrder,
+  canTransitionOffline, isOrderUnsynced,
+} from '../../offline/index.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
+// Slice 3.2 — an order can now arrive from a background sync as well as from a live
+// fetch, and a snapshot written mid-outage can be missing a numeric field the page
+// would otherwise render as "₱NaN". Coerce once, here, rather than sprinkling
+// `|| 0` through the arithmetic below.
+const num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
 const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `₱${num(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const fmtDate = (d, opts = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) =>
   d ? new Date(d).toLocaleString('en-PH', opts) : null;
@@ -48,6 +60,10 @@ export default function OrderDetailPage() {
   // drained to the server. Gates the "Waiting to sync" banner and which actions G28
   // allows offline.
   const [unsynced, setUnsynced]     = useState(false);
+  // Slice 3.2 — true when this page is showing the device's own synced snapshot
+  // because the server could not be reached. Distinct from `unsynced` above: the order
+  // may be perfectly well known to the server, we just cannot ask it right now.
+  const [fromLocalSnapshot, setFromLocalSnapshot] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [editing, setEditing]       = useState(false);
@@ -81,6 +97,12 @@ export default function OrderDetailPage() {
       .then((o) => {
         setOrder(o);
         setUnsynced(false);
+        setFromLocalSnapshot(false);
+        // ADR 0015 §4 — every order this device has ever SEEN is held in full, not just
+        // the ones it created. The background sync is what makes the whole history
+        // available, but writing the snapshot here too means the order the operator is
+        // looking at right now is guaranteed current the moment the line drops.
+        putOrderSnapshot(o).catch(() => {});
         setAdjValue(Number(o.adjustment) ? String(o.adjustment) : '');
         setAdjReason(o.adjustment_reason || '');
         setAdjExpanded(Number(o.adjustment) !== 0);
@@ -96,7 +118,15 @@ export default function OrderDetailPage() {
           const local = await getReceipt(id).catch(() => null);
           if (local) {
             setOrder(local);
-            setUnsynced(true);
+            // Slice 3.2 — "we read this from the device" and "this order has never
+            // reached the server" stopped being the same thing the moment the device
+            // began syncing the WHOLE history ahead of time. Reading a synced order
+            // from local storage during an outage must NOT flag it unsynced: that flag
+            // is what unlocks the offline status transitions, and ADR 0015 §5 allows
+            // those only for orders no other tablet has seen. Ask the outbox, which is
+            // the only thing that actually knows.
+            setUnsynced(await isOrderUnsynced(local.receipt_number).catch(() => false));
+            setFromLocalSnapshot(true);
             setAdjValue(Number(local.adjustment) ? String(local.adjustment) : '');
             setAdjReason(local.adjustment_reason || '');
             setAdjExpanded(Number(local.adjustment) !== 0);
@@ -121,9 +151,8 @@ export default function OrderDetailPage() {
     return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
   }, [load]);
 
-  const bottleItems = order
-    ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
-    : [];
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const bottleItems = items.filter((i) => i?.requires_bottle_return && num(i.unit_deposit_fee) > 0);
   const bottleItemIds = bottleItems.map((i) => i.id).join(',');
 
   // Reset the in-progress bottle-return entries whenever the set of returnable items
@@ -133,8 +162,8 @@ export default function OrderDetailPage() {
     if (!order || order.status !== 'completed' || bottleItems.length === 0) return;
     const counts = {};
     bottleItems.forEach((i) => {
-      const stored = Number(i.bottles_returned);
-      const total  = Number(i.quantity) * (Number(i.units_per_case) || 1);
+      const stored = num(i.bottles_returned);
+      const total  = num(i.quantity) * (num(i.units_per_case) || 1);
       counts[i.id] = String(stored > 0 ? stored : total);
     });
     setReturnCounts(counts);
@@ -144,6 +173,25 @@ export default function OrderDetailPage() {
     if (!confirmAction) return;
     setTransitioning(true);
     try {
+      // ADR 0015 §5 — an order this tablet created and has NOT yet synced may move
+      // through the fulfillment lifecycle offline: no other device has ever heard of
+      // it, so there is no transition to race. Once it has synced this branch stops
+      // applying (the buttons for it are disabled below), because the order is shared
+      // state that moves central stock. transitionLocalOrder throws if the order
+      // drained while this screen was open — fall through to the ordinary server POST
+      // rather than losing the operator's action.
+      if (unsynced && canTransitionOffline(order.status, confirmAction.newStatus)) {
+        try {
+          const updated = await transitionLocalOrder({ order, newStatus: confirmAction.newStatus });
+          setOrder(updated);
+          setConfirmAction(null);
+          addToast(`Order ${confirmAction.label.toLowerCase()} — will sync when connected.`, 'success');
+          return;
+        } catch {
+          // Already drained; the online path below is now the right one.
+        }
+      }
+
       const updated = await api.post(`/orders/${id}/status`, { status: confirmAction.newStatus });
       setOrder(updated);
       setConfirmAction(null);
@@ -173,7 +221,7 @@ export default function OrderDetailPage() {
         try {
           const updated = await updateLocalOrder({
             order,
-            items: order.items,
+            items: items,
             notes: order.notes,
             adjustment: { value: adj, reason: adjReason.trim() },
             personnel: null,
@@ -249,31 +297,46 @@ export default function OrderDetailPage() {
   if (!order) return null;
 
   const st = STATUS[order.status] ?? { label: order.status, color: 'bg-slate-100 text-slate-500 border-slate-200' };
+
+  // Slice 3.2 / ADR 0015 §5 — two different reasons an action here can be unavailable,
+  // and the operator deserves to be told which:
+  //   `unsynced`            this order has never reached the server, so there is no row
+  //                         to reverse, cancel or settle against yet.
+  //   offlineViewingSynced  the order exists and other tablets can see it; we simply
+  //                         cannot reach the server from this device right now.
+  // The three FORWARD transitions survive the first but not the second; everything that
+  // reverses or settles shared state needs a live connection either way.
+  const offlineViewingSynced = fromLocalSnapshot && !unsynced;
+  const onlineOnlyDisabled   = unsynced || offlineViewingSynced;
+  const onlineOnlyTitle      = unsynced ? 'Waiting to sync'
+    : offlineViewingSynced ? 'Needs a connection' : undefined;
   const isPickup      = order.order_type === 'pickup';
   const isDepositable = order.status === 'done' || order.status === 'completed';
-  const finalTotal = Number(order.total_amount) + Number(order.adjustment || 0);
-  const hasAdj     = Number(order.adjustment) !== 0;
+  const hasAdj     = num(order.adjustment) !== 0;
 
-  const itemsSubtotal = order.items.reduce(
-    (sum, i) => sum + Number(i.quantity) * Number(i.unit_price), 0);
+  const itemsSubtotal = items.length > 0
+    ? items.reduce((sum, i) => sum + num(i.quantity) * num(i.unit_price), 0)
+    : num(order.total_amount) - num(order.adjustment);
 
   const itemNetDeposit = (item) => {
     if (!isDepositable) return 0;
-    const dep = Number(item.unit_deposit_fee);
+    const dep = num(item?.unit_deposit_fee);
     if (!dep) return 0;
-    const totalBottles = Number(item.quantity) * (Number(item.units_per_case) || 1);
+    const totalBottles = num(item.quantity) * (num(item.units_per_case) || 1);
     const isLive = item.requires_bottle_return && order.status === 'completed'
                    && returnCounts[item.id] !== undefined && returnCounts[item.id] !== '';
     const returned = isLive
-      ? Math.max(Number(returnCounts[item.id]) || 0, 0)
-      : Math.max(Number(item.bottles_returned) || 0, 0);
+      ? Math.max(num(returnCounts[item.id]), 0)
+      : Math.max(num(item.bottles_returned), 0);
     return (totalBottles - returned) * dep;
   };
 
-  const depositTotal = order.items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
+  const depositTotal = items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
 
-  const liveTotal   = itemsSubtotal + depositTotal + Number(order.adjustment || 0);
-  const hasDeposits = order.items.some(i => Number(i.unit_deposit_fee) > 0);
+  const liveTotal   = items.length > 0
+    ? itemsSubtotal + depositTotal + num(order.adjustment)
+    : num(order.total_amount);
+  const hasDeposits = items.some((i) => num(i?.unit_deposit_fee) > 0);
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -309,6 +372,13 @@ export default function OrderDetailPage() {
         <div className="mb-4 -mt-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
           <span aria-hidden="true">⏳</span>
           <span>Waiting to sync — this order is saved on this device and will reach the server once connected.</span>
+        </div>
+      )}
+
+      {!unsynced && fromLocalSnapshot && (
+        <div className="mb-4 -mt-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
+          <span aria-hidden="true">⏳</span>
+          <span>Offline — showing this device's saved copy of this order. Status changes need a connection.</span>
         </div>
       )}
 
@@ -351,18 +421,18 @@ export default function OrderDetailPage() {
         {/* Customer */}
         <div className="mt-5 pt-5 border-t border-slate-300">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Customer</p>
-          <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
+          <p className="text-base font-semibold text-slate-800">{order.customer_name || 'Customer'}</p>
           {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
           {order.customer_phone   && <p className="text-sm text-slate-500">{order.customer_phone}</p>}
         </div>
 
         {/* Personnel */}
-        {order.personnel?.length > 0 && (
+        {(order.personnel || []).length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-300">
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Assigned Personnel</p>
             <div className="flex flex-wrap gap-2">
-              {order.personnel.map((p) => (
-                <div key={p.id} className="flex items-center gap-1.5">
+              {(order.personnel || []).filter(Boolean).map((p, idx) => (
+                <div key={p.id ?? p.personnel_id ?? idx} className="flex items-center gap-1.5">
                   <span className="text-sm font-medium text-slate-700">{p.full_name}</span>
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border
                     ${ROLE_COLOR[p.role] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
@@ -412,22 +482,29 @@ export default function OrderDetailPage() {
             </tr>
           </thead>
           <tbody>
-            {order.items.map((item) => (
-              <tr key={item.id} className="border-t border-slate-300">
+            {items.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-6 text-center text-slate-400">
+                  Line items not available offline
+                </td>
+              </tr>
+            ) : (
+              items.map((item) => (
+              <tr key={item.id ?? `${item.product_id}-${item.unit_price}`} className="border-t border-slate-300">
                 <td className="px-5 py-3">
-                  <p className="font-medium text-slate-800">{item.sku || item.product_name}</p>
+                  <p className="font-medium text-slate-800">{item.sku || item.product_name || 'Item'}</p>
                 </td>
                 <td className="px-5 py-3 text-right tabular-nums text-slate-700">
-                  {item.quantity} {item.unit}
+                  {item.quantity ?? '—'} {item.unit || ''}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-500 hidden sm:table-cell">
                   {PHP(item.unit_price)}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-500 hidden sm:table-cell">
-                  {Number(item.unit_deposit_fee) > 0 && isDepositable ? (
+                  {num(item.unit_deposit_fee) > 0 && isDepositable ? (
                     <div>
                       <div>{PHP(item.unit_deposit_fee)}/bottle</div>
-                      {Number(item.bottles_returned) > 0 && (
+                      {num(item.bottles_returned) > 0 && (
                         <div className="text-xs text-green-700 mt-0.5">
                           −{item.bottles_returned} returned
                         </div>
@@ -436,8 +513,8 @@ export default function OrderDetailPage() {
                   ) : '—'}
                 </td>
                 <td className="px-5 py-3 text-right tabular-nums font-semibold text-slate-800">
-                  <div>{PHP(Number(item.quantity) * Number(item.unit_price))}</div>
-                  {Number(item.unit_deposit_fee) > 0 && isDepositable && (
+                  <div>{PHP(num(item.quantity) * num(item.unit_price))}</div>
+                  {num(item.unit_deposit_fee) > 0 && isDepositable && (
                     <div className={`text-xs font-normal mt-0.5 ${itemNetDeposit(item) < 0 ? 'text-green-700' : 'text-slate-500'}`}>
                       {itemNetDeposit(item) < 0
                         ? `− ${PHP(Math.abs(itemNetDeposit(item)))} credit`
@@ -446,7 +523,7 @@ export default function OrderDetailPage() {
                   )}
                 </td>
               </tr>
-            ))}
+            )))}
           </tbody>
           <tfoot>
             {hasDeposits && isDepositable && (
@@ -476,8 +553,8 @@ export default function OrderDetailPage() {
                   )}
                 </td>
                 <td className={`px-5 py-3 text-right tabular-nums font-medium
-                  ${Number(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
-                  {Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                  ${num(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                  {num(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
                 </td>
               </tr>
             )}
@@ -511,8 +588,8 @@ export default function OrderDetailPage() {
             {!adjExpanded && (
               <p className="text-sm text-slate-500 mt-1">
                 {hasAdj
-                  ? <span className={Number(order.adjustment) > 0 ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}>
-                      {Number(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                  ? <span className={num(order.adjustment) > 0 ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}>
+                      {num(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
                       {order.adjustment_reason && ` — ${order.adjustment_reason}`}
                     </span>
                   : 'None'}
@@ -570,8 +647,8 @@ export default function OrderDetailPage() {
             className="w-full"
             onClick={handleCloseOrder}
             loading={closing}
-            disabled={unsynced}
-            title={unsynced ? 'Waiting to sync' : undefined}
+            disabled={onlineOnlyDisabled}
+            title={onlineOnlyTitle}
           >
             Close Order
           </Button>
@@ -606,10 +683,14 @@ export default function OrderDetailPage() {
           </div>
         ) : (
           <div className="flex flex-wrap gap-3">
-            {/* G28 — Edit Order and Print Receipt stay enabled while unsynced; every
-                status transition below (Dispatch/Cancel and their symmetric partners)
-                is online-required and disabled instead, since the server has no row
-                for this order to transition yet. */}
+            {/* G28 / ADR 0015 §5 — Edit Order and Print Receipt stay enabled while
+                unsynced, and so do the three FORWARD transitions (Start Dispatch, Mark
+                as Picked Up, Mark as Delivered): an order only this tablet knows about
+                can be dispatched and delivered during an outage, which is exactly what
+                happens on a blackout day. Everything else here — the reversals, Cancel,
+                Close — stays online-required, because each of them undoes or settles
+                shared state, and replaying those out of order across disconnected
+                tablets is what corrupts the stock and deposit ledgers. */}
             <Button variant="secondary" onClick={() => setEditing(true)}>
               Edit Order
             </Button>
@@ -617,12 +698,14 @@ export default function OrderDetailPage() {
             {/* Delivery pending: Start Dispatch */}
             {order.status === 'pending' && !isPickup && (
               <Button
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={offlineViewingSynced}
+                title={offlineViewingSynced ? 'Needs a connection' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'in_transit',
                   label: 'Start Dispatch',
-                  message: 'Stock will be deducted from inventory. This cannot be undone without cancelling.',
+                  message: unsynced
+                    ? 'Saved on this device now; stock is deducted when this order reaches the server.'
+                    : 'Stock will be deducted from inventory. This cannot be undone without cancelling.',
                 })}
               >
                 Start Dispatch →
@@ -632,12 +715,14 @@ export default function OrderDetailPage() {
             {/* Pickup pending: Mark as Picked Up */}
             {order.status === 'pending' && isPickup && (
               <Button
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={offlineViewingSynced}
+                title={offlineViewingSynced ? 'Needs a connection' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
                   label: 'Mark as Picked Up',
-                  message: 'Stock will be deducted from inventory once the customer picks up.',
+                  message: unsynced
+                    ? 'Saved on this device now; stock is deducted when this order reaches the server.'
+                    : 'Stock will be deducted from inventory once the customer picks up.',
                 })}
               >
                 Mark as Picked Up ✓
@@ -647,8 +732,8 @@ export default function OrderDetailPage() {
             {order.status === 'in_transit' && (
               <Button
                 variant="secondary"
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={onlineOnlyDisabled}
+                title={onlineOnlyTitle}
                 onClick={() => setConfirmAction({
                   newStatus: 'pending',
                   label: 'Back to Pending',
@@ -662,8 +747,8 @@ export default function OrderDetailPage() {
             {order.status === 'in_transit' && (
               <Button
                 variant="warning"
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={offlineViewingSynced}
+                title={offlineViewingSynced ? 'Needs a connection' : undefined}
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
                   label: 'Mark as Delivered',
@@ -677,8 +762,8 @@ export default function OrderDetailPage() {
             {order.status === 'completed' && !isPickup && (
               <Button
                 variant="secondary"
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={onlineOnlyDisabled}
+                title={onlineOnlyTitle}
                 onClick={() => setConfirmAction({
                   newStatus: 'in_transit',
                   label: 'Back to In Transit',
@@ -692,8 +777,8 @@ export default function OrderDetailPage() {
             {order.status === 'completed' && isPickup && (
               <Button
                 variant="secondary"
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={onlineOnlyDisabled}
+                title={onlineOnlyTitle}
                 onClick={() => setConfirmAction({
                   newStatus: 'pending',
                   label: 'Back to Pending',
@@ -707,8 +792,8 @@ export default function OrderDetailPage() {
             {order.status === 'done' && (
               <Button
                 variant="secondary"
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={onlineOnlyDisabled}
+                title={onlineOnlyTitle}
                 onClick={() => setConfirmAction({
                   newStatus: 'completed',
                   label: 'Reopen Order',
@@ -722,8 +807,8 @@ export default function OrderDetailPage() {
             {!['done', 'cancelled'].includes(order.status) && (
               <Button
                 variant="danger"
-                disabled={unsynced}
-                title={unsynced ? 'Waiting to sync' : undefined}
+                disabled={onlineOnlyDisabled}
+                title={onlineOnlyTitle}
                 onClick={() => setConfirmAction({
                   newStatus: 'cancelled',
                   label: 'Cancel Order',

@@ -3,8 +3,26 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import OfflineBanner from '../../components/ui/OfflineBanner';
 import DeliveryFormModal from './DeliveryFormModal';
 import DeliveryDetailPanel from './DeliveryDetailPanel';
+import { loadWithCache, DELIVERIES_CACHE } from '../../offline/backOfficeCache.js';
+import { queuedDeliveriesFromOutbox, mergeDeliveries } from '../../offline/deliveries.js';
+import { subscribeOutbox } from '../../offline/outbox.js';
+
+// The filters the server applies to a live read, applied here instead when the rows
+// came from the local cache or from the outbox. Same predicates as GET /incoming.
+export function filterDeliveries(rows, { supplierFilter, fromDate, toDate }) {
+  const needle = (supplierFilter || '').trim().toLowerCase();
+  return rows.filter((d) => {
+    if (needle && !(d.supplier_name || '').toLowerCase().includes(needle)) return false;
+    const t = Date.parse(d.received_at);
+    if (Number.isNaN(t)) return true;
+    if (fromDate && t < Date.parse(fromDate)) return false;
+    if (toDate && t >= Date.parse(toDate) + 24 * 60 * 60 * 1000) return false;
+    return true;
+  });
+}
 
 export default function IncomingPage() {
   const { addToast } = useToast();
@@ -19,6 +37,16 @@ export default function IncomingPage() {
   const [fromDate, setFromDate]             = useState('');
   const [toDate, setToDate]                 = useState('');
 
+  const [fromCache, setFromCache]       = useState(false);
+  const [cachedAt, setCachedAt]         = useState(null);
+  const [queuedDeliveries, setQueued]   = useState([]);
+
+  const hasFilters = Boolean(supplierFilter.trim() || fromDate || toDate);
+
+  // ADR 0015 §9 — the deliveries list is readable offline from a bounded local copy
+  // (30 days; see backOfficeCache.js). Only the unfiltered baseline is cached, so a
+  // filtered read never overwrites it and the filters are applied to the held copy
+  // here instead.
   const load = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
@@ -27,13 +55,36 @@ export default function IncomingPage() {
     if (toDate)   params.set('to_date', toDate);
     const qs = params.toString();
 
-    api.get(`/incoming${qs ? `?${qs}` : ''}`)
-      .then(setDeliveries)
-      .catch(() => addToast('Failed to load deliveries.', 'error'))
+    loadWithCache(DELIVERIES_CACHE, () => api.get(`/incoming${qs ? `?${qs}` : ''}`), {
+      cacheable: !hasFilters, dateField: 'received_at',
+    })
+      .then(({ data, fromCache: cached, cachedAt: at }) => {
+        const rows = Array.isArray(data) ? data : [];
+        setDeliveries(cached ? filterDeliveries(rows, { supplierFilter, fromDate, toDate }) : rows);
+        setFromCache(cached);
+        setCachedAt(at);
+      })
+      .catch(() => addToast('Offline and this device has no deliveries saved yet — connect once to set it up.', 'error'))
       .finally(() => setLoading(false));
-  }, [supplierFilter, fromDate, toDate, addToast]);
+  }, [supplierFilter, fromDate, toDate, hasFilters, addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // ADR 0015 §8 — deliveries logged blind live in the outbox until they drain, so the
+  // server's list cannot see them. Same rule as queued customers and queued products:
+  // merge them in, or the truck someone deliberately logged during the outage is
+  // invisible on exactly the screen they logged it for.
+  const loadQueued = useCallback(async () => {
+    setQueued(await queuedDeliveriesFromOutbox());
+  }, []);
+
+  useEffect(() => {
+    loadQueued();
+    return subscribeOutbox(() => loadQueued());
+  }, [loadQueued]);
+
+  const visibleQueued = filterDeliveries(queuedDeliveries, { supplierFilter, fromDate, toDate });
+  const displayDeliveries = mergeDeliveries(deliveries, visibleQueued);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -41,8 +92,12 @@ export default function IncomingPage() {
       {/* ── Header ───────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Incoming Supplies</h1>
+        {/* ADR 0015 §8 — logging a truck is additive and conflict-free, so it works
+            blind. Editing and voiding an already-logged delivery do not. */}
         <Button onClick={() => setCreating(true)}>+ Log Delivery</Button>
       </div>
+
+      {fromCache && <OfflineBanner cachedAt={cachedAt} />}
 
       {/* ── Filters ──────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -94,7 +149,7 @@ export default function IncomingPage() {
         <div className="flex items-center justify-center h-64">
           <Spinner size="lg" />
         </div>
-      ) : deliveries.length === 0 ? (
+      ) : displayDeliveries.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {(supplierFilter || fromDate || toDate)
             ? 'No deliveries match your filters.'
@@ -112,10 +167,10 @@ export default function IncomingPage() {
               </tr>
             </thead>
             <tbody>
-              {deliveries.map((d) => (
+              {displayDeliveries.map((d) => (
                 <tr
                   key={d.id}
-                  onClick={() => setSelectedId(d.id)}
+                  onClick={() => { if (!d._unsynced) setSelectedId(d.id); }}
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4 text-slate-700 tabular-nums">
@@ -125,6 +180,12 @@ export default function IncomingPage() {
                   </td>
                   <td className="px-5 py-4 font-semibold text-slate-900">
                     {d.supplier_name}
+                    {d._unsynced && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs
+                                       font-semibold border bg-amber-100 text-amber-800 border-amber-300">
+                        Waiting to sync
+                      </span>
+                    )}
                     {d.notes && (
                       <p className="text-xs text-slate-400 font-normal mt-0.5 truncate max-w-xs">{d.notes}</p>
                     )}
@@ -161,6 +222,7 @@ export default function IncomingPage() {
       {selectedId !== null && (
         <DeliveryDetailPanel
           deliveryId={selectedId}
+          cachedDelivery={displayDeliveries.find((d) => String(d.id) === String(selectedId)) || null}
           onClose={() => setSelectedId(null)}
           onEdit={(d) => { setSelectedId(null); setEditing(d); }}
           onDeleted={() => { setSelectedId(null); load(); }}
