@@ -492,6 +492,26 @@ Every V1 screen now works blind. What a future session most needs to know:
   `manual_adjustment` on `current_stock` (or `price_change` on `base_wholesale_price`)
   dated after the record was queued. Widening that to "the value changed" would fire on
   every sale and teach the owners to tap through the modal without reading it.
+- **But business movement is RE-DERIVED, not ignored** (`stockDriftSinceQueued` in
+  `productMutations.js`). Not-a-conflict never meant not-a-problem: resending a count
+  as an absolute value erased whatever sale or delivery had landed while it waited. The
+  screening pass sums the `current_stock` audit deltas dated after the record was
+  queued and sends `counted + drift`, so a stocktake queued at 09:00 no longer wipes a
+  09:30 sale. It returns `null` — meaning "ask a person" — for the two cases it cannot
+  prove: a full 50-entry audit page whose every stock row is newer than the record
+  (movements may have fallen off the end), and a human `manual_adjustment` after the
+  queue time that `findCompetingEdit` missed because other movements netted the server
+  back to this device's baseline. Those become a conflict carrying
+  `cause: CAUSE_UNEXPLAINED_MOVEMENT`, which `StockReconcileModal.jsx` words
+  differently — it must not claim another tablet counted the shelf when none did.
+  **Price is never re-derived**: a price does not move on its own, and "price plus a
+  delta" is not a meaningful thing to send.
+- **`delivery_edit`, not `manual_adjustment`, for a delivery edit/void's stock
+  reversal** (`incoming.js`, migration 038). It is business activity; logging it under
+  the human action type made the guard above raise a reconciliation question about a
+  number nobody disputed. Any NEW `action_type` must be added to migration 011's CHECK
+  constraint (via a new migration) and to the label maps in `AuditPage.jsx` and
+  `ProductDetailPanel.jsx`.
 - **`screenProductMutations()` runs BEFORE every drain** (`offline/index.js`), and no
   guarded record is ever sent unscreened — with no line it returns `{offline:true}` and
   changes nothing. A conflicting field is lifted OUT of its record (stripped from the

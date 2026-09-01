@@ -26,6 +26,7 @@ const ACTION_TYPE_LABELS = {
   order_fulfillment: 'Order Dispatched',
   order_edit:        'Order Edited',
   order_cancel:      'Order Cancelled',
+  delivery_edit:     'Delivery Edited',
 };
 
 export default function ProductDetailPanel({ productId, onClose, onSaved, cachedProduct = null }) {

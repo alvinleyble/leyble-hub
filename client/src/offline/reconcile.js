@@ -31,6 +31,22 @@ import { NS, RECONCILE_PREFIX, reconcileKey } from './keys.js';
 // `manual_adjustment` on `current_stock` (or `price_change` on
 // `base_wholesale_price`) dated after this record was queued. That is exactly the
 // two-tablets-both-counting case §6 describes, and nothing else.
+//
+// ── What happens to ordinary business movement instead ──────────────────────
+//
+// Not flagging it was never the same thing as ignoring it. A queued count is a claim
+// about the shelf AT THE MOMENT IT WAS SAVED; if six cases were sold an hour later,
+// resending the counted number as an absolute value erases that sale. So the guard
+// RE-DERIVES the queued count as a delta instead: it sums the stock movements the
+// server logged after this record was queued and sends `counted + drift`. Nobody is
+// asked anything, because nobody disagrees — arithmetic settles it (the same shape
+// applyStockDelta already uses server-side).
+//
+// The one case that cannot be settled that way is a truncated audit window (the
+// server returns the last 50 entries; if every one of them is newer than this record,
+// there may be movements we cannot see). Then the drift is unknowable and the value
+// falls back to a question, carrying `cause: CAUSE_UNEXPLAINED_MOVEMENT` so the modal
+// does not claim another tablet counted the shelf.
 
 const NEXT_ID_KEY = `${NS}reconcile.nextId`;
 
@@ -43,6 +59,13 @@ async function nextConflictId() {
 
 export const STOCK_FIELD = 'current_stock';
 export const PRICE_FIELD = 'base_wholesale_price';
+
+// Why this question exists. `competing_edit` is §6's original case — another person
+// set the same field. `unexplained_movement` is the fallback above: the server's
+// number moved for reasons this device could not account for, so the delta could not
+// be re-derived. The two need different words on screen; they take the same answers.
+export const CAUSE_COMPETING_EDIT = 'competing_edit';
+export const CAUSE_UNEXPLAINED_MOVEMENT = 'unexplained_movement';
 
 /**
  * Records one unanswered question.
@@ -60,10 +83,12 @@ export const PRICE_FIELD = 'base_wholesale_price';
  * @param {string} [c.theirReason]  the reason the other tablet's operator gave
  * @param {string} [c.theirAt]      when the other edit landed
  * @param {string} [c.queuedAt]     when this tablet's edit was saved
+ * @param {string} [c.cause]        CAUSE_COMPETING_EDIT | CAUSE_UNEXPLAINED_MOVEMENT
  */
 export async function recordConflict({
   productId, productName, field, mine, theirs, baseline, profileKey,
   unit = '', reason = null, theirReason = null, theirAt = null, queuedAt = null,
+  cause = CAUSE_COMPETING_EDIT,
 }) {
   if (!profileKey) {
     // Same rule the outbox enforces (D14): whatever the operator finally confirms is
@@ -85,6 +110,7 @@ export async function recordConflict({
     their_reason: theirReason,
     their_at: theirAt,
     queued_at: queuedAt,
+    cause,
     profile_key: profileKey,
     detected_at: new Date().toISOString(),
   };
