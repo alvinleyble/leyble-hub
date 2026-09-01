@@ -15,6 +15,7 @@ import {
   saveOrderLocalFirst, updateLocalOrder, cleanupOrphanedDraftDirect,
   parkOrderLocalFirst, updateLocalDraft, discardLocalDraft,
   enqueue, drainOutbox, loadCustomerPrices, loadCatalogue, queuedCustomersFromOutbox,
+  checkIsOnline,
 } from '../../offline/index.js';
 
 const PHP = (n) =>
@@ -671,7 +672,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
         addToast('Order created.', 'success');
       }
 
-      if (dirtyItems.length && selectedCustomer && !isLocalCustomer(customerId)) {
+      // checkIsOnline() gate (captain 2026-08-31): customer_product_prices has no unique
+      // constraint, so two offline tablets saving different prices for the same
+      // customer/product would both land with no signal to either operator. The line-item
+      // override this order actually charges is unaffected — only remembering it as the
+      // customer's new standing price waits for a connection. Skips silently; no toast.
+      if (dirtyItems.length && selectedCustomer && !isLocalCustomer(customerId) && checkIsOnline()) {
         setPriceSavePrompt({
           step: 'first', orderId, customer: selectedCustomer, orderType,
           dirty: dirtyItems, busy: false,

@@ -155,6 +155,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   };
 
   const openPricingForm = async () => {
+    if (sharedMutationsBlocked) return;
     if (products.length === 0) {
       try {
         const prods = await api.get('/products');
@@ -178,6 +179,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const setP = (field) => (e) => setPriceForm((f) => ({ ...f, [field]: e.target.value }));
 
   const handleSetPrice = async () => {
+    if (sharedMutationsBlocked) return;
     const errs = {};
     if (!priceForm.product_id) errs.product_id = 'Select a product.';
     if (priceForm.custom_unit_price === '') errs.custom_unit_price = 'Enter a price.';
@@ -332,11 +334,24 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Prices</p>
                 {!pricingOpen && (
-                  <Button size="sm" variant="secondary" onClick={openPricingForm}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={openPricingForm}
+                    disabled={sharedMutationsBlocked}
+                    title={sharedMutationsBlocked ? 'Needs a connection' : undefined}
+                  >
                     + Set Price
                   </Button>
                 )}
               </div>
+              {sharedMutationsBlocked && (
+                <p className="text-sm text-slate-500 mb-4">
+                  Setting a custom price needs a connection — two offline tablets could
+                  otherwise save different prices for the same product with no way to tell
+                  which one wins.
+                </p>
+              )}
 
               {/* Delivery / Pickup tab switcher */}
               <div className="flex gap-1.5 mb-4">
@@ -407,7 +422,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                         }}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={handleSetPrice} loading={priceSaving}>
+                      <Button size="sm" onClick={handleSetPrice} loading={priceSaving}
+                        disabled={sharedMutationsBlocked}>
                         Save Price
                       </Button>
                     </div>
