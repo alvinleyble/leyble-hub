@@ -21,14 +21,16 @@ apart from the corrections dated 2026-08-29 and marked as such.
 > [ADR 0015 § Delivery Slices](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md#delivery-slices--what-actually-shipped).
 >
 > **Genuinely still open:**
-> 1. **8.4's custom-price half** — setting a custom price from the Customers module is still
->    online-only. Next queued task. See 8.4 and Known Gaps G1.
-> 2. **5.15, historical draft orders** — settled 2026-08-29, scoped but not yet built
+> 1. **5.15, historical draft orders** — settled 2026-08-29, scoped but not yet built
 >    (`leyble-hub-offline-historical-drafts-edit`). See 5.15 and Known Gaps G2.
-> 3. **Deferred conflicts** where this document and the shipped app disagree on purpose —
+> 2. **Deferred conflicts** where this document and the shipped app disagree on purpose —
 >    9.2/9.3 (Personnel), 6.0 (delivery edit), 10.1 (ticket creation). See Known Gaps.
-> 4. **Two minor UX gaps** observed testing PR #55, captain-acknowledged and non-blocking.
+> 3. **Two minor UX gaps** observed testing PR #55, captain-acknowledged and non-blocking.
 >    See Known Gaps G6–G7.
+>
+> **Closed 2026-09-02:** 8.4's custom-price half — custom-price capture is now online-only
+> by design everywhere (Customers module and New Order modal alike), not a gap. See 8.4,
+> 5.13, and Known Gaps G1 (closed).
 
 ---
 
@@ -126,14 +128,17 @@ parked ones. What you can then DO with one depends on which half it came from: s
 > **Settled 2026-08-28:** scoped by the same synced-order-edit-scope boundary as 5.8–5.10.
 > *(captain decision: synced-order-edit-scope)*
 
-5.13 New Order Modal is fully functional for both online and offline: see all products, search all customers, both order types, all categories, select products, adjust quantities, change prices, add adjustment, optional notes, reset/clear, cancel, create, X-to-exit, save as draft, apply a regular customer's custom prices (discounted/wholesale/markup), save new custom prices for a customer.
+5.13 New Order Modal is fully functional for both online and offline: see all products, search all customers, both order types, all categories, select products, adjust quantities, change prices, add adjustment, optional notes, reset/clear, cancel, create, X-to-exit, save as draft, apply a regular customer's custom prices (discounted/wholesale/markup); the in-sale price override always works offline, but "save new custom prices for a customer" is online-only by design.
 
-> **Clarification 2026-08-29 — the "save new custom prices" clause.** This one works offline
-> (the *"Save Custom Price?"* prompt queues via `enqueue`, PR #54), with one narrowing worth
-> knowing when testing: the prompt only opens for a customer who already exists on the
-> server, so a customer quick-created during the same outage cannot have a price captured
-> for her until she has synced. The Customers module's own *Add Custom Price* is a different
-> flow and does **not** work offline — see 8.4 and Known Gaps G1.
+> **Corrected 2026-09-02 — the "save new custom prices" clause is online-only, everywhere.**
+> The *"Save Custom Price?"* prompt is gated on connectivity in addition to its existing
+> "customer already exists on the server" check, and silently never opens offline (no toast,
+> no explanation needed — captain confirmed this UX choice 2026-08-31). This closes a
+> two-tablet race: `customer_product_prices` has no unique constraint, so two offline
+> tablets could each save a different price for the same customer/product and both would
+> land with no signal to either operator about which one "won." The Customers module's own
+> *Add Custom Price* is the same story — see 8.4 and Known Gaps G1 (closed). The order's own
+> line-item price override for that one sale is unaffected and still works offline.
 
 5.14 In every order-list tab, offline users cannot bulk-select orders (since they can't act on them anyway).
 
@@ -222,25 +227,24 @@ offline.
 
 8.3 Customers: offline users can add a new customer.
 
-8.4 Customers: offline users can fully edit a customer's details and set custom prices.
+8.4 Customers: offline users can fully edit a customer's details; custom prices are online-only everywhere, by design.
 
-> **Half shipped, half open — corrected 2026-08-29.** The **details** half is live (Slice 3.3):
+> **Corrected 2026-08-29, closed 2026-09-02.** The **details** half is live (Slice 3.3):
 > `CustomerDetailPanel.jsx`'s Save routes through `updateCustomerLocalFirst`, queueing blind
-> and toasting *"Saved on this device · will sync when connected."* The **custom-price** half
-> is **not built**: that panel's *Add Custom Price* calls `api.post('/customers/:id/prices')`
-> directly, and `client/src/api/client.js`'s `request()` has no offline queueing, so it fails
-> offline; the same panel's price list reads empty and its product picker aborts with
-> *"Failed to load products."* rather than reading the held catalogue.
+> and toasting *"Saved on this device · will sync when connected."*
 >
-> The only custom-price capture that *does* work offline today is the *"Save Custom Price?"*
-> prompt at the end of a sale in `OrderCreateModal.jsx` (`persistPriceSave` → `enqueue`,
-> PR #54) — and even that opens only for a customer who already exists on the server, so a
-> customer quick-created blind cannot have a price captured for her until she syncs.
->
-> Closing this is the next queued offline task. Until it lands, treat 8.4 as *details: pass,
-> prices: known fail*. Known Gaps G1;
-> [ADR 0015 §7](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) carries
-> the same correction (its earlier "100% offline-capable … unchanged" wording was false).
+> The **custom-price** half is deliberately **online-only, everywhere** — not a gap, a closed
+> decision. `customer_product_prices` is append-only with no unique constraint on
+> customer/product/order_type, so two offline tablets could each set a different price for
+> the same pair; both inserts would land with no signal to either operator about which one
+> "won." The panel's *Add Custom Price* action (including its price list and product picker)
+> is disabled with an explanatory message while offline, matching the disabled+message
+> pattern already used in this panel for the active/inactive toggle, merge, and delete.
+> `OrderCreateModal.jsx`'s *"Save Custom Price?"* prompt (5.13) is gated the same way —
+> it silently never opens offline, even for a customer who already exists on the server.
+> A cashier can still override a line-item price for that one sale while offline; only
+> *remembering* it as the customer's new standing price waits for a connection. Known Gaps
+> G1 is closed.
 
 8.5 Customers: the active/inactive toggle is disabled offline with an explanatory message; the rest of the customer edit form still saves normally offline.
 
@@ -315,7 +319,7 @@ its Delivery Slices section rather than duplicating the list.)*
 
 | # | Item | Kind | Criteria | Status |
 | :-- | :--- | :--- | :--- | :--- |
-| G1 | Custom prices cannot be set from the Customers module offline | Open work | 8.4 | Next queued task |
+| G1 | Custom prices cannot be set offline, from the Customers module or the New Order modal | Closed — by design | 8.4, 5.13 | Closed 2026-09-02: online-only everywhere is the intended design, not a gap (no unique constraint on `customer_product_prices`) |
 | G2 | Historical (synced) drafts not editable offline | Open work | 5.15 | Scoped 2026-08-29, backlog item `leyble-hub-offline-historical-drafts-edit` |
 | G3 | Personnel edit form blocked entirely offline, not just toggle + photo | Deferred conflict | 9.2, 9.3 vs ADR §9 | Captain: *"let it be for now"* (2026-08-29) |
 | G4 | Editing a logged delivery is blocked offline, not only deleting | Open conflict | 6.0 vs ADR §8 + code | Needs a captain call |
