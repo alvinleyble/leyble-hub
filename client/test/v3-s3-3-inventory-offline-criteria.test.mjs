@@ -96,6 +96,18 @@ const bottleReturnInput = (r) => r.container.querySelector('#requires_bottle_ret
 const activeInput       = (r) => r.container.querySelector('#is_active');
 const depositInput      = (r) => r.all('input[step="0.01"]')[1];
 
+function changeInput(input, value) {
+  const prototype = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+  descriptor.set.call(input, value);
+  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps'));
+  if (reactPropsKey && input[reactPropsKey]?.onChange) {
+    input[reactPropsKey].onChange({ target: { value, type: input.type || 'text', checked: input.checked } });
+  }
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  input.dispatchEvent(new window.Event('change', { bubbles: true }));
+}
+
 // ── 7.3 / 7.4 and the product active flag ────────────────────────────────────
 
 test('7.3 / 7.4: bottles-per-case and bottle-return are locked while the panel is offline', async () => {
@@ -127,6 +139,13 @@ test('7.3 / 7.4: the same controls are freely editable with the line up', async 
 test('7.3 / 7.4: a blind save carries neither locked field, so it cannot reverse another tablet', async () => {
   const r = await renderPanelOffline();
 
+  // Item 4 (offline-multi-device clobber audit) — an untouched field is now diffed out
+  // entirely, not just the four locked ones, so only a field the operator actually
+  // edited reaches the wire.
+  await act(() => {
+    changeInput(r.container.querySelector(`input[value="${PRODUCT.name}"]`), 'Red Horse 1L');
+  });
+
   const save = r.all('button').find((b) => b.textContent.includes('Save Changes'));
   r.click(save);
   await settle();
@@ -136,9 +155,25 @@ test('7.3 / 7.4: a blind save carries neither locked field, so it cannot reverse
   for (const field of ['units_per_case', 'requires_bottle_return', 'deposit_fee', 'is_active']) {
     assert.equal(record.payload[field], undefined, `${field} must not be on the wire`);
   }
-  // …while the rest of the form is exactly as before.
-  assert.equal(record.payload.name, PRODUCT.name);
-  assert.equal(record.payload.sku, PRODUCT.sku);
+  // The field the operator actually touched is sent…
+  assert.equal(record.payload.name, 'Red Horse 1L');
+  // …but a field left untouched is diffed out, not resent from the (possibly stale)
+  // cached snapshot.
+  assert.equal(record.payload.sku, undefined, 'an untouched field must not be on the wire');
+
+  r.unmount();
+});
+
+test('item 4: an unmodified blind save queues an empty patch — nothing to clobber with', async () => {
+  const r = await renderPanelOffline();
+
+  const save = r.all('button').find((b) => b.textContent.includes('Save Changes'));
+  r.click(save);
+  await settle();
+
+  const [record] = (await listRecords()).filter((x) => x.entity_type === 'product_update');
+  assert.ok(record, 'the save still queues, even with nothing changed');
+  assert.deepEqual(record.payload, {}, 'no field should be resent when nothing was edited');
 
   r.unmount();
 });
@@ -251,6 +286,13 @@ test('8.5: the customer active flag is locked offline while the rest of the form
   assert.equal(active.disabled, true);
   assert.match(r.text(), /Deactivating or restoring a customer needs a connection/);
 
+  // Item 4 (offline-multi-device clobber audit) — an untouched field is now diffed out
+  // entirely, not just is_active, so only a field the operator actually edited reaches
+  // the wire.
+  await act(() => {
+    changeInput(r.container.querySelector(`input[value="${CUSTOMER.phone}"]`), '09990001111');
+  });
+
   const save = r.all('button').find((b) => b.textContent.includes('Save Changes'));
   assert.equal(save.disabled, false, '8.4 — the rest of the form still saves blind');
   r.click(save);
@@ -259,7 +301,8 @@ test('8.5: the customer active flag is locked offline while the rest of the form
   const [record] = (await listRecords()).filter((x) => x.entity_type === 'customer_update');
   assert.ok(record);
   assert.equal(record.payload.is_active, undefined, 'is_active must not be on the wire');
-  assert.equal(record.payload.name, CUSTOMER.name);
+  assert.equal(record.payload.phone, '09990001111');
+  assert.equal(record.payload.name, undefined, 'an untouched field must not be on the wire');
 
   r.unmount();
 });
