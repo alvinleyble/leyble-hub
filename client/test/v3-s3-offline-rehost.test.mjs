@@ -749,6 +749,18 @@ test('Slice 3.2: a SYNCED order read from local history offline shows the offlin
   const dispatchBtn = r.all('button').find((b) => b.textContent.includes('Start Dispatch'));
   assert.equal(dispatchBtn.disabled, true, 'a synced order cannot be transitioned without a connection');
 
+  const editBtn = r.all('button').find((b) => b.textContent.trim() === 'Edit Order');
+  assert.ok(editBtn);
+  assert.equal(editBtn.disabled, true,
+    'a synced order viewed offline must not offer Edit Order, matching Inventory/Customers/Personnel proactive disable');
+  assert.equal(editBtn.title, 'Needs a connection');
+
+  const toggleBtn = r.all('button').find((b) => b.textContent.includes('Add Adjustment'));
+  assert.ok(toggleBtn, '+ Add Adjustment must still render for a synced order (only drafts hide it outright)');
+  assert.equal(toggleBtn.disabled, true,
+    'a synced order viewed offline must not offer the adjustment toggle either');
+  assert.equal(toggleBtn.title, 'Needs a connection');
+
   r.unmount();
 });
 
