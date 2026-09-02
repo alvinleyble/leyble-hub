@@ -572,10 +572,11 @@ Every V1 screen now works blind. What a future session most needs to know:
   decides what every other tablet can sell — none has a second honest value for
   `StockReconcileModal` to offer. `is_active` follows the same rule on Customers (8.5).
   **Always validate an Inventory change against §7 of that doc, not the ADR alone.**
-- **`CustomerDetailPanel.handleSave` and `ProductDetailPanel.handleSaveDetails` diff the
-  save payload against the loaded snapshot (`snapshot` state on Customers; `product`
-  itself on Products) — only a field that actually changed is sent, for both online and
-  offline saves.** This is what makes the four locked fields above (and 8.5's
+- **`CustomerDetailPanel.handleSave`, `ProductDetailPanel.handleSaveDetails` and
+  `PersonnelDetailPanel.handleSave` all diff the save payload against the loaded
+  snapshot (`snapshot` state on Customers; `product`/`person` themselves on Products/
+  Personnel) — only a field that actually changed is sent, for both online and offline
+  saves.** This is what makes the four locked fields above (and 8.5's/9.2's
   `is_active`) true beyond their own carve-out: without it, ANY untouched field resent
   from a stale cached snapshot — not just the disabled ones — silently overwrites
   whatever another tablet wrote to that field while this one was offline (item 4,
@@ -583,20 +584,31 @@ Every V1 screen now works blind. What a future session most needs to know:
   explicit `mutationsBlocked`/`sharedMutationsBlocked` deletions for the locked fields
   stay as belt-and-braces — the diff alone already drops them since their controls are
   disabled and so never change — but the diff is what protects every other field
-  (name/category/unit/sku on Products; name/type/address/phone/notes on Customers).
-  Server routes already treat an omitted field as "leave unchanged," so this is
-  client-only; don't reintroduce a full-form patch when touching either `handleSave`.
-- **"Waiting to sync" has two sources, not one — on both Inventory and Customers.**
-  `queuedProductsFromOutbox`/`queuedCustomersFromOutbox` cover a row CREATED blind (no
+  (name/category/unit/sku on Products; name/type/address/phone/notes on Customers;
+  full_name/remarks/phone/license_number on Personnel). Server routes already treat an
+  omitted field as "leave unchanged," so this is client-only; don't reintroduce a
+  full-form patch when touching any of these `handleSave`s.
+- **"Waiting to sync" has two sources, not one — on Inventory, Customers, and now
+  Personnel too (G3, closed 2026-09-02).** `queuedProductsFromOutbox`/
+  `queuedCustomersFromOutbox`/`queuedPersonnelFromOutbox` cover a row CREATED blind (no
   server row, merged in as `local-<outboxId>`); `pendingProductEditIds()`/
-  `pendingCustomerEditIds()` (both in `client/src/offline/`) cover an existing row
-  carrying an undrained EDIT (`product_update`/`product_batch_price`/the two
-  `*_confirm` types for products; `customer_update` for customers — one entity type,
-  simpler than the product side). The EDIT half is the one that hides:
-  `applyLocalProductPatch`/the customer equivalent write the operator's new value onto
-  the held catalogue copy, so a blind edit renders identically to a saved one. Every
-  badge reads the outbox directly, so it clears itself on drain with no extra wiring
-  (G7, closed 2026-09-02).
+  `pendingCustomerEditIds()`/`pendingPersonnelEditIds()` (all in `client/src/offline/`)
+  cover an existing row carrying an undrained EDIT (`product_update`/
+  `product_batch_price`/the two `*_confirm` types for products; `customer_update` for
+  customers; `personnel_update` for personnel — one entity type each, simpler than the
+  product side). The EDIT half is the one that hides: `applyLocalProductPatch`/the
+  customer and personnel equivalents write the operator's new value onto the held
+  catalogue copy, so a blind edit renders identically to a saved one. Every badge reads
+  the outbox directly, so it clears itself on drain with no extra wiring.
+- **Personnel's offline carve-out is narrower than Customers': toggle AND photo AND
+  delete all stay online-only (rules 9.0/9.1/9.2, ADR 0015 §9), where Customers only
+  locks the toggle plus merge/delete.** `PersonnelDetailPanel.jsx`'s `mutationsBlocked`
+  still gates the active/inactive checkbox, the ID photo upload button, and
+  `DangerZoneDelete` — only the rest of the edit form and `PersonnelFormModal.jsx`'s
+  *+ Add Personnel* moved onto the outbox (`updatePersonnelLocalFirst`,
+  `client/src/offline/queuedPersonnel.js`). Before 2026-08-29 → 2026-09-02, one shared
+  `mutationsBlocked` gated the whole form instead — see ADR 0015 §9's amendment note and
+  `docs/offline-accessibility-acceptance-criteria.md` items 9.2/9.3 and Known Gaps G3.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets

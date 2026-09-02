@@ -129,6 +129,17 @@ Administrative back-office screens (**Dashboard, Personnel, Tickets, Audit Log**
 - **Calm Offline Indicator:** When disconnected, these views render from local cache with a calm amber banner: *"Viewing offline data · Changes sync when connected."*
 - **Shared Mutations Gated Online:** Actions that mutate shared operational records — resolving or deleting a deposit ticket (`PATCH /tickets/:id/resolve`, `DELETE /tickets/:id`), deactivating personnel, or updating staff profiles — are cleanly disabled offline with explicit explanatory badges, matching the safety model of customer merges and delivery voids.
 - **Known conflict with acceptance criteria 9.2 / 9.3 — deliberately unresolved (captain, 2026-08-29):** this section blocks the **whole** personnel edit form offline; acceptance criteria 9.2 and 9.3 say only the active/inactive toggle and the photo are blocked and "the rest of the personnel edit form still saves normally offline". The shipped code (PR #55) followed **this ADR**, not the criteria: `PersonnelPage.jsx` and `PersonnelDetailPanel.jsx` compute one `mutationsBlocked = fromCache || !checkIsOnline()` and disable *+ Add Personnel*, the form's Save, photo upload and delete alike. The captain was shown this conflict directly and chose to leave it: *"let it be for now, personnel module is not being used anyway."* It is therefore a **deliberate, acknowledged deferral, not an oversight** — do not "fix" either side without a fresh captain decision. Mirrored in [docs/offline-accessibility-acceptance-criteria.md](../offline-accessibility-acceptance-criteria.md) item 9.2 and its Known Gaps section.
+  > **Amendment, 2026-09-02:** the captain revisited and reversed this deferral. Personnel's
+  > offline editing and creation are no longer blocked by the single `mutationsBlocked` gate
+  > described above — the rest of the personnel edit form (name, phone, remarks, license
+  > number) and *+ Add Personnel* now queue via the outbox and drain like Customers'
+  > profile edits and Inventory's product edits (`updatePersonnelLocalFirst`,
+  > `client/src/offline/queuedPersonnel.js`). Deactivating/reactivating personnel, the ID
+  > photo, and Delete remain online-only, unchanged. The bullet above is left as written
+  > because it is an accurate record of what shipped and why between 2026-08-29 and
+  > 2026-09-02; it no longer describes current behavior. See
+  > [docs/offline-accessibility-acceptance-criteria.md](../offline-accessibility-acceptance-criteria.md)
+  > item 9.2 and Known Gaps G3 (closed).
 - **Ticket *creation* is also blocked offline**, which criterion 10.1 ("anything else not mentioned is accessible offline") reads against. No decision in this ADR grants ticket creation an offline path — unlike order, customer and delivery creation, each of which is explicitly established as additive-and-safe — so Slice 3.3 blocked it with an explanation rather than letting it fail as a fetch error. Recorded here as an interpretation applied in code, flagged for confirmation in the criteria doc's Known Gaps section rather than silently absorbed into either document.
 
 #### Alternatives Considered / Rejected
@@ -221,4 +232,4 @@ Mechanically: `GET /api/v1/orders/sync` serves complete order snapshots (line it
 
 - **Offline custom-price editing on the Customers module** — the §7 gap corrected above: `CustomerDetailPanel.jsx`'s standalone Add Custom Price flow is still a bare `api.post`. Next queued task; closes criterion 8.4.
 - **Historical (synced) draft orders editable offline** — §5's new bullet, scoped 2026-08-29 and not yet built (`leyble-hub-offline-historical-drafts-edit`); closes criterion 5.15.
-- **Deferred / flagged, not scheduled** — the Personnel-edit conflict (§9), the delivery-edit conflict (§8), ticket creation (§9), and two minor UX gaps observed testing PR #55. All are listed in one place: [docs/offline-accessibility-acceptance-criteria.md](../offline-accessibility-acceptance-criteria.md) § *Known Gaps, Deferrals and Open Conflicts*.
+- **Deferred / flagged, not scheduled** — the delivery-edit conflict (§8), ticket creation (§9), and two minor UX gaps observed testing PR #55. (The Personnel-edit conflict (§9) that used to be listed here closed 2026-09-02 — see the amendment above.) All are listed in one place: [docs/offline-accessibility-acceptance-criteria.md](../offline-accessibility-acceptance-criteria.md) § *Known Gaps, Deferrals and Open Conflicts*.

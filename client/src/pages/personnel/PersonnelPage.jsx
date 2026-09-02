@@ -8,6 +8,7 @@ import PersonnelFormModal from './PersonnelFormModal';
 import PersonnelDetailPanel from './PersonnelDetailPanel';
 import { getCachedPersonnel, getCachedEntity } from '../../offline/catalogue.js';
 import { checkIsOnline } from '../../offline/status.js';
+import { subscribeOutbox, queuedPersonnelFromOutbox, pendingPersonnelEditIds } from '../../offline/index.js';
 
 export default function PersonnelPage() {
   const { addToast } = useToast();
@@ -19,6 +20,12 @@ export default function PersonnelPage() {
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
   const [fromCache, setFromCache]       = useState(false);
+  // G3 — personnel added while blind, still queued in the outbox and not yet visible
+  // to the server's own /personnel list. Mirrors CustomersPage's queuedCustomers.
+  const [queuedPersonnel, setQueuedPersonnel] = useState([]);
+  // An existing personnel record carrying an undrained offline EDIT, mirroring
+  // CustomersPage.jsx's pendingEditIds for customers.
+  const [pendingEditIds, setPendingEditIds] = useState(() => new Set());
 
   // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
   // personnel (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
@@ -44,25 +51,47 @@ export default function PersonnelPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Reads directly from the outbox rather than the server, so a person added or
+  // edited offline shows up here immediately, and clears the moment the queued
+  // record actually drains — no page reload, matching CustomersPage's G29/G7 pattern.
+  const loadQueuedPersonnel = useCallback(async () => {
+    const [created, editIds] = await Promise.all([
+      queuedPersonnelFromOutbox(),
+      pendingPersonnelEditIds(),
+    ]);
+    setQueuedPersonnel(created);
+    setPendingEditIds(editIds);
+  }, []);
+
+  useEffect(() => {
+    loadQueuedPersonnel();
+    return subscribeOutbox(() => loadQueuedPersonnel());
+  }, [loadQueuedPersonnel]);
+
+  // 9.0/9.1/9.2 — delete, photo upload/delete, and the active/inactive toggle stay
+  // online-only; the rest of the edit form and + Add Personnel no longer do (G3).
   const mutationsBlocked = fromCache || !checkIsOnline();
 
-  const filtered = personnel.filter((p) =>
-    p.full_name.toLowerCase().includes(search.toLowerCase()) ||
-    (p.remarks ?? '').toLowerCase().includes(search.toLowerCase())
-  );
+  const searchLower = search.toLowerCase();
+  const visibleQueuedPersonnel = searchLower
+    ? queuedPersonnel.filter((p) =>
+        p.full_name.toLowerCase().includes(searchLower) ||
+        (p.remarks ?? '').toLowerCase().includes(searchLower))
+    : queuedPersonnel;
+  const filtered = [
+    ...visibleQueuedPersonnel,
+    ...personnel.filter((p) =>
+      p.full_name.toLowerCase().includes(search.toLowerCase()) ||
+      (p.remarks ?? '').toLowerCase().includes(search.toLowerCase())
+    ),
+  ];
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Personnel</h1>
-        {/* ADR 0015 §9 — personnel is read-only offline: adding, editing, deactivating
-            and photo upload all change a roster every device shares. */}
-        <Button
-          onClick={() => setCreating(true)}
-          disabled={mutationsBlocked}
-          title={mutationsBlocked ? 'Needs a connection' : undefined}
-        >
+        <Button onClick={() => setCreating(true)}>
           + Add Personnel
         </Button>
       </div>
@@ -112,7 +141,16 @@ export default function PersonnelPage() {
               {filtered.map((p) => (
                 <tr
                   key={p.id}
-                  onClick={() => setSelectedId(p.id)}
+                  onClick={() => {
+                    // A still-queued personnel record has no server row yet: opening
+                    // the edit panel would 404 against a `local-` id, so tell the
+                    // operator why instead of trying (mirrors CustomersPage's G29).
+                    if (p._unsynced) {
+                      addToast('Personnel is queued for sync — details and editing will be available once connected.', 'info');
+                      return;
+                    }
+                    setSelectedId(p.id);
+                  }}
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4">
@@ -124,7 +162,12 @@ export default function PersonnelPage() {
                     {p.phone ?? '—'}
                   </td>
                   <td className="px-5 py-4">
-                    {p.is_active ? (
+                    {(p._unsynced || pendingEditIds.has(String(p.id))) ? (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
+                                        bg-amber-100 text-amber-800 border border-amber-300">
+                        ⏳ Waiting to sync
+                      </span>
+                    ) : p.is_active ? (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
                                         bg-green-100 text-green-800 border border-green-300">
                         Active
