@@ -37,6 +37,11 @@ async function getFullDelivery(deliveryId) {
 
 // Reconcile stock after editing/voiding a delivery. Deliveries ADD stock, so the
 // per-product change is (newQty − oldQty); pass newItems = [] to fully reverse.
+//
+// `delivery_edit`, not `manual_adjustment` (migration 038): this is business activity,
+// not somebody's stock recount, and the offline guard's HUMAN_ACTION_FOR_FIELD map
+// reads `manual_adjustment` on current_stock as exactly that. Labelling a delivery
+// reversal that way raised a reconciliation question about a value nobody disputed.
 async function reconcileDeliveryStock(client, oldItems, newItems, deliveryId, userId, reason) {
   const deltas = {};
   for (const it of oldItems) {
@@ -45,7 +50,7 @@ async function reconcileDeliveryStock(client, oldItems, newItems, deliveryId, us
   for (const it of newItems) {
     deltas[it.product_id] = (deltas[it.product_id] || 0) + Number(it.quantity_received);
   }
-  await applyDeltaMap(client, deltas, { actionType: 'manual_adjustment', reason, userId, deliveryId });
+  await applyDeltaMap(client, deltas, { actionType: 'delivery_edit', reason, userId, deliveryId });
 }
 
 // ─── routes ─────────────────────────────────────────────────────────────────

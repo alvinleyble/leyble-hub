@@ -185,4 +185,53 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
     assert.equal(delivery.delivery_ref, null);
     assert.equal(delivery.receipt_station, null);
   });
+
+  // Migration 038. A delivery edit/void reverses stock the delivery once added — that
+  // is business activity, not somebody's stock recount. It used to be logged
+  // `manual_adjustment`, which is precisely the action type the offline guard reads as
+  // "another human counted this shelf" (HUMAN_ACTION_FOR_FIELD in
+  // client/src/offline/productMutations.js), so a delivery correction landing next to a
+  // queued manual count raised a reconciliation question about a value nobody disputed.
+  it('a delivery edit logs its stock reversal as delivery_edit, not manual_adjustment', async () => {
+    const created = await (await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body()),
+    })).json();
+    deliveryIds.push(created.id);
+    const before = await stockNow();
+
+    const res = await call(`/incoming/${created.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...body(), items: [{ product_id: productId, quantity_received: 2 }] }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(await stockNow(), before - 3);
+
+    const { rows } = await db.query(
+      `SELECT action_type, delta FROM inventory_audit_logs
+       WHERE related_delivery_id = $1 AND field_changed = 'current_stock'
+       ORDER BY id DESC LIMIT 1`,
+      [created.id]
+    );
+    assert.equal(rows[0].action_type, 'delivery_edit');
+    assert.equal(Number(rows[0].delta), -3);
+  });
+
+  it('voiding a delivery logs its full reversal the same way', async () => {
+    const created = await (await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body()),
+    })).json();
+    deliveryIds.push(created.id);
+
+    const res = await call(`/incoming/${created.id}`, { method: 'DELETE' });
+    assert.equal(res.status, 204);
+
+    const { rows } = await db.query(
+      `SELECT action_type, delta FROM inventory_audit_logs
+       WHERE related_delivery_id = $1 AND field_changed = 'current_stock'
+       ORDER BY id DESC LIMIT 1`,
+      [created.id]
+    );
+    assert.equal(rows[0].action_type, 'delivery_edit');
+    assert.equal(Number(rows[0].delta), -5);
+  });
 });

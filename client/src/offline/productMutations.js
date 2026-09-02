@@ -5,6 +5,7 @@ import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 import {
   recordConflict, hasOpenConflict, removeConflict, listConflicts,
   STOCK_FIELD, PRICE_FIELD,
+  CAUSE_COMPETING_EDIT, CAUSE_UNEXPLAINED_MOVEMENT,
 } from './reconcile.js';
 import { nativeStore } from './nativeStore.js';
 import { outboxKey } from './keys.js';
@@ -182,6 +183,9 @@ const HUMAN_ACTION_FOR_FIELD = {
   [PRICE_FIELD]: 'price_change',
 };
 
+// GET /api/v1/products/:id — "includes last 50 audit log entries".
+const AUDIT_LOG_PAGE = 50;
+
 /**
  * Runs before every drain pass. For each queued product mutation carrying a guard,
  * asks the server what the product looks like now and whether anyone else corrected
@@ -192,6 +196,13 @@ const HUMAN_ACTION_FOR_FIELD = {
  * product is dropped from the batch) and becomes a question in the reconcile store, so
  * the rest of the operator's edit still lands and only the genuinely contested value
  * waits on a human.
+ *
+ * A check that is clean but whose server value moved for ORDINARY BUSINESS REASONS —
+ * an order dispatched, cancelled or edited, a delivery logged — is neither left alone
+ * nor turned into a question: the queued count is re-derived as a delta against those
+ * movements (stockDriftSinceQueued) so it stops being an absolute overwrite. That is
+ * the fix for the silent clobber where a stocktake queued at 09:00 erased a sale that
+ * landed at 09:30 simply by draining second.
  *
  * Requires a connection by construction: with no line the product read throws, this
  * returns having done nothing, and everything stays queued exactly as before. That is
@@ -206,6 +217,9 @@ export async function screenProductMutations() {
 
   for (const record of records) {
     const survivors = [];
+    // Guarded fields whose queued value was re-derived on this pass — written back onto
+    // the outbox payload once, alongside the screened stamp, rather than per check.
+    const rederivations = {};
     for (const check of record.guard.checks) {
       checked++;
       let server;
@@ -220,46 +234,148 @@ export async function screenProductMutations() {
       }
 
       const competing = findCompetingEdit(server, check, record.created_at);
-      if (!competing) { survivors.push(check); continue; }
 
-      // Don't stack a second identical question behind an unanswered one — the
-      // operator would be asked the same thing twice about the same product.
-      if (!(await hasOpenConflict(check.product_id, check.field))) {
-        await recordConflict({
-          productId:   check.product_id,
-          productName: server.name || check.product_name,
-          field:       check.field,
-          mine:        check.mine,
-          theirs:      Number(server[check.field]),
-          baseline:    check.baseline,
-          unit:        server.unit || check.unit,
-          reason:      check.reason,
-          theirReason: competing.reason || null,
-          theirAt:     competing.created_at,
-          queuedAt:    record.created_at,
-          profileKey:  record.profile_key,
-        });
+      if (!competing) {
+        // No second opinion — but the server's number may still have moved because
+        // something was sold, cancelled, edited or delivered while this record waited.
+        // Resending the counted number as an absolute would erase that movement, so
+        // re-derive it as a delta instead (see the header comment in reconcile.js).
+        const drift = stockDriftSinceQueued(server, check, record.created_at);
+        if (drift === null) {
+          // Unknowable: the audit window is truncated, so we cannot tell what moved.
+          // §6's answer to "we cannot settle this" is always the same — ask a person.
+          await raiseQuestion({
+            record, check, server, competing: null, cause: CAUSE_UNEXPLAINED_MOVEMENT,
+          });
+          conflicts++;
+          continue;
+        }
+        if (drift !== 0) {
+          const rederived = Number(check.mine) + drift;
+          rederivations[check.field] = rederived;
+          await applyLocalProductPatch(check.product_id, { [check.field]: rederived });
+        }
+        survivors.push(check);
+        continue;
       }
+
+      await raiseQuestion({ record, check, server, competing, cause: CAUSE_COMPETING_EDIT });
       conflicts++;
     }
 
     if (survivors.length !== record.guard.checks.length) {
-      await rewriteRecord(record, survivors);
+      await rewriteRecord(record, survivors, rederivations);
     } else {
-      await stampScreened(record);
+      await stampScreened(record, rederivations);
     }
   }
 
   return { checked, conflicts };
 }
 
+// Records the question a contested field becomes. Don't stack a second identical
+// question behind an unanswered one — the operator would be asked the same thing twice
+// about the same product.
+async function raiseQuestion({ record, check, server, competing, cause }) {
+  if (await hasOpenConflict(check.product_id, check.field)) return;
+  await recordConflict({
+    productId:   check.product_id,
+    productName: server.name || check.product_name,
+    field:       check.field,
+    mine:        check.mine,
+    theirs:      Number(server[check.field]),
+    baseline:    check.baseline,
+    unit:        server.unit || check.unit,
+    reason:      check.reason,
+    theirReason: competing?.reason || null,
+    theirAt:     competing?.created_at || null,
+    queuedAt:    record.created_at,
+    profileKey:  record.profile_key,
+    cause,
+  });
+}
+
 // The drain refuses to send a guarded record that has not just been screened (see
-// isFreshlyScreened in outbox.js), so a clean pass has to say so.
-async function stampScreened(record) {
+// isFreshlyScreened in outbox.js), so a clean pass has to say so. `rederivations` is
+// the {field: value} map of queued values this pass recomputed as a delta.
+async function stampScreened(record, rederivations = {}) {
   const stored = await nativeStore.getJson(outboxKey(record.id));
   if (!stored?.guard) return;
+  stored.payload = applyRederivations(stored.payload, rederivations);
   stored.guard = { ...stored.guard, screened_at: Date.now() };
   await nativeStore.setJson(outboxKey(record.id), stored);
+}
+
+// Writes re-derived values back onto the payload about to be sent. Only ever touches
+// a field the payload already carries — a field that was dropped at save time (because
+// the operator did not change it) must stay out of the body, not reappear here.
+function applyRederivations(payload, rederivations) {
+  const fields = Object.keys(rederivations || {});
+  if (fields.length === 0) return payload;
+  const next = { ...payload };
+  for (const field of fields) {
+    if (next[field] === undefined) continue;
+    next[field] = rederivations[field];
+  }
+  return next;
+}
+
+// The server's own stock movements since this record was queued, summed.
+//
+// Returns 0 when nothing moved (send the counted value as it stands), a signed number
+// when it did (send `counted + drift`), and null when the answer is unknowable and the
+// value has to become a question instead. Unknowable means one of two things:
+//
+//   * the audit window is truncated — GET /products/:id returns the last 50 entries,
+//     and if the oldest of a full 50 is still newer than this record, there may be
+//     movements we simply cannot see; or
+//   * a human `manual_adjustment` landed after this record was queued that
+//     findCompetingEdit did not flag, which happens only when other movements netted
+//     the server's value back to this device's baseline. Re-deriving over the business
+//     movements alone would then quietly overwrite that person's count.
+//
+// Price is never re-derived: a price does not move on its own (only price_change,
+// which is a human, i.e. a competing edit), and "price plus a delta" is not a
+// meaningful thing to send anyway.
+export function stockDriftSinceQueued(serverProduct, check, queuedAtIso) {
+  if (check.field !== STOCK_FIELD) return 0;
+
+  const queuedAt = Date.parse(queuedAtIso);
+  if (Number.isNaN(queuedAt)) return 0; // no anchor to measure "since" from
+
+  const log = Array.isArray(serverProduct?.audit_log) ? serverProduct.audit_log : [];
+  const stockLog = log.filter((e) => e.field_changed === STOCK_FIELD);
+
+  const since = [];
+  for (const entry of stockLog) {
+    const at = Date.parse(entry.created_at);
+    if (Number.isNaN(at) || at <= queuedAt) continue;
+    // Checked BEFORE the "nothing moved" shortcut below, on purpose: a human count
+    // whose effect other movements happen to have netted back to this device's
+    // baseline is invisible to findCompetingEdit, and arithmetic must not be what
+    // quietly overwrites it.
+    if (entry.action_type === HUMAN_ACTION_FOR_FIELD[STOCK_FIELD]) return null;
+    since.push(entry);
+  }
+
+  if (since.length === 0) return 0;
+  if (Number(serverProduct?.[check.field]) === Number(check.baseline)) return 0;
+
+  // The window is only a worry when it is full AND every stock entry in it is newer
+  // than this record — then whatever movement fell off the end is invisible here.
+  if (log.length >= AUDIT_LOG_PAGE && since.length === stockLog.length) return null;
+
+  let drift = 0;
+  for (const entry of since) {
+    // A stock entry with no usable delta (shouldn't happen — applyStockDelta and the
+    // PATCH route both write one) leaves the sum unprovable, so stop guessing. Note
+    // Number(null) is 0, which is exactly the wrong answer here.
+    if (entry.delta === null || entry.delta === undefined || entry.delta === '') return null;
+    const delta = Number(entry.delta);
+    if (!Number.isFinite(delta)) return null;
+    drift += delta;
+  }
+  return drift;
 }
 
 // The competing edit, if there is one: a human setting the same field after this
@@ -282,9 +398,10 @@ export function findCompetingEdit(serverProduct, check, queuedAtIso) {
 // Removes the contested fields from a record. What is left is still a real edit and
 // still worth sending; a record with nothing left is dropped, because the only thing
 // it carried is now a question instead.
-async function rewriteRecord(record, survivors) {
+async function rewriteRecord(record, survivors, rederivations = {}) {
   const stored = await nativeStore.getJson(outboxKey(record.id));
   if (!stored) return;
+  stored.payload = applyRederivations(stored.payload, rederivations);
 
   if (record.guard.kind === 'batch_price') {
     const keep = new Set(survivors.map((c) => String(c.product_id)));

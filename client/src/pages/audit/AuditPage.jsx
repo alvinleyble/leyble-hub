@@ -17,6 +17,7 @@ const ACTION_LABELS = {
   order_fulfillment: 'Order Fulfilled',
   order_edit:        'Order Edit',
   order_cancel:      'Order Cancelled',
+  delivery_edit:     'Delivery Edited',
 };
 
 const ACTION_COLORS = {
@@ -26,6 +27,7 @@ const ACTION_COLORS = {
   order_fulfillment: 'bg-slate-100  text-slate-700  border-slate-300',
   order_edit:        'bg-amber-100  text-amber-800  border-amber-300',
   order_cancel:      'bg-red-100    text-red-800    border-red-300',
+  delivery_edit:     'bg-teal-100   text-teal-800   border-teal-300',
 };
 
 const ACTION_TYPES = Object.keys(ACTION_LABELS);

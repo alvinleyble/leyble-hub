@@ -4,7 +4,7 @@ import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import { useToast } from '../../components/ui/Toast';
 import {
-  listConflicts, subscribeConflicts, STOCK_FIELD,
+  listConflicts, subscribeConflicts, STOCK_FIELD, CAUSE_UNEXPLAINED_MOVEMENT,
 } from '../../offline/reconcile.js';
 import { resolveConflict, keepServerValue } from '../../offline/productMutations.js';
 
@@ -27,6 +27,12 @@ const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base tex
 //
 // No option quietly wins by default. Closing the modal leaves the question open;
 // nothing is sent until somebody says which value is true.
+//
+// Ordinary business movement — a sale, a delivery — does NOT arrive here: the guard
+// re-derives the queued count as a delta instead of asking. The one exception is a
+// movement it could not account for (`CAUSE_UNEXPLAINED_MOVEMENT`), which lands here
+// with different words, because claiming "another tablet counted this" when nobody did
+// is exactly how a modal teaches people to stop reading it.
 
 function formatValue(conflict, value) {
   return conflict.field === STOCK_FIELD
@@ -49,6 +55,7 @@ function ConflictCard({ conflict, onResolved }) {
 
   const isStock = conflict.field === STOCK_FIELD;
   const noun = isStock ? 'count' : 'price';
+  const unexplained = conflict.cause === CAUSE_UNEXPLAINED_MOVEMENT;
 
   const act = async (fn) => {
     setBusy(true);
@@ -74,7 +81,9 @@ function ConflictCard({ conflict, onResolved }) {
   const keepTheirs = () => act(async () => {
     await keepServerValue(conflict.id);
     addToast(
-      `${conflict.product_name}: kept the other tablet's ${noun} (${formatValue(conflict, conflict.theirs)}).`,
+      unexplained
+        ? `${conflict.product_name}: kept the server's ${noun} (${formatValue(conflict, conflict.theirs)}).`
+        : `${conflict.product_name}: kept the other tablet's ${noun} (${formatValue(conflict, conflict.theirs)}).`,
       'success'
     );
   });
@@ -84,9 +93,11 @@ function ConflictCard({ conflict, onResolved }) {
       <div className="px-5 py-4 bg-amber-50 border-b border-amber-200">
         <p className="text-lg font-bold text-slate-900">{conflict.product_name}</p>
         <p className="text-sm text-amber-900 mt-0.5">
-          {isStock
-            ? 'Two tablets corrected this stock count while they were offline.'
-            : 'Two tablets changed this price while they were offline.'}
+          {unexplained
+            ? `This ${noun} changed on the server while this tablet was offline, and there is no record here of why.`
+            : isStock
+              ? 'Two tablets corrected this stock count while they were offline.'
+              : 'Two tablets changed this price while they were offline.'}
         </p>
       </div>
 
@@ -115,7 +126,7 @@ function ConflictCard({ conflict, onResolved }) {
 
         <div className="rounded-lg border border-slate-300 p-4">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
-            Another tablet (now on the server)
+            {unexplained ? 'Now on the server' : 'Another tablet (now on the server)'}
           </p>
           <p className="text-3xl font-bold tabular-nums text-slate-900">
             {formatValue(conflict, conflict.theirs)}
