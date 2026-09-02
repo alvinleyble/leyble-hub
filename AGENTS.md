@@ -152,7 +152,7 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   `client/tailwind.config.js` are for V2 shell/screens; V1 pages stay light. The V2 focus ring is
   re-tinted via the `.v2-root` rule in `client/src/index.css`.
 - **Back Office** (Personnel, Incoming Supplies, Tickets, Audit Log) stays V1 UI permanently.
-- All V2 slices merge to `dev` only; `main` is merged once at the end (batched APK cutover).
+- All V2 slices merge to `staging` only; `main` is merged once at the end (batched APK cutover).
 - **POS (Slice 1, done):** [client/src/pages/pos/POSPage.jsx](client/src/pages/pos/POSPage.jsx) plus
   `client/src/components/pos/`. Order math lives in `posMath.js` — every POS figure and the
   printed receipt are **goods-only**: V2 never charges or shows the bottle deposit, because it
