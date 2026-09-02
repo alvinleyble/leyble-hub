@@ -414,6 +414,14 @@ test('OrdersPage parked-drafts banner counts both halves of the list', async () 
 // instead of opening read-only) traced to `openDraft` discarding the fetched order
 // the moment it displayed it, so a later outage had nothing to fall back to —
 // unlike every other order, which OrderDetailPage.jsx's own load() always snapshots.
+//
+// Extended the same day: that first fix only covered a draft THIS device had
+// individually opened while online (openDraft's own putOrderSnapshot). GET
+// /orders/sync used to exclude drafts entirely, so a historical draft this device
+// never happened to tap still had no snapshot and still failed. The route now mirrors
+// drafts unconditionally, same as any other order, so the background history sync
+// (offline/sync.js) is what actually makes an untouched historical draft readable —
+// openDraft's per-view write stays in place as a redundant belt-and-braces path.
 
 function makeHistoricalDraft(overrides = {}) {
   return {
@@ -484,12 +492,24 @@ test('OrdersPage: tapping a historical draft this device has already cached open
   r.unmount();
 });
 
-test('OrdersPage: a historical draft never opened before this outage still fails gracefully (no cached snapshot to fall back to)', async () => {
+test('OrdersPage: a historical draft never opened before this outage still opens read-only, via the bulk order-history sync alone', async () => {
+  // 2026-09-02, extending PR #64: GET /orders/sync now mirrors drafts unconditionally
+  // (server/src/routes/orders.js), so the background history sync (offline/sync.js)
+  // writes a putOrderSnapshot for a draft exactly like any other order — no per-view
+  // fetch through openDraft required first. Simulate that bulk-sync write directly,
+  // deliberately WITHOUT ever calling openDraft's own live GET, to prove the fallback
+  // does not depend on this device having individually opened this specific draft.
   await registerStation(1);
   api.getActiveProfile = async () => 'josie';
 
-  await nativeStore.setJson(DRAFTS_KEY, [makeHistoricalDraft({ id: 9002, customer_name: 'Never Opened Yet' })]);
+  const draft = makeHistoricalDraft({ id: 9002, customer_name: 'Never Opened Yet' });
+  await putOrderSnapshot(draft);
+  await nativeStore.setJson(DRAFTS_KEY, [draft]);
+
   api.get = offline;
+  api.patch = async (path) => { throw new Error(`api.patch(${path}) must not be called — a historical draft is read-only offline`); };
+  api.post  = async (path) => { throw new Error(`api.post(${path}) must not be called — a historical draft is read-only offline`); };
+  api.del   = async (path) => { throw new Error(`api.del(${path}) must not be called — a historical draft is read-only offline`); };
 
   const r = renderOrdersFlow('/orders');
   await settle(60);
@@ -499,10 +519,42 @@ test('OrdersPage: a historical draft never opened before this outage still fails
   await settle(60);
 
   const row = r.all('td').find((td) => td.textContent.includes('Never Opened Yet'))?.closest('tr');
+  assert.ok(row, 'the historical draft must still list while offline');
+  await r.click(row);
+  await settle(60);
+
+  assert.doesNotMatch(r.text(), /needs a connection to open/, 'the bulk-synced snapshot must be enough — no per-view fetch ever happened for this draft');
+  assert.doesNotMatch(r.text(), /Order not found/);
+  assert.match(r.text(), /Never Opened Yet/, 'the draft must open showing its contents');
+  assert.match(r.text(), /showing this device\'s saved copy/, 'the usual offline-copy banner applies, same as any synced order');
+
+  assert.equal(r.all('button').find((b) => b.textContent.trim() === 'Edit Order'), undefined,
+    'read-only posture is unchanged: Edit Order must still be absent for a historical draft offline');
+  assert.equal(r.all('button').find((b) => b.textContent.trim() === 'Cancel Order'), undefined,
+    'read-only posture is unchanged: Cancel Order must still be absent for a historical draft offline');
+
+  r.unmount();
+});
+
+test('OrdersPage: a historical draft with truly no cache anywhere (never synced, never opened) still fails gracefully', async () => {
+  await registerStation(1);
+  api.getActiveProfile = async () => 'josie';
+
+  await nativeStore.setJson(DRAFTS_KEY, [makeHistoricalDraft({ id: 9003, customer_name: 'Truly Never Synced' })]);
+  api.get = offline;
+
+  const r = renderOrdersFlow('/orders');
+  await settle(60);
+
+  const draftsTab = r.all('button').find((b) => b.textContent.trim() === 'Drafts');
+  await r.click(draftsTab);
+  await settle(60);
+
+  const row = r.all('td').find((td) => td.textContent.includes('Truly Never Synced'))?.closest('tr');
   assert.ok(row);
   await r.click(row);
   await settle(60);
 
-  assert.match(r.text(), /needs a connection to open/, 'unchanged: a genuine cache miss still surfaces the existing offline toast');
+  assert.match(r.text(), /needs a connection to open/, 'unchanged: a genuine cache miss (no bulk sync has ever run) still surfaces the existing offline toast');
   r.unmount();
 });
