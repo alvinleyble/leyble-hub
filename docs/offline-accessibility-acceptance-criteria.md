@@ -12,26 +12,28 @@ a **"Settled 2026-08-28"** note. Everything else here is the criteria list as or
 apart from the corrections dated 2026-08-29 and marked as such.
 
 > **Delivery note (rewritten 2026-08-29 — what is live vs. what is still open).**
-> Everything in this list is **live behaviour to validate against** except the four items
+> Everything in this list is **live behaviour to validate against** except the item
 > named below. Shipped: Slice 3.1 (PR #49), Slice 3.2 (PR #50), the audit follow-ups
 > (PRs #53, #54 — including offline login / Resume Offline Session, items 1.0 and 12.0),
 > Slice 3.3 (PR #55 — offline product/stock CRUD, Incoming Supplies, customer profile
-> edits, back-office read caching) and the drafts regression fix (PR #56 — items 5.1, 5.6,
-> 5.13 for this device's own drafts). Per-PR detail is in
+> edits, back-office read caching), the drafts regression fix (PR #56 — items 5.1, 5.6,
+> 5.13 for this device's own drafts) and the historical-drafts read-only fix (PR #64 —
+> item 5.15). Per-PR detail is in
 > [ADR 0015 § Delivery Slices](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md#delivery-slices--what-actually-shipped).
 >
 > **Genuinely still open:**
-> 1. **5.15, historical draft orders** — settled 2026-08-29, scoped but not yet built
->    (`leyble-hub-offline-historical-drafts-edit`). See 5.15 and Known Gaps G2.
-> 2. **Deferred conflicts** where this document and the shipped app disagree on purpose —
->    9.2/9.3 (Personnel), 6.0 (delivery edit), 10.1 (ticket creation). See Known Gaps.
-> 3. **One minor UX gap** observed testing PR #55, captain-acknowledged and non-blocking.
->    See Known Gaps G7.
+> 1. **One deferred conflict** where this document and the shipped app disagree on
+>    purpose — 9.2/9.3 (Personnel). See Known Gaps G3.
 >
 > **Closed 2026-09-02:** 8.4's custom-price half — custom-price capture is now online-only
 > by design everywhere (Customers module and New Order modal alike), not a gap. See 8.4,
-> 5.13, and Known Gaps G1 (closed). Also closed: G6's Inventory offline-banner reconnect
-> observation, verified by static review + new unit coverage — see Known Gaps G6 (closed).
+> 5.13, and Known Gaps G1 (closed). Also closed the same day: G2 (5.15, historical draft
+> orders — reversed to match 5.8's rule, no code change needed), G4 (6.0, delivery edit —
+> doc corrected to match the app and ADR 0015 §8), G5 (10.1, ticket creation — doc corrected
+> to state the exception explicitly), G6 (Inventory offline-banner reconnect observation,
+> verified by static review + new unit coverage), and G7 (customer offline-edit sync badge,
+> item 8.4/8.5 — `pendingCustomerEditIds()` added, mirroring the Inventory pattern). See
+> Known Gaps for each.
 
 ---
 
@@ -100,9 +102,6 @@ parked ones. What you can then DO with one depends on which half it came from: s
 > is restricted to orders created locally that have never synced — never on an already-synced
 > historical order, regardless of status. This mirrors ADR 0015 §5's existing rule for status
 > transitions; see the new rule added there. *(captain decision: synced-order-edit-scope)*
->
-> **One exception, added 2026-08-29:** a synced **draft** order is not covered by this rule —
-> see 5.15. Everything else in 5.8 stands.
 
 5.9 Reviewing a Closed order offline: cannot reopen; shall be able to print; shall NOT be able to edit or add adjustment.
 
@@ -172,39 +171,32 @@ order that has already synced requires an online connection to edit its content.
 
 5.14 In every order-list tab, offline users cannot bulk-select orders (since they can't act on them anyway).
 
-5.15 A **synced/historical draft order** can be opened, edited, and moved forward into a real
-order while offline — the one exception to 5.8's rule that a synced order needs a connection to
-edit. Discarding stays narrower: only a draft created in the **same offline session on this
-device** can be discarded offline; a historical/synced draft can never be deleted or discarded
-offline.
+5.15 A **synced/historical draft order** follows the same rule as every other synced order
+(criterion 5.8): it opens read-only offline and needs a connection to edit or advance it.
+Discarding is likewise online-only for a synced/historical draft; only a draft created in the
+**same offline session on this device** can be discarded offline.
 
-> **Settled 2026-08-29 (captain, live) — SCOPED BUT NOT YET BUILT.** A draft is not yet an
-> order: no stock has moved, nothing has printed, and nothing downstream depends on it, so
-> advancing one carries none of the multi-device hazard that keeps synced orders online-only
-> in 5.8. Deleting one is a different act — it destroys a row other devices can see, the
-> shape of a merge or a void — so it keeps the stricter, session-local boundary.
->
-> **Current behaviour (do not test against the rule above yet):** only drafts this device
-> parked itself are editable offline (`_local: true` in `parkedOrders.js`; PR #56).
-> Server-sourced drafts are cached whole so 5.1 and 5.6 still *list* them blind, but opening
-> one offline answers *"Offline — this draft is on the server and needs a connection to
-> open."* and discarding one answers the same. Closing this is a queued, not-yet-dispatched
-> backlog item (`leyble-hub-offline-historical-drafts-edit`).
+> **Settled 2026-09-02 (captain, live) — reverses the 2026-08-29 exception.** The captain
+> reversed the earlier decision to grant historical drafts an offline edit/advance path,
+> specifically for consistency with how every other order status already behaves under 5.8 —
+> a draft gets no special carve-out. This matches what's already shipped (PR #64): a
+> historical (already-synced) draft opens read-only offline via `OrderDetailPage.jsx`
+> (Edit Order, the adjustment toggle, and Cancel Order are hidden outright for
+> `status === 'draft'`), the same as any other synced order. A session-local draft (parked
+> entirely offline, never synced) is unaffected — it still opens, edits, and discards through
+> `OrderCreateModal.jsx` with no network, exactly as before.
 > See [ADR 0015 §5](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md).
 > *(captain decision: historical-draft-offline-edit-scope)*
 
-6.0 Incoming Supplies: fully accessible online/offline except offline cannot delete a delivery (can edit).
+6.0 Incoming Supplies: fully accessible online/offline except offline cannot delete a delivery.
 
-> **⚠ Conflict flagged 2026-08-29 — not silently resolved.** The shipped app blocks
-> **editing** an already-logged delivery offline as well as deleting it:
-> `DeliveryDetailPanel.jsx` gates both on one `mutationsBlocked`, and only *logging a new
-> truck* works blind. That follows
+> **Confirmed 2026-09-02:** editing an already-logged delivery is online-only, same as
+> deleting one. `DeliveryDetailPanel.jsx` gates both on one `mutationsBlocked`, and only
+> *logging a new truck* works blind. That matches
 > [ADR 0015 §8](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md), whose
 > chosen option reads "Voids and line edits remain online-only" — editing a logged delivery
-> reconciles stock movements it already made, which is the same hazard as a void. So the
-> code and the ADR agree against this item's "(can edit)" clause. Needs a captain call:
-> either this clause is dropped, or §8 grants delivery edits an offline path. Listed as
-> Known Gaps G4.
+> reconciles stock movements it already made, which is the same hazard as a void. Doc
+> corrected to match the app and the ADR. See Known Gaps G4 (closed).
 
 7.0 Inventory: users can print the list.
 
@@ -313,16 +305,16 @@ note — in the shipped app, "accessible" means viewable, not editable.)*
 
 10.0 Tickets: offline users cannot Resolve a ticket.
 
-10.1 Tickets: anything else not mentioned is accessible offline.
+10.1 Tickets: anything else not mentioned is accessible offline, with one exception —
+creating a new ticket requires an online connection.
 
-> **⚠ Flagged 2026-08-29:** the shipped app also blocks **creating** a ticket offline
-> (`TicketsPage.jsx`, *"Needs a connection — new tickets can't be raised offline"*), which
-> this item reads against. The reasoning applied in Slice 3.3: no decision in ADR 0015
+> **Confirmed 2026-09-02:** `TicketsPage.jsx` blocks **creating** a ticket offline
+> (*"Needs a connection — new tickets can't be raised offline"*). No decision in ADR 0015
 > grants ticket creation an offline path, unlike order / customer / delivery creation, each
 > of which is explicitly established as additive-and-safe — so it is blocked with an
-> explanation rather than left to fail as a fetch error. That is an implementer's reading,
-> not a captain decision; recorded here rather than silently absorbed. Viewing tickets and
-> their detail panels offline works as this item intends. Known Gaps G5.
+> explanation rather than left to fail as a fetch error. Viewing tickets and their detail
+> panels offline works as this item intends. Doc corrected to state the exception
+> explicitly. See Known Gaps G5 (closed).
 
 11.0 Audit log should "align accordingly": offline-queued actions simply appear in the Audit Log once they sync — eventual consistency only, no synthesized "pending sync" placeholder rows.
 
@@ -350,20 +342,25 @@ its Delivery Slices section rather than duplicating the list.)*
 | # | Item | Kind | Criteria | Status |
 | :-- | :--- | :--- | :--- | :--- |
 | G1 | Custom prices cannot be set offline, from the Customers module or the New Order modal | Closed — by design | 8.4, 5.13 | Closed 2026-09-02: online-only everywhere is the intended design, not a gap (no unique constraint on `customer_product_prices`) |
-| G2 | Historical (synced) drafts not editable offline | Open work | 5.15 | Scoped 2026-08-29, backlog item `leyble-hub-offline-historical-drafts-edit` |
+| G2 | Historical (synced) drafts not editable offline | Closed — reversed for consistency | 5.15 | Closed 2026-09-02: captain reversed the drafts exception for app-wide consistency; current app behavior (read-only offline) was already correct, no code change needed |
 | G3 | Personnel edit form blocked entirely offline, not just toggle + photo | Deferred conflict | 9.2, 9.3 vs ADR §9 | Captain: *"let it be for now"* (2026-08-29) |
-| G4 | Editing a logged delivery is blocked offline, not only deleting | Open conflict | 6.0 vs ADR §8 + code | Needs a captain call |
-| G5 | Creating a ticket is blocked offline | Open conflict | 10.1 vs code | Implementer's reading; needs confirmation |
+| G4 | Editing a logged delivery is blocked offline, not only deleting | Closed — doc corrected | 6.0 vs ADR §8 + code | Closed 2026-09-02: confirmed online-only 2026-09-02, doc corrected to match app + ADR 0015 §8 |
+| G5 | Creating a ticket is blocked offline | Closed — doc corrected | 10.1 vs code | Closed 2026-09-02: confirmed online-only 2026-09-02, doc corrected to state the exception explicitly |
 | G6 | Inventory offline banner may not clear promptly on reconnect | Closed — verified by static review + test | 7.7 | Closed 2026-09-02: see detail below |
-| G7 | No "Waiting to sync" indicator on an offline-edited customer row | Observation | 8.4, 8.5 | Cosmetic inconsistency, non-blocking |
+| G7 | No "Waiting to sync" indicator on an offline-edited customer row | Closed — fixed | 8.4, 8.5 | Closed 2026-09-02: fixed 2026-09-02, `pendingCustomerEditIds()` added mirroring the Inventory pattern, badge now shows on an offline-edited customer row |
+
+**G2 — Historical drafts.** Full detail under item 5.15. The captain settled this
+2026-08-29 with an exception for synced drafts, then reversed it 2026-09-02 for consistency
+with how every other order status already behaves under 5.8 — a synced/historical draft is
+not a special case. The app's shipped behavior (PR #64, read-only offline) was already
+correct under the reversed rule; only the doc needed correcting.
 
 **G3 — Personnel.** Full detail under item 9.2. The captain has seen this and parked it
 because the Personnel module is not in use; do not change either the ADR or the app without a
 fresh decision.
 
-**G4 — Delivery edits.** Full detail under item 6.0. Code and ADR §8 agree with each other and
-against criterion 6.0's "(can edit)" clause. Deliberately not resolved by rewriting either
-side.
+**G4 — Delivery edits.** Full detail under item 6.0. Code and ADR §8 agree with each other;
+the doc's stale "(can edit)" clause has been corrected to match both.
 
 **G5 — Ticket creation.** Full detail under item 10.1.
 
@@ -398,10 +395,12 @@ mechanism, and should be filed as a fresh, separately-reproduced item rather tha
 one from a single unconfirmed sighting.
 
 **G7 — No sync indicator on an offline-edited customer.** Editing an existing customer offline
-queues and syncs correctly, but the customer's row in the directory shows nothing to say so.
+queued and synced correctly, but the customer's row in the directory showed nothing to say so.
 Inventory got both halves of this affordance in PR #55 — `queuedProductsFromOutbox` badges
 products *created* blind, and `pendingProductEditIds()` badges existing products carrying an
-undrained *edit*. Customers only has the first half (`queuedCustomersFromOutbox`, the
-`local-<outboxId>` rows), so an edit to an already-synced customer is invisible. An
-inconsistency between two screens, not a functional failure. Captain-acknowledged,
-non-blocking; a natural companion to G1 whenever someone is next in that panel.
+undrained *edit*. Customers only had the first half (`queuedCustomersFromOutbox`, the
+`local-<outboxId>` rows). **Closed 2026-09-02:** `pendingCustomerEditIds()` was added to
+`client/src/offline/queuedCustomers.js`, mirroring `pendingProductEditIds()`'s exact approach,
+and wired into `CustomersPage.jsx`'s existing-row "⏳ Waiting to sync" badge condition
+alongside `queuedCustomersFromOutbox()` — the same pattern `InventoryPage.jsx` already uses for
+products.

@@ -10,7 +10,7 @@ import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
 import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
-import { subscribeOutbox, queuedCustomersFromOutbox } from '../../offline/index.js';
+import { subscribeOutbox, queuedCustomersFromOutbox, pendingCustomerEditIds } from '../../offline/index.js';
 import { getCachedCustomers, getCachedEntity } from '../../offline/catalogue.js';
 import { customerMatches } from '../../utils/customerSearch';
 
@@ -28,6 +28,9 @@ export default function CustomersPage() {
   // G29 — customers quick-created offline (OrderCreateModal), still queued in the
   // outbox and not yet visible to the server's own /customers list.
   const [queuedCustomers, setQueuedCustomers] = useState([]);
+  // G7 — an existing customer carrying an undrained offline EDIT, mirroring
+  // InventoryPage.jsx's pendingEditIds for products.
+  const [pendingEditIds, setPendingEditIds] = useState(() => new Set());
 
   // Debounce search so we don't fire on every keystroke
   useEffect(() => {
@@ -68,7 +71,12 @@ export default function CustomersPage() {
   // disappears the moment its queued POST /customers actually drains — no page
   // reload, no spinner, matching the same silent-refresh spirit as G27.
   const loadQueuedCustomers = useCallback(async () => {
-    setQueuedCustomers(await queuedCustomersFromOutbox());
+    const [created, editIds] = await Promise.all([
+      queuedCustomersFromOutbox(),
+      pendingCustomerEditIds(),
+    ]);
+    setQueuedCustomers(created);
+    setPendingEditIds(editIds);
   }, []);
 
   useEffect(() => {
@@ -177,7 +185,7 @@ export default function CustomersPage() {
                     <span className="block max-w-[220px] truncate">{c.address ?? '—'}</span>
                   </td>
                   <td className="px-5 py-4">
-                    {c._unsynced ? (
+                    {(c._unsynced || pendingEditIds.has(String(c.id))) ? (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
                         ⏳ Waiting to sync
                       </span>

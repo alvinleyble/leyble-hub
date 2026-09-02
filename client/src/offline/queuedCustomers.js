@@ -74,3 +74,32 @@ export async function updateCustomerLocalFirst(customerId, patch, { profileKey }
   const synced = !(await listRecords().catch(() => [])).some((r) => r.id === record.id);
   return { record, synced };
 }
+
+// ── Queued EDITS to customers that already exist on the server ──────────────
+//
+// Distinct from queuedCustomersFromOutbox above, and the distinction is the whole
+// point: a queued CREATE has no server row to show, so it is merged into the list as
+// a `local-` row; a queued EDIT belongs to a row that is already on screen, showing
+// the operator's new details (updateCustomerLocalFirst wrote them to the held copy),
+// with nothing at all to say those details have not reached anyone else yet.
+//
+// Mirrors pendingProductEditIds() in productMutations.js — same "Waiting to sync"
+// affordance Inventory already gives an offline-edited product row.
+
+/** Ids (as strings) of existing customers carrying an edit that has not drained yet. */
+export async function pendingCustomerEditIds() {
+  try {
+    const records = await listRecords();
+    const ids = new Set();
+    for (const r of records) {
+      if (r.status !== 'queued' || r.entity_type !== 'customer_update') continue;
+      const id = String(r.endpoint || '').split('/').pop();
+      if (id) ids.add(id);
+    }
+    return ids;
+  } catch {
+    // Best-effort, exactly like queuedCustomersFromOutbox — a badge is never worth
+    // failing the screen that asked for it.
+    return new Set();
+  }
+}

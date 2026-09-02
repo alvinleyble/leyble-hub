@@ -586,13 +586,17 @@ Every V1 screen now works blind. What a future session most needs to know:
   (name/category/unit/sku on Products; name/type/address/phone/notes on Customers).
   Server routes already treat an omitted field as "leave unchanged," so this is
   client-only; don't reintroduce a full-form patch when touching either `handleSave`.
-- **"Waiting to sync" has two sources on Inventory, not one.** `queuedProductsFromOutbox`
-  covers products CREATED blind (no server row, merged in as `local-<outboxId>`);
-  `pendingProductEditIds()` covers existing products carrying an undrained EDIT
-  (`product_update` / `product_batch_price` / the two `*_confirm` types). The second is the
-  one that hides: `applyLocalProductPatch` writes the operator's new number onto the held
-  copy, so a blind edit renders identically to a saved one. The badge and the panel banner
-  both read the outbox, so they clear themselves on drain.
+- **"Waiting to sync" has two sources, not one — on both Inventory and Customers.**
+  `queuedProductsFromOutbox`/`queuedCustomersFromOutbox` cover a row CREATED blind (no
+  server row, merged in as `local-<outboxId>`); `pendingProductEditIds()`/
+  `pendingCustomerEditIds()` (both in `client/src/offline/`) cover an existing row
+  carrying an undrained EDIT (`product_update`/`product_batch_price`/the two
+  `*_confirm` types for products; `customer_update` for customers — one entity type,
+  simpler than the product side). The EDIT half is the one that hides:
+  `applyLocalProductPatch`/the customer equivalent write the operator's new value onto
+  the held catalogue copy, so a blind edit renders identically to a saved one. Every
+  badge reads the outbox directly, so it clears itself on drain with no extra wiring
+  (G7, closed 2026-09-02).
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
