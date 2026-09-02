@@ -603,6 +603,8 @@ export default function OrderDetailPage() {
             <button
               type="button"
               onClick={() => setAdjExpanded((v) => !v)}
+              disabled={offlineViewingSynced}
+              title={offlineViewingSynced ? 'Needs a connection' : undefined}
               className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
             >
@@ -699,7 +701,12 @@ export default function OrderDetailPage() {
                 Close — stays online-required, because each of them undoes or settles
                 shared state, and replaying those out of order across disconnected
                 tablets is what corrupts the stock and deposit ledgers. */}
-            <Button variant="secondary" onClick={() => setEditing(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setEditing(true)}
+              disabled={offlineViewingSynced}
+              title={offlineViewingSynced ? 'Needs a connection' : undefined}
+            >
               Edit Order
             </Button>
 
