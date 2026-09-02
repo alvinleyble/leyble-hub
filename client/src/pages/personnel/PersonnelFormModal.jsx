@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
+import { enqueue, drainOutbox, listRecords } from '../../offline/index.js';
 
 const FIELD = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -25,13 +26,38 @@ export default function PersonnelFormModal({ onClose, onSaved }) {
 
     setSaving(true);
     try {
-      await api.post('/personnel', {
-        full_name:      form.full_name.trim(),
-        remarks:        form.remarks.trim() || null,
-        phone:          form.phone.trim() || null,
-        license_number: form.license_number.trim() || null,
+      // G3 (docs/offline-accessibility-acceptance-criteria.md), captain decision
+      // 2026-09-02 — Add Personnel goes through the outbox, same pattern as offline
+      // product/customer creation: additive and conflict-free, so it takes one code
+      // path online and blind — queue it, then drain immediately. On a connected
+      // tablet the drain lands it within about a second and the operator sees the
+      // ordinary "added" toast; blind, it sits in the outbox, shows on the roster as
+      // "Waiting to sync" (queuedPersonnelFromOutbox), and is pickable as a Driver/
+      // Helper on a new order straight away.
+      const profileKey = await api.getActiveProfile();
+      const record = await enqueue({
+        entityType: 'personnel',
+        endpoint:   '/personnel',
+        method:     'POST',
+        payload: {
+          full_name:      form.full_name.trim(),
+          remarks:        form.remarks.trim() || null,
+          phone:          form.phone.trim() || null,
+          license_number: form.license_number.trim() || null,
+        },
+        profileKey,
       });
-      addToast(`${form.full_name} added.`, 'success');
+
+      await drainOutbox().catch(() => {});
+      const stillQueued = (await listRecords().catch(() => []))
+        .some((r) => r.id === record.id);
+
+      addToast(
+        stillQueued
+          ? `${form.full_name.trim()} saved on this device · will sync when connected.`
+          : `${form.full_name.trim()} added.`,
+        'success'
+      );
       onSaved();
     } catch (err) {
       addToast(err.message || 'Failed to create personnel.', 'error');

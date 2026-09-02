@@ -22,6 +22,7 @@ export * from './status.js';
 export * from './drainNotifier.js';
 export * from './sync.js';
 export * from './queuedCustomers.js';
+export * from './queuedPersonnel.js';
 export * from './backOfficeCache.js';
 export * from './reconcile.js';
 export * from './productMutations.js';

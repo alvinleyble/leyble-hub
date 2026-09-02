@@ -7,6 +7,7 @@ import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import { checkIsOnline } from '../../offline/status.js';
+import { updatePersonnelLocalFirst } from '../../offline/queuedPersonnel.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -116,23 +117,52 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
     if (!form.full_name.trim()) errs.full_name = 'Required.';
     if (Object.keys(errs).length) { setFormErrors(errs); return; }
 
-    const body = {
-      full_name:      form.full_name.trim(),
-      remarks:        form.remarks.trim() || null,
-      phone:          form.phone.trim() || null,
-      license_number: form.license_number.trim() || null,
-      is_active:      form.is_active,
-    };
-
-    if (imageUpload) {
-      body.id_image_base64    = imageUpload.b64;
-      body.id_image_mime_type = imageUpload.mime;
-    }
-
     setSaving(true);
     try {
-      await api.patch(`/personnel/${personnelId}`, body);
-      addToast('Personnel updated.', 'success');
+      const profileKey = await api.getActiveProfile();
+      const finalValues = {
+        full_name:      form.full_name.trim(),
+        remarks:        form.remarks.trim() || null,
+        phone:          form.phone.trim() || null,
+        license_number: form.license_number.trim() || null,
+        is_active:      form.is_active,
+      };
+      // Diff against `person` — the snapshot this form was seeded from — so a blind
+      // save only ever carries what the operator actually changed, not a full-form
+      // resend that could revert a field another tablet already changed via a stale
+      // cached snapshot (item 4, offline-multi-device clobber audit; same pattern as
+      // CustomerDetailPanel/ProductDetailPanel).
+      const baseline = {
+        full_name:      person.full_name,
+        remarks:        person.remarks ?? null,
+        phone:          person.phone ?? null,
+        license_number: person.license_number ?? null,
+        is_active:      person.is_active,
+      };
+      const patch = {};
+      for (const field of ['full_name', 'remarks', 'phone', 'license_number']) {
+        if (finalValues[field] !== baseline[field]) patch[field] = finalValues[field];
+      }
+      // 9.2 — the toggle is disabled offline (below), so this would only ever restate
+      // the value already stored; the diff above already drops it when untouched, but
+      // this is what keeps it off the wire even offline where a cached snapshot itself
+      // may be stale. Leaving it out of the body is what stops a blind save from
+      // reversing a deactivation another tablet just made.
+      if (!mutationsBlocked && finalValues.is_active !== baseline.is_active) {
+        patch.is_active = finalValues.is_active;
+      }
+      // 9.1 — the photo control is disabled offline, so imageUpload is only ever set
+      // when a connection is available; nothing more to guard here.
+      if (imageUpload) {
+        patch.id_image_base64    = imageUpload.b64;
+        patch.id_image_mime_type = imageUpload.mime;
+      }
+
+      const { synced } = await updatePersonnelLocalFirst(personnelId, patch, { profileKey });
+      addToast(
+        synced ? 'Personnel updated.' : 'Saved on this device · will sync when connected.',
+        'success'
+      );
       onSaved();
       load();
     } catch (err) {
@@ -187,7 +217,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
               <div className="px-6 pt-5">
                 <OfflineBanner
                   className="mb-0"
-                  message="Viewing offline data · Staff details can't be changed until this tablet is back online"
+                  message="Viewing offline data · Details you change here sync when connected"
                 />
               </div>
             )}
@@ -229,12 +259,29 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
                     <input type="text" value={form.license_number} onChange={set('license_number')} className={INPUT} />
                   </FormField>
 
-                  <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
-                    <input type="checkbox" id="pers_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700" />
-                    <label htmlFor="pers_active" className="text-base font-medium text-slate-700 cursor-pointer">
-                      Active (can be assigned to orders)
-                    </label>
+                  {/* 9.2 — everything else on this form still saves blind; only the
+                      active flag waits, because it decides who every other tablet can
+                      still assign to an order and there is no second value to
+                      reconcile. */}
+                  <div className="sm:col-span-2 min-h-[48px]" title={blockedTip}>
+                    <div className="flex items-center gap-3 min-h-[48px]">
+                      <input type="checkbox" id="pers_active" checked={form.is_active}
+                        onChange={set('is_active')} disabled={mutationsBlocked}
+                        className="w-6 h-6 accent-blue-700 disabled:opacity-50" />
+                      <label
+                        htmlFor="pers_active"
+                        className={`text-base font-medium ${mutationsBlocked
+                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                      >
+                        Active (can be assigned to orders)
+                      </label>
+                    </div>
+                    {mutationsBlocked && (
+                      <p className="text-sm text-slate-500">
+                        Deactivating or restoring personnel needs a connection — the
+                        rest of this form still saves offline.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -282,9 +329,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
               </div>
 
               <div className="px-6 py-4 flex justify-end border-b border-slate-400">
-                <Button type="submit" loading={saving} disabled={mutationsBlocked} title={blockedTip}>
-                  Save Changes
-                </Button>
+                <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
 

@@ -21,19 +21,20 @@ apart from the corrections dated 2026-08-29 and marked as such.
 > item 5.15). Per-PR detail is in
 > [ADR 0015 § Delivery Slices](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md#delivery-slices--what-actually-shipped).
 >
-> **Genuinely still open:**
-> 1. **One deferred conflict** where this document and the shipped app disagree on
->    purpose — 9.2/9.3 (Personnel). See Known Gaps G3.
+> **Genuinely still open:** nothing — the last open item (9.2/9.3's Personnel conflict,
+> G3) closed 2026-09-02.
 >
 > **Closed 2026-09-02:** 8.4's custom-price half — custom-price capture is now online-only
 > by design everywhere (Customers module and New Order modal alike), not a gap. See 8.4,
 > 5.13, and Known Gaps G1 (closed). Also closed the same day: G2 (5.15, historical draft
-> orders — reversed to match 5.8's rule, no code change needed), G4 (6.0, delivery edit —
-> doc corrected to match the app and ADR 0015 §8), G5 (10.1, ticket creation — doc corrected
-> to state the exception explicitly), G6 (Inventory offline-banner reconnect observation,
-> verified by static review + new unit coverage), and G7 (customer offline-edit sync badge,
-> item 8.4/8.5 — `pendingCustomerEditIds()` added, mirroring the Inventory pattern). See
-> Known Gaps for each.
+> orders — reversed to match 5.8's rule, no code change needed), G3 (9.2/9.3, Personnel —
+> captain reversed the 2026-08-29 deferral; Personnel now follows the same edit/create/
+> delete-blocked pattern as Customers and Inventory, code and doc brought into agreement),
+> G4 (6.0, delivery edit — doc corrected to match the app and ADR 0015 §8), G5 (10.1,
+> ticket creation — doc corrected to state the exception explicitly), G6 (Inventory
+> offline-banner reconnect observation, verified by static review + new unit coverage),
+> and G7 (customer offline-edit sync badge, item 8.4/8.5 — `pendingCustomerEditIds()`
+> added, mirroring the Inventory pattern). See Known Gaps for each.
 
 ---
 
@@ -287,21 +288,23 @@ Discarding is likewise online-only for a synced/historical draft; only a draft c
 > **Settled 2026-08-28:** same rule as 8.5, applied to Personnel.
 > *(captain decision: active-toggle-ux)*
 >
-> **⚠ Conflict with ADR 0015 §9 — deliberately left standing (captain, 2026-08-29).**
-> This item (with 9.3) says only the toggle and the photo are blocked offline and the rest
-> of the personnel edit form still saves. **The shipped app blocks the whole form**, plus
-> *+ Add Personnel*: `PersonnelPage.jsx` and `PersonnelDetailPanel.jsx` compute one
-> `mutationsBlocked = fromCache || !checkIsOnline()` and disable Save, photo upload, delete
-> and Add alike. PR #55 implemented
-> [ADR 0015 §9](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md)
-> ("personnel is read-only offline"), not this item. The captain was shown the conflict
-> directly and chose to leave it: *"let it be for now, personnel module is not being used
-> anyway."* **This is an acknowledged deferral, not an oversight or a bug to file** — a
-> future reader should not rediscover it as a surprise, and neither side should be changed
-> without a fresh captain decision. Known Gaps G3.
+> **Fixed 2026-09-02 — code now matches this item.** From 2026-08-29 to 2026-09-02 this
+> conflicted with [ADR 0015 §9](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md):
+> the shipped app (PR #55) blocked the *whole* personnel edit form plus *+ Add Personnel*
+> offline, via one `mutationsBlocked = fromCache || !checkIsOnline()` gate in
+> `PersonnelPage.jsx` / `PersonnelDetailPanel.jsx`. The captain reversed that 2026-08-29
+> deferral 2026-09-02: Personnel now follows the same pattern already proven in Customers
+> (`updateCustomerLocalFirst`) and Inventory (`updateProductLocalFirst`) — the rest of the
+> edit form (name, phone, remarks, license number) and *+ Add Personnel* queue via the
+> outbox and drain like any other offline-safe write (`updatePersonnelLocalFirst` /
+> `client/src/offline/queuedPersonnel.js`). Only the active/inactive toggle and the ID
+> photo stay disabled offline with an explanatory message — same carve-out as before, now
+> actually enforced field-by-field rather than substituted for by blocking the whole form.
+> Known Gaps G3 (closed).
 
-9.3 Personnel: anything else not mentioned is accessible offline. *(Read with 9.2's conflict
-note — in the shipped app, "accessible" means viewable, not editable.)*
+9.3 Personnel: anything else not mentioned is accessible offline, and (as of 2026-09-02) so is
+editing the rest of the profile and adding a new hire — see 9.2. Only the active/inactive
+toggle, the ID photo, and Delete (9.0) need a connection.
 
 10.0 Tickets: offline users cannot Resolve a ticket.
 
@@ -343,7 +346,7 @@ its Delivery Slices section rather than duplicating the list.)*
 | :-- | :--- | :--- | :--- | :--- |
 | G1 | Custom prices cannot be set offline, from the Customers module or the New Order modal | Closed — by design | 8.4, 5.13 | Closed 2026-09-02: online-only everywhere is the intended design, not a gap (no unique constraint on `customer_product_prices`) |
 | G2 | Historical (synced) drafts not editable offline | Closed — reversed for consistency | 5.15 | Closed 2026-09-02: captain reversed the drafts exception for app-wide consistency; current app behavior (read-only offline) was already correct, no code change needed |
-| G3 | Personnel edit form blocked entirely offline, not just toggle + photo | Deferred conflict | 9.2, 9.3 vs ADR §9 | Captain: *"let it be for now"* (2026-08-29) |
+| G3 | Personnel edit form blocked entirely offline, not just toggle + photo | Closed — fixed | 9.2, 9.3 vs ADR §9 | Closed 2026-09-02: captain reversed the 2026-08-29 deferral; Personnel now follows the same edit/create/delete-blocked pattern as Customers and Inventory |
 | G4 | Editing a logged delivery is blocked offline, not only deleting | Closed — doc corrected | 6.0 vs ADR §8 + code | Closed 2026-09-02: confirmed online-only 2026-09-02, doc corrected to match app + ADR 0015 §8 |
 | G5 | Creating a ticket is blocked offline | Closed — doc corrected | 10.1 vs code | Closed 2026-09-02: confirmed online-only 2026-09-02, doc corrected to state the exception explicitly |
 | G6 | Inventory offline banner may not clear promptly on reconnect | Closed — verified by static review + test | 7.7 | Closed 2026-09-02: see detail below |
@@ -355,9 +358,17 @@ with how every other order status already behaves under 5.8 — a synced/histori
 not a special case. The app's shipped behavior (PR #64, read-only offline) was already
 correct under the reversed rule; only the doc needed correcting.
 
-**G3 — Personnel.** Full detail under item 9.2. The captain has seen this and parked it
-because the Personnel module is not in use; do not change either the ADR or the app without a
-fresh decision.
+**G3 — Personnel.** Full detail under item 9.2. Originally a deferred conflict — the captain
+saw the app-vs-doc mismatch 2026-08-29 and parked it (*"let it be for now, personnel module is
+not being used anyway"*). **Closed 2026-09-02**: the captain reversed that deferral. Code
+change: `updatePersonnelLocalFirst` and `queuedPersonnelFromOutbox`/`pendingPersonnelEditIds`
+(new `client/src/offline/queuedPersonnel.js`) bring Personnel onto the same outbox pattern
+already shipped for Customers (`queuedCustomers.js`) and Inventory (`productMutations.js`) —
+the rest of the edit form and *+ Add Personnel* now queue and drain offline; the active/
+inactive toggle, ID photo, and Delete remain online-only, per ADR 0015 §9's carve-out and
+rules 9.0/9.1. ADR 0015 §9 carries a dated amendment note recording the reversal; its original
+"personnel is fully read-only offline" rationale is left standing as historical record, not
+rewritten.
 
 **G4 — Delivery edits.** Full detail under item 6.0. Code and ADR §8 agree with each other;
 the doc's stale "(can edit)" clause has been corrected to match both.
