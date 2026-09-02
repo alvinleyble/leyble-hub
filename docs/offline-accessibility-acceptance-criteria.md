@@ -116,17 +116,46 @@ parked ones. What you can then DO with one depends on which half it came from: s
 > "CAN edit" clause here was never wrong, it just needs the unsynced-local qualifier made
 > explicit. *(captain decision: synced-order-edit-scope)*
 
-5.11 Reviewing an In-Transit order offline: cannot Cancel / Mark-as-Delivered; CAN edit, add adjustment — **only while the order is still unsynced-local** (see 5.8). No print clause: Print Receipt stays hidden for In-Transit orders, online and offline alike.
+5.11 Reviewing an In-Transit order offline: CAN Mark-as-Delivered — this is one of the three
+forward transitions the offline path exists to support — **only while the order is still
+unsynced-local** (see 5.8); cannot Back-to-Pending or Cancel, since those reversals stay
+online-only regardless of sync state. CAN edit, add adjustment — only while the order is still
+unsynced-local (see 5.8). No print clause: Print Receipt stays hidden for In-Transit orders,
+online and offline alike.
 
-> **Settled 2026-08-28:** two corrections. (a) same unsynced-local qualifier as 5.10. (b) the
-> original "CAN print" clause is dropped — it was a drafting mistake; Print Receipt has always
-> been hidden entirely for In-Transit orders regardless of connectivity, and that is not
-> changing. *(captain decisions: synced-order-edit-scope, intransit-print-availability)*
+> **Settled 2026-08-28:** unsynced-local qualifier on edit/adjustment, and the original "CAN
+> print" clause dropped — it was a drafting mistake; Print Receipt has always been hidden
+> entirely for In-Transit orders regardless of connectivity, and that is not changing.
+> *(captain decisions: synced-order-edit-scope, intransit-print-availability)*
+>
+> **Corrected 2026-09-02:** the prior wording — "cannot Cancel / Mark-as-Delivered" — read as a
+> blanket prohibition on Mark-as-Delivered, which contradicts both ADR 0015 §5 and the shipped
+> code (`posSave.js`'s `OFFLINE_TRANSITIONS`, ~line 367-374; `OrderDetailPage.jsx`'s "Mark as
+> Delivered" control, ~line 747-760) — an unsynced-local In-Transit order can be marked
+> delivered offline; that is one of the three explicitly-supported forward transitions. Only the
+> actual reversal (Back to Pending, ~`OrderDetailPage.jsx` line 732-745) and Cancel are
+> online-only, and stay so even for an unsynced-local order. Captain decision 2026-08-31 (this
+> was a wording defect only; no code change): app behavior for this criterion was already
+> correct. *(captain decision: offline-forward-transition-wording)*
 
-5.12 Reviewing a Pending order offline: cannot start dispatch / cancel / Mark-as-Picked-up; CAN edit, print, add adjustment — **only while the order is still unsynced-local** (see 5.8). A Pending order that has already synced requires an online connection to edit its content.
+5.12 Reviewing a Pending order offline: CAN Start Dispatch and Mark-as-Picked-Up — the other two
+forward transitions the offline path exists to support — **only while the order is still
+unsynced-local** (see 5.8); cannot Cancel, which stays online-only regardless of sync state. CAN
+edit, print, add adjustment — only while the order is still unsynced-local (see 5.8). A Pending
+order that has already synced requires an online connection to edit its content.
 
 > **Settled 2026-08-28:** scoped by the same synced-order-edit-scope boundary as 5.8–5.10.
 > *(captain decision: synced-order-edit-scope)*
+>
+> **Corrected 2026-09-02:** the prior wording — "cannot start dispatch / cancel /
+> Mark-as-Picked-up" — read as a blanket prohibition on all three, which contradicts both ADR
+> 0015 §5 and the shipped code (`posSave.js`'s `OFFLINE_TRANSITIONS`, ~line 367-374;
+> `OrderDetailPage.jsx`'s "Start Dispatch" and "Mark as Picked Up" controls, ~line 698-730) — an
+> unsynced-local Pending order can start dispatch or be marked picked up offline; those are two
+> of the three explicitly-supported forward transitions. Only Cancel is online-only, and stays so
+> even for an unsynced-local order. Captain decision 2026-08-31 (this was a wording defect only;
+> no code change): app behavior for this criterion was already correct.
+> *(captain decision: offline-forward-transition-wording)*
 
 5.13 New Order Modal is fully functional for both online and offline: see all products, search all customers, both order types, all categories, select products, adjust quantities, change prices, add adjustment, optional notes, reset/clear, cancel, create, X-to-exit, save as draft, apply a regular customer's custom prices (discounted/wholesale/markup); the in-sale price override always works offline, but "save new custom prices for a customer" is online-only by design.
 
