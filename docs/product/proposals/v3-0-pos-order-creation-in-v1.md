@@ -1,6 +1,6 @@
 # Leyble Hub V3.0 — POS-Style Order Creation inside V1
 
-**Status:** Settled Design  
+**Status:** Shipped — `/v2/*` routes are gone from `client/src/App.jsx` and `POSProductGrid` is imported and rendered inside `OrderCreateModal.jsx` on `staging`.  
 **Date:** 2026-08-25  
 **Origin:** User feedback on V2.5 demo & Product Owner Grill Outcomes (G1–G17)  
 **See also:** [V2.0 Proposal](v2-tablet-pos-overhaul.md), [V2.5 Offline Accessibility](v2-5-offline-accessibility.md), [Glossary](../glossary.md), [Database Reference](../../architecture/DATABASE.md), [ADR Index](../../adr/)
