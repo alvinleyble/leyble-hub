@@ -385,11 +385,20 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   (offline edit for a synced draft) on 2026-09-02: a historical draft stays under the same
   synced-order-edit-scope lock as any other synced order, permanently. `OrdersPage.jsx`'s
   `openDraft` is what actually opens one: online it fetches and, like `OrderDetailPage.jsx`'s
-  own `load()`, writes a `putOrderSnapshot` (a historical draft never rides the delta sync,
-  so this fetch is the only thing that ever caches it); offline it resolves that same cache
-  via `getReceipt` and routes into `OrderDetailPage.jsx` read-only — never the editable
+  own `load()`, writes a `putOrderSnapshot`; offline it resolves that same cache via
+  `getReceipt` and routes into `OrderDetailPage.jsx` read-only — never the editable
   `OrderCreateModal` draft form. `OrderDetailPage.jsx` hides Edit Order, the adjustment
   toggle and Cancel Order outright for `status === 'draft'` (absent, not just disabled).
+  **`GET /orders/sync` includes drafts** (extended the same day, `server/src/routes/
+  orders.js`) — the exclusion `openDraft` was built around was a leftover from Slice
+  3.2, before a draft had any offline-reading requirement at all, and left a historical
+  draft this device had never individually opened with no snapshot to fall back to.
+  Drafts riding the same bulk history sync as everything else (`offline/sync.js`,
+  status-agnostic) is now the PRIMARY path — `openDraft`'s own per-view
+  `putOrderSnapshot` write is redundant belt-and-braces on top of it, not the only
+  path. The list endpoint (`GET /orders`) still excludes drafts by default (a display
+  concern for the All tab, overridable with `status=draft`) — that default is
+  unrelated and untouched.
 - **A locally parked draft carries a `display` blob beside its payload.** `payload` is
   the POST body and stays exactly that, so it has no customer name and no product
   names; `record.display` holds them, and `recordToDraft` merges the two. Without it a

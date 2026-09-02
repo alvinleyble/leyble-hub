@@ -82,11 +82,21 @@ describe('V3.0 Slice 3.2: GET /orders/sync and the reference-data deltas', () =>
       orderIds.push(order.id);
     }
 
-    // A parked draft, which history must never include.
+    // A draft, which history now includes (2026-09-02: a historical draft must be as
+    // offline-readable as any other synced order, not gated on a per-view fetch).
     const { rows: [draft] } = await db.query(
       `INSERT INTO orders (customer_id, total_amount, order_type, status, created_at, updated_at)
        VALUES ($1, 0, 'delivery', 'draft', '2026-08-26T02:00:00Z', '2026-08-26T02:00:00Z') RETURNING id`,
       [customerId]
+    );
+    await db.query(
+      `INSERT INTO order_items (order_id, product_id, quantity, unit_price, unit_deposit_fee, units_per_case)
+       VALUES ($1, $2, 1, 100, 0, 24)`,
+      [draft.id, productId]
+    );
+    await db.query(
+      `INSERT INTO order_personnel (order_id, personnel_id, role) VALUES ($1, $2, 'Driver')`,
+      [draft.id, personnelId]
     );
     orderIds.push(draft.id);
 
@@ -125,12 +135,12 @@ describe('V3.0 Slice 3.2: GET /orders/sync and the reference-data deltas', () =>
 
   const ours = (orders) => orders.filter((o) => o.customer_id === customerId);
 
-  it('hands back COMPLETE snapshots — line items and personnel, not summary rows', async () => {
+  it('hands back COMPLETE snapshots — line items and personnel, not summary rows — and includes drafts', async () => {
     const { status, body } = await get('/orders/sync?direction=back&limit=200');
     assert.equal(status, 200);
 
     const mine = ours(body.orders);
-    assert.equal(mine.length, 4, 'four orders, and the parked draft is not history');
+    assert.equal(mine.length, 5, 'four orders plus the draft — a draft is history too, 2026-09-02');
     for (const order of mine) {
       assert.ok(Array.isArray(order.items) && order.items.length === 1,
         'a snapshot without its items is what crashed OrderDetailPage offline');
@@ -141,7 +151,8 @@ describe('V3.0 Slice 3.2: GET /orders/sync and the reference-data deltas', () =>
       assert.equal(order.personnel[0].role, 'Driver');
       assert.ok(order.customer_name, 'and the customer the order belongs to');
     }
-    assert.ok(!mine.some((o) => o.status === 'draft'));
+    assert.ok(mine.some((o) => o.status === 'draft'),
+      'a historical draft must ride the bulk sync, not only the per-view fallback');
   });
 
   it('walks backwards newest-first and resumes from a cursor rather than restarting', async () => {

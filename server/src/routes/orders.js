@@ -391,8 +391,19 @@ router.get('/', async (req, res, next) => {
 //   including orders created on OTHER tablets, which is the whole reason a device
 //   cannot just remember its own writes.
 //
-// Drafts are excluded, matching the list endpoint's default: a parked draft is device-
-// local working state (client/src/offline/parkedOrders.js), not history.
+// Drafts ARE included, unlike the list endpoint's default. That default (drafts hidden
+// unless `status=draft` is asked for explicitly) exists so a screen doesn't show
+// in-progress paperwork next to real orders — a display concern. This route mirrors
+// history for offline reading, and a draft is exactly as historical as any other order
+// once it has synced: Captain decision 2026-09-02 (following the read-only lock added
+// the same day) is that a historical draft the device has never individually opened
+// must still open read-only offline, the same unconditional way a regular order
+// already does — not only when this device happened to view that specific draft while
+// online (client/src/pages/orders/OrdersPage.jsx's `openDraft`, kept as a belt-and-
+// braces per-view fallback). Draft volume in practice is a small fraction of order
+// history (dozens, not thousands) and drafts are covered by the same keyset delta as
+// everything else, so an edited draft simply reappears in the next forward page like
+// any other touched order — no special-casing needed here.
 //
 // MUST stay above `GET /:id`, or Express reads "sync" as an order id.
 router.get('/sync', async (req, res, next) => {
@@ -401,7 +412,7 @@ router.get('/sync', async (req, res, next) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
     const forward = String(direction) === 'forward';
 
-    const conditions = [`o.status <> 'draft'`];
+    const conditions = [];
     const params = [];
     let idx = 1;
 
@@ -422,6 +433,7 @@ router.get('/sync', async (req, res, next) => {
 
     const limitIdx = idx++;
     params.push(limit + 1); // one extra row purely to answer has_more
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const { rows } = await db.query(
       `SELECT o.*,
@@ -434,7 +446,7 @@ router.get('/sync', async (req, res, next) => {
        JOIN customers c ON c.id = o.customer_id
        LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
        LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
-       WHERE ${conditions.join(' AND ')}
+       ${whereClause}
        ORDER BY o.updated_at ${forward ? 'ASC' : 'DESC'}, o.id ${forward ? 'ASC' : 'DESC'}
        LIMIT $${limitIdx}`,
       params
