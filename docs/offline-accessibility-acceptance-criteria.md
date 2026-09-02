@@ -25,12 +25,13 @@ apart from the corrections dated 2026-08-29 and marked as such.
 >    (`leyble-hub-offline-historical-drafts-edit`). See 5.15 and Known Gaps G2.
 > 2. **Deferred conflicts** where this document and the shipped app disagree on purpose —
 >    9.2/9.3 (Personnel), 6.0 (delivery edit), 10.1 (ticket creation). See Known Gaps.
-> 3. **Two minor UX gaps** observed testing PR #55, captain-acknowledged and non-blocking.
->    See Known Gaps G6–G7.
+> 3. **One minor UX gap** observed testing PR #55, captain-acknowledged and non-blocking.
+>    See Known Gaps G7.
 >
 > **Closed 2026-09-02:** 8.4's custom-price half — custom-price capture is now online-only
 > by design everywhere (Customers module and New Order modal alike), not a gap. See 8.4,
-> 5.13, and Known Gaps G1 (closed).
+> 5.13, and Known Gaps G1 (closed). Also closed: G6's Inventory offline-banner reconnect
+> observation, verified by static review + new unit coverage — see Known Gaps G6 (closed).
 
 ---
 
@@ -353,7 +354,7 @@ its Delivery Slices section rather than duplicating the list.)*
 | G3 | Personnel edit form blocked entirely offline, not just toggle + photo | Deferred conflict | 9.2, 9.3 vs ADR §9 | Captain: *"let it be for now"* (2026-08-29) |
 | G4 | Editing a logged delivery is blocked offline, not only deleting | Open conflict | 6.0 vs ADR §8 + code | Needs a captain call |
 | G5 | Creating a ticket is blocked offline | Open conflict | 10.1 vs code | Implementer's reading; needs confirmation |
-| G6 | Inventory offline banner may not clear promptly on reconnect | Observation | 7.7 | Low confidence, not reproduced |
+| G6 | Inventory offline banner may not clear promptly on reconnect | Closed — verified by static review + test | 7.7 | Closed 2026-09-02: see detail below |
 | G7 | No "Waiting to sync" indicator on an offline-edited customer row | Observation | 8.4, 8.5 | Cosmetic inconsistency, non-blocking |
 
 **G3 — Personnel.** Full detail under item 9.2. The captain has seen this and parked it
@@ -366,12 +367,35 @@ side.
 
 **G5 — Ticket creation.** Full detail under item 10.1.
 
-**G6 — Inventory offline banner on reconnect.** Observed once while testing PR #55: after the
-tablet regained connectivity, the Inventory offline banner did not visibly clear within roughly
-10 seconds. **Low confidence and not confirmed reproducible** — it may simply be the screen
-waiting for the next load rather than a stuck banner. Captain-acknowledged, non-blocking:
-recorded so the next person to see it knows it has been seen before, not as a work item. Do not
-open an investigation on this entry alone.
+**G6 — Inventory offline banner on reconnect.** Originally an unconfirmed observation from
+PR #55 testing: after the tablet regained connectivity, the Inventory offline banner might not
+visibly clear promptly. **Closed 2026-09-02** by a static/code-level re-verification pass plus
+new unit coverage (no live device involved — see limitation below):
+
+- Traced the full mechanism in `InventoryPage.jsx`. The banner (`OfflineBanner`) renders solely
+  off `fromCache`. `load()` sets `fromCache` to `false` on a successful `GET /products` and to
+  `true` only in the catch branch, when it falls back to the cached copy. The `online` and
+  `leyble:drain-complete` listeners (lines ~76–85) both call `load(true)` — a silent retry of the
+  live GET, not a mere UI toggle — so the banner clears exactly when, and only when, a live read
+  actually succeeds again.
+  - `online` fires on the browser network-interface event and re-tries the live fetch
+    immediately; if the fetch still fails (interface up, server not yet reachable) `fromCache`
+    stays `true` and the banner correctly stays up.
+  - `leyble:drain-complete` (`drainNotifier.js`) only fires after a real successful send, so by
+    the time it reaches `InventoryPage` connectivity is already confirmed and the follow-up
+    `load(true)` reliably clears the banner.
+- Added `client/test/inventory-reconnect-banner.test.mjs` (3 new unit tests, all passing as part
+  of `cd client && npm test`): banner clears on `online` once the live GET succeeds, banner
+  clears on `leyble:drain-complete` once the live GET succeeds, and — the negative case — the
+  banner stays up if `online` fires but the live GET still fails (ruling out an optimistic clear
+  on the browser event alone).
+
+**Known limitation of this pass:** this is code-level + jsdom unit verification only; it does
+not confirm real-device timing (e.g. how promptly Android's WebView actually fires `online`, or
+end-to-end latency on a real reconnect). No functional gap was found — if the observation from
+PR #55 recurs on a real device, that points at platform-level event timing, not at this
+mechanism, and should be filed as a fresh, separately-reproduced item rather than reopening this
+one from a single unconfirmed sighting.
 
 **G7 — No sync indicator on an offline-edited customer.** Editing an existing customer offline
 queues and syncs correctly, but the customer's row in the directory shows nothing to say so.
