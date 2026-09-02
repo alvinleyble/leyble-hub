@@ -10,7 +10,7 @@ import { orderRef } from '../../utils/orderRef';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
 import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
 import {
-  listRecords, subscribeOutbox, getReceipt, listReceipts,
+  listRecords, subscribeOutbox, getReceipt, listReceipts, putOrderSnapshot,
   loadParkedOrders, discardLocalDraft,
 } from '../../offline/index.js';
 
@@ -326,8 +326,23 @@ export default function OrdersPage() {
     if (o._local) { setResumeDraft(o); return; }
     try {
       const full = await api.get(`/orders/${o.id}`);
+      // A historical draft never rode the delta sync (GET /orders/sync deliberately
+      // excludes drafts, working state not history) and this fetch used to discard its
+      // result the moment it displayed — so a later outage had no snapshot to fall back
+      // to and a live draft this device had opened moments earlier still failed offline.
+      // Write it the same way OrderDetailPage.jsx does for every other order it sees.
+      putOrderSnapshot(full).catch(() => {});
       setResumeDraft(full);
     } catch (err) {
+      // Captain decision 2026-09-02: a historical (already-synced) draft is locked to
+      // the same offline posture as any other synced order — no edit, no conversion to
+      // a real order. So the offline fallback here is OrderDetailPage.jsx's read-only
+      // view (via its own local-snapshot fallback), never the editable draft form.
+      const offlineOrMissing = err.status === 404 || !err.status;
+      if (offlineOrMissing && await getReceipt(o.id).catch(() => null)) {
+        navigate(`/orders/${o.id}`);
+        return;
+      }
       addToast(
         err?.status ? (err.message || 'Failed to open draft.')
                     : 'Offline — this draft is on the server and needs a connection to open.',
