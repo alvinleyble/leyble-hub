@@ -1,6 +1,6 @@
 # Proposal: Leyble Hub V2 — Tablet POS & Store Operations Overhaul
 
-**Status:** Reviewed, prototype tested, decisions locked. Ready for slice-by-slice implementation.  
+**Status:** Superseded/historical — the standalone V2 shell described here has since been fully replaced. See [v3-0-pos-order-creation-in-v1.md](v3-0-pos-order-creation-in-v1.md) (shipped) and [phone-responsive-layout.md](phone-responsive-layout.md).  
 **Origin:** Alvin & Firstmate (2026-08-18).  
 **Target Hardware:** **Honor Pad X8B** (11.0" Android Tablet, ~1200×1920 native, landscape orientation).  
 **Target Users:** Store owners in Antipolo, Rizal, PH.  
