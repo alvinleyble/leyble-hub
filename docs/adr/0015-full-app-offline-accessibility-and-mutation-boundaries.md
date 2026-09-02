@@ -201,7 +201,7 @@ Mechanically: `GET /api/v1/orders/sync` serves complete order snapshots (line it
 
 ## Delivery Slices — What Actually Shipped
 
-*(Rewritten 2026-08-29. This section previously described the pre-delivery slice plan; it now records what is merged to `dev`, PR by PR, so it can be read as a statement of the app's current state rather than of an intention. The pre-delivery plan for Slices 3.2/3.3 was superseded twice over — first by the sync model above, then by the deliveries below — and is not preserved here; `git log` holds it.)*
+*(Rewritten 2026-08-29. This section previously described the pre-delivery slice plan; it now records what is merged to `staging`, PR by PR, so it can be read as a statement of the app's current state rather than of an intention. The pre-delivery plan for Slices 3.2/3.3 was superseded twice over — first by the sync model above, then by the deliveries below — and is not preserved here; `git log` holds it.)*
 
 ### Shipped
 
