@@ -1,0 +1,15 @@
+{
+  "name": "leyble-hub-appium-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "On-device UI tests for the Leyble Hub Capacitor Android app, driven by Appium against a real emulator/device. Manual/on-demand only — not part of CI.",
+  "type": "module",
+  "scripts": {
+    "test:login": "node tests/login.test.mjs"
+  },
+  "dependencies": {
+    "appium": "^3.7.0",
+    "appium-uiautomator2-driver": "^8.5.2",
+    "webdriverio": "^9.31.5"
+  }
+}

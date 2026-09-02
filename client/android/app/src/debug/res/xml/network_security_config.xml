@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-build-only (see ../AndroidManifest.xml). Permits cleartext HTTP to the Android
+  emulator's host-loopback alias only, so a debug APK can reach a backend running on the
+  developer's machine during Appium runs / manual on-device QA. Never packaged into a
+  release build.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
