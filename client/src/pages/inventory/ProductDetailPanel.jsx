@@ -125,7 +125,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
     setSaving(true);
     try {
       const profileKey = await api.getActiveProfile();
-      const patch = {
+      const finalValues = {
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -137,11 +137,22 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
         is_active:            form.is_active,
         requires_bottle_return: form.requires_bottle_return,
       };
+      // Diff against `product` — the snapshot the panel loaded this form from — so a
+      // save only ever carries fields the operator actually changed. A full-form
+      // resend is what let a blind save on one tablet silently revert a field another
+      // tablet had already changed via a stale cached snapshot (item 4, offline-
+      // multi-device clobber audit); this generalizes the carve-out already used below
+      // for the four locked fields to the rest of the form.
+      const patch = {};
+      for (const [field, value] of Object.entries(finalValues)) {
+        const baseline = product[field];
+        const changed = typeof value === 'number' ? Number(baseline) !== value : baseline !== value;
+        if (changed) patch[field] = value;
+      }
       // The three locked controls are disabled above, so these carry the values the
-      // product already had — but a PATCH that restates them would still overwrite a
-      // change another tablet made while this one was blind, on exactly the fields that
-      // have no reconciliation path. The visible disable is the UX contract; leaving
-      // them out of the body is what makes it true on the wire.
+      // product already had — the diff above already drops them when untouched, but
+      // this is the belt-and-braces version: it keeps them off the wire even if the
+      // panel's own `product` snapshot were ever stale relative to what's on screen.
       if (mutationsBlocked) {
         delete patch.units_per_case;
         delete patch.requires_bottle_return;

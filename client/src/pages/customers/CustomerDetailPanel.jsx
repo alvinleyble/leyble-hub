@@ -41,6 +41,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [orders, setOrders]         = useState([]);
   const [loading, setLoading]       = useState(true);
   const [form, setForm]             = useState(null);
+  // The values `form` was seeded with at load time — the snapshot a save's diff is
+  // computed against, so a full-form resend never restates a field the operator never
+  // touched (item 4, offline-multi-device clobber audit).
+  const [snapshot, setSnapshot]     = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving]         = useState(false);
   const [mergeOpen, setMergeOpen]   = useState(false);
@@ -72,14 +76,18 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       .then(async (data) => {
         setCustomer(data);
         setOrders(data.orders ?? []);
-        setForm({
-          name:          data.name,
-          customer_type: normalizeCustomerType(data.customer_type),
-          phone:         data.phone ?? '',
-          address:       data.address ?? '',
-          notes:         data.notes ?? '',
-          is_active:     data.is_active,
-        });
+        {
+          const seeded = {
+            name:          data.name,
+            customer_type: normalizeCustomerType(data.customer_type),
+            phone:         data.phone ?? '',
+            address:       data.address ?? '',
+            notes:         data.notes ?? '',
+            is_active:     data.is_active,
+          };
+          setForm(seeded);
+          setSnapshot(seeded);
+        }
         // ADR 0009 — saved prices are the pricing source, so every customer has a
         // Custom Prices panel. Nothing is hidden behind the descriptive tag.
         await loadCustomPrices(priceTabRef.current);
@@ -94,14 +102,18 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         setCustomer(held);
         setOrders([]);
         setFromCache(true);
-        setForm({
-          name:          held.name,
-          customer_type: normalizeCustomerType(held.customer_type),
-          phone:         held.phone ?? '',
-          address:       held.address ?? '',
-          notes:         held.notes ?? '',
-          is_active:     held.is_active,
-        });
+        {
+          const seeded = {
+            name:          held.name,
+            customer_type: normalizeCustomerType(held.customer_type),
+            phone:         held.phone ?? '',
+            address:       held.address ?? '',
+            notes:         held.notes ?? '',
+            is_active:     held.is_active,
+          };
+          setForm(seeded);
+          setSnapshot(seeded);
+        }
         await loadCustomPrices(priceTabRef.current);
       })
       .finally(() => {
@@ -130,17 +142,42 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
     setSaving(true);
     try {
       const profileKey = await api.getActiveProfile();
-      const { synced } = await updateCustomerLocalFirst(customerId, {
+      const finalValues = {
         name:          form.name.trim(),
         customer_type: form.customer_type,
         phone:         form.phone.trim() || null,
         address:       form.address.trim() || null,
         notes:         form.notes.trim() || null,
-        // 8.5 — the toggle is disabled offline (below), so this would only ever restate
-        // the value already stored. Leaving it out of the body is what stops a blind
-        // save from reversing a deactivation another tablet just made.
-        ...(sharedMutationsBlocked ? {} : { is_active: form.is_active }),
-      }, { profileKey });
+        is_active:     form.is_active,
+      };
+      // Diff against the snapshot this form was seeded with, not the field's current
+      // server value — only what the operator actually changed belongs on the wire.
+      // A full-form resend of every field, changed or not, is what let a blind save on
+      // one tablet silently revert a field another tablet had already changed while this
+      // one's cached snapshot went stale (item 4, offline-multi-device clobber audit).
+      // `snapshot` mirrors `form`'s '' fallback for optional fields, so normalize it the
+      // same way `finalValues` normalizes an untouched field to null before comparing.
+      const baseline = {
+        name:          snapshot.name,
+        customer_type: snapshot.customer_type,
+        phone:         snapshot.phone || null,
+        address:       snapshot.address || null,
+        notes:         snapshot.notes || null,
+        is_active:     snapshot.is_active,
+      };
+      const patch = {};
+      for (const field of ['name', 'customer_type', 'phone', 'address', 'notes']) {
+        if (finalValues[field] !== baseline[field]) patch[field] = finalValues[field];
+      }
+      // 8.5 — the toggle is disabled offline (below), so this would only ever restate
+      // the value already stored; the diff above already drops it when untouched, but
+      // this is what keeps it off the wire even offline where a cached snapshot itself
+      // may be stale. Leaving it out of the body is what stops a blind save from
+      // reversing a deactivation another tablet just made.
+      if (!sharedMutationsBlocked && finalValues.is_active !== baseline.is_active) {
+        patch.is_active = finalValues.is_active;
+      }
+      const { synced } = await updateCustomerLocalFirst(customerId, patch, { profileKey });
       addToast(
         synced ? 'Customer updated.' : 'Saved on this device \u00b7 will sync when connected.',
         'success'

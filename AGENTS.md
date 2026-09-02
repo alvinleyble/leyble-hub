@@ -552,13 +552,26 @@ Every V1 screen now works blind. What a future session most needs to know:
   [docs/offline-accessibility-acceptance-criteria.md](docs/offline-accessibility-acceptance-criteria.md)
   §7. `units_per_case` (7.4), `requires_bottle_return` + its `deposit_fee` (7.3) and
   `is_active` (7.8) are disabled offline on **both** `ProductFormModal` and
-  `ProductDetailPanel`, and stripped from the queued payload. The reason they are not
-  reconcilable like a stock count: `units_per_case` is an input to the GENERATED
-  `order_items.line_total`, the bottle-return flag decides whether the deposit ledger
-  applies at all, and `is_active` decides what every other tablet can sell — none has a
-  second honest value for `StockReconcileModal` to offer. `is_active` follows the same
-  rule on Customers (8.5). **Always validate an Inventory change against §7 of that doc,
-  not the ADR alone.**
+  `ProductDetailPanel`. The reason they are not reconcilable like a stock count:
+  `units_per_case` is an input to the GENERATED `order_items.line_total`, the
+  bottle-return flag decides whether the deposit ledger applies at all, and `is_active`
+  decides what every other tablet can sell — none has a second honest value for
+  `StockReconcileModal` to offer. `is_active` follows the same rule on Customers (8.5).
+  **Always validate an Inventory change against §7 of that doc, not the ADR alone.**
+- **`CustomerDetailPanel.handleSave` and `ProductDetailPanel.handleSaveDetails` diff the
+  save payload against the loaded snapshot (`snapshot` state on Customers; `product`
+  itself on Products) — only a field that actually changed is sent, for both online and
+  offline saves.** This is what makes the four locked fields above (and 8.5's
+  `is_active`) true beyond their own carve-out: without it, ANY untouched field resent
+  from a stale cached snapshot — not just the disabled ones — silently overwrites
+  whatever another tablet wrote to that field while this one was offline (item 4,
+  `data/leyble-hub-offline-multidevice-clobber-audit/report.md`, fixed 2026-09-02). The
+  explicit `mutationsBlocked`/`sharedMutationsBlocked` deletions for the locked fields
+  stay as belt-and-braces — the diff alone already drops them since their controls are
+  disabled and so never change — but the diff is what protects every other field
+  (name/category/unit/sku on Products; name/type/address/phone/notes on Customers).
+  Server routes already treat an omitted field as "leave unchanged," so this is
+  client-only; don't reintroduce a full-form patch when touching either `handleSave`.
 - **"Waiting to sync" has two sources on Inventory, not one.** `queuedProductsFromOutbox`
   covers products CREATED blind (no server row, merged in as `local-<outboxId>`);
   `pendingProductEditIds()` covers existing products carrying an undrained EDIT
