@@ -380,11 +380,16 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   the way past), that cache when it does not, unioned either way with
   `listLocalParkedOrders()` minus `pendingDeletionRefs()`. Cached server drafts are
   read-only offline (they are synced rows — ADR 0015 §5 / criterion 5.8); the ones this
-  device parked carry `_local: true` and open, edit and discard with no network. That
-  read-only half is slated to change: the captain settled on 2026-08-29 that a synced draft
-  SHOULD open, edit and move forward offline (discarding stays session-local either way) —
-  scoped, not built, backlog item `leyble-hub-offline-historical-drafts-edit`, ADR 0015 §5 /
-  criterion 5.15. Until it lands, the `_local` split above is the shipped behaviour.
+  device parked carry `_local: true` and open, edit and discard with no network. **This is
+  final, not provisional** — the captain reversed a more-permissive 2026-08-29 decision
+  (offline edit for a synced draft) on 2026-09-02: a historical draft stays under the same
+  synced-order-edit-scope lock as any other synced order, permanently. `OrdersPage.jsx`'s
+  `openDraft` is what actually opens one: online it fetches and, like `OrderDetailPage.jsx`'s
+  own `load()`, writes a `putOrderSnapshot` (a historical draft never rides the delta sync,
+  so this fetch is the only thing that ever caches it); offline it resolves that same cache
+  via `getReceipt` and routes into `OrderDetailPage.jsx` read-only — never the editable
+  `OrderCreateModal` draft form. `OrderDetailPage.jsx` hides Edit Order, the adjustment
+  toggle and Cancel Order outright for `status === 'draft'` (absent, not just disabled).
 - **A locally parked draft carries a `display` blob beside its payload.** `payload` is
   the POST body and stays exactly that, so it has no customer name and no product
   names; `record.display` holds them, and `recordToDraft` merges the two. Without it a

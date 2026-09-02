@@ -596,17 +596,22 @@ export default function OrderDetailPage() {
               </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => setAdjExpanded((v) => !v)}
-            className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
-          >
-            {adjExpanded ? 'Cancel' : hasAdj ? 'Edit' : '+ Add Adjustment'}
-          </button>
+          {/* Historical drafts stay under the synced-order-edit-scope lock offline
+              (captain decision 2026-09-02) — no reachable edit control, not just a
+              non-functional one, so the toggle itself is absent for a draft. */}
+          {order.status !== 'draft' && (
+            <button
+              type="button"
+              onClick={() => setAdjExpanded((v) => !v)}
+              className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+            >
+              {adjExpanded ? 'Cancel' : hasAdj ? 'Edit' : '+ Add Adjustment'}
+            </button>
+          )}
         </div>
 
-        {adjExpanded && (
+        {adjExpanded && order.status !== 'draft' && (
           <div className="mt-4 space-y-3">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1">
@@ -655,7 +660,10 @@ export default function OrderDetailPage() {
         </div>
       )}
 
-      {/* Actions */}
+      {/* Actions — a historical draft has none: it stays under the synced-order-edit-
+          scope lock (no edit, no convert-to-order, no cancel) whether or not this view
+          came from the offline read-only fallback (captain decision 2026-09-02). */}
+      {order.status !== 'draft' && (
       <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Actions</p>
 
@@ -824,6 +832,7 @@ export default function OrderDetailPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Edit modal */}
       {editing && (

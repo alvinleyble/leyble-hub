@@ -16,14 +16,14 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { render, React, act } from './render.mjs';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { __resetMemoryBackend, nativeStore } from '../src/offline/nativeStore.js';
 import { DRAFTS_KEY } from '../src/offline/keys.js';
 import { __clearOutbox, listRecords, enqueue, QUEUED } from '../src/offline/outbox.js';
 import { __resetIssuance, ensureStationRegistered } from '../src/offline/station.js';
-import { __clearReceipts } from '../src/offline/receiptHistory.js';
+import { __clearReceipts, putOrderSnapshot, getReceipt } from '../src/offline/receiptHistory.js';
 import {
   parkOrderLocalFirst, listLocalParkedOrders, loadParkedOrders,
   getCachedServerDrafts, updateLocalDraft,
@@ -33,6 +33,7 @@ const { createRoot } = await import('react-dom/client');
 
 const OrdersPage       = (await import('../src/pages/orders/OrdersPage.jsx')).default;
 const OrderCreateModal = (await import('../src/pages/orders/OrderCreateModal.jsx')).default;
+const OrderDetailPage  = (await import('../src/pages/orders/OrderDetailPage.jsx')).default;
 
 const settle = (ms = 40) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
@@ -43,6 +44,33 @@ function renderPage(element) {
   act(() => {
     root.render(React.createElement(MemoryRouter, null,
       React.createElement(ToastProvider, null, element)));
+  });
+  return {
+    container,
+    text: () => container.textContent,
+    all: (sel) => [...container.querySelectorAll(sel)],
+    click: (el) => act(() => { el.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); }),
+    unmount: () => act(() => { root.unmount(); }),
+  };
+}
+
+// Same shape as renderPage above, but with real Routes so a navigate() out of
+// OrdersPage (opening a historical draft) actually lands on OrderDetailPage.
+function renderOrdersFlow(initialPath = '/orders') {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(
+      React.createElement(MemoryRouter, { initialEntries: [initialPath] },
+        React.createElement(ToastProvider, null,
+          React.createElement(Routes, null,
+            React.createElement(Route, { path: '/orders', element: React.createElement(OrdersPage) }),
+            React.createElement(Route, { path: '/orders/:id', element: React.createElement(OrderDetailPage) }),
+          )
+        )
+      )
+    );
   });
   return {
     container,
@@ -374,5 +402,107 @@ test('OrdersPage parked-drafts banner counts both halves of the list', async () 
   await settle(60);
 
   assert.match(r.text(), /2 parked drafts/);
+  r.unmount();
+});
+
+// ── 5. Opening a HISTORICAL (already-synced) draft while offline ───────────────
+//
+// Captain decision 2026-09-02, reversing the more-permissive 2026-08-29 one: a
+// synced draft stays under the same offline lock as any other synced order — no
+// edit, no adjustment, no convert-to-a-real-order, no delete/discard. The one real
+// bug (the draft was on the server, but tapping it while offline failed/blanked
+// instead of opening read-only) traced to `openDraft` discarding the fetched order
+// the moment it displayed it, so a later outage had nothing to fall back to —
+// unlike every other order, which OrderDetailPage.jsx's own load() always snapshots.
+
+function makeHistoricalDraft(overrides = {}) {
+  return {
+    id: 9001,
+    status: 'draft',
+    order_type: 'delivery',
+    customer_id: 5,
+    customer_name: 'Aling Nena',
+    customer_address: null,
+    customer_phone: null,
+    notes: null,
+    adjustment: 0,
+    adjustment_reason: null,
+    items: [{
+      id: 1, product_id: 1, product_name: 'Coke Sakto 200ml', sku: 'C-8', unit: 'cs',
+      quantity: 2, unit_price: 300, unit_deposit_fee: 0, units_per_case: 24,
+      requires_bottle_return: false, bottles_returned: 0, is_price_overridden: false,
+    }],
+    personnel: [],
+    total_amount: 600,
+    created_at: '2026-08-29T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+test('OrdersPage: tapping a historical draft this device has already cached opens it read-only offline, with no reachable edit/adjustment/cancel control and no mutation endpoint hit', async () => {
+  await registerStation(1);
+  api.getActiveProfile = async () => 'josie';
+
+  const draft = makeHistoricalDraft();
+  // Models the fix's own write path: the first time this device opened the draft
+  // (while online), OrderDetailPage-style snapshotting is what makes this available
+  // later — see putOrderSnapshot(full) in OrdersPage.jsx's openDraft.
+  await putOrderSnapshot(draft);
+  await nativeStore.setJson(DRAFTS_KEY, [draft]);
+
+  // Now offline: every live fetch fails, and no mutation must ever reach the server.
+  api.get = offline;
+  api.patch = async (path) => { throw new Error(`api.patch(${path}) must not be called — a historical draft is read-only offline`); };
+  api.post  = async (path) => { throw new Error(`api.post(${path}) must not be called — a historical draft is read-only offline`); };
+  api.del   = async (path) => { throw new Error(`api.del(${path}) must not be called — a historical draft is read-only offline`); };
+
+  const r = renderOrdersFlow('/orders');
+  await settle(60);
+
+  const draftsTab = r.all('button').find((b) => b.textContent.trim() === 'Drafts');
+  await r.click(draftsTab);
+  await settle(60);
+
+  const row = r.all('td').find((td) => td.textContent.includes('Aling Nena'))?.closest('tr');
+  assert.ok(row, 'the historical draft must still list while offline');
+  await r.click(row);
+  await settle(60);
+
+  assert.doesNotMatch(r.text(), /needs a connection to open/, 'the fetch failure must fall back to the cached snapshot, not error out');
+  assert.doesNotMatch(r.text(), /Order not found/);
+  assert.match(r.text(), /Aling Nena/, 'the draft must open showing its contents');
+  assert.match(r.text(), /Coke Sakto 200ml|C-8/, 'line items must render from the cached snapshot');
+  assert.match(r.text(), /showing this device's saved copy/, 'the usual offline-copy banner applies, same as any synced order');
+
+  assert.equal(r.all('button').find((b) => b.textContent.trim() === 'Edit Order'), undefined,
+    'Edit Order must be absent, not just disabled, for a historical draft offline');
+  assert.equal(r.all('button').find((b) => /Add Adjustment|^Edit$/.test(b.textContent.trim())), undefined,
+    'the adjustment control must be absent for a historical draft offline');
+  assert.equal(r.all('button').find((b) => b.textContent.trim() === 'Cancel Order'), undefined,
+    'Cancel Order must be absent for a historical draft offline');
+
+  r.unmount();
+});
+
+test('OrdersPage: a historical draft never opened before this outage still fails gracefully (no cached snapshot to fall back to)', async () => {
+  await registerStation(1);
+  api.getActiveProfile = async () => 'josie';
+
+  await nativeStore.setJson(DRAFTS_KEY, [makeHistoricalDraft({ id: 9002, customer_name: 'Never Opened Yet' })]);
+  api.get = offline;
+
+  const r = renderOrdersFlow('/orders');
+  await settle(60);
+
+  const draftsTab = r.all('button').find((b) => b.textContent.trim() === 'Drafts');
+  await r.click(draftsTab);
+  await settle(60);
+
+  const row = r.all('td').find((td) => td.textContent.includes('Never Opened Yet'))?.closest('tr');
+  assert.ok(row);
+  await r.click(row);
+  await settle(60);
+
+  assert.match(r.text(), /needs a connection to open/, 'unchanged: a genuine cache miss still surfaces the existing offline toast');
   r.unmount();
 });
