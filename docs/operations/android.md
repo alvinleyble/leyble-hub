@@ -81,25 +81,43 @@ Leyble Hub distributes to the owners' devices automatically via **Google Play St
 
 ### Continuous Deployment (GitHub Actions)
 
-Deployments are fully automated via [.github/workflows/deploy-play.yml](../../.github/workflows/deploy-play.yml):
+Deployments are fully automated via GitHub Actions for both Production and Staging:
+
+#### Production Pipeline ([.github/workflows/deploy-play.yml](../../.github/workflows/deploy-play.yml))
 - **Trigger**: Any push to `main` modifying `client/**` or `.github/workflows/deploy-play.yml` (and on-demand via `workflow_dispatch`).
+- **Target Backend**: Production Render API (`https://leyble-hub.onrender.com`).
+- **Application ID**: `com.leyble.hub`
+- **App Name**: `Leyble Hub`
 - **Steps**:
   1. Sets up Node 22 (required for Capacitor 8 CLI) and Java 21 (Temurin).
   2. Runs `npm ci && npm run build` inside `client/`.
   3. Runs `npx cap sync android` to sync web assets.
   4. Decodes the base64 release keystore to `client/android/app/release.jks`.
   5. Executes `./gradlew bundleRelease` to produce `app-release.aab`.
-  6. Uploads the signed AAB to Google Play Internal Testing track via `r0adkll/upload-google-play@v1`.
+  6. Uploads the signed AAB to Google Play Internal Testing track (`com.leyble.hub`) via `r0adkll/upload-google-play@v1`.
+
+#### Staging Pipeline ([.github/workflows/deploy-play-staging.yml](../../.github/workflows/deploy-play-staging.yml))
+- **Trigger**: Any push to `staging` modifying `client/**` or `.github/workflows/deploy-play-staging.yml` (and on-demand via `workflow_dispatch`).
+- **Target Backend**: Northflank Staging API (`https://site--leyble-hub--tkm4pp6r2kky.code.run`).
+- **Application ID**: `com.leyble.hub.staging` (can be installed alongside production on the same device).
+- **App Name**: `Leyble Hub (Staging)`
+- **Steps**:
+  1. Sets up Node 22 and Java 21.
+  2. Builds web client with `VITE_API_URL=https://site--leyble-hub--tkm4pp6r2kky.code.run`.
+  3. Runs `npx cap sync android`.
+  4. Decodes keystore (supports `PLAY_STAGING_KEYSTORE_BASE64` with fallback to `PLAY_KEYSTORE_BASE64`).
+  5. Executes `./gradlew bundleRelease` with `ANDROID_APPLICATION_ID=com.leyble.hub.staging` and `ANDROID_APP_NAME="Leyble Hub (Staging)"`.
+  6. Uploads the signed AAB to Google Play Internal Testing track (`com.leyble.hub.staging`) via `r0adkll/upload-google-play@v1`.
 
 ### Signing & Keystore Secrets
 
 The release keystore is stored locally at `client/android/app/release.jks` (alias `upload`) and is gitignored (`*.jks`).
-The CI pipeline uses 5 GitHub Repository Secrets:
-- `PLAY_SERVICE_ACCOUNT_JSON`: Google Cloud IAM service account key with Google Play Android Developer API access.
-- `PLAY_KEYSTORE_BASE64`: Base64 encoded `release.jks` (`base64 -i client/android/app/release.jks | pbcopy`).
-- `PLAY_KEYSTORE_PASSWORD`: Keystore password.
-- `PLAY_KEY_ALIAS`: Keystore alias (`upload`).
-- `PLAY_KEY_PASSWORD`: Key password.
+The CI pipelines support both dedicated staging secrets and shared repository secrets:
+- `PLAY_SERVICE_ACCOUNT_JSON` / `PLAY_STAGING_SERVICE_ACCOUNT_JSON`: Google Cloud IAM service account key with Google Play Android Developer API access.
+- `PLAY_KEYSTORE_BASE64` / `PLAY_STAGING_KEYSTORE_BASE64`: Base64 encoded `release.jks` (`base64 -i client/android/app/release.jks | pbcopy`).
+- `PLAY_KEYSTORE_PASSWORD` / `PLAY_STAGING_KEYSTORE_PASSWORD`: Keystore password.
+- `PLAY_KEY_ALIAS` / `PLAY_STAGING_KEY_ALIAS`: Keystore alias (`upload`).
+- `PLAY_KEY_PASSWORD` / `PLAY_STAGING_KEY_PASSWORD`: Key password.
 
 ### Versioning Rules
 
@@ -109,9 +127,9 @@ Google Play requires every release to have a strictly higher `versionCode`:
 
 ### Installing & Updating on Devices
 
-1. Invite the Google accounts of the tablet owners under **Google Play Console → Testing → Internal testing → Testers**.
-2. Have owners open the one-time opt-in link and install **Leyble Hub** from Google Play Store.
-3. Subsequent releases pushed to `main` will automatically update on the tablets via Google Play background updates.
+1. Invite the Google accounts of the tablet owners/testers under **Google Play Console → Testing → Internal testing → Testers**.
+2. Have owners open the one-time opt-in link and install **Leyble Hub** (or **Leyble Hub (Staging)**) from Google Play Store.
+3. Subsequent releases pushed to `main` (or `staging`) will automatically update on the tablets via Google Play background updates.
 
 ---
 

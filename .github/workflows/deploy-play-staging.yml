@@ -1,0 +1,63 @@
+name: Deploy Staging to Play Internal
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - 'client/**'
+      - '.github/workflows/deploy-play-staging.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install deps & build web
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: https://site--leyble-hub--tkm4pp6r2kky.code.run
+
+      - name: Capacitor sync
+        working-directory: client
+        run: npx cap sync android
+
+      - name: Decode keystore
+        run: echo "$PLAY_KEYSTORE_BASE64" | base64 -d > client/android/app/release.jks
+        env:
+          PLAY_KEYSTORE_BASE64: ${{ secrets.PLAY_STAGING_KEYSTORE_BASE64 || secrets.PLAY_KEYSTORE_BASE64 }}
+
+      - name: Build AAB
+        working-directory: client/android
+        run: ./gradlew bundleRelease --stacktrace
+        env:
+          ANDROID_APPLICATION_ID: com.leyble.hub.staging
+          ANDROID_APP_NAME: Leyble Hub (Staging)
+          PLAY_KEYSTORE_PATH: release.jks
+          PLAY_KEYSTORE_PASSWORD: ${{ secrets.PLAY_STAGING_KEYSTORE_PASSWORD || secrets.PLAY_KEYSTORE_PASSWORD }}
+          PLAY_KEY_ALIAS: ${{ secrets.PLAY_STAGING_KEY_ALIAS || secrets.PLAY_KEY_ALIAS }}
+          PLAY_KEY_PASSWORD: ${{ secrets.PLAY_STAGING_KEY_PASSWORD || secrets.PLAY_KEY_PASSWORD }}
+
+      - name: Upload to Play Internal
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STAGING_SERVICE_ACCOUNT_JSON || secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.leyble.hub.staging
+          releaseFiles: client/android/app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
