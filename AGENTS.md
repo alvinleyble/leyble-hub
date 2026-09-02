@@ -51,6 +51,8 @@ cd client && npm test
 node --test audit-client.test.mjs
 ```
 
+On-device UI (Appium, manual/on-demand — not part of CI): [e2e/appium/README.md](e2e/appium/README.md).
+
 `server/test/v2-accuracy-audit.test.js` + `audit-client.test.mjs` come from the V2 accuracy audit
 and deliberately **pin some still-broken behaviour** (the closed-order deposit total, the ESC/POS
 non-ASCII bytes, the blank no-SKU receipt line). Invert those assertions as each fix lands rather

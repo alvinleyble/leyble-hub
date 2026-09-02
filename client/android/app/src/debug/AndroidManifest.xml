@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-build-only manifest override, merged by Gradle's `debug` source set on top of
+  src/main/AndroidManifest.xml — never applied to a release build (assembleRelease /
+  bundleRelease only ever read src/main + src/release).
+
+  Purpose: let a locally-built debug APK reach a backend running on the developer's
+  machine (http://10.0.2.2:<port>, the emulator's host-loopback alias) for Appium runs
+  and manual on-device QA — see e2e/appium/README.md. The production app's networking
+  behavior (src/main, no networkSecurityConfig, cleartext blocked) is untouched.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+</manifest>
