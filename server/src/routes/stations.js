@@ -11,9 +11,9 @@ router.use(requireAuth);
 // not CLAIM a station number any more: it is ASSIGNED one of three fixed slots.
 //
 // What did not change: the number is still stored on the device, still issued locally
-// with no round trip at Save (ADR 0004), still the outbox's anti-duplicate key
-// (ADR 0006), still what addresses the order before it has ever reached the server
-// (ADR 0010). Only where an available number comes from changed — from "the next
+// with no round trip at Save (ADR 0004), still unique, still what addresses the order
+// before it has ever reached the server (ADR 0010). It is no longer the outbox's
+// anti-duplicate key — ADR 0017 #9 split that off onto `request_key`. Only where an available number comes from changed — from "the next
 // value of a sequence, forever" to "one of slots 1, 2, 3, reassignable by the owner".
 //
 // Manual per-device number entry is still rejected, for ADR 0003's original reason:
@@ -24,8 +24,10 @@ router.use(requireAuth);
 // When a slot moves to a REPLACEMENT device, the new tablet is seeded past the highest
 // sequence the server has seen for that slot — plus this reserve. The outgoing tablet
 // may still be holding receipts it issued and never managed to sync, and those numbers
-// are not visible here; without the gap the replacement would re-issue them and the
-// idempotency check (ADR 0006) would answer the NEW order with the OLD one's row.
+// are not visible here; without the gap the replacement would re-issue them. Since
+// ADR 0017 #9 that no longer answers the NEW order with the OLD one's row — the retry
+// key is a separate value — but the receipt number is still unique, so the collision
+// becomes a 409 that strands the new sale until a human re-issues its number.
 //
 // A gap in a device's numbering is invisible to everyone; a repeat is two customers
 // holding the same receipt number. Same trade ADR 0003 made for skipped sequences.

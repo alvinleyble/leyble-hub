@@ -328,11 +328,19 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   order, a review-queue tab) use `orderRefFromId(id, receiptNumber)` and get the receipt
   number from a `LEFT JOIN orders` their query now carries — the id alone is never the
   display name ([ADR 0010](docs/adr/0010-receipt-number-addresses-order-across-sync-boundary.md)).
-- **The receipt number is also the anti-duplicate key.** `POST /orders` answers a
-  receipt number it already holds with the stored order and a `200` — never an error,
-  never a second row, so the device can clear its outbox. Mechanism is table-agnostic in
-  `server/src/lib/idempotency.js`; Release 2's deliveries adopt it by adding the same
-  column pair + partial unique index.
+- **The retry key is `request_key`, NOT the receipt number** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md)
+  #9, revising [ADR 0006](docs/adr/0006-receipt-number-as-idempotency-key.md), migration
+  039). `outbox.js` mints one per queued record (`requestKeys.js`) and injects it into
+  every POST body it drains; `POST /orders` and `POST /incoming` answer a key they
+  already hold with the stored row and a `200` — never an error, never a second row, so
+  the device can clear its outbox. The receipt number stays unique and stays the route
+  identifier (ADR 0010); it is simply no longer what a *retry* is recognised by, so two
+  different sales that collide on one number are two rows and a `409` a human can act
+  on, instead of the second sale silently vanishing into the first. **The receipt-number
+  dedupe path is the fallback for a record with no `request_key` (a pre-039 queued
+  record, ADR 0014's mixed-fleet window) and must never be removed.** Mechanism is
+  table-agnostic in `server/src/lib/idempotency.js` — `orders` and `supplier_deliveries`
+  carry the same column shape, so a third table is one allowlist entry.
 - **Device state lives in native storage only** — `@capacitor/preferences`, **one key per
   record**, all under the `v25.` prefix, via `client/src/offline/nativeStore.js`. Never
   `localStorage`, never IndexedDB (Android evicts them; "clear data" wipes them). It must
@@ -361,7 +369,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
 - **Parked orders (`client/src/offline/parkedOrders.js`):** online, unchanged —
   the pre-2.5 early-draft POST + debounced PATCH. Blind, a draft parks as an ordinary
   queued `order` outbox record (`payload.status: 'draft'`), given its own device-issued
-  receipt number purely as a local identity and anti-duplicate key — `server/src/lib/
+  receipt number purely as a local identity — `server/src/lib/
   idempotency.js` is table-agnostic over any orders row, drafts included, so this reuses
   the existing mechanism rather than adding one. `POSPage.jsx`'s `draftId` holds either a
   real row id (online) or that receipt number (local park); every order route already
@@ -540,11 +548,12 @@ Every V1 screen now works blind. What a future session most needs to know:
   "mid-sale on it" has no second value to weigh. Same gate as customer merge/delete
   (§7), delivery edit/void (§8), ticket resolve and every personnel mutation (§9), all
   via `DangerZoneDelete`'s `disabled`/`disabledReason` or a `title` tooltip.
-- **Deliveries are the second table on ADR 0006's idempotency mechanism.**
+- **Deliveries are the second table on the idempotency mechanism.**
   `<station>-DEL-<seq>` (`issueDeliveryRef`, its OWN counter — `v25.deliverySequence`),
-  stored on `supplier_deliveries.receipt_station/receipt_sequence` (migration 036, same
-  column names on purpose so `lib/idempotency.js` needs one whitelist entry). Without
-  it a resent record is a second truckload of stock in the ledger.
+  stored on `supplier_deliveries.receipt_station/receipt_sequence` (migration 036) plus
+  `request_key` (migration 039) — same column names as `orders` on purpose, so
+  `lib/idempotency.js` needs one whitelist entry. Without it a resent record is a second
+  truckload of stock in the ledger.
 - **Queued rows are merged into three lists now**, all the same `local-<outboxId>`
   shape G29 established: customers (`queuedCustomersFromOutbox`), products
   (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +

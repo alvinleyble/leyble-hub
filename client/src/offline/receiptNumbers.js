@@ -27,8 +27,8 @@ export function parseReceiptNumber(value) {
 // ── Delivery references (ADR 0015 §8, Slice 3.3) ────────────────────────────
 //
 // `<station>-DEL-<sequence>`, e.g. `1-DEL-00007`. Same shape and the same job as a
-// receipt number — a device-issued identity that doubles as the anti-duplicate key
-// for a resent outbox record (ADR 0006) — with `DEL` in the middle so a delivery
+// receipt number — a device-issued identity, unique and stable (the resend key is
+// separate since ADR 0017 #9; see requestKeys.js) — with `DEL` in the middle so a delivery
 // reference can never be mistaken for, or collide with, a customer's receipt number.
 // The server mirror is server/src/lib/receiptNumbers.js.
 
