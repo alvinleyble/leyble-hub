@@ -25,6 +25,7 @@ export default function CustomersPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+  const [menuOpen, setMenuOpen]         = useState(false);
   // G29 — customers quick-created offline (OrderCreateModal), still queued in the
   // outbox and not yet visible to the server's own /customers list.
   const [queuedCustomers, setQueuedCustomers] = useState([]);
@@ -104,15 +105,53 @@ export default function CustomersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={customers.length === 0}>
+          {/* Phone width: Print List collapses into a "⋮" overflow menu. */}
+          <div className="relative lg:hidden">
+            <button
+              type="button"
+              aria-label="More actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+              className="flex items-center justify-center w-12 h-12 rounded-lg border border-slate-300
+                         bg-white text-xl text-slate-700
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <div role="menu" className="absolute left-0 z-30 mt-1 w-56 rounded-lg border border-slate-200
+                                          bg-white shadow-lg py-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={customers.length === 0}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setMenuOpen(false); handlePrintList(); }}
+                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  🖶 Print List
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Tablet: full button, unchanged. */}
+          <Button
+            variant="secondary" onClick={handlePrintList} loading={printing} disabled={customers.length === 0}
+            className="hidden lg:inline-flex"
+          >
             🖶 Print List
           </Button>
+
           <Button onClick={() => setCreating(true)}>+ Add Customer</Button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="flex flex-row gap-3 mb-6">
         <input
           type="search"
           placeholder="Search by name or phone…"
@@ -123,7 +162,24 @@ export default function CustomersPage() {
           aria-label="Search customers"
           data-testid="customers-search-input"
         />
-        <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
+        {/* Phone width: compact inline switch beside the search bar. */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showInactive}
+          onClick={() => setShowInactive((v) => !v)}
+          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
+                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        >
+          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
+          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
+                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
+                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
+          </span>
+        </button>
+        {/* Tablet: original box, unchanged. */}
+        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
                           bg-white cursor-pointer select-none">
           <input
             type="checkbox" checked={showInactive}

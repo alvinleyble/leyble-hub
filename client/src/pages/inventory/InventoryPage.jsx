@@ -33,6 +33,7 @@ export default function InventoryPage() {
   const [stockFilter, setStockFilter]   = useState('all');
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+  const [menuOpen, setMenuOpen]         = useState(false);
 
   // Batch price edit
   const [batchMode, setBatchMode]         = useState(false);
@@ -183,16 +184,65 @@ export default function InventoryPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={displayProducts.length === 0}>
+          {/* Phone width: Print List + Batch Edit Prices collapse into a "⋮" overflow menu. */}
+          <div className="relative lg:hidden">
+            <button
+              type="button"
+              aria-label="More actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+              className="flex items-center justify-center w-12 h-12 rounded-lg border border-slate-300
+                         bg-white text-xl text-slate-700
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <div role="menu" className="absolute left-0 z-30 mt-1 w-56 rounded-lg border border-slate-200
+                                          bg-white shadow-lg py-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={displayProducts.length === 0}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setMenuOpen(false); handlePrintList(); }}
+                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  🖶 Print List
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!batchMode && products.length === 0}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setMenuOpen(false); batchMode ? exitBatchMode() : setBatchMode(true); }}
+                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {batchMode ? 'Cancel Batch Edit' : 'Batch Edit Prices'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Tablet: full buttons, unchanged. */}
+          <Button
+            variant="secondary" onClick={handlePrintList} loading={printing} disabled={displayProducts.length === 0}
+            className="hidden lg:inline-flex"
+          >
             🖶 Print List
           </Button>
           {batchMode ? (
-            <Button variant="secondary" onClick={exitBatchMode}>Cancel Batch Edit</Button>
+            <Button variant="secondary" onClick={exitBatchMode} className="hidden lg:inline-flex">Cancel Batch Edit</Button>
           ) : (
-            <Button variant="secondary" onClick={() => setBatchMode(true)} disabled={products.length === 0}>
+            <Button variant="secondary" onClick={() => setBatchMode(true)} disabled={products.length === 0} className="hidden lg:inline-flex">
               Batch Edit Prices
             </Button>
           )}
+
           <Button onClick={() => setCreating(true)}>+ Add Product</Button>
         </div>
       </div>
@@ -223,7 +273,7 @@ export default function InventoryPage() {
       {fromCache && <OfflineBanner />}
 
       {/* ── Filters ──────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="flex flex-row gap-3 mb-6">
         <input
           type="search"
           placeholder="Search by name, category, or SKU…"
@@ -234,7 +284,24 @@ export default function InventoryPage() {
           aria-label="Search products"
           data-testid="inventory-search-input"
         />
-        <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
+        {/* Phone width: compact inline switch beside the search bar. */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showInactive}
+          onClick={() => setShowInactive((v) => !v)}
+          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
+                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        >
+          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
+          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
+                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
+                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
+          </span>
+        </button>
+        {/* Tablet: original box, unchanged. */}
+        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
                           bg-white cursor-pointer select-none">
           <input
             type="checkbox"
@@ -247,13 +314,16 @@ export default function InventoryPage() {
       </div>
 
       {/* ── Category chips ───────────────────────────────────────── */}
+      {/* D4-style: below `lg` this scrolls as a single row instead of wrapping — every
+          category stays one tap. Wraps unchanged at `lg`+ (tablet). */}
       {!loading && allCategories.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 mb-3">
+        <div className="flex flex-nowrap gap-1.5 overflow-x-auto -mx-0.5 px-0.5 pb-0.5 mb-3
+                        lg:flex-wrap lg:overflow-visible lg:mx-0 lg:px-0 lg:pb-0">
           {['all', ...allCategories].map((cat) => (
             <button
               key={cat}
               onClick={() => setCategoryFilter(cat)}
-              className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
+              className={`shrink-0 lg:shrink px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
                 ${categoryFilter === cat
                   ? 'bg-blue-700 text-white border-blue-700'
@@ -266,8 +336,10 @@ export default function InventoryPage() {
       )}
 
       {/* ── Stock status filter ───────────────────────────────────── */}
+      {/* Segmented control (distinct from the category pill row above) — same style at
+          phone and tablet width. */}
       {!loading && (
-        <div className="flex gap-1.5 mb-5">
+        <div className="inline-flex mb-5 rounded-lg border border-slate-300 bg-white p-0.5">
           {[
             { value: 'all', label: 'All Stock' },
             { value: 'low', label: 'Low Stock' },
@@ -276,13 +348,13 @@ export default function InventoryPage() {
             <button
               key={opt.value}
               onClick={() => setStockFilter(opt.value)}
-              className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
+              className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors
                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
                 ${stockFilter === opt.value
-                  ? opt.value === 'out' ? 'bg-red-600 text-white border-red-600'
-                    : opt.value === 'low' ? 'bg-amber-500 text-white border-amber-500'
-                    : 'bg-slate-700 text-white border-slate-700'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                  ? opt.value === 'out' ? 'bg-red-600 text-white'
+                    : opt.value === 'low' ? 'bg-amber-500 text-white'
+                    : 'bg-slate-700 text-white'
+                  : 'text-slate-600 hover:bg-slate-50'}`}
             >
               {opt.label}
             </button>

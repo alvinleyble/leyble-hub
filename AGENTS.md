@@ -78,9 +78,11 @@ than treating a passing run as "all correct".
 - `inventory_audit_logs`, `customer_product_prices`, and `activity_logs` are **append-only** — never `UPDATE` or `DELETE` these tables.
 - `order_items.line_total` is a PostgreSQL `GENERATED` column — never write to it directly. Since migration 023 the formula is `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee` (deposit charged on un-returned bottles).
 - Multiple personnel per order via `order_personnel` join table (not FK columns on `orders`).
-- **At most one Driver per order** — auto-switch UX in the order modal (picking a new Driver
-  demotes the previous one to Helper) + validated in `syncPersonnel` in
-  [server/src/routes/orders.js](server/src/routes/orders.js) (400 on >1 Driver).
+- **At most one Driver per order** — validated in `syncPersonnel` in
+  [server/src/routes/orders.js](server/src/routes/orders.js) (400 on >1 Driver). V3.5 removed
+  the Driver/Helper picker UI from order creation (no viewport shows it any more — a settled
+  product decision, not a bug); `OrderCreateModal.jsx` still loads and round-trips an existing
+  order's `assignedPersonnel` unedited on save so historical assignments survive an edit.
 
 ### Pricing and stock — the two rules that are invisible on screen
 
@@ -630,6 +632,19 @@ testid makes the Appium assertion fail on a phone-width emulator. For those two,
 testid lives only on the card's badge; the table's original badge is left rendering
 the same content with no testid at all. `StationsPage.jsx` (Devices) needed no card —
 its slot list is already a `flex flex-col sm:flex-row` card, not a table.
+
+Piece 3 (V3.5 Pocket polish — captain-reviewed fixes on top of Pieces 1/2: Orders'
+Drafts card, Dashboard's whole-card tap target, order creation's personnel picker
+removed, Inventory/Customers header overflow menus, Inventory's category scroll +
+segmented stock filter, the compact "Show inactive" switch) follows the same
+additive-`lg:`-gate rule. **Overflow-menu positioning gotcha:** a phone-width "⋮" menu
+button placed at the *left* edge of a header (before the primary action button, as in
+`InventoryPage.jsx`/`CustomersPage.jsx`) must anchor its dropdown with `absolute
+left-0`, not `right-0` — `right-0` aligns the dropdown's right edge to its own narrow
+`relative` wrapper (just the button), which pushes most of the menu off-screen to the
+left. Caught by checking `getBoundingClientRect()` in a real ~390px-wide iframe, not by
+screenshot alone (a `role="menu"` rendered mostly off-canvas can still look like a
+blank white box in a screenshot rather than visibly wrong).
 
 Testing this against the Appium suite locally requires the debug APK to actually reach
 the host machine's dev backend: `client/.env.production`'s `VITE_API_URL` outranks
