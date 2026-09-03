@@ -1,8 +1,21 @@
 # Three Fixed Station Slots, Captain-Reassignable
 
-**Status:** Settled (2026-08-29)
+**Status:** Superseded (2026-09-03) by [ADR 0017: Receipt Numbers Keyed to User Accounts](0017-receipt-numbers-keyed-to-user-accounts.md)
 **Origin:** Captain decision, 2026-08-29 (receipt-number format grill)
+**Superseded by:** [ADR 0017: Receipt Numbers Keyed to User Accounts, With a Per-Person Device Letter](0017-receipt-numbers-keyed-to-user-accounts.md)
 **See also:** [ADR 0003: Device-Issued Receipt Numbers](0003-device-issued-receipt-numbers.md), [ADR 0004: Local-First POS](0004-local-first-pos.md), [ADR 0006: Receipt Number as Idempotency Key](0006-receipt-number-as-idempotency-key.md), [ADR 0010: Receipt Number Addresses an Order Across the Sync Boundary](0010-receipt-number-addresses-order-across-sync-boundary.md), [ADR 0011: Only the Android App is a Station](0011-tablets-as-stations-browser-as-dev-tier.md)
+
+## Superseded
+
+[ADR 0017](0017-receipt-numbers-keyed-to-user-accounts.md) replaces the slot scheme with a receipt number keyed to the *person* (`<person><device letter>-<sequence>`, e.g. `1A-00042`).
+Everything below is kept unchanged as the record of why slots existed and what they were solving; none of it is deleted or rewritten.
+
+What ADR 0017 removes: the three-slot concept itself, the Devices screen, `POST /stations/slots/:slot/assign`, high-water counter seeding on reassignment and `REASSIGN_RESERVE`.
+Why it can remove them: those four mechanisms exist only so that a number tied to *hardware* can survive a hardware change.
+Once the number is keyed to the person, a replacement device simply takes a fresh letter, which cannot collide with receipts the old device never synced - so there is nothing left for a reserve gap or a seeding rule to protect.
+
+What survives, in ADR 0017's own form: the person digits 1 Alvin, 2 Josie, 3 Luis (deliberately the same digits, so each person's series reads as continuing), the no-backfill rule of decision 8, and the write-path backstop of decision 6, which must be widened past 1-3 before a fourth person is created.
+The station registry (`stations`, `device_key`) is not the receipt station under either ADR.
 
 ## Context
 
