@@ -7,11 +7,32 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
 
 ## What's here
 
-- `tests/login.test.mjs` — the one committed test: log in, confirm the profile picker appears,
-  pick a profile, confirm the Dashboard renders. Run it, or use it as the template for a new
-  test.
+- `tests/login.test.mjs` — log in, confirm the profile picker appears, pick a profile, confirm
+  the Dashboard renders.
+- `tests/dashboard.test.mjs`, `orders.test.mjs`, `inventory.test.mjs`, `customers.test.mjs`,
+  `personnel.test.mjs`, `tickets.test.mjs`, `audit.test.mjs`, `devices.test.mjs` — one basic
+  test per core screen: its list loads with real data, a filter/search control narrows it (or
+  the screen's closest equivalent — see each file's header comment for screens where none
+  applies or a substitution was made), and opening an item shows its detail view. Use any of
+  these as the template for a new test.
+- `helpers/driver.js` — connects to Appium, switches into the Capacitor WebView context, and
+  `withSession(fn)` wraps both plus session teardown around a test body.
+- `helpers/auth.js` — `loginAs(driver)` (the shared login flow every test starts from) and
+  `navigateTo(driver, 'orders')` (opens the nav drawer and taps a screen's link — see "How
+  screen tests navigate" below).
+- `helpers/ui.js` — small `data-testid`-based query/click helpers (`waitForTestId`,
+  `clickTestId`, `allTestId`, `assertCount`, `waitForCountSettled`) used across every test.
 - `package.json` — `appium` (the WebDriver-protocol server), `appium-uiautomator2-driver` (the
   Android driver), `webdriverio` (the client library the tests are written against).
+
+## `data-testid` hooks
+
+Every screen's list container, filter/search control, list item, and detail-view root carry a
+`data-testid` (e.g. `orders-list`, `orders-search-input`, `orders-row`, `order-detail`) so tests
+don't depend on visible copy or DOM structure — grep the relevant `client/src/pages/**` file for
+`data-testid` to see a screen's hooks. Navigation carries them too: `nav-menu-button` (the
+hamburger) and `nav-link-<path>` (e.g. `nav-link-orders`) on each drawer link, and
+`profile-picker`/`profile-picker-<key>` on the post-login profile picker.
 
 Nothing here touches `client/` or `server/`'s own build or test setup. The one thing it does
 depend on outside this directory is a debug-build-only Android networking override — see
@@ -61,7 +82,10 @@ cd e2e/appium
 npx appium --base-path /wd/hub --allow-insecure uiautomator2:chromedriver_autodownload
 
 # 5. In another terminal: clear the app's persisted login (see "Clean state" below), then run
-#    the test.
+#    a test — any of the `test:*` scripts in package.json (test:login, test:dashboard,
+#    test:orders, test:inventory, test:customers, test:personnel, test:tickets, test:audit,
+#    test:devices). Every non-login test logs in for itself first (helpers/auth.js), so
+#    `pm clear` before each of them matters the same way it does for test:login.
 adb shell am force-stop com.leyble.hub
 adb shell pm clear com.leyble.hub
 cd e2e/appium
@@ -131,16 +155,17 @@ scout/ship work only covered the emulator.
 
 ## Adding a new test
 
-1. Copy the shape of `tests/login.test.mjs`: connect with `remote()`, wait for and switch into
-   the `WEBVIEW_com.leyble.hub` context, then drive the page with `driver.$()` /
-   `driver.$$()` using CSS or XPath selectors against the real React markup — there are no
-   `data-testid` hooks anywhere in the app today, so selectors lean on visible text, input
-   `type`, and structural XPath. If this directory grows past a couple of tests, adding
-   `data-testid`s to key screens would make new tests much less brittle against copy changes —
-   worth doing at that point, not before.
-2. If a test needs to start from an authenticated state, factor the login flow out into a
-   shared helper rather than copy-pasting it — there's only one test today so it hasn't been
-   extracted yet.
+1. Copy the shape of an existing screen test (e.g. `tests/orders.test.mjs`): wrap the body in
+   `withSession(async (driver) => { ... })` from `helpers/driver.js` (connects, switches into
+   the `WEBVIEW_com.leyble.hub` context, tears the session down afterwards), call
+   `loginAs(driver)` from `helpers/auth.js` to start authenticated on `/dashboard`, then
+   `navigateTo(driver, '<path>')` to reach the screen through the nav drawer.
+2. Prefer `data-testid`-based selectors (`helpers/ui.js`'s `waitForTestId`/`clickTestId`/
+   `allTestId`) over visible text or structural XPath — every screen's list container,
+   filter/search control, list item, and detail-view root already carry one (see "`data-testid`
+   hooks" above). Add a new one, following the existing `<screen>-list` / `<screen>-<field>`
+   naming, if the screen you're covering needs a hook that doesn't exist yet — that's a markup
+   attribute only, no behavior change.
 3. A native (non-WebView) interaction — e.g. a system permission dialog, or eventually a native
    plugin screen — doesn't need the context switch; drive it directly against the default
    `NATIVE_APP` context with the same `driver.$()` API but Android accessibility-id / resource-id

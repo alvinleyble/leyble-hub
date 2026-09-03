@@ -5,7 +5,15 @@
   "description": "On-device UI tests for the Leyble Hub Capacitor Android app, driven by Appium against a real emulator/device. Manual/on-demand only — not part of CI.",
   "type": "module",
   "scripts": {
-    "test:login": "node tests/login.test.mjs"
+    "test:login": "node tests/login.test.mjs",
+    "test:dashboard": "node tests/dashboard.test.mjs",
+    "test:orders": "node tests/orders.test.mjs",
+    "test:inventory": "node tests/inventory.test.mjs",
+    "test:customers": "node tests/customers.test.mjs",
+    "test:personnel": "node tests/personnel.test.mjs",
+    "test:tickets": "node tests/tickets.test.mjs",
+    "test:audit": "node tests/audit.test.mjs",
+    "test:devices": "node tests/devices.test.mjs"
   },
   "dependencies": {
     "appium": "^3.7.0",

@@ -151,7 +151,7 @@ export default function DashboardPage() {
               No active orders at the moment
             </p>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" data-testid="dashboard-orders-list">
               <table className="w-full text-base">
                 <thead>
                   <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">
@@ -164,7 +164,7 @@ export default function DashboardPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-300">
                   {orders.map((order) => (
-                    <tr key={order.id} className="hover:bg-slate-50 transition-colors">
+                    <tr key={order.id} data-testid="dashboard-order-row" className="hover:bg-slate-50 transition-colors">
                       <td className="px-5 py-4">
                         <Link
                           to={`/orders/${order.id}`}

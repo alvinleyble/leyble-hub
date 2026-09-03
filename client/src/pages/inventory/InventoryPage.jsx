@@ -232,6 +232,7 @@ export default function InventoryPage() {
           className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                      focus:outline-none focus:ring-2 focus:ring-blue-600"
           aria-label="Search products"
+          data-testid="inventory-search-input"
         />
         <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
                           bg-white cursor-pointer select-none">
@@ -317,7 +318,7 @@ export default function InventoryPage() {
           {search ? 'No products match your search.' : 'No products yet. Add one to get started.'}
         </p>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="inventory-list">
           <table className="w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
@@ -370,6 +371,7 @@ export default function InventoryPage() {
                         }
                         setSelectedId(p.id);
                       }}
+                      data-testid="inventory-row"
                       className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                     >
                       {batchMode && (

@@ -43,6 +43,7 @@ export default function AppLayout() {
             type="button"
             onClick={() => setNavOpen(true)}
             aria-label="Open menu"
+            data-testid="nav-menu-button"
             className="flex items-center justify-center w-12 h-12 rounded-lg
                        hover:bg-slate-800
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
