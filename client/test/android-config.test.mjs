@@ -4,12 +4,17 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // V3.0 Slice 5 removed the V1<->V2 long-press bridge and the V2 shell, but the
-// landscape lock and single Android package identity must survive that cleanup.
+// single Android package identity must survive that cleanup.
+//
+// V3.5 Pocket (D1, docs/product/proposals/phone-responsive-layout.md) unlocks rotation:
+// MainActivity no longer force-locks to sensorLandscape — CSS breakpoints adapt to
+// whatever orientation the OS reports instead of native code pre-deciding it.
 
-test('AndroidManifest uses ${appName} placeholder and retains sensorLandscape', () => {
+test('AndroidManifest uses ${appName} placeholder and leaves orientation unlocked', () => {
   const xml = readFileSync(fileURLToPath(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url)), 'utf8');
-  assert.match(xml, /android:screenOrientation="sensorLandscape"/, 'expected sensorLandscape on MainActivity');
-  assert.match(xml, /<activity[^>]*android:screenOrientation="sensorLandscape"/s);
+  assert.match(xml, /android:screenOrientation="unspecified"/, 'expected unspecified (unlocked) on MainActivity');
+  assert.match(xml, /<activity[^>]*android:screenOrientation="unspecified"/s);
+  assert.doesNotMatch(xml, /android:screenOrientation="sensorLandscape"/, 'D1 removed the landscape lock');
   assert.match(xml, /<application[^>]*android:label="\$\{appName\}"/s, 'expected ${appName} placeholder on application');
   assert.match(xml, /<activity[^>]*android:label="\$\{appName\}"/s, 'expected ${appName} placeholder on activity');
 });
