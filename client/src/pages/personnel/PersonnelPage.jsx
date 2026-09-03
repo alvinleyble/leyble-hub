@@ -130,7 +130,48 @@ export default function PersonnelPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="personnel-list">
-          <table className="w-full text-base">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {filtered.map((p) => (
+              <div
+                key={p.id}
+                onClick={() => {
+                  if (p._unsynced) {
+                    addToast('Personnel is queued for sync — details and editing will be available once connected.', 'info');
+                    return;
+                  }
+                  setSelectedId(p.id);
+                }}
+                data-testid="personnel-row"
+                className="p-4 active:bg-blue-50 cursor-pointer flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <p className={`font-semibold truncate ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                    {p.full_name}
+                  </p>
+                  <p className="text-sm text-slate-500 mt-0.5">{p.phone ?? '—'}</p>
+                </div>
+                {(p._unsynced || pendingEditIds.has(String(p.id))) ? (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
+                                    bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
+                    ⏳ Waiting to sync
+                  </span>
+                ) : p.is_active ? (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
+                                    bg-green-100 text-green-800 border border-green-300 shrink-0">
+                    Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
+                                    bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
+                    Inactive
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-5 py-3 font-semibold">Name</th>

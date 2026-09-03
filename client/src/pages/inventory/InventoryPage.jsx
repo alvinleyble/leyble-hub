@@ -319,7 +319,73 @@ export default function InventoryPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="inventory-list">
-          <table className="w-full text-base">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {categories.map((cat) => (
+              <React.Fragment key={cat}>
+                <div className="bg-slate-100 border-y border-slate-300 px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  {cat}
+                </div>
+                {grouped[cat].map((p) => (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      if (p._unsynced) {
+                        addToast('Product is queued for sync — details and editing will be available once connected.', 'info');
+                        return;
+                      }
+                      setSelectedId(p.id);
+                    }}
+                    data-testid="inventory-row"
+                    className="p-4 active:bg-blue-50 cursor-pointer flex items-start justify-between gap-3"
+                  >
+                    <div className="min-w-0 flex items-start gap-2">
+                      {batchMode && (
+                        <label
+                          className="flex items-center justify-center w-8 h-8 -m-1 shrink-0 cursor-pointer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(p.id)}
+                            disabled={p._unsynced}
+                            onChange={() => toggleSelected(p.id)}
+                            className="w-5 h-5 rounded border-slate-300 text-blue-700
+                                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                            aria-label={`Select ${p.name}`}
+                          />
+                        </label>
+                      )}
+                      <div className="min-w-0">
+                        <p className={`font-semibold truncate ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                          {p.name}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5">{p.sku ?? p.unit}</p>
+                        {(p._unsynced || pendingEditIds.has(String(p.id))) && (
+                          <span className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs
+                                           font-semibold border bg-amber-100 text-amber-800 border-amber-300">
+                            ⏳ Waiting to sync
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-semibold text-slate-900 tabular-nums">{PHP(p.base_wholesale_price)}</p>
+                      <p className={`font-bold text-base tabular-nums ${
+                        p.current_stock <= 0   ? 'text-red-600'   :
+                        p.current_stock <= 10  ? 'text-amber-600' :
+                                                 'text-slate-900'
+                      }`}>
+                        {p.current_stock}<span className="text-xs text-slate-400 font-normal ml-1">{p.unit}</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </React.Fragment>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 {batchMode && (

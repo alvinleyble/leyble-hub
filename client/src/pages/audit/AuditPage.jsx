@@ -350,7 +350,43 @@ export default function AuditPage() {
           ) : (
             <>
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
-                <table className="w-full text-sm min-w-[640px]">
+                {/* Phone-width cards (D5) — same rows/testids as the table below, hidden
+                    at lg. The action badge's data-testid lives ONLY here (not on the
+                    table's copy below) because e2e/appium/tests/audit.test.mjs reads its
+                    text with getText(), which returns "" for a display:none element. */}
+                <div className="lg:hidden divide-y divide-slate-200">
+                  {entries.map((e) => (
+                    <div key={e.id} data-testid="audit-row" className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-900">{e.sku || e.product_name}</p>
+                          <p className="text-xs text-slate-400 tabular-nums mt-0.5">
+                            {new Date(e.created_at).toLocaleString('en-PH', {
+                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                            })}
+                          </p>
+                        </div>
+                        {e.delta != null ? (
+                          <span className={`font-bold tabular-nums shrink-0 ${Number(e.delta) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {Number(e.delta) >= 0 ? '+' : ''}{e.delta}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 font-normal shrink-0">—</span>
+                        )}
+                      </div>
+                      <div className="mt-2">
+                        <span
+                          data-testid="audit-action-badge"
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
+                          ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          {ACTION_LABELS[e.action_type] ?? e.action_type}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <table className="hidden lg:table w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
@@ -373,7 +409,6 @@ export default function AuditPage() {
                         </td>
                         <td className="px-5 py-3">
                           <span
-                            data-testid="audit-action-badge"
                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
                             ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                             {ACTION_LABELS[e.action_type] ?? e.action_type}
@@ -489,7 +524,30 @@ export default function AuditPage() {
           ) : (
             <>
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
-                <table className="w-full text-sm min-w-[640px]">
+                {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+                <div className="lg:hidden divide-y divide-slate-200">
+                  {activityEntries.map((e) => (
+                    <div key={e.id} data-testid="audit-row" className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <EntityRef entry={e} />
+                          <p className="text-xs text-slate-400 tabular-nums mt-0.5">
+                            {new Date(e.created_at).toLocaleString('en-PH', {
+                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                            })}
+                          </p>
+                        </div>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap shrink-0
+                          ${ACTIVITY_ACTION_COLORS[e.action] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          {ACTIVITY_ACTION_LABELS[e.action] ?? e.action}
+                        </span>
+                      </div>
+                      <p className="text-slate-600 text-sm mt-2">{e.summary}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <table className="hidden lg:table w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>

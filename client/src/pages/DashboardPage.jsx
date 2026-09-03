@@ -152,7 +152,40 @@ export default function DashboardPage() {
             </p>
           ) : (
             <div className="overflow-x-auto" data-testid="dashboard-orders-list">
-              <table className="w-full text-base">
+              {/* Phone-width cards (D5) — receipt, customer, status, total (the D5-specified
+                  Orders field set), same rows/testids as the table below, hidden at lg */}
+              <div className="lg:hidden divide-y divide-slate-300">
+                {orders.map((order) => (
+                  <div key={order.id} data-testid="dashboard-order-row" className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link
+                          to={`/orders/${order.id}`}
+                          className="font-mono font-semibold text-blue-700 hover:underline
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+                        >
+                          {orderRef(order)}
+                        </Link>
+                        <p className="font-medium text-slate-900 mt-0.5 truncate">{order.customer_name}</p>
+                      </div>
+                      <p className="text-right font-semibold text-slate-900 tabular-nums shrink-0">
+                        {PHP(order.total_amount)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 items-center mt-2">
+                      <StatusBadge status={order.status} />
+                      {((order.status === 'pending' && order.pending_receipt_printed_at)
+                        || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)) && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                          🖶 Printed
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <table className="hidden lg:table w-full text-base">
                 <thead>
                   <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">
                     <th className="text-left px-5 py-3 font-semibold">Receipt</th>
