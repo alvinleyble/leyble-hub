@@ -41,6 +41,9 @@ Antipolo, Philippines. This folder is the single home for project documentation.
     [0014](adr/0014-v3-release-sequencing.md) release sequencing (database before server/APK).
   - Full-app offline accessibility:
     [0015](adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) full-app offline accessibility & mutation boundaries *(partially supersedes 0005)*.
+  - Receipt numbering, current:
+    [0016](adr/0016-three-fixed-station-slots.md) three fixed station slots *(superseded by 0017)*,
+    [0017](adr/0017-receipt-numbers-keyed-to-user-accounts.md) receipt numbers keyed to user accounts *(supersedes 0016, revises 0006)*.
 
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally.
