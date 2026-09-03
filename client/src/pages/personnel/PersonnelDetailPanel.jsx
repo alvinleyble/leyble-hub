@@ -185,6 +185,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
       <div
         className="fixed top-0 right-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl flex flex-col"
         role="dialog" aria-modal="true" aria-labelledby="personnel-detail-title"
+        data-testid="personnel-detail"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">

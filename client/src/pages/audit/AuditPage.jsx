@@ -87,6 +87,7 @@ function EntityRef({ entry }) {
         to={`/orders/${entry.entity_id}`}
         className="text-blue-700 hover:underline font-medium"
         onClick={(ev) => ev.stopPropagation()}
+        data-testid="audit-order-ref-link"
       >
         Order {orderRefFromId(entry.entity_id, entry.entity_receipt_number)}
       </Link>
@@ -263,10 +264,10 @@ export default function AuditPage() {
 
       {/* ── Tab switcher ─────────────────────────────────────────── */}
       <div className="flex gap-1.5 mb-6">
-        <button type="button" onClick={() => setTab('inventory')} className={TAB_BUTTON(tab === 'inventory')}>
+        <button type="button" onClick={() => setTab('inventory')} data-testid="audit-tab-inventory" className={TAB_BUTTON(tab === 'inventory')}>
           Inventory
         </button>
-        <button type="button" onClick={() => setTab('activity')} className={TAB_BUTTON(tab === 'activity')}>
+        <button type="button" onClick={() => setTab('activity')} data-testid="audit-tab-activity" className={TAB_BUTTON(tab === 'activity')}>
           Activity
         </button>
       </div>
@@ -296,6 +297,7 @@ export default function AuditPage() {
               onChange={(e) => setActionType(e.target.value)}
               className={SELECT}
               aria-label="Filter by action type"
+              data-testid="audit-filter-action"
             >
               <option value="">All Actions</option>
               {ACTION_TYPES.map((a) => (
@@ -347,7 +349,7 @@ export default function AuditPage() {
             </p>
           ) : (
             <>
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
@@ -362,7 +364,7 @@ export default function AuditPage() {
                   </thead>
                   <tbody>
                     {entries.map((e) => (
-                      <tr key={e.id} className="border-t border-slate-300 hover:bg-slate-50">
+                      <tr key={e.id} data-testid="audit-row" className="border-t border-slate-300 hover:bg-slate-50">
                         <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>
@@ -370,7 +372,9 @@ export default function AuditPage() {
                           {e.sku || e.product_name}
                         </td>
                         <td className="px-5 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
+                          <span
+                            data-testid="audit-action-badge"
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
                             ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                             {ACTION_LABELS[e.action_type] ?? e.action_type}
                           </span>
@@ -397,6 +401,7 @@ export default function AuditPage() {
                                     to={`/orders/${e.related_order_id}`}
                                     className="text-blue-700 hover:underline"
                                     onClick={(ev) => ev.stopPropagation()}
+                                    data-testid="audit-order-ref-link"
                                   >
                                     Order {orderRefFromId(e.related_order_id, e.related_order_receipt_number)}
                                   </Link>
@@ -431,6 +436,7 @@ export default function AuditPage() {
               onChange={(e) => setEntityType(e.target.value)}
               className={SELECT}
               aria-label="Filter by entity type"
+              data-testid="audit-filter-entity"
             >
               <option value="">All Types</option>
               {ENTITY_TYPES.map((t) => (
@@ -482,7 +488,7 @@ export default function AuditPage() {
             </p>
           ) : (
             <>
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
                 <table className="w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
@@ -495,7 +501,7 @@ export default function AuditPage() {
                   </thead>
                   <tbody>
                     {activityEntries.map((e) => (
-                      <tr key={e.id} className="border-t border-slate-300 hover:bg-slate-50">
+                      <tr key={e.id} data-testid="audit-row" className="border-t border-slate-300 hover:bg-slate-50">
                         <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>

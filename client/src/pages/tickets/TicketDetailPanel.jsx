@@ -77,6 +77,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
         role="dialog"
         aria-modal="true"
         aria-labelledby="ticket-panel-title"
+        data-testid="ticket-detail"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">

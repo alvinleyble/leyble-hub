@@ -339,7 +339,7 @@ export default function OrderDetailPage() {
   const hasDeposits = items.some((i) => num(i?.unit_deposit_fee) > 0);
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-3xl mx-auto" data-testid="order-detail">
 
       {/* Back + Print */}
       <div className="flex items-center justify-between mb-6">

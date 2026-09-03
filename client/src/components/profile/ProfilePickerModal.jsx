@@ -13,6 +13,7 @@ export default function ProfilePickerModal() {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
       role="dialog" aria-modal="true" aria-labelledby="profile-picker-title"
+      data-testid="profile-picker"
     >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8">
         <h2 id="profile-picker-title" className="text-xl font-bold text-slate-900 text-center mb-8">
@@ -24,6 +25,7 @@ export default function ProfilePickerModal() {
               key={p.profile_key}
               type="button"
               onClick={() => chooseProfile(p.profile_key)}
+              data-testid={`profile-picker-${p.profile_key}`}
               className="flex flex-col items-center gap-2 group focus-visible:outline-none"
             >
               <span

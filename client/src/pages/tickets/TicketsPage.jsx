@@ -96,6 +96,7 @@ export default function TicketsPage() {
           <button
             key={opt.value}
             onClick={() => setStatusFilter(opt.value)}
+            data-testid={`tickets-filter-${opt.value}`}
             className={`px-4 py-2 rounded-full text-sm font-semibold border transition-colors
               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
               ${statusFilter === opt.value
@@ -125,7 +126,7 @@ export default function TicketsPage() {
             : 'No tickets yet. Create one to get started.'}
         </p>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="tickets-list">
           <table className="w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
@@ -142,6 +143,7 @@ export default function TicketsPage() {
                 <tr
                   key={t.id}
                   onClick={() => setSelectedId(t.id)}
+                  data-testid="tickets-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4 text-slate-400 font-mono text-sm">
@@ -170,7 +172,9 @@ export default function TicketsPage() {
                     )}
                   </td>
                   <td className="px-5 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
+                    <span
+                      data-testid="tickets-status-badge"
+                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
                       ${t.status === 'resolved'
                         ? 'bg-green-100 text-green-800 border-green-300'
                         : 'bg-amber-100 text-amber-800 border-amber-300'}`}>

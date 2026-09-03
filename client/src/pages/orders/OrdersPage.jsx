@@ -532,6 +532,7 @@ export default function OrdersPage() {
           <button
             key={tab.value}
             onClick={() => setStatusTab(tab.value)}
+            data-testid={`orders-tab-${tab.value}`}
             className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors
               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
               ${statusTab === tab.value
@@ -554,6 +555,7 @@ export default function OrdersPage() {
             placeholder="Search orders by customer or #..."
             className="w-full h-10 pl-9 pr-8 border border-slate-300 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
             aria-label="Search orders"
+            data-testid="orders-search-input"
           />
           <span className="absolute left-3 top-2.5 text-slate-400 text-sm select-none pointer-events-none">🔍</span>
           {searchQuery && (
@@ -705,7 +707,7 @@ export default function OrdersPage() {
             : 'No orders match the search and filter criteria.'}
         </p>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="orders-list">
           <table className="w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
@@ -791,6 +793,7 @@ export default function OrdersPage() {
                   onClick={() => o.status === 'draft'
                     ? openDraft(o)
                     : navigate(`/orders/${localOrderRoute(o)}`)}
+                  data-testid="orders-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   {showCheckboxes && o._local && (

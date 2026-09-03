@@ -47,7 +47,7 @@ function AssignConfirmModal({ slot, target, onCancel, onConfirm, busy }) {
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onCancel(); }}
     >
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="assign-slot-title">
+      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="assign-slot-title" data-testid="devices-assign-modal">
         <div className="border-b border-slate-200 px-6 py-5">
           <h2 id="assign-slot-title" className="text-xl font-bold text-slate-900">
             Give Slot {slot.slot_number} ({slot.owner_name}) to this {target.self ? 'tablet' : 'device'}?
@@ -173,11 +173,11 @@ export default function StationsPage() {
           {/* ── The three slots ─────────────────────────────────────────── */}
           <section className="mb-8">
             <h2 className="mb-3 text-lg font-bold text-slate-900">Receipt number slots</h2>
-            <ul className="space-y-3">
+            <ul className="space-y-3" data-testid="devices-slots-list">
               {slots.map((slot) => {
                 const isMine = slot.device?.device_key && slot.device.device_key === myKey;
                 return (
-                  <li key={slot.slot_number} className="rounded-xl border border-slate-200 bg-white p-5">
+                  <li key={slot.slot_number} data-testid="devices-slot-item" className="rounded-xl border border-slate-200 bg-white p-5">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <p className="text-lg font-bold text-slate-900">
@@ -206,6 +206,7 @@ export default function StationsPage() {
                             variant={slot.device ? 'secondary' : 'primary'}
                             onClick={() => setPending({ slot, target: { self: true, device_key: myKey } })}
                             disabled={!myKey}
+                            data-testid="devices-slot-assign-button"
                           >
                             Use this tablet
                           </Button>

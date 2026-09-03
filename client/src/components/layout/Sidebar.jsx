@@ -98,6 +98,7 @@ export default function Sidebar({ onClose, offlineMarker }) {
               key={path}
               to={path}
               onClick={onClose}
+              data-testid={`nav-link-${path.slice(1)}`}
               className={({ isActive }) =>
                 `flex items-center justify-between min-h-[48px] px-5 text-base font-medium transition-colors duration-100
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400
