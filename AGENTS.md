@@ -731,9 +731,11 @@ returns a 404 JSON. The Android APK is the only way in.
 
 > **CRITICAL — read before every commit/push.**
 
-- **Never commit without Alvin's explicit go-ahead.** Do not auto-commit even when changes are complete and ready.
-- **Never push without Alvin's explicit go-ahead.** A completed implementation is not permission to push.
-- Always present changes and ask "ready to commit and push?" — wait for a direct "yes" or "okay, commit and push."
+- **`main` branch (Production) is strictly guarded:**
+  - **Never push or merge directly to `main` without Alvin's explicit go-ahead.** A push to `main` triggers immediate production deployments (Render API) and automated Google Play Store builds.
+  - Always present completed work and ask *"ready to commit and push to main?"* — wait for a direct *"yes"* or *"okay, commit and push."*
+- **Working branches (`dev`, `staging`, feature/task branches, worktrees):**
+  - **Autonomous commit & push permitted:** Agents and Firstmate orchestration are free to commit, create branches, and push to non-`main` branches as needed for PRs, CI, and slice development without halting for confirmation.
 
 ## Security rules
 - **Native Android (production):** the Capacitor app stores the JWT in `@capacitor/preferences`
