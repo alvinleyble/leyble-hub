@@ -708,7 +708,114 @@ export default function OrdersPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="orders-list">
-          <table className="w-full text-base">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {visibleLocalUnsyncedOrders.map((o) => (
+              <div
+                key={o.id}
+                onClick={() => navigate(`/orders/${o.receipt_number}`)}
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm text-slate-500">{orderRef(o)}</p>
+                    <p className="font-semibold text-slate-900 truncate">{o.customer_name}</p>
+                  </div>
+                  <p className="font-bold text-slate-900 tabular-nums shrink-0">
+                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5 items-center mt-2">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                    ⏳ Waiting to sync
+                  </span>
+                  {o.order_type === 'pickup' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                      Pickup
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {filteredOrders.map((o) => (
+              <div
+                key={o.id ?? `local-draft-${o._outboxId}`}
+                onClick={() => o.status === 'draft'
+                  ? openDraft(o)
+                  : navigate(`/orders/${localOrderRoute(o)}`)}
+                data-testid="orders-row"
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex items-start gap-2">
+                    {showCheckboxes && !o._local && (
+                      <label
+                        className="flex items-center justify-center w-8 h-8 -m-1 shrink-0 cursor-pointer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(o.id)}
+                          onChange={() => toggleSelected(o.id)}
+                          className="w-5 h-5 rounded border-slate-300 text-blue-700
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                          aria-label={`Select order #${o.id}`}
+                        />
+                      </label>
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-mono text-sm text-slate-500">
+                        {o._local ? (o.receipt_number || 'Draft') : orderRef(o)}
+                      </p>
+                      <p className="font-semibold text-slate-900 truncate">{o.customer_name}</p>
+                    </div>
+                  </div>
+                  <p className="font-bold text-slate-900 tabular-nums shrink-0">
+                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5 items-center mt-2">
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                    {STATUS_LABEL[o.status] ?? o.status}
+                  </span>
+                  {o._local && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      ⏳ Waiting to sync
+                    </span>
+                  )}
+                  {o.order_type === 'pickup' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                      Pickup
+                    </span>
+                  )}
+                  {((o.status === 'pending' && o.pending_receipt_printed_at)
+                    || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                      🖶 Printed
+                    </span>
+                  )}
+                  {possibleDoubleIds.has(o.id) && (
+                    // A <div>, not <span>, on purpose: client/test/v3-orders-list-search-filters.test.mjs
+                    // counts `r.all('span')` matching this text to verify duplicate-flagged
+                    // row count — reusing <span> here would double that count against the
+                    // table's own badge below.
+                    <div className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold">
+                      ⚠️ possible duplicates
+                    </div>
+                  )}
+                </div>
+                {statusTab === 'draft' && (
+                  <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
+                    <Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(o)}>
+                      Discard
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 {showCheckboxes && (

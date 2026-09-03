@@ -143,7 +143,52 @@ export default function CustomersPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="customers-list">
-          <table className="w-full text-base">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {displayCustomers.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => {
+                  if (c._unsynced) {
+                    addToast('Customer is queued for sync — details and editing will be available once connected.', 'info');
+                    return;
+                  }
+                  setSelectedId(c.id);
+                }}
+                data-testid="customers-row"
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className={`font-semibold truncate ${c.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                      {c.name}
+                    </p>
+                    <p className="text-sm text-slate-500 mt-0.5">{c.phone ?? '—'}</p>
+                  </div>
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
+                    {customerTypeLabel(c.customer_type)}
+                  </span>
+                </div>
+                <div className="mt-2">
+                  {(c._unsynced || pendingEditIds.has(String(c.id))) ? (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      ⏳ Waiting to sync
+                    </span>
+                  ) : c.is_active ? (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
+                      Active
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                      Inactive
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-5 py-3 font-semibold">Name</th>

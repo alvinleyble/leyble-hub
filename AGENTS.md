@@ -612,6 +612,32 @@ Every V1 screen now works blind. What a future session most needs to know:
   `mutationsBlocked` gated the whole form instead — see ADR 0015 §9's amendment note and
   `docs/offline-accessibility-acceptance-criteria.md` items 9.2/9.3 and Known Gaps G3.
 
+### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
+
+Piece 1 (order creation: orientation unlock, bottom-sheet cart, horizontal category
+scroll) and Piece 2 (D5 — every other screen's table becomes cards at phone width)
+both ship as additive `lg:` breakpoint gates, never a rewrite of the tablet/desktop
+markup (D2). Piece 2's card block for a screen renders as a `lg:hidden` sibling placed
+**before** the existing table in the JSX, which is then given `hidden lg:table`; every
+row/container `data-testid` is duplicated onto the card unchanged, since the only
+assertions against those particular testids in `e2e/appium/tests/*.test.mjs` are
+count-inequality (`>0`, `===0`) or click-the-first-match, both indifferent to a doubled
+DOM count as long as the visible (phone-width) copy sorts first.
+**Exception — a testid whose exact text is read via WebDriver's `getText()`
+(`tickets-status-badge`, `audit-action-badge`) must NOT be duplicated**: `getText()`
+returns `""` for a `display:none` element, so a hidden table-row copy carrying the same
+testid makes the Appium assertion fail on a phone-width emulator. For those two, the
+testid lives only on the card's badge; the table's original badge is left rendering
+the same content with no testid at all. `StationsPage.jsx` (Devices) needed no card —
+its slot list is already a `flex flex-col sm:flex-row` card, not a table.
+
+Testing this against the Appium suite locally requires the debug APK to actually reach
+the host machine's dev backend: `client/.env.production`'s `VITE_API_URL` outranks
+`client/.env.local` under `vite build` (mode defaults to `production`), so
+`VITE_API_URL=http://10.0.2.2:3000 npm run android:sync` (env var on the command line,
+not just in `.env.local`) is what actually bakes the emulator's host-loopback alias
+into the bundle — `e2e/appium/README.md` doesn't call this out.
+
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
 - 16px+ fonts

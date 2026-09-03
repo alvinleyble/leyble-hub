@@ -127,7 +127,47 @@ export default function TicketsPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="tickets-list">
-          <table className="w-full text-base">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg.
+              The status badge's data-testid lives ONLY here (not on the table's copy
+              below) because e2e/appium/tests/tickets.test.mjs reads its text with
+              getText(), which returns "" for a display:none element — duplicating the
+              testid onto the hidden table row would make that assertion fail on a phone
+              emulator. */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {visibleTickets.map((t) => (
+              <div
+                key={t.id}
+                onClick={() => setSelectedId(t.id)}
+                data-testid="tickets-row"
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-slate-400 font-mono text-sm">#{t.id}</p>
+                    <p className="font-semibold text-slate-900">{t.title}</p>
+                    <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{t.description}</p>
+                  </div>
+                  {t.amount != null && (
+                    <span className={`font-semibold tabular-nums shrink-0 ${Number(t.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
+                      {Number(t.amount) >= 0 ? '+' : ''}{PHP(t.amount)}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2">
+                  <span
+                    data-testid="tickets-status-badge"
+                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
+                    ${t.status === 'resolved'
+                      ? 'bg-green-100 text-green-800 border-green-300'
+                      : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
+                    {t.status === 'resolved' ? 'Resolved' : 'Pending'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-5 py-3 font-semibold">#</th>
@@ -173,7 +213,6 @@ export default function TicketsPage() {
                   </td>
                   <td className="px-5 py-4">
                     <span
-                      data-testid="tickets-status-badge"
                       className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
                       ${t.status === 'resolved'
                         ? 'bg-green-100 text-green-800 border-green-300'
