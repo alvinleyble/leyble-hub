@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/ui/Badge';
 import Spinner from '../components/ui/Spinner';
@@ -20,6 +20,7 @@ function SummaryCard({ label, value, colorClass = 'text-slate-900', bgClass = 'b
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
@@ -156,12 +157,17 @@ export default function DashboardPage() {
                   Orders field set), same rows/testids as the table below, hidden at lg */}
               <div className="lg:hidden divide-y divide-slate-300">
                 {orders.map((order) => (
-                  <div key={order.id} data-testid="dashboard-order-row" className="p-4">
+                  <div
+                    key={order.id}
+                    data-testid="dashboard-order-row"
+                    onClick={() => navigate(`/orders/${order.id}`)}
+                    className="p-4 active:bg-blue-50 cursor-pointer"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <Link
                           to={`/orders/${order.id}`}
-                          className="font-mono font-semibold text-blue-700 hover:underline
+                          className="font-mono text-sm text-slate-500
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
                         >
                           {orderRef(order)}
@@ -197,11 +203,16 @@ export default function DashboardPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-300">
                   {orders.map((order) => (
-                    <tr key={order.id} data-testid="dashboard-order-row" className="hover:bg-slate-50 transition-colors">
+                    <tr
+                      key={order.id}
+                      data-testid="dashboard-order-row"
+                      onClick={() => navigate(`/orders/${order.id}`)}
+                      className="hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
                       <td className="px-5 py-4">
                         <Link
                           to={`/orders/${order.id}`}
-                          className="font-mono font-semibold text-blue-700 hover:underline
+                          className="font-mono text-sm text-slate-500
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
                         >
                           {orderRef(order)}

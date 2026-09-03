@@ -99,7 +99,7 @@ export default function PersonnelPage() {
       {fromCache && <OfflineBanner />}
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="flex flex-row gap-3 mb-6">
         <input
           type="search"
           placeholder="Search by name…"
@@ -110,7 +110,24 @@ export default function PersonnelPage() {
           aria-label="Search personnel"
           data-testid="personnel-search-input"
         />
-        <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
+        {/* Phone width: compact inline switch beside the search bar. */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showInactive}
+          onClick={() => setShowInactive((v) => !v)}
+          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
+                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        >
+          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
+          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
+                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
+                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
+          </span>
+        </button>
+        {/* Tablet: original box, unchanged. */}
+        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
                           bg-white cursor-pointer select-none">
           <input
             type="checkbox" checked={showInactive}

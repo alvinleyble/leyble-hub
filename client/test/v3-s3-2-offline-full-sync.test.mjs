@@ -496,8 +496,15 @@ test('OrderCreateModal loads its catalogue from the device when the server is un
   await settle(60);
 
   assert.match(r.text(), /Coke Sakto 200ml/, 'the product grid fills from the held catalogue');
-  assert.match(r.text(), /Luis Reyes/, 'and so does the Driver/Helper list');
   assert.doesNotMatch(r.text(), /Failed to load form data/);
+
+  // V3.5 phone polish removed the Assigned Personnel picker from order creation
+  // (no viewport shows it any more), so the UI text assertion this used to make
+  // ("and so does the Driver/Helper list") no longer applies. Personnel still
+  // comes back with loadCatalogue() blind — it's what lets an existing order's
+  // personnel round-trip unchanged on save — so check the cache directly instead.
+  assert.deepEqual((await getCachedPersonnel()).map((p) => p.full_name), ['Luis Reyes'],
+    'personnel is still loaded from the device cache while offline, even though the picker UI is gone');
 
   r.unmount();
 });

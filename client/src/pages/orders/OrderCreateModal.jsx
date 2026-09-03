@@ -234,8 +234,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   // to do during an outage, was impossible. loadCatalogue tries the server first and
   // quietly refreshes the held copy on success, and falls back to that held copy when
   // it can't be reached, so there is one code path online and offline (D2/D16).
-  // Personnel comes back with it, which is what makes Driver/Helper assignment work
-  // blind (ADR 0015 §9).
+  // Personnel comes back with it too — V3.5 removed the Driver/Helper picker UI, but
+  // an existing order's assigned personnel still needs their full_name resolved here
+  // so it round-trips unchanged on save (see assignedPersonnel below).
   useEffect(() => {
     Promise.all([loadCatalogue(), queuedCustomersFromOutbox()])
       .then(([{ products: prods, customers: served, personnel: pers, fromCache }, queued]) => {
@@ -454,26 +455,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   };
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
-
-  // Personnel helpers
-  const togglePersonnel = (person) => {
-    setAssignedPersonnel((prev) => {
-      if (prev.some((p) => p.id === person.id)) {
-        return prev.filter((p) => p.id !== person.id);
-      }
-      const hasDriver = prev.some((p) => p.role === 'Driver');
-      return [...prev, { id: person.id, role: hasDriver ? 'Helper' : 'Driver' }];
-    });
-  };
-
-  const setPersonnelRole = (personId, role) =>
-    setAssignedPersonnel((prev) =>
-      prev.map((p) => {
-        if (p.id === personId) return { ...p, role };
-        if (role === 'Driver' && p.role === 'Driver') return { ...p, role: 'Helper' };
-        return p;
-      })
-    );
 
   // ── Draft auto-save ────────────────────────────────────────────────────────
   const draftBody = () => {
@@ -1183,55 +1164,6 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
                       />
                     </FormField>
                   </div>
-
-                  {/* Assigned Personnel */}
-                  {activePersonnel.length > 0 && (
-                    <div className="pt-2 border-t border-slate-200">
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                        Personnel <span className="font-normal text-slate-400">(optional)</span>
-                      </p>
-                      <div className="space-y-1.5">
-                        {activePersonnel.map((person) => {
-                          const assigned = assignedPersonnel.find((p) => p.id === person.id);
-                          return (
-                            <div
-                              key={person.id}
-                              className={`flex items-center gap-2 p-2 rounded-lg border text-xs transition-colors
-                                ${assigned ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}
-                            >
-                              <input
-                                type="checkbox"
-                                id={`pers-${person.id}`}
-                                checked={Boolean(assigned)}
-                                onChange={() => togglePersonnel(person)}
-                                className="w-4 h-4 accent-blue-700 shrink-0"
-                              />
-                              <label htmlFor={`pers-${person.id}`} className="flex-1 cursor-pointer font-medium text-slate-800 truncate">
-                                {person.full_name}
-                              </label>
-                              {assigned && (
-                                <div className="flex gap-1 shrink-0">
-                                  {['Driver', 'Helper'].map((role) => (
-                                    <button
-                                      key={role}
-                                      type="button"
-                                      onClick={() => setPersonnelRole(person.id, role)}
-                                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border
-                                        ${assigned.role === role
-                                          ? 'bg-blue-700 text-white border-blue-700'
-                                          : 'bg-white text-slate-600 border-slate-300'}`}
-                                    >
-                                      {role}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* Footer: Running Totals & Action Row */}

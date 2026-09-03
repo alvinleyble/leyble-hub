@@ -803,14 +803,17 @@ export default function OrdersPage() {
                       ⚠️ possible duplicates
                     </div>
                   )}
-                </div>
-                {statusTab === 'draft' && (
-                  <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
-                    <Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(o)}>
+                  {statusTab === 'draft' && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="ml-auto"
+                      onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
+                    >
                       Discard
                     </Button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             ))}
           </div>
