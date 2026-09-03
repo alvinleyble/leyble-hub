@@ -109,8 +109,10 @@ export default function POSProductGrid({
     [products, category, query]
   );
 
+  // shrink-0 keeps pills full-width in the phone-width horizontal scroll strip (D4);
+  // lg:shrink restores the tablet's default flex-shrink so the wrapped layout (D2) is untouched.
   const pill = (active) =>
-    `flex min-h-[38px] items-center rounded-xl px-3.5 text-sm font-semibold transition-colors duration-100
+    `flex min-h-[38px] shrink-0 lg:shrink items-center rounded-xl px-3.5 text-sm font-semibold transition-colors duration-100
      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 border
      ${active
        ? 'bg-blue-700 text-white border-blue-700 shadow-sm'
@@ -140,7 +142,14 @@ export default function POSProductGrid({
           {headerActions && <div className="flex shrink-0 items-center gap-2">{headerActions}</div>}
         </div>
 
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Product categories">
+        {/* D4: below `lg` this scrolls as a single row instead of wrapping — every category
+            stays one tap, alphabetical order unchanged. Untouched at `lg`+ (D2). */}
+        <div
+          className="flex flex-nowrap gap-1.5 overflow-x-auto -mx-0.5 px-0.5 pb-0.5
+                     lg:flex-wrap lg:overflow-visible lg:mx-0 lg:px-0 lg:pb-0"
+          role="group"
+          aria-label="Product categories"
+        >
           <button
             type="button"
             onClick={() => setCategory(ALL_CATEGORIES)}

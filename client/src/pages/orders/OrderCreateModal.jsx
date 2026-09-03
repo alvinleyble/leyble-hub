@@ -76,6 +76,11 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   const [notes, setNotes]                         = useState(editOrder?.notes ?? '');
   const [errors, setErrors]                       = useState({});
 
+  // D3 (phone-responsive-layout.md) — below `lg` the order/cart panel becomes a bottom
+  // sheet, collapsed to a summary bar by default. No effect at `lg`+, where the panel
+  // renders exactly as it always has (D2).
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+
   // ── Adjustment ────────────────────────────────────────────────────────────
   const [adjExpanded, setAdjExpanded] = useState(isRealEdit && Number(editOrder?.adjustment) !== 0);
   const [adjValue, setAdjValue]       = useState(isRealEdit && Number(editOrder?.adjustment) ? String(editOrder.adjustment) : '');
@@ -817,10 +822,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
           {loading ? (
             <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
           ) : (
-            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] divide-y lg:divide-y-0 lg:divide-x divide-slate-200 overflow-hidden">
-              
+            <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] lg:divide-x divide-slate-200 overflow-hidden">
+
               {/* ── LEFT COLUMN: Product Catalogue ──────────────────── */}
-              <div className="flex flex-col min-h-0 h-full p-4 sm:p-5 overflow-hidden bg-slate-50/40">
+              {/* pb-24 (D3): keeps the last row of tiles clear of the collapsed bottom-sheet
+                  bar below `lg`, where the sheet overlays this column. Untouched at `lg`+. */}
+              <div className="flex flex-col min-h-0 h-full p-4 pb-24 sm:p-5 sm:pb-24 lg:pb-5 overflow-hidden bg-slate-50/40">
                 <POSProductGrid
                   products={activeProducts}
                   orderQty={orderQty}
@@ -830,8 +837,45 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
               </div>
 
               {/* ── RIGHT COLUMN: Order Panel ───────────────────────── */}
-              <div className="flex flex-col min-h-0 h-full overflow-hidden bg-white">
-                
+              {/* D3 — below `lg` this is a bottom sheet (absolute, collapsed to the summary
+                  bar below unless sheetExpanded) laid over the product grid. At `lg`+ every
+                  positioning class here is neutralized (lg:static etc.) and the column renders
+                  exactly as it always has, side-by-side with the grid (D2). */}
+              <div
+                className={`absolute inset-x-0 bottom-0 z-10 flex flex-col overflow-hidden rounded-t-2xl
+                            border-t border-slate-200 bg-white shadow-[0_-6px_24px_-6px_rgba(15,23,42,0.3)]
+                            transition-[height] duration-300 ease-out
+                            ${sheetExpanded ? 'h-[88%]' : 'h-16'}
+                            lg:static lg:z-auto lg:h-full lg:min-h-0 lg:rounded-none lg:border-t-0
+                            lg:shadow-none lg:transition-none`}
+              >
+                {/* Collapsed/expand handle — phone width only */}
+                <button
+                  type="button"
+                  onClick={() => setSheetExpanded((v) => !v)}
+                  aria-expanded={sheetExpanded}
+                  aria-controls="order-cart-sheet-body"
+                  className="lg:hidden flex w-full shrink-0 flex-col items-center justify-center gap-1
+                             h-16 px-4 focus-visible:outline-none focus-visible:ring-2
+                             focus-visible:ring-inset focus-visible:ring-blue-600"
+                >
+                  <span aria-hidden="true" className="h-1 w-10 rounded-full bg-slate-300" />
+                  <span className="flex w-full items-center justify-between gap-2 text-sm">
+                    <span className="font-bold text-slate-900 tabular-nums truncate">
+                      {totalCases(items)} cs · {PHP(totals.total)}
+                    </span>
+                    <span className="flex items-center gap-1 font-semibold text-blue-700 shrink-0">
+                      {sheetExpanded ? 'Hide cart' : 'View cart'}
+                      <span aria-hidden="true">{sheetExpanded ? '▾' : '▴'}</span>
+                    </span>
+                  </span>
+                </button>
+
+                <div
+                  id="order-cart-sheet-body"
+                  className={`min-h-0 flex-1 flex-col overflow-hidden ${sheetExpanded ? 'flex' : 'hidden'} lg:flex`}
+                >
+
                 {/* Order Header: Customer & Order Type */}
                 <div className="p-4 border-b border-slate-200 shrink-0 space-y-3 bg-white">
                   <div>
@@ -1187,6 +1231,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
                   )}
                 </div>
 
+                </div>
               </div>
             </div>
           )}
