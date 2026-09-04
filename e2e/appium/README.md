@@ -16,7 +16,7 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
   is unchanged and still the only way a NEW account reaches a device, so `loginAs` drives it
   exactly as before.
 - `tests/dashboard.test.mjs`, `orders.test.mjs`, `inventory.test.mjs`, `customers.test.mjs`,
-  `personnel.test.mjs`, `tickets.test.mjs`, `audit.test.mjs`, `devices.test.mjs` — one basic
+  `personnel.test.mjs`, `tickets.test.mjs`, `audit.test.mjs` — one basic
   test per core screen: its list loads with real data, a filter/search control narrows it (or
   the screen's closest equivalent — see each file's header comment for screens where none
   applies or a substitution was made), and opening an item shows its detail view. Use any of
@@ -92,8 +92,8 @@ npx appium --base-path /wd/hub --allow-insecure uiautomator2:chromedriver_autodo
 
 # 5. In another terminal: clear the app's persisted login (see "Clean state" below), then run
 #    a test — any of the `test:*` scripts in package.json (test:login, test:dashboard,
-#    test:orders, test:inventory, test:customers, test:personnel, test:tickets, test:audit,
-#    test:devices). Every non-login test logs in for itself first (helpers/auth.js), so
+#    test:orders, test:inventory, test:customers, test:personnel, test:tickets,
+#    test:audit). Every non-login test logs in for itself first (helpers/auth.js), so
 #    `pm clear` before each of them matters the same way it does for test:login.
 adb shell am force-stop com.leyble.hub
 adb shell pm clear com.leyble.hub

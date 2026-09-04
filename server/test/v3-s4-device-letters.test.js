@@ -64,12 +64,9 @@ describe('ADR 0017 slice 4 — device letters', () => {
 
   // The one call this slice is about. Returns the parsed body.
   //
-  // Registration still auto-claims one of ADR 0016's three slots for a device that holds
-  // none — legacy behaviour this slice deliberately leaves alone (see the file header of
-  // server/src/routes/stations.js). Nothing here cares about slots, and there are only
-  // three of them in the whole database, so each test device hands its slot straight
-  // back: holding them for the length of this suite would starve any other suite that
-  // runs alongside it and asserts on the roster.
+  // Since ADR 0017 removed the slot concept, registration allocates nothing but this
+  // person's letter for this device — there is no shared three-slot pool left to hand
+  // back, so nothing here has to tidy up after itself beyond its own device rows.
   async function register(person, deviceKey, { label } = {}) {
     const res = await fetch(`${baseUrl}/stations/register`, {
       method: 'POST',
@@ -78,11 +75,6 @@ describe('ADR 0017 slice 4 — device letters', () => {
     });
     const body = await res.json();
     assert.ok(res.ok, `register failed: ${res.status} ${JSON.stringify(body)}`);
-    await db.query(
-      `UPDATE stations SET slot_number = NULL, slot_assigned_at = NULL, slot_assigned_by = NULL
-        WHERE device_key = $1 AND slot_number IS NOT NULL`,
-      [deviceKey]
-    );
     return body;
   }
 
@@ -323,62 +315,48 @@ describe('ADR 0017 slice 4 — device letters', () => {
 
   // ── ADR 0014: the switchover window ───────────────────────────────────────
 
-  it('a letter-scheme sale never drags the old slot series along with it', async () => {
+  it('a pre-letter sale and a lettered one never seed each other, though both are one person', async () => {
     // The exact overlap ADR 0014's switchover window creates: an updated device selling
-    // as `1Z-…` while an un-updated one is still numbering from slot 1. Both store
-    // receipt_station = 1, and only the letter tells the two series apart — so both
-    // places the server reports a slot's next number (`slotHighWater` behind
-    // POST /register, and the roster query behind GET /stations) filter on
-    // `receipt_device IS NULL`.
+    // as `1Z-…` while an un-updated one is still numbering as `1-…`. Both rows store the
+    // same receipt_station, and only the letter tells the two series apart — which is why
+    // `pairHighWater` keys on the PAIR (person AND letter) and not on the person alone.
     //
-    // Deliberately read-only about slots: assigning one here would fight every other
-    // suite that registers a device against the same database. The sequences below are
-    // far above anything any test issues, so "the slot series never saw them" is
-    // checkable without owning the slot.
-    const SLOT = 1;
+    // ADR 0016's slot high-water, which had the mirror-image job of keeping the old
+    // series clear of the new one, is gone with the slot concept; this is the half of
+    // that invariant that still has to hold.
     const FAR_ABOVE = 90000;
+    const known = await register(people.alvin, newDeviceKey('switchover-known'));
+    const person = known.person;
 
-    const before = await fetch(`${baseUrl}/stations`, {
-      headers: { Authorization: `Bearer ${people.alvin.token}` },
-    }).then((r) => r.json());
-    const slotBefore = before.slots.find((s) => s.slot_number === SLOT);
-
+    // Five pre-letter sales under this person, far above anything any test issues.
     await db.query(
       `INSERT INTO orders (customer_id, status, total_amount, receipt_station, receipt_device, receipt_sequence)
-       SELECT $2, 'pending', 0, $1, 'Z', $3 + g FROM generate_series(1, 5) g`,
-      [SLOT, customerId, FAR_ABOVE]
+       SELECT $2, 'pending', 0, $1, NULL, $3 + g FROM generate_series(1, 5) g`,
+      [person, customerId, FAR_ABOVE]
     );
 
     try {
-      const after = await fetch(`${baseUrl}/stations`, {
-        headers: { Authorization: `Bearer ${people.alvin.token}` },
-      }).then((r) => r.json());
-      const slotAfter = after.slots.find((s) => s.slot_number === SLOT);
-
+      const fresh = await register(people.alvin, newDeviceKey('switchover-fresh'));
+      assert.equal(fresh.person, person);
       assert.ok(
-        slotAfter.next_sequence <= FAR_ABOVE,
-        `the slot series must not be dragged up by a lettered sale (got ${slotAfter.next_sequence})`
+        fresh.next_pair_sequence <= FAR_ABOVE,
+        `a fresh pair must not be seeded by the pre-letter series (got ${fresh.next_pair_sequence})`
       );
-      assert.ok(slotAfter.last_sequence <= slotBefore.last_sequence + 5);
     } finally {
       await db.query(
-        'DELETE FROM orders WHERE receipt_station = $1 AND receipt_device = $2 AND receipt_sequence > $3',
-        [SLOT, 'Z', FAR_ABOVE]
+        'DELETE FROM orders WHERE receipt_station = $1 AND receipt_device IS NULL AND receipt_sequence > $2',
+        [person, FAR_ABOVE]
       );
     }
   });
 
-  it('still answers the ADR 0016 slot fields, so an un-updated tablet keeps selling', async () => {
-    const body = await register(people.alvin, newDeviceKey('legacy-shape'));
+  it('answers no slot fields — ADR 0017 removed the concept, not just the screen', async () => {
+    const body = await register(people.alvin, newDeviceKey('no-slot-fields'));
 
-    // Whatever the slot half decided, the fields a pre-0017 client reads are present and
-    // separately named from the pair's own count. Confusing the two would wind an
-    // un-updated tablet's counter somewhere it has already printed.
-    assert.ok('slot_number' in body && 'station_number' in body);
-    assert.ok(
-      body.unassigned === true || Number.isInteger(body.next_sequence),
-      'a slot-holder is still told its SLOT count, which is what numbers its receipts'
-    );
-    assert.ok(Number.isInteger(body.next_pair_sequence), 'and the PAIR count is a separate field');
+    for (const gone of ['slot_number', 'station_number', 'owner_name', 'unassigned',
+                        'next_sequence', 'next_delivery_sequence']) {
+      assert.ok(!(gone in body), `${gone} belongs to the removed slot concept`);
+    }
+    assert.ok(Number.isInteger(body.next_pair_sequence), 'the PAIR count is what is answered now');
   });
 });

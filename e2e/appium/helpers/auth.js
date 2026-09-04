@@ -61,7 +61,7 @@ export async function switchAccount(driver, email) {
 // Opens the slide-in nav drawer (today's tablet layout — the emulator this suite runs
 // against renders below the `desktop:` breakpoint, see client/src/components/layout/
 // AppLayout.jsx) and taps the given screen's link. `navPath` is the route without its
-// leading slash, e.g. 'orders', 'inventory', 'devices'.
+// leading slash, e.g. 'orders', 'inventory', 'audit'.
 //
 // AppLayout mounts <Sidebar> twice — once for the permanent desktop rail (kept in the
 // DOM but `display:none` below the `desktop:` breakpoint), once for this drawer — so

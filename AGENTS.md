@@ -42,7 +42,7 @@ psql -d leyble_hub_v2audit -c "INSERT INTO users (email, password_hash, full_nam
   ('alvin@leyblestore.com','x','Admin','admin',TRUE);"
 # `npm test` runs the files ONE AT A TIME (--test-concurrency=1). Several suites assert
 # on state that is global to the database — which device holds each of ADR 0016's three
-# station slots, what the orders list contains, where a sync cursor has reached — so run
+# a person's device letters, what the orders list contains, where a sync cursor has reached — so run
 # them in parallel and they fail each other at random. Serial takes ~2 minutes; CI does
 # not run this suite at all (it only syntax-checks), so the cost is local only.
 cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit \
@@ -368,22 +368,25 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   receipts waiting to sync" a hard requirement — never mark them `NEEDS_ATTENTION`, never
   drop them. The 401 path in `api/client.js` clears session state **by name** (the active
   token, `activeProfile`, that one account's remembered token) and nothing under `v25.`.
-- **The ADR 0016 slot registry is still there, and is legacy** ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md),
-  migration 037): `stations.slot_number`, `POST /stations/slots/:slot/assign`, the owner
-  names in `server/src/lib/stationSlots.js` and the slot half of the `/devices` screen.
-  It is kept only for ADR 0014's switchover window — tablets update one at a time, and an
-  un-updated one still reads `slot_number`/`next_sequence` out of the register response to
-  number its receipts. `resolveIssuingSeries` in `client/src/offline/station.js` is the
-  matching fallback: no letter yet + a stored slot = keep selling the old shape. Delete
-  both once every tablet is on the letter build. `slotHighWater` filters on
-  `receipt_device IS NULL` — a letter-scheme sale shares the slot's leading number and
-  would otherwise drag the old series forward past numbers it never issued.
-  `assertIssuableStation` (the `POST /orders` / `POST /incoming` backstop) no longer caps
-  at 3; it only refuses a value that cannot be a person at all.
+- **ADR 0016's slot concept is gone** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) #3):
+  the `/devices` screen (`StationsPage.jsx`), `GET /stations`,
+  `POST /stations/slots/:slot/assign`, `REASSIGN_RESERVE`, the slot high-water seeding and
+  the owner-name vocabulary all existed only to keep a *hardware*-keyed number alive
+  across a hardware change. A replacement device now signs in and takes a **fresh letter**,
+  which cannot collide with anything, so none of it has a job left. `stationSlots.js` was
+  renamed **`server/src/lib/personNumbers.js`** and keeps only `assertIssuableStation` (the
+  `POST /orders` / `POST /incoming` backstop, no longer capped at 3 — it refuses a value
+  that cannot be a person at all). `stations.slot_number` / `slot_assigned_at` /
+  `slot_assigned_by` (migration 037) are left in place, written by nothing.
+  **One residue is deliberate:** a device that already holds a pre-letter `station_number`
+  keeps it — `persistRegistration` preserves it rather than re-deriving it from a response
+  that no longer carries one — so a tablet mid-switchover keeps selling `3-00061` until its
+  letter arrives (`resolveIssuingSeries`, ADR 0014's switchover window). Nothing hands a
+  number of that shape out any more.
 - **Receipt numbers are device-issued** (`<person><device letter>-<sequence>`, e.g.
   `1A-00042`) at Save, with no server round trip. `client/src/offline/station.js` issues
-  them, off a counter keyed by the **series** (`'1A'`, or `'3'` for a device still on a
-  slot) so two pairs on one tablet can never share a count; display goes
+  them, off a counter keyed by the **series** (`'1A'`, or `'3'` for a device still
+  carrying a pre-letter number) so two pairs on one tablet can never share a count; display goes
   through `orderRef()` in `client/src/utils/orderRef.js` — use it anywhere an order was
   shown as `#<id>`. The row id stays internal. Pre-V2.5 orders have no receipt number and
   are never backfilled. Screens that hold only an id (audit entries, a ticket's related
@@ -392,7 +395,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   display name ([ADR 0010](docs/adr/0010-receipt-number-addresses-order-across-sync-boundary.md)).
 - **Three receipt-number formats coexist permanently and the server takes all three**
   ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md), which supersedes
-  ADR 0016): the ~1,300 legacy `#1240` orders (no receipt number at all), the slot-scheme
+  ADR 0016): the ~1,300 legacy `#1240` orders (no receipt number at all), the pre-letter
   `3-00061`, and `3A-00001` — the leading number is the **person**, the letter their own
   device. Delivery references take the same shape (`1A-DEL-00007`). **Old-format
   acceptance is never removed** — tablets update one at a time over days, so an
@@ -732,8 +735,7 @@ DOM count as long as the visible (phone-width) copy sorts first.
 returns `""` for a `display:none` element, so a hidden table-row copy carrying the same
 testid makes the Appium assertion fail on a phone-width emulator. For those two, the
 testid lives only on the card's badge; the table's original badge is left rendering
-the same content with no testid at all. `StationsPage.jsx` (Devices) needed no card —
-its slot list is already a `flex flex-col sm:flex-row` card, not a table.
+the same content with no testid at all.
 
 Piece 3 (V3.5 Pocket polish — captain-reviewed fixes on top of Pieces 1/2: Orders'
 Drafts card, Dashboard's whole-card tap target, order creation's personnel picker
@@ -774,7 +776,6 @@ into the bundle — `e2e/appium/README.md` doesn't call this out.
 | Outgoing Orders | ✅ Done | Delivery + pickup types; editable at all statuses (inventory auto-reconciles, incl. Edit/Cancel inside the batch-review queues); price adjustment field; per-bottle deposit + bottle-return close flow (Review Deliveries queue); 80mm thermal receipt |
 | Incoming Supplies | ✅ Done | Log deliveries, auto-restock; supports 0.5-case quantities |
 | Tickets | ✅ Done | Create, view, resolve |
-| Devices | ✅ Done | Which tablet holds each of the three receipt-number slots, and the device-replacement action ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md)) |
 | Audit Log | ✅ Done | Read-only, filterable. Two append-only sources: `inventory_audit_logs` (stock deltas, `GET /api/v1/audit`) and `activity_logs` (cross-entity change log for orders/customers/products/personnel/tickets, `GET /api/v1/audit/activity`) |
 
 > **Order totals:** an order's stored `total_amount` is **goods-only (qty × price) while it is open**; the bottle deposit on un-returned bottles is folded into the total only when the order is closed and returns are counted (`recomputeTotal` in [server/src/routes/orders.js](server/src/routes/orders.js)). This is intentional — pre-close totals deliberately exclude the refundable deposit.
@@ -808,7 +809,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no device/person identity behind a receipt number | `users.receipt_person` (the permanent person number) and the `user_devices` table (one row per person-and-device pair, holding that pair's `device_letter`) added (migration 043) |
 | no session concept on `users` | `session_id` / `session_device` / `session_started_at` added (migration 044) — ADR 0017 #8's one session per account; all nullable, and a token with no `sid` claim is still accepted |
 | receipt number has no device letter | `orders.receipt_device` + `supplier_deliveries.receipt_device` added and both `GENERATED` display columns rebuilt over them (migration 040) — ADR 0017's `1A-00042`. Both partial unique indexes rebuilt with the letter `COALESCE`d **inside the index expression**, which is what keeps them protecting pre-letter rows |
-| `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots. `activity_logs.entity_type` widened to accept `'station'` in the same migration |
+| `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots, now **dead columns**: [ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) removed the slot concept and nothing reads or writes them. `activity_logs.entity_type` widened to accept `'station'` in the same migration, which is still live — that is where a device-letter allocation is recorded |
 | `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_device`/`receipt_sequence` triple + partial unique index, and a `GENERATED` `delivery_ref` (`1A-DEL-00007`) added (migrations 036, 040) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8, ADR 0017 #14) |
 
 ### `order_personnel` join table (migration 016)

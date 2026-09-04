@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber, parseBareSequence } = require('../lib/receiptNumbers');
-const { assertIssuableStation } = require('../lib/stationSlots');
+const { assertIssuableStation } = require('../lib/personNumbers');
 const {
   normalizeRequestKey, findByRequestKey, findByReceiptNumber,
   isDuplicateRequestKey, isDuplicateReceiptNumber,
@@ -54,7 +54,7 @@ function orderLabel(order) {
 // order is addressed across the sync boundary (ADR 0010) and old-format acceptance is
 // never removed (ADR 0014's ADR-0017 switchover ordering, step 4):
 //   '1A-00042'  a receipt number carrying a device letter
-//   '3-00061'   a receipt number from the pre-letter slot scheme
+//   '3-00061'   a receipt number from the pre-letter scheme
 //   '1240'      a bare row id — every legacy order, which never had a receipt number
 //
 // The letter is matched through the same COALESCE the partial unique index uses, so

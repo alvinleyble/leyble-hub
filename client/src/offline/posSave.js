@@ -99,8 +99,8 @@ export async function saveOrderLocalFirst({
   const localOrder = {
     receipt_number,
     receipt_station: station,
-    // ADR 0017 — the device letter, null on a device still numbering from an ADR 0016
-    // slot. Kept decomposed here so a locally-held order and the server row it becomes
+    // ADR 0017 — the device letter, null on a device still carrying a pre-letter
+    // number. Kept decomposed here so a locally-held order and the server row it becomes
     // have the same shape; only `receipt_number` itself ever goes on the wire.
     receipt_device: device ?? null,
     receipt_sequence: sequence,

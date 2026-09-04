@@ -17,6 +17,10 @@ Once the number is keyed to the person, a replacement device simply takes a fres
 What survives, in ADR 0017's own form: the person digits 1 Alvin, 2 Josie, 3 Luis (deliberately the same digits, so each person's series reads as continuing), the no-backfill rule of decision 8, and the write-path backstop of decision 6, which must be widened past 1-3 before a fourth person is created.
 The station registry (`stations`, `device_key`) is not the receipt station under either ADR.
 
+**Removed from the code on 2026-09-04** (ADR 0017 slice 6): the Devices screen (`client/src/pages/stations/StationsPage.jsx` and its `/devices` route), `GET /stations`, `POST /stations/slots/:slot/assign`, `REASSIGN_RESERVE`, the slot high-water seeding, and the slot vocabulary that lived in `server/src/lib/stationSlots.js` — which is now `server/src/lib/personNumbers.js` and carries only `assertIssuableStation`.
+`stations.slot_number` / `slot_assigned_at` / `slot_assigned_by` (migration 037) are left in the schema as dead columns; no migration drops them.
+Two things deliberately outlive the mechanism: the `3-00061` receipt numbers it issued are permanent and still parse and route (ADR 0017 #12), and a device still carrying one of those numbers keeps selling under it until its letter arrives.
+
 ## Context
 
 A receipt number is `<station>-<sequence>`. [ADR 0003](0003-device-issued-receipt-numbers.md)

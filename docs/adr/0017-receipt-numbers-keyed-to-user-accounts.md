@@ -112,7 +112,7 @@ The leading number identifies the person who sold it, the letter distinguishes t
 13. **Switchover ordering.**
     There is a multi-day window while tablets are updated one at a time, during which some devices still hold unsynced receipts in the old format.
     The full procedure is recorded in [ADR 0014](0014-v3-release-sequencing.md); in short: deploy a server that accepts **both** formats first and change nothing visible, wait until every tablet reports no waiting receipts, then update tablets one at a time, and **never remove old-format acceptance**.
-    Separately, `assertIssuableStation` in [`server/src/lib/stationSlots.js`](../../server/src/lib/stationSlots.js), which refuses any station outside 1-3, must be widened before a fourth person is ever created, or that person's first sale is rejected.
+    Separately, `assertIssuableStation` (then in `server/src/lib/stationSlots.js`, now [`server/src/lib/personNumbers.js`](../../server/src/lib/personNumbers.js)), which refused any station outside 1-3, must be widened before a fourth person is ever created, or that person's first sale is rejected.
 
 14. **Delivery references take the same shape and the same rules.**
     `1-DEL-00007` ([ADR 0015 section 8](0015-full-app-offline-accessibility-and-mutation-boundaries.md)) becomes `1A-DEL-00007`, with the same person number, the same per-person device letter, the same no-backfill rule and the same both-formats-accepted switchover.

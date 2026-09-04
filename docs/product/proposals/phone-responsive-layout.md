@@ -147,7 +147,13 @@ for discussion.
   2–4 headline fields. This is the standard cost of every table-to-card responsive
   pattern and was accepted as part of the mockup review.
 
-### D6 — Three Fixed Station Slots: No Change Needed [SETTLED, Considered and Rejected]
+### D6 — Three Fixed Station Slots: No Change Needed [SETTLED, Considered and Rejected; OBSOLETE since ADR 0017]
+
+> **Obsolete (2026-09-04).** [ADR 0017](../../adr/0017-receipt-numbers-keyed-to-user-accounts.md)
+> removed the slot concept, the `/devices` screen and the reassignment endpoint entirely. The
+> conclusion below — "a phone is just another device, nothing to change" — still holds, and holds
+> more simply: a phone is just another device that signs in and takes its own letter. Kept as the
+> record of the decision, not as a description of the code.
 
 * **Decision:** No change to
   [ADR 0016 — Three Fixed Station Slots](../../adr/0016-three-fixed-station-slots.md).
@@ -172,9 +178,9 @@ for discussion.
 | Order creation — product grid | [`client/src/pages/orders/OrderCreateModal.jsx`](../../../client/src/pages/orders/OrderCreateModal.jsx), [`client/src/components/pos/POSProductGrid.jsx`](../../../client/src/components/pos/POSProductGrid.jsx) | Product grid becomes the default full-screen surface; existing `lg:grid-cols-[...]` split (line 820) stays as the wide-viewport case, untouched (D2, D3) |
 | Order creation — cart panel | [`client/src/pages/orders/OrderCreateModal.jsx`](../../../client/src/pages/orders/OrderCreateModal.jsx) | Order panel (customer, type toggle, lines, notes, personnel, totals, Save/Reset) becomes a collapsible bottom sheet at phone width (D3) |
 | Category filter | [`client/src/components/pos/POSProductGrid.jsx`](../../../client/src/components/pos/POSProductGrid.jsx) | `flex flex-wrap` pill container (line 143) gains a phone-width variant that scrolls horizontally in one row instead of wrapping; sort order unchanged (D4) |
-| Dashboard, Orders, Inventory, Customers, Personnel, Tickets, Audit, Devices | respective `*Page.jsx` files under `client/src/pages/` | Table rows become cards at phone width, tapping through to the existing detail panel/drawer; exact fields per screen are implementation-time work (D5) |
+| Dashboard, Orders, Inventory, Customers, Personnel, Tickets, Audit | respective `*Page.jsx` files under `client/src/pages/` | Table rows become cards at phone width, tapping through to the existing detail panel/drawer; exact fields per screen are implementation-time work (D5) |
 | Side panels & modals | pattern documented in `AGENTS.md` "Frontend patterns" (e.g. [`PersonnelDetailPanel.jsx`](../../../client/src/pages/personnel/PersonnelDetailPanel.jsx), [`PersonnelFormModal.jsx`](../../../client/src/pages/personnel/PersonnelFormModal.jsx)) | Already `w-full` at phone width; expect minor spacing/sizing tuning only, no structural change (D5) |
-| Station slots | [`server/src/routes/stations.js`](../../../server/src/routes/stations.js), `/devices` route (`StationsPage`) | No change — existing per-device reassignment flow already covers a phone replacing a tablet or another phone (D6) |
+| Station slots | [`server/src/routes/stations.js`](../../../server/src/routes/stations.js) | No change (D6). Obsolete since ADR 0017: the `/devices` route and `StationsPage` no longer exist, and a phone simply signs in and takes its own letter |
 
 ---
 
@@ -189,4 +195,5 @@ for discussion.
 4. **No full enumeration of per-screen card fields.** That is implementation work for
    the ship task this proposal hands off to (D5).
 5. **No change to the station-slot system.** A phone is just another device in the
-   existing three-slot model (D6).
+   existing three-slot model (D6). *(Obsolete since ADR 0017 removed that system; the
+   conclusion is unchanged — a phone is just another device that signs in.)*

@@ -84,9 +84,9 @@ Those receipts must still be accepted when they finally drain, however long that
 3. **Then update tablets, one at a time.**
    A tablet that has been updated issues new-format numbers; one that has not still issues old-format numbers, and step 1 means the server takes both.
 4. **Never remove old-format acceptance.**
-   The roughly 1,300 legacy `#<id>` orders and every `3-00061` slot-scheme order are permanent and are never backfilled ([ADR 0017](0017-receipt-numbers-keyed-to-user-accounts.md) #12), so read paths must keep resolving all three shapes forever.
+   The roughly 1,300 legacy `#<id>` orders and every `3-00061` pre-letter order are permanent and are never backfilled ([ADR 0017](0017-receipt-numbers-keyed-to-user-accounts.md) #12), so read paths must keep resolving all three shapes forever.
 
-One separate prerequisite, unrelated to the window: `assertIssuableStation` in [`server/src/lib/stationSlots.js`](../../server/src/lib/stationSlots.js) refuses any station outside 1-3.
+One separate prerequisite, unrelated to the window: `assertIssuableStation` (since ADR 0017 in [`server/src/lib/personNumbers.js`](../../server/src/lib/personNumbers.js), formerly `stationSlots.js`) refused any station outside 1-3.
 It must be widened before a fourth person is ever created, or that person's first sale is rejected at `POST /orders`.
 
 ### Why commit `b1547ef` reverted the earlier receipt-number release

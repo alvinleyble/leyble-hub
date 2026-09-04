@@ -15,7 +15,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { __resetMemoryBackend, nativeStore } from '../src/offline/nativeStore.js';
-import { SYNC_STATE_KEY } from '../src/offline/keys.js';
+import { STATION_KEY, SYNC_STATE_KEY } from '../src/offline/keys.js';
 import { __clearOutbox, listRecords, enqueue } from '../src/offline/outbox.js';
 import { __resetIssuance, ensureStationRegistered } from '../src/offline/station.js';
 import {
@@ -119,7 +119,7 @@ const serverOrder = (id, overrides = {}) => ({
  * A stand-in server that records every path asked for, so a test can assert on the
  * SHAPE of the conversation (full pull vs delta) and not only on its result.
  */
-function stubServer({ orders = [], products = PRODUCTS, customers = CUSTOMERS, personnel = PERSONNEL, pageSize = 100 } = {}) {
+async function stubServer({ orders = [], products = PRODUCTS, customers = CUSTOMERS, personnel = PERSONNEL, pageSize = 100 } = {}) {
   const calls = [];
   api.get = async (path) => {
     calls.push(path);
@@ -155,8 +155,9 @@ function stubServer({ orders = [], products = PRODUCTS, customers = CUSTOMERS, p
       : [];
     return since ? pick.filter((r) => String(r.updated_at) > since) : pick;
   };
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: 1 });
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: 1, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
+    ? { registered_at: '2026-08-26T00:00:00.000Z' } : {});
   return calls;
 }
 
@@ -164,7 +165,7 @@ function stubServer({ orders = [], products = PRODUCTS, customers = CUSTOMERS, p
 
 test('first setup: a tablet holding nothing pulls the full catalogue, customers, personnel AND the complete order history', async () => {
   const orders = [serverOrder(1), serverOrder(2), serverOrder(3)];
-  stubServer({ orders });
+  await stubServer({ orders });
 
   assert.equal(await isFirstSetup(), true, 'a device with no sync state has never been set up');
 
@@ -192,7 +193,7 @@ test('first setup unlocks the app as soon as products/customers/personnel land, 
   // The order history endpoint hangs: if the gate waited on it, this test would never
   // see essentialsReady go true, which is exactly the loading screen we refuse to show.
   const orders = [serverOrder(1)];
-  stubServer({ orders });
+  await stubServer({ orders });
   const realGet = api.get;
   api.get = async (path) => {
     if (path.startsWith('/orders/sync')) {
@@ -242,7 +243,7 @@ test('an already-set-up tablet only fetches what changed — no full catalogue p
   const changedProduct = { ...PRODUCTS[0], base_wholesale_price: 310, updated_at: '2026-08-27T00:00:00.000Z' };
   // Order 3 was created on ANOTHER tablet since our last sync — the case a device
   // cannot cover by remembering its own writes.
-  const calls = stubServer({
+  const calls = await stubServer({
     orders: [serverOrder(1), serverOrder(2), serverOrder(3)],
     products: [changedProduct, PRODUCTS[1]],
   });
@@ -278,7 +279,7 @@ test('a reference delta that returns nothing leaves the held copy exactly as it 
   });
   await nativeStore.setJson('v25.catalogue.products', PRODUCTS);
 
-  stubServer({ orders: [] });
+  await stubServer({ orders: [] });
   await runSync({ trigger: 'login', waitForOrders: true });
 
   assert.deepEqual((await getCachedProducts()).map((p) => p.id), [1, 2]);
@@ -289,7 +290,7 @@ test('a reference delta that returns nothing leaves the held copy exactly as it 
 // ── 3. Reconnect throttling ───────────────────────────────────────────────────
 
 test('two reconnects inside the throttle window cost exactly one sync', async () => {
-  const calls = stubServer({ orders: [serverOrder(1)] });
+  const calls = await stubServer({ orders: [serverOrder(1)] });
   await runSync({ trigger: 'login', waitForOrders: true });
 
   // Age the watermark past the throttle window, so the first of the two reconnects
@@ -310,7 +311,7 @@ test('two reconnects inside the throttle window cost exactly one sync', async ()
 });
 
 test('a reconnect moments after a login sync is throttled too — the window is about the last sync, not the trigger before it', async () => {
-  const calls = stubServer({ orders: [] });
+  const calls = await stubServer({ orders: [] });
   await runSync({ trigger: 'login', waitForOrders: true });
   const before = calls.length;
 
@@ -320,7 +321,7 @@ test('a reconnect moments after a login sync is throttled too — the window is 
 });
 
 test('a deliberate login is never throttled, however recent the last sync was', async () => {
-  stubServer({ orders: [] });
+  await stubServer({ orders: [] });
   await runSync({ trigger: 'login', waitForOrders: true });
   const again = await runSync({ trigger: 'login', waitForOrders: true });
   assert.notEqual(again.skipped, true, 'signing in is an explicit act — it always checks in');
@@ -330,7 +331,7 @@ test('a deliberate login is never throttled, however recent the last sync was', 
 
 test('a sync interrupted partway leaves everything it already fetched in place, and resumes rather than restarting', async () => {
   const orders = [serverOrder(1), serverOrder(2), serverOrder(3), serverOrder(4)];
-  stubServer({ orders, pageSize: 2 });
+  await stubServer({ orders, pageSize: 2 });
 
   // Drop the line after the first history page.
   const realGet = api.get;
@@ -424,8 +425,9 @@ test('OrdersPage falls back to the full local history when the server cannot be 
 });
 
 test('OrdersPage shows a still-queued order once, not twice, when the table is served from local history', async () => {
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: 3 });
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: 3, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
+    ? { registered_at: '2026-08-26T00:00:00.000Z' } : {});
   await ensureStationRegistered();
   api.request = async () => { throw new Error('Failed to fetch'); };
 
@@ -450,7 +452,7 @@ test('OrdersPage shows a still-queued order once, not twice, when the table is s
 test('OrderDetailPage opens an order this tablet never created and never visited, from the synced history alone', async () => {
   // Exactly the field-testing failure this slice exists for: the order came from the
   // eager sync, not from a visit and not from a local save.
-  stubServer({ orders: [serverOrder(1240, {
+  await stubServer({ orders: [serverOrder(1240, {
     receipt_number: null, customer_name: 'Mang Juan', status: 'pending',
     created_at: '2026-08-24T02:00:00.000Z', updated_at: '2026-08-24T02:00:00.000Z',
   })] });
@@ -487,7 +489,7 @@ test('OrderDetailPage opens an order this tablet never created and never visited
 // ── 7. Offline order creation ─────────────────────────────────────────────────
 
 test('OrderCreateModal loads its catalogue from the device when the server is unreachable', async () => {
-  stubServer({ orders: [] });
+  await stubServer({ orders: [] });
   await runSync({ trigger: 'login', waitForOrders: true });
 
   api.get = async () => { throw new Error('Failed to fetch'); };
@@ -510,7 +512,7 @@ test('OrderCreateModal loads its catalogue from the device when the server is un
 });
 
 test('OrderCreateModal offers a customer who was added from the directory while offline', async () => {
-  stubServer({ orders: [] });
+  await stubServer({ orders: [] });
   await runSync({ trigger: 'login', waitForOrders: true });
   await enqueue({
     entityType: 'customer', endpoint: '/customers', method: 'POST',
@@ -574,8 +576,9 @@ test('canTransitionOffline allows the forward lifecycle and nothing else', () =>
 });
 
 test('dispatching an unsynced order offline updates it locally and queues the transition behind its own creation', async () => {
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: 3 });
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: 3, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' } : {});
+    ? { registered_at: '2026-08-26T00:00:00.000Z' } : {});
   await ensureStationRegistered();
   api.request = async () => { throw new Error('Failed to fetch'); }; // nothing drains
 

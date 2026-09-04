@@ -40,106 +40,82 @@ afterEach(() => {
   api.request = savedApi.request;
 });
 
+// ADR 0017 slice 6 removed the slot concept, so nothing on the server hands a device its
+// leading number any more. This suite predates device letters and asserts on the
+// pre-letter `1-00001` shape, so it stands the device up the way a tablet mid-switchover
+// actually is: already carrying its own number, which registration keeps rather than
+// re-derives (see persistRegistration in src/offline/station.js).
 async function registerStation(number = 1) {
-  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: number });
+  api.post = async () => ({ registered_at: '2026-08-23T00:00:00.000Z' });
   return ensureStationRegistered();
 }
 
 // ── D1: station registration ────────────────────────────────────────────────
 
-test('registers with one device_key and keeps the slot it was given', async () => {
+test('registers with one device_key and keeps the number it is already carrying', async () => {
   const keys = [];
+  await nativeStore.setJson(STATION_KEY, { device_key: 'mid-switchover', station_number: 2 });
   api.post = async (path, body) => {
     assert.equal(path, '/stations/register');
     assert.ok(body.device_key, 'a device_key is sent so the server can be idempotent');
     keys.push(body.device_key);
-    return { slot_number: 2, owner_name: 'Josie', next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' };
+    return { registered_at: '2026-08-23T00:00:00.000Z' };
   };
 
   const first = await ensureStationRegistered();
   assert.equal(first.station_number, 2);
   assert.equal(await isRegistered(), true);
 
-  // ADR 0016 — a later start re-confirms rather than short-circuiting (the server is
-  // authoritative on who holds which slot), but sends the SAME device_key and so can
-  // never be handed a second number.
+  // A later start re-confirms rather than short-circuiting, but sends the SAME
+  // device_key — and since ADR 0017 removed the slot concept, no response can take this
+  // device's number away or hand it a different one.
   const second = await ensureStationRegistered();
   assert.equal(second.station_number, 2);
   assert.equal(new Set(keys).size, 1);
 });
 
-// ── ADR 0016: three fixed slots, captain-reassignable ───────────────────────
+// ── ADR 0017 #3: the slot concept is gone ──────────────────────────────────
+//
+// What used to be pinned here — a "no slot" answer stopping the device, a replacement
+// tablet seeded past the outgoing one's high-water plus REASSIGN_RESERVE, and a device
+// moved 2 -> 1 -> 3 resuming each slot's own count — all tested machinery that only
+// existed because the number was tied to hardware. A replacement device now signs in and
+// takes a FRESH letter (covered in v3-s4-device-letters.test.mjs), so there is no
+// reassignment to survive and nothing a server answer can take away.
+//
+// Two things outlive it and are pinned below: a number this device is ALREADY carrying
+// survives registration untouched (ADR 0014's switchover window), and the per-series
+// counters that keep it from bleeding into the letter series.
 
-test('a server answer of "no slot" stops this device issuing receipt numbers', async () => {
+test('a number this device already carries survives registration — nothing can take it away', async () => {
   await registerStation(3);
-  assert.equal(await isRegistered(), true);
-
-  // The replacement tablet has been given slot 3; this one is told it holds nothing.
-  api.post = async () => ({ slot_number: null, unassigned: true, registered_at: '2026-08-23T00:00:00.000Z' });
-  await ensureStationRegistered();
-
-  assert.equal(await isRegistered(), false);
-  assert.equal((await getStation()).station_number, null);
-  await assert.rejects(() => issueReceiptNumber(), /station number/);
-});
-
-test('a replacement tablet continues the slot\'s numbering instead of restarting it', async () => {
-  api.post = async () => ({
-    slot_number: 2, owner_name: 'Josie', next_sequence: 151, next_delivery_sequence: 9,
-    registered_at: '2026-08-29T00:00:00.000Z',
-  });
-  await ensureStationRegistered();
-
-  // Seeded from the server's high-water mark plus its reassignment reserve — never
-  // back at 00001, which would re-issue numbers the old tablet already printed and
-  // make every one of them collide with a stored order under ADR 0006.
-  assert.equal((await issueReceiptNumber()).receipt_number, '2-00151');
-  assert.equal((await issueReceiptNumber()).receipt_number, '2-00152');
-});
-
-// The captain's on-device repro: reassigning ONE tablet 2 -> 1 -> 3 in a row printed
-// 2-00056, 1-00057, 3-00058 — the prefix moved but the count kept running, because one
-// device-wide counter meant "never downwards" was comparing the incoming slot's number
-// against the outgoing slot's high-water mark. Each slot now carries its own count.
-test('a device moved between slots resumes each slot\'s own count, not the last one it worked', async () => {
-  const answer = (slot, nextSeq) => { api.post = async () => ({ slot_number: slot, next_sequence: nextSeq, registered_at: '2026-08-29T00:00:00.000Z' }); };
-
-  // Slot 2 is at 55 on the server; this tablet takes it and sells one.
-  answer(2, 56);
-  await ensureStationRegistered();
-  assert.equal((await issueReceiptNumber()).receipt_number, '2-00056');
-
-  // Moved to slot 1, which has only ever issued one receipt. Its own count resumes —
-  // the device does NOT carry slot 2's 56 across.
-  answer(1, 2);
-  await ensureStationRegistered();
-  assert.equal((await issueReceiptNumber()).receipt_number, '1-00002');
-
-  // And to slot 3, which has issued nothing at all.
-  answer(3, 1);
-  await ensureStationRegistered();
   assert.equal((await issueReceiptNumber()).receipt_number, '3-00001');
 
-  // Back to slot 2: it picks up where IT left off, not where slot 3 did.
-  answer(2, 56);
+  // The response carries no leading number at all any more. The device keeps selling.
+  api.post = async () => ({ registered_at: '2026-08-23T00:00:00.000Z' });
   await ensureStationRegistered();
-  assert.equal((await issueReceiptNumber()).receipt_number, '2-00057');
+
+  assert.equal(await isRegistered(), true);
+  assert.equal((await getStation()).station_number, 3);
+  assert.equal((await issueReceiptNumber()).receipt_number, '3-00002');
 });
 
-test('a tablet upgrading from the single-counter build keeps its count under the slot it was working', async () => {
-  // What a pre-fix device holds: one bare scalar, and the slot it was selling under.
+test('a tablet upgrading from the single-counter build keeps its count under its own number', async () => {
+  // What a pre-fix device holds: one bare scalar, and the number it was selling under.
   await nativeStore.setJson(STATION_KEY, { device_key: 'upgrading-tablet', station_number: 2 });
   await nativeStore.setString(SEQUENCE_KEY, 55);
 
-  // It launches blind and sells before it can re-register. The scalar is read as slot
-  // 2's count — restarting at 00001 here would reprint numbers already on paper.
+  // It launches blind and sells before it can re-register. The scalar is read as this
+  // device's count — restarting at 00001 here would reprint numbers already on paper.
   assert.equal((await issueReceiptNumber()).receipt_number, '2-00056');
 
-  // The line returns and the owner has since given this tablet slot 1. The carried-over
-  // count stays filed under slot 2; slot 1 starts from slot 1's own server count.
-  api.post = async () => ({ slot_number: 1, next_sequence: 3, registered_at: '2026-08-29T00:00:00.000Z' });
+  // The line returns. Registration files the carried-over scalar under series '2' as a
+  // map, and keeps issuing from it — the upgrade must not cost the device its count.
+  api.post = async () => ({ registered_at: '2026-08-29T00:00:00.000Z' });
   await ensureStationRegistered();
-  assert.equal((await issueReceiptNumber()).receipt_number, '1-00003');
+  assert.deepEqual(await nativeStore.getJson(SEQUENCE_KEY), { 2: 56 });
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00057');
 });
 
 test('re-confirming never winds a device back behind receipts it has already issued', async () => {
@@ -147,8 +123,9 @@ test('re-confirming never winds a device back behind receipts it has already iss
   assert.equal((await issueReceiptNumber()).receipt_number, '1-00001');
   assert.equal((await issueReceiptNumber()).receipt_number, '1-00002');
 
-  // The server has seen neither of those yet (still queued), so it answers with 1.
-  api.post = async () => ({ slot_number: 1, next_sequence: 1, registered_at: '2026-08-23T00:00:00.000Z' });
+  // The server has seen neither of those yet (still queued) — and since ADR 0017 it does
+  // not answer a sequence for this series at all, so there is nothing to wind back to.
+  api.post = async () => ({ registered_at: '2026-08-23T00:00:00.000Z' });
   await ensureStationRegistered();
 
   assert.equal((await issueReceiptNumber()).receipt_number, '1-00003');
@@ -165,7 +142,7 @@ test('a device_key is persisted before registering, so a lost response cannot bu
   let sentKey = null;
   api.post = async (_path, body) => {
     sentKey = body.device_key;
-    return { station_number: 1, registered_at: '2026-08-23T00:00:00.000Z' };
+    return { registered_at: '2026-08-23T00:00:00.000Z' };
   };
   await ensureStationRegistered();
   assert.equal(sentKey, stored.device_key, 'the retry re-sends the same device_key');
@@ -186,7 +163,7 @@ test('the sequence is stored before the number is handed out, so a crash skips r
   await registerStation(1);
   const issued = await issueReceiptNumber();
   assert.equal(issued.sequence, 1);
-  // Stored per slot (ADR 0016), so the key holds a map rather than a bare number.
+  // Stored per series, so the key holds a map rather than a bare number.
   assert.deepEqual(await nativeStore.getJson(SEQUENCE_KEY), { 1: 1 });
 });
 

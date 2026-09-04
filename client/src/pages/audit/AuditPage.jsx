@@ -51,7 +51,11 @@ const ACTIVITY_ACTION_LABELS = {
   closed:         'Closed',
   resolved:       'Resolved',
   price_set:      'Price Set',
+  // ADR 0017 removed the slot concept, so nothing writes this action any more. The label
+  // stays because `activity_logs` is append-only: the entries already recorded must keep
+  // reading as words rather than falling back to the raw key.
   slot_assigned:  'Slot Assigned',
+  device_letter_allocated: 'New Tablet',
 };
 
 const ACTIVITY_ACTION_COLORS = {

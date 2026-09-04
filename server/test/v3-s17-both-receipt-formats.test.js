@@ -27,7 +27,7 @@ const {
 } = require('../src/lib/receiptNumbers');
 const {
   assertIssuableStation, MAX_ISSUABLE_STATION,
-} = require('../src/lib/stationSlots');
+} = require('../src/lib/personNumbers');
 
 describe('ADR 0017 slice 2 — both receipt-number formats are accepted', () => {
   let server;
