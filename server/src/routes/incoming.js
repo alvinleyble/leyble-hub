@@ -110,10 +110,12 @@ router.get('/', async (req, res, next) => {
 //                 resent unchanged on every retry OF THAT RECORD. It is the record's
 //                 identity here, so a resend of a key already stored is answered with
 //                 the stored delivery and a 200 rather than a second truckload of stock.
-//   delivery_ref  '<station>-DEL-<sequence>' issued on the device at Save. It names the
-//                 DELIVERY and stays unique, but is no longer what a retry is recognised
-//                 by. With no request_key it still is, as the fallback for a pre-039
-//                 queued record (ADR 0006's mechanism, second table).
+//   delivery_ref  '<person><device letter>-DEL-<sequence>' issued on the device at Save,
+//                 or the pre-letter '<person>-DEL-<sequence>' from a tablet that has not
+//                 been updated yet — both are accepted, permanently (ADR 0017 #14). It
+//                 names the DELIVERY and stays unique, but is no longer what a retry is
+//                 recognised by. With no request_key it still is, as the fallback for a
+//                 pre-039 queued record (ADR 0006's mechanism, second table).
 router.post('/', async (req, res, next) => {
   const { supplier_name, notes, received_at, items, delivery_ref, request_key } = req.body;
 
@@ -135,9 +137,11 @@ router.post('/', async (req, res, next) => {
   let ref = null;
   if (delivery_ref !== undefined && delivery_ref !== null && delivery_ref !== '') {
     try {
+      // Accepts both shapes: '1-DEL-00007' from a tablet that has not been updated yet
+      // and '1A-DEL-00007' from one that has (ADR 0017 #14).
       ref = parseDeliveryRef(delivery_ref);
-      // ADR 0016 — same three-slot cap the receipt numbers carry; a delivery reference
-      // is issued off the same station number.
+      // Same person-number backstop the receipt numbers carry; a delivery reference is
+      // issued off the same person-and-device pair.
       assertIssuableStation(ref.station, { field: 'delivery_ref' });
     } catch (err) {
       return next(err);
@@ -166,12 +170,12 @@ router.post('/', async (req, res, next) => {
 
     const { rows: [delivery] } = await client.query(
       `INSERT INTO supplier_deliveries
-         (supplier_name, notes, received_at, created_by, receipt_station, receipt_sequence,
-          request_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (supplier_name, notes, received_at, created_by,
+          receipt_station, receipt_device, receipt_sequence, request_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [supplier_name, notes || null, received_at || new Date().toISOString(), req.user.id,
-       ref?.station ?? null, ref?.sequence ?? null, requestKey]
+       ref?.station ?? null, ref?.device ?? null, ref?.sequence ?? null, requestKey]
     );
 
     for (const item of items) {

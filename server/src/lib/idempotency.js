@@ -28,9 +28,9 @@
 // ── Table-agnostic by design ────────────────────────────────────────────────
 //
 // Any table that carries `request_key` (and, for the fallback, the
-// `receipt_station` / `receipt_sequence` pair) with the matching partial unique
-// indexes can use this: `orders` (receipts and parked orders alike, since a parked
-// order is an orders row) and, since ADR 0015 §8 / migration 036,
+// `receipt_station` / `receipt_device` / `receipt_sequence` triple) with the matching
+// partial unique indexes can use this: `orders` (receipts and parked orders alike,
+// since a parked order is an orders row) and, since ADR 0015 §8 / migration 036,
 // `supplier_deliveries`. Adding a table here is the whole integration.
 
 // Whitelist, because the table name is interpolated into SQL. Never take this from
@@ -82,11 +82,21 @@ async function findByRequestKey(runner, table, requestKey) {
 }
 
 // Fallback identity for a record queued before request keys existed. See the header.
-async function findByReceiptNumber(runner, table, { station, sequence }) {
+//
+// The device letter (ADR 0017) is matched through the same COALESCE the partial unique
+// index uses, so this lookup and the index agree exactly: a pre-letter `3-00061`
+// carries a NULL letter and must still find its own stored row, while `3A-00061` is a
+// different receipt belonging to a different device. A pre-039 record — the only kind
+// that reaches this path — never carries a letter, so it resolves against the
+// letterless rows and nothing else.
+async function findByReceiptNumber(runner, table, { station, device = null, sequence }) {
   assertIdempotentTable(table);
   const { rows: [row] } = await runner.query(
-    `SELECT id FROM ${table} WHERE receipt_station = $1 AND receipt_sequence = $2`,
-    [station, sequence]
+    `SELECT id FROM ${table}
+      WHERE receipt_station = $1
+        AND COALESCE(receipt_device, '') = $2
+        AND receipt_sequence = $3`,
+    [station, device || '', sequence]
   );
   return row ? row.id : null;
 }

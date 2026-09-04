@@ -316,18 +316,37 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   server is authoritative on who holds a slot, and the register/assign response carries
   `next_sequence`/`next_delivery_sequence` so a replacement tablet continues that person's
   numbering instead of restarting at `00001` — seeded upward only, never back behind
-  receipts the device has already issued. `assertIssuableStation` in the `POST /orders`
-  and `POST /incoming` paths is the backstop against a pre-0016 client. Nothing already
-  numbered is backfilled, and dev/CI is deliberately not special-cased (a fresh worktree
-  takes a slot on `/devices` like any other device).
-- **Receipt numbers are device-issued** (`<station>-<sequence>`, e.g. `1-00042`) at Save,
-  with no server round trip. `client/src/offline/station.js` issues them; display goes
+  receipts the device has already issued. Nothing already numbered is backfilled, and
+  dev/CI is deliberately not special-cased (a fresh worktree takes a slot on `/devices`
+  like any other device). **ADR 0017 supersedes this**: the leading component is now a
+  person, so `assertIssuableStation` (the `POST /orders` / `POST /incoming` backstop) no
+  longer caps at 3 — it only refuses a value that cannot be a person at all — and the
+  slot registry above stays only until the accounts slice replaces it.
+- **Receipt numbers are device-issued** (`<person><device letter>-<sequence>`, e.g.
+  `1A-00042`) at Save, with no server round trip. `client/src/offline/station.js` issues them; display goes
   through `orderRef()` in `client/src/utils/orderRef.js` — use it anywhere an order was
   shown as `#<id>`. The row id stays internal. Pre-V2.5 orders have no receipt number and
   are never backfilled. Screens that hold only an id (audit entries, a ticket's related
   order, a review-queue tab) use `orderRefFromId(id, receiptNumber)` and get the receipt
   number from a `LEFT JOIN orders` their query now carries — the id alone is never the
   display name ([ADR 0010](docs/adr/0010-receipt-number-addresses-order-across-sync-boundary.md)).
+- **Three receipt-number formats coexist permanently and the server takes all three**
+  ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md), which supersedes
+  ADR 0016): the ~1,300 legacy `#1240` orders (no receipt number at all), the slot-scheme
+  `3-00061`, and `3A-00001` — the leading number is the **person**, the letter their own
+  device. Delivery references take the same shape (`1A-DEL-00007`). **Old-format
+  acceptance is never removed** — tablets update one at a time over days, so an
+  un-updated one is still issuing the old shape while an updated one may still hold
+  unsynced old-shape receipts (ADR 0014's ADR-0017 switchover ordering).
+  `parseReceiptNumber`/`parseDeliveryRef` (`client/src/offline/receiptNumbers.js` and its
+  server mirror `server/src/lib/receiptNumbers.js` — **keep the two in step**) and
+  `resolveOrderId` in `server/src/routes/orders.js` all accept the letter optionally.
+  **Never `ORDER BY` a receipt number** — the three shapes do not sort as text; order by
+  time. The letter goes through `COALESCE(receipt_device, '')` **inside** the partial
+  unique index (migration 040) and in every lookup that matches it; without that,
+  NULL-is-distinct silently stops the index protecting every pre-letter row, which is
+  invisible from the app — see `server/test/v3-s17-both-receipt-formats.test.js`.
+  Letters are not allocated yet; the client still issues the pre-letter shape.
 - **The retry key is `request_key`, NOT the receipt number** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md)
   #9, revising [ADR 0006](docs/adr/0006-receipt-number-as-idempotency-key.md), migration
   039). `outbox.js` mints one per queued record (`requestKeys.js`) and injects it into
@@ -549,11 +568,12 @@ Every V1 screen now works blind. What a future session most needs to know:
   (§7), delivery edit/void (§8), ticket resolve and every personnel mutation (§9), all
   via `DangerZoneDelete`'s `disabled`/`disabledReason` or a `title` tooltip.
 - **Deliveries are the second table on the idempotency mechanism.**
-  `<station>-DEL-<seq>` (`issueDeliveryRef`, its OWN counter — `v25.deliverySequence`),
-  stored on `supplier_deliveries.receipt_station/receipt_sequence` (migration 036) plus
-  `request_key` (migration 039) — same column names as `orders` on purpose, so
-  `lib/idempotency.js` needs one whitelist entry. Without it a resent record is a second
-  truckload of stock in the ledger.
+  `<person><device letter>-DEL-<seq>` (`issueDeliveryRef`, its OWN counter —
+  `v25.deliverySequence`), stored on
+  `supplier_deliveries.receipt_station/receipt_device/receipt_sequence` (migrations 036
+  and 040) plus `request_key` (migration 039) — same column names as `orders` on purpose,
+  so `lib/idempotency.js` needs one whitelist entry. Without it a resent record is a
+  second truckload of stock in the ledger.
 - **Queued rows are merged into three lists now**, all the same `local-<outboxId>`
   shape G29 established: customers (`queuedCustomersFromOutbox`), products
   (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +
@@ -712,8 +732,9 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
 | no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |
+| receipt number has no device letter | `orders.receipt_device` + `supplier_deliveries.receipt_device` added and both `GENERATED` display columns rebuilt over them (migration 040) — ADR 0017's `1A-00042`. Both partial unique indexes rebuilt with the letter `COALESCE`d **inside the index expression**, which is what keeps them protecting pre-letter rows |
 | `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots. `activity_logs.entity_type` widened to accept `'station'` in the same migration |
-| `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_sequence` pair + partial unique index, and a `GENERATED` `delivery_ref` (`1-DEL-00007`) added (migration 036) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8) |
+| `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_device`/`receipt_sequence` triple + partial unique index, and a `GENERATED` `delivery_ref` (`1A-DEL-00007`) added (migrations 036, 040) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8, ADR 0017 #14) |
 
 ### `order_personnel` join table (migration 016)
 ```sql

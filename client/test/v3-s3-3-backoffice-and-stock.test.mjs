@@ -537,8 +537,12 @@ test('§8: a delivery reference is <station>-DEL-<seq>, off its own counter', as
   const second = await issueDeliveryRef();
   assert.equal(first.delivery_ref, '3-DEL-00001');
   assert.equal(second.delivery_ref, '3-DEL-00002');
-  assert.deepEqual(parseDeliveryRef('3-DEL-00002'), { station: 3, sequence: 2 });
+  assert.deepEqual(parseDeliveryRef('3-DEL-00002'), { station: 3, device: null, sequence: 2 });
   assert.equal(parseDeliveryRef('3-00002'), null, 'a receipt number is never read as a delivery reference');
+  // ADR 0017 #14 — the same per-person device letter, and the same both-shapes rule.
+  assert.equal(formatDeliveryRef(3, 2, 'A'), '3A-DEL-00002');
+  assert.deepEqual(parseDeliveryRef('3A-DEL-00002'), { station: 3, device: 'A', sequence: 2 });
+  assert.equal(parseDeliveryRef('3A-00002'), null);
   assert.equal(formatDeliveryRef(1, 7), '1-DEL-00007');
 });
 
