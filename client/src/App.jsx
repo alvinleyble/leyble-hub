@@ -15,7 +15,6 @@ import OrderDetailPage from './pages/orders/OrderDetailPage';
 import IncomingPage from './pages/incoming/IncomingPage';
 import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
-import StationsPage from './pages/stations/StationsPage';
 import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 
 // Layout route: guards all children behind auth check.
@@ -39,9 +38,9 @@ function ProtectedLayout() {
 // that used to overlay it: each person signs in with their own account, so the identity
 // is settled by the time this renders.
 function AuthedShell() {
-  // V2.5 (D1) — claim this device's station number once, then keep the outbox
-  // draining in the background. A no-op unless the release switch is on (D18), and it
-  // runs after sign-in because registration is an authenticated call.
+  // V2.5 (D1) / ADR 0017 #2 — allocate this person's device letter once, then keep the
+  // outbox draining in the background. It runs after sign-in because registration is an
+  // authenticated call, and because the letter belongs to the account, not the tablet.
   useEffect(() => {
     startOfflineCore();
     return stopOfflineCore;
@@ -90,7 +89,6 @@ function AppRoutes() {
           <Route path="/personnel/*"  element={<PersonnelPage />} />
           <Route path="/tickets"      element={<TicketsPage />} />
           <Route path="/audit"        element={<AuditPage />} />
-          <Route path="/devices"      element={<StationsPage />} />
           <Route path="*"             element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Route>

@@ -111,13 +111,13 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     return key;
   }
 
-  // Tests vary their SEQUENCE rather than their station to stay unique across re-runs
-  // against a reused database. `testReceipt` issues the pre-letter format on purpose —
-  // this suite is what pins that a tablet which has NOT been updated is still served
-  // (ADR 0014's ADR-0017 switchover ordering); the letter format is covered in
+  // Tests vary their SEQUENCE rather than their person number to stay unique across
+  // re-runs against a reused database. `testReceipt` issues the pre-letter format on
+  // purpose — this suite is what pins that a tablet which has NOT been updated is still
+  // served (ADR 0014's ADR-0017 switchover ordering); the letter format is covered in
   // v3-s17-both-receipt-formats.test.js.
   let sequenceSeed = Date.now() % 80000;
-  const testReceipt = (slot = 1) => `${slot}-${String(++sequenceSeed).padStart(5, '0')}`;
+  const testReceipt = (person = 1) => `${person}-${String(++sequenceSeed).padStart(5, '0')}`;
 
   const orderBody = (over = {}) => ({
     customer_id: customerId,
@@ -125,117 +125,46 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     ...over,
   });
 
-  // ── D1 / ADR 0016: station slots ──────────────────────────────────────────
+  // ── D1 / ADR 0017: device registration ────────────────────────────────────
   //
-  // ADR 0016 replaced ADR 0003's "the next value of a sequence, forever" with three
-  // fixed slots. Everything else about a station number is untouched — it is still
-  // stored on the device, still used with no round trip, still the anti-duplicate key
-  // — so what has to hold here is: a slot is only ever held by one device, a fourth
-  // device gets nothing rather than a number 4, and reassigning a slot continues its
-  // numbering rather than restarting it.
+  // ADR 0016's three fixed slots are gone with the rest of the slot concept
+  // (ADR 0017 #3), and so are the cases that pinned them: the roster, the
+  // assignment endpoint, and the reserve gap a replacement tablet was seeded past.
+  // What has to keep holding is what was never about slots — registration is
+  // idempotent on device_key, it refuses a request without one, and the leading
+  // component of a receipt number is validated as a PERSON rather than capped at
+  // three. The letter allocation itself lives in v3-s4-device-letters.test.js.
 
-  describe('ADR 0016 — three fixed station slots', () => {
-    // The suite shares a database with whatever else has registered against it, so
-    // each case parks the slots in a known state first rather than assuming they are free.
-    async function clearSlots() {
-      await db.query('UPDATE stations SET slot_number = NULL, slot_assigned_at = NULL, slot_assigned_by = NULL');
-    }
-
+  describe('ADR 0017 — device registration', () => {
     const register = (key) => call('/stations/register', {
       method: 'POST', body: JSON.stringify({ device_key: key }),
     }).then((r) => r.json());
 
-    it('gives the first three devices slots 1, 2 and 3 — and the fourth nothing at all', async () => {
-      await clearSlots();
-      const a = await register(newDeviceKey('SLOT_A'));
-      const b = await register(newDeviceKey('SLOT_B'));
-      const c = await register(newDeviceKey('SLOT_C'));
-      const d = await register(newDeviceKey('SLOT_D'));
-
-      assert.deepEqual([a.slot_number, b.slot_number, c.slot_number], [1, 2, 3]);
-      assert.deepEqual([a.station_number, b.station_number, c.station_number], [1, 2, 3]);
-      assert.deepEqual([a.owner_name, b.owner_name, c.owner_name], ['Alvin', 'Josie', 'Luis']);
-
-      // The whole point of ADR 0016: no number 4 exists to hand out.
-      assert.equal(d.slot_number, null);
-      assert.equal(d.station_number, null);
-      assert.equal(d.unassigned, true);
-    });
-
-    it('is idempotent on device_key — a retried registration keeps the same slot', async () => {
-      await clearSlots();
-      const key = newDeviceKey('SLOT_RETRY');
+    it('is idempotent on device_key — a retried registration is not a second device', async () => {
+      const key = newDeviceKey('REG_RETRY');
       const first = await register(key);
       const second = await register(key);
-      assert.equal(second.slot_number, first.slot_number);
+      assert.equal(first.created, true);
       assert.equal(second.created, false);
-    });
+      assert.equal(second.device_key, first.device_key);
 
-    it('moves a slot to a replacement device, and continues its numbering past what was issued', async () => {
-      await clearSlots();
-      const oldTablet = newDeviceKey('SLOT_OLD');
-      const newTablet = newDeviceKey('SLOT_NEW');
-      const claimed = await register(oldTablet);
-      await register(newDeviceKey('SLOT_FILLER_B'));
-      await register(newDeviceKey('SLOT_FILLER_C'));
-      // The replacement arrives with all three slots taken and gets none.
-      assert.equal((await register(newTablet)).slot_number, null);
-
-      const slot = claimed.slot_number;
-      const printed = 40;
-      await call('/orders', {
-        method: 'POST',
-        body: JSON.stringify(orderBody({ receipt_number: `${slot}-${String(printed).padStart(5, '0')}` })),
-      });
-
-      const moved = await (await call(`/stations/slots/${slot}/assign`, {
-        method: 'POST', body: JSON.stringify({ device_key: newTablet }),
-      })).json();
-
-      assert.equal(moved.slot_number, slot);
-      assert.equal(moved.replaced_previous, true);
-      assert.ok(
-        moved.next_sequence > printed,
-        'the replacement continues past what the old tablet printed, never back at 1'
-      );
-
-      // Exactly one device holds the slot: the old tablet is released in the same act.
-      const { rows } = await db.query('SELECT device_key FROM stations WHERE slot_number = $1', [slot]);
+      const { rows } = await db.query('SELECT id FROM stations WHERE device_key = $1', [key]);
       assert.equal(rows.length, 1);
-      assert.equal(rows[0].device_key, newTablet);
-
-      // And the released tablet is told so the next time it asks.
-      const released = await register(oldTablet);
-      assert.equal(released.slot_number, null);
-      assert.equal(released.unassigned, true);
     });
 
-    it('lists the three slots and every device left without one', async () => {
-      await clearSlots();
-      const held = newDeviceKey('SLOT_LIST_HELD');
-      await register(held);
-      const spare = newDeviceKey('SLOT_LIST_SPARE');
-      await register(newDeviceKey('SLOT_LIST_B'));
-      await register(newDeviceKey('SLOT_LIST_C'));
-      await register(spare);
-
-      const roster = await (await call('/stations')).json();
-      assert.deepEqual(roster.slots.map((s) => s.slot_number), [1, 2, 3]);
-      assert.deepEqual(roster.slots.map((s) => s.owner_name), ['Alvin', 'Josie', 'Luis']);
-      assert.equal(roster.slots.find((s) => s.slot_number === 1).device.device_key, held);
-      assert.ok(roster.unassigned.some((d) => d.device_key === spare));
+    it('answers no slot fields at all — nothing hands a number to hardware any more', async () => {
+      const body = await register(newDeviceKey('REG_NO_SLOTS'));
+      for (const gone of ['slot_number', 'station_number', 'owner_name', 'unassigned',
+                          'next_sequence', 'next_delivery_sequence']) {
+        assert.ok(!(gone in body), `${gone} is part of the removed slot concept`);
+      }
     });
 
-    it('refuses a slot outside 1-3, and an assignment to a device it has never seen', async () => {
-      const bad = await call('/stations/slots/4/assign', {
+    it('has no roster and no slot-assignment endpoint left to call', async () => {
+      assert.equal((await call('/stations')).status, 404);
+      assert.equal((await call('/stations/slots/1/assign', {
         method: 'POST', body: JSON.stringify({ device_key: 'anything' }),
-      });
-      assert.equal(bad.status, 400);
-
-      const stranger = await call('/stations/slots/1/assign', {
-        method: 'POST', body: JSON.stringify({ device_key: 'TEST_V25_NEVER_REGISTERED' }),
-      });
-      assert.equal(stranger.status, 404);
+      })).status, 404);
     });
 
     it('refuses a registration with no device_key', async () => {
@@ -243,7 +172,7 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.equal(res.status, 400);
     });
 
-    // ADR 0017 supersedes the cap this used to pin. The leading component is now a
+    // ADR 0017 supersedes the cap ADR 0016 imposed. The leading component is now a
     // PERSON, not a device slot, and a new hire takes the next number — so refusing
     // anything above 3 would reject a fourth person's very first sale. What
     // assertIssuableStation still refuses is a value that cannot be a person at all.

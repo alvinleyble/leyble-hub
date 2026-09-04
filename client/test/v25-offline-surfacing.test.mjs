@@ -16,6 +16,7 @@ import './render.mjs'; // jsdom globals
 
 import { api } from '../src/api/client.js';
 import { nativeStore, __resetMemoryBackend } from '../src/offline/nativeStore.js';
+import { STATION_KEY } from '../src/offline/keys.js';
 import { V25_OFFLINE_CORE, setSimulatedOffline } from '../src/config/features.js';
 import {
   enqueue, drainOutbox, listRecords, waitingCount, listNeedsAttention, repointRecord,
@@ -117,7 +118,8 @@ test('advisory toast fires ONCE per outage and persists in nativeStore across re
 });
 
 test('advisory toast fires from the real saveOrderLocalFirst code path when saving while offline', async () => {
-  api.post = async () => ({ slot_number: 1, next_sequence: 1 });
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: 1 });
+  api.post = async () => ({});
   await ensureStationRegistered();
 
   const toasts = [];

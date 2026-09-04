@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { render, React, act } from './render.mjs';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
-import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
+import { nativeStore, __resetMemoryBackend } from '../src/offline/nativeStore.js';
+import { STATION_KEY } from '../src/offline/keys.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import { __clearOutbox } from '../src/offline/outbox.js';
 
@@ -53,8 +54,9 @@ beforeEach(async () => {
   await __resetMemoryBackend();
   __resetIssuance();
   await __clearOutbox();
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: 1 });
   api.post = async (path) => (path === '/stations/register'
-    ? { slot_number: 1, next_sequence: 1, registered_at: '2026-08-26T00:00:00.000Z' }
+    ? { registered_at: '2026-08-26T00:00:00.000Z' }
     : { id: 100 });
   await ensureStationRegistered();
 });

@@ -17,6 +17,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { __resetMemoryBackend, nativeStore } from '../src/offline/nativeStore.js';
+import { STATION_KEY } from '../src/offline/keys.js';
 import { __clearOutbox, listRecords, enqueue, drainOutbox } from '../src/offline/outbox.js';
 import { __resetIssuance, ensureStationRegistered, issueDeliveryRef } from '../src/offline/station.js';
 import { formatDeliveryRef, parseDeliveryRef } from '../src/offline/receiptNumbers.js';
@@ -98,8 +99,14 @@ async function seedCatalogue(products = [PRODUCT]) {
   await applyCatalogueDelta('products', products);
 }
 
+// ADR 0017 slice 6 removed the slot concept, so nothing on the server hands a device its
+// leading number any more. These suites predate device letters and assert on the
+// pre-letter `1-00001` shape, so they stand the device up the way a tablet mid-switchover
+// actually is: already carrying its own number, which registration keeps rather than
+// re-derives (see persistRegistration in src/offline/station.js).
 async function registerStation(number = 3) {
-  api.post = async () => ({ slot_number: number, next_sequence: 1, registered_at: '2026-08-29T00:00:00.000Z' });
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: number });
+  api.post = async () => ({ registered_at: '2026-08-29T00:00:00.000Z' });
   await ensureStationRegistered();
 }
 

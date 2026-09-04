@@ -79,7 +79,7 @@ Base64), `is_active`.
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
-| `receipt_station`, `receipt_device`, `receipt_sequence` | the device-issued receipt number, decomposed (033; the letter added by 040). `receipt_station` is the **person** and `receipt_device` their device letter ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md)). All three are nullable — orders predating V2.5 have none, orders from the pre-letter slot scheme have no letter, and neither is ever backfilled. `CHECK`s keep the station/sequence pair whole and the letter shaped `[A-Z]{1,2}` and never orphaned. Since 039 this is no longer the retry key — see `request_key` |
+| `receipt_station`, `receipt_device`, `receipt_sequence` | the device-issued receipt number, decomposed (033; the letter added by 040). `receipt_station` is the **person** and `receipt_device` their device letter ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md)). All three are nullable — orders predating V2.5 have none, orders from the pre-letter scheme have no letter, and neither is ever backfilled. `CHECK`s keep the station/sequence pair whole and the letter shaped `[A-Z]{1,2}` and never orphaned. Since 039 this is no longer the retry key — see `request_key` |
 | `orders_receipt_number_uniq` | a **partial** `UNIQUE` over rows that carry a receipt number, keeping the number itself unique ([ADR 0010](../adr/0010-receipt-number-addresses-order-across-sync-boundary.md)). Since 040 the letter goes through `COALESCE(receipt_device, '')` **inside the index expression** — without that, NULL-is-distinct would silently stop the index protecting every pre-letter row. Match it the same way in any query that looks a receipt number up |
 | `request_key` | the anti-duplicate key for a **resent outbox record** (039, [ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #9 revising [ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)). Minted on the device once per outbox record and resent unchanged on every retry of it; partial `UNIQUE` over rows that carry one. Nullable: absent for anything a connected client posted, and for a record queued by a pre-039 build, which still dedupes on the receipt number |
 | `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1A-00042'`, or `'1-00042'` with no letter. Derived from the three columns above; never written to. **Never `ORDER BY` it** — `#1240`, `3-00061` and `3A-00001` coexist permanently and do not sort as text ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #12) |
@@ -113,14 +113,15 @@ i.e. deposit is charged on the bottles that were *not* returned. With defaults
 (`units_per_case=1, bottles_returned=0`) this reduces to the old `quantity*(price+deposit)`.
 
 ### `stations` (033, altered by 037)
-One row per device that has registered ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md),
-[ADR 0016](../adr/0016-three-fixed-station-slots.md)).
+One row per device that has registered ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
+Since [ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) this is a plain device
+registry and nothing here is any part of a receipt number — the person is `users.receipt_person`
+and the letter is `user_devices.device_letter` (043).
 | Column | Notes |
 |---|---|
 | `device_key` | UNIQUE. Generated on the device; the idempotency key for registration, so a retried register call returns the same station instead of claiming a second one |
-| `slot_number` | (037) 1, 2 or 3 — the receipt number's station component. CHECK-bounded, partial UNIQUE over non-NULL, so exactly one device holds each slot and a fourth device holds none. Slot 1 is Alvin's tablet, 2 Josie's, 3 Luis's; the owner names are a constant in `server/src/lib/stationSlots.js` |
-| `slot_assigned_at`, `slot_assigned_by` | (037) when the slot moved onto this device, and who moved it. Every assignment also writes an `activity_logs` row (`entity_type = 'station'`, `action = 'slot_assigned'`) |
-| `station_number` | UNIQUE, defaulted from `station_number_seq`. Since 037 this is only the registry's internal id for a device — it is **not** the receipt station, which is `slot_number` |
+| `slot_number`, `slot_assigned_at`, `slot_assigned_by` | (037) **dead columns.** ADR 0016's three fixed slots — which device held each of 1/2/3, when it moved there and who moved it. ADR 0017 removed the slot concept along with the Devices screen and the assignment endpoint; nothing reads or writes these any longer. Kept rather than dropped so historical rows and any device still mid-switchover stay describable |
+| `station_number` | UNIQUE, defaulted from `station_number_seq`. The registry's internal id for a device — it is **not** a receipt number component and never leaves the server |
 | `label` | optional, e.g. `'Honor Pad X8B'` |
 | `registered_at`, `last_seen_at` | |
 

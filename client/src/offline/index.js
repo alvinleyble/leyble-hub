@@ -32,8 +32,9 @@ export { nativeStore } from './nativeStore.js';
 const DRAIN_INTERVAL_MS = 30_000;
 
 // How often a device that already has what it needs re-asks the server anyway. Only ever
-// costs one small request; under ADR 0016 it is how a slot reassignment reaches a tablet
-// left running, rather than waiting for its next restart.
+// costs one small request, and it keeps the device's `last_seen_at` honest for a tablet
+// left running for days — which is the only way anyone can tell which physical device a
+// letter belongs to now that there is no Devices screen to ask.
 const RECONFIRM_INTERVAL_MS = 10 * 60_000;
 
 let timer = null;
@@ -99,16 +100,14 @@ export async function startOfflineCore({ label } = {}) {
       // Registration is retried here too, on every tick, until the SIGNED-IN PERSON
       // holds a device letter (ADR 0017 #2). Gating that retry on "can this device issue
       // anything at all" instead would leave a real gap during the switchover window: a
-      // tablet that still holds an ADR 0016 slot can sell the moment someone signs in,
-      // but it sells under the SLOT's number, which belongs to whoever that slot is —
+      // tablet still carrying a pre-letter number can sell the moment someone signs in,
+      // but it sells under a number that belongs to whoever that device was set up for —
       // so a sign-in whose registration call did not get through would put Josie's sales
       // out under Luis's number until the slow re-confirm below came round.
       //
-      // Once the letter is held, the slow cadence takes over: ADR 0016 makes the server
-      // authoritative on who holds which slot, so a tablet whose slot was moved to its
-      // replacement has to find out without waiting for a restart. Confirming on every
-      // 30s tick would be a pointless request a minute; RECONFIRM_INTERVAL_MS is the
-      // compromise.
+      // Once the letter is held, the slow cadence takes over. There is nothing urgent
+      // left to learn from the server — a letter is permanent and no admin action can
+      // move it — so this is only the keep-alive described on RECONFIRM_INTERVAL_MS.
       getReceiptIdentity()
         .then((identity) => {
           if (!identity) return ensureStationRegistered({ label: effectiveLabel });

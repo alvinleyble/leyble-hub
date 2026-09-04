@@ -85,9 +85,8 @@ function makeServer() {
       return {
         device_key: body.device_key,
         registered_at: '2026-09-04T00:00:00.000Z',
-        // The ADR 0016 half — absent for a device the store never gave a slot.
-        slot_number: null, station_number: null, unassigned: true,
-        // The ADR 0017 half.
+        // ADR 0017 slice 6 removed the slot concept, so the response carries no leading
+        // number for hardware at all — only the person's letter for this device.
         user_id: person.id,
         person: person.person,
         seller_name: person.name,
@@ -293,12 +292,12 @@ test('delivery references carry the same prefix off their own counter (ADR 0017 
 
 // ── ADR 0014's switchover window ────────────────────────────────────────────
 
-test('a device updated to this build but not yet online keeps selling under its old slot', async () => {
+test('a device updated to this build but not yet online keeps selling under its old number', async () => {
   const device = makeDevice('mid-rollout-tablet');
   await pickUp(device);
   await signIn(ALVIN);
 
-  // What such a tablet holds the moment the new APK starts: an ADR 0016 slot and a
+  // What such a tablet holds the moment the new APK starts: a pre-letter number and a
   // count under it, and no letter, because it has not been able to register yet.
   await nativeStore.setJson(STATION_KEY, { device_key: 'rolled-out', station_number: 3 });
   await nativeStore.setJson(SEQUENCE_KEY, { 3: 60 });
@@ -315,7 +314,7 @@ test('a device updated to this build but not yet online keeps selling under its 
   assert.deepEqual(await nativeStore.getJson(SEQUENCE_KEY), { 3: 62, '1A': 1 });
 });
 
-test('a device with neither a letter nor a slot refuses to issue, rather than guessing', async () => {
+test('a device with neither a letter nor a number of its own refuses to issue, rather than guessing', async () => {
   const device = makeDevice('brand-new');
   await pickUp(device);
   await signIn(ALVIN);

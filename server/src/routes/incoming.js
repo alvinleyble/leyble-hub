@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { applyStockDelta, applyDeltaMap } = require('../lib/inventory');
 const { parseDeliveryRef } = require('../lib/receiptNumbers');
-const { assertIssuableStation } = require('../lib/stationSlots');
+const { assertIssuableStation } = require('../lib/personNumbers');
 const {
   normalizeRequestKey, findByRequestKey, findByReceiptNumber,
   isDuplicateRequestKey, isDuplicateReceiptNumber,

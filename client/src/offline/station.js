@@ -22,12 +22,14 @@ import { formatReceiptNumber, formatDeliveryRef } from './receiptNumbers';
 // is why there is no device list, no assignment UI, no high-water seeding and no reserve
 // gap in this file: a letter that has never been used cannot collide with receipts a
 // dead tablet issued and never synced, so there is nothing to reserve against. Setting
-// up a replacement is signing in on it.
+// up a replacement is signing in on it. ADR 0016's slots, the Devices screen that moved
+// one, and the client half that asked for a reassignment are all gone with the concept.
 //
-// The ADR 0016 slot fields are still read and still stored. They are the fallback for
-// ADR 0014's switchover window — a tablet updated to this build but not yet able to
-// reach the server keeps selling under the slot it already holds, and the server accepts
-// both shapes permanently (ADR 0017 #12).
+// ONE thing survives them: a `station_number` this device is ALREADY holding. A tablet
+// updated to this build but not yet able to reach the server keeps selling under that
+// number until its letter arrives, and the server accepts that shape permanently
+// (ADR 0017 #12/#13). It is read from local storage and never from a server response —
+// nothing hands one out any more.
 
 function newDeviceKey() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -73,8 +75,9 @@ export async function getReceiptIdentity() {
 }
 
 // The counter this issuance draws from, e.g. '1A' for the letter scheme and '3' for a
-// device still on its ADR 0016 slot. Both live in the same map (see readCounters) and
-// can never be confused for one another, because one has a letter and the other cannot.
+// device still carrying a pre-letter number. Both live in the same map (see readCounters)
+// and can never be confused for one another, because one has a letter and the other
+// cannot.
 export function receiptSeries({ person, letter } = {}) {
   return `${person}${letter || ''}`;
 }
@@ -116,7 +119,8 @@ async function persistDeviceLetter(registered) {
 // for THAT series) without leaking across series.
 //
 // A series key is the receipt prefix as text: '1A' under the letter scheme, '3' for a
-// device still on its ADR 0016 slot. They cannot collide — a slot key never has a letter.
+// device still carrying a pre-letter number. They cannot collide — the old shape has no
+// letter in it.
 
 // Reads the counter map. A device from before per-series counters holds a bare scalar
 // here — `getJson` parses it back as a number — which is that device's count under the
@@ -149,8 +153,8 @@ async function migrateLegacyCounter(key, previousSeries) {
 // Under the letter scheme a fresh pair has nothing to seed from and simply starts at
 // 00001 — that is the point of a fresh letter (ADR 0017 #3). It still matters for a
 // pair the server HAS seen: taking the max protects a device that is ahead of the
-// server because it is holding receipts it has not drained yet, and it is what makes an
-// ADR 0016 replacement tablet continue a slot's numbering rather than reprint it.
+// server because it is holding receipts it has not drained yet, or that reinstalled the
+// app and would otherwise restart a series it has printed paper for.
 async function seedSequence(key, series, next) {
   if (!series || !Number.isInteger(next) || next < 1) return;
   const counters = await readCounters(key, series);
@@ -163,26 +167,26 @@ async function seedSequence(key, series, next) {
 
 async function persistRegistration(deviceKey, registered) {
   const previous = await getStation();
-  const previousStation = previous?.station_number;
 
-  // Pre-ADR-0016 servers answer with station_number and no slot. Honoured only when it
-  // is already inside 1-3, so a new client keeps working against an old server during
-  // the deploy window without ever being able to print a station this store does not
-  // have. A device with no usable number simply cannot sell, which is recoverable,
-  // whereas an out-of-range number on paper is not.
-  const legacy = registered?.station_number;
-  const slot = Number.isInteger(registered?.slot_number)
-    ? registered.slot_number
-    : (Number.isInteger(legacy) && legacy >= 1 && legacy <= 3 ? legacy : null);
+  // Whatever number this device already holds it keeps. Nothing on the server hands one
+  // out since ADR 0017 removed the slot concept, so re-deriving it from the response
+  // would only ever blank it — and blanking it would strand a tablet mid-switchover that
+  // is still numbering its receipts from it (see the file header).
+  const held = Number.isInteger(previous?.station_number) ? previous.station_number : null;
 
   const station = {
     device_key: deviceKey,
-    station_number: slot,
-    slot_number: Number.isInteger(registered?.slot_number) ? registered.slot_number : null,
-    owner_name: registered?.owner_name ?? null,
-    registered_at: registered?.registered_at ?? null,
+    station_number: held,
+    registered_at: registered?.registered_at ?? previous?.registered_at ?? null,
   };
   await nativeStore.setJson(STATION_KEY, station);
+
+  // The one-time counter upgrade, run BEFORE anything is seeded (seeding writes the same
+  // key). A pre-per-series device holds a bare scalar, and it belongs to the series that
+  // device was working — never to a letter series it is only now being handed.
+  const heldSeries = held === null ? null : String(held);
+  await migrateLegacyCounter(SEQUENCE_KEY, heldSeries);
+  await migrateLegacyCounter(DELIVERY_SEQUENCE_KEY, heldSeries);
 
   // ADR 0017 — the half that actually numbers receipts from here on.
   const identity = await persistDeviceLetter(registered);
@@ -191,25 +195,16 @@ async function persistRegistration(deviceKey, registered) {
     await seedSequence(SEQUENCE_KEY, series, registered?.next_pair_sequence);
     await seedSequence(DELIVERY_SEQUENCE_KEY, series, registered?.next_pair_delivery_sequence);
   }
-
-  // ADR 0016 slots, still maintained for the switchover window (see the file header).
-  if (slot !== null) {
-    const previousSeries = Number.isInteger(previousStation) ? String(previousStation) : null;
-    await migrateLegacyCounter(SEQUENCE_KEY, previousSeries);
-    await migrateLegacyCounter(DELIVERY_SEQUENCE_KEY, previousSeries);
-    await seedSequence(SEQUENCE_KEY, String(slot), registered?.next_sequence);
-    await seedSequence(DELIVERY_SEQUENCE_KEY, String(slot), registered?.next_delivery_sequence);
-  }
   return station;
 }
 
 // True once this device can issue a receipt number AT ALL for whoever is signed in —
-// either because that person holds a letter here (ADR 0017) or because the device still
-// holds an ADR 0016 slot.
+// either because that person holds a letter here (ADR 0017) or because the device is
+// still carrying a pre-letter station number of its own.
 //
-// Deliberately NOT what the boot loop in index.js gates its retry on: a slot-only device
-// can sell, but only under the slot's number, which belongs to whoever that slot is. The
-// loop keeps re-registering until `getReceiptIdentity()` answers.
+// Deliberately NOT what the boot loop in index.js gates its retry on: a device on the
+// old number can sell, but it sells under a number that belongs to whoever that device
+// was set up for. The loop keeps re-registering until `getReceiptIdentity()` answers.
 export async function isRegistered() {
   if (await getReceiptIdentity()) return true;
   const station = await getStation();
@@ -259,35 +254,6 @@ export async function ensureStationRegistered({ label } = {}) {
   }
 }
 
-// ── ADR 0016 slot administration (legacy) ───────────────────────────────────
-//
-// ADR 0017 #3 removes the reason these exist: a replacement device signs in and takes a
-// fresh letter, so there is no slot to move and no admin action to take. They are kept
-// only while tablets are still being updated one at a time (ADR 0014), because an
-// un-updated tablet is still numbering its receipts from a slot. Nothing on the letter
-// path calls them.
-
-// Moves one of the three ADR 0016 slots onto a device. `deviceKey` defaults to this one.
-export async function assignStationSlot(slotNumber, { deviceKey } = {}) {
-  const existing = await getStation();
-  const key = deviceKey || existing?.device_key;
-  if (!key) throw new Error('This device has not registered yet — connect once first.');
-
-  const assigned = await api.post(`/stations/slots/${slotNumber}/assign`, { device_key: key });
-
-  // Only adopt the result locally when the slot went to THIS device; assigning a slot
-  // to some other tablet must not renumber the one doing the assigning.
-  if (!deviceKey || deviceKey === existing?.device_key) {
-    return persistRegistration(key, assigned);
-  }
-  return assigned;
-}
-
-// The three slots, who holds each, and every device registered without one.
-export async function getStationSlots() {
-  return api.get('/stations');
-}
-
 // ── Receipt issuance ────────────────────────────────────────────────────────
 //
 // Issuance is serialised through one promise chain. JavaScript is single-threaded, but
@@ -303,10 +269,11 @@ export const NO_RECEIPT_IDENTITY_MESSAGE =
 
 // Which person and which series this Save issues under.
 //
-// The letter scheme first; the ADR 0016 slot second. That second branch is ADR 0014's
-// switchover window in one place: a tablet updated to this build while offline still
-// holds its slot and keeps selling `3-00061` until it can reach the server, and the
-// server accepts that shape permanently (ADR 0017 #12), so nothing it prints is stranded.
+// The letter scheme first; the number this device was already carrying second. That
+// second branch is ADR 0014's switchover window in one place: a tablet updated to this
+// build while offline keeps selling `3-00061` until it can reach the server, and the
+// server accepts that shape permanently (ADR 0017 #12), so nothing it prints is
+// stranded. It is a fallback only — nothing allocates a number of that shape any more.
 async function resolveIssuingSeries() {
   const identity = await getReceiptIdentity();
   if (identity) {

@@ -8,7 +8,7 @@
 // (ADR 0017 #12):
 //   `#1240`    the ~1,300 legacy orders — no receipt number at all, shown as `#<id>`
 //              by orderRef()
-//   `3-00061`  the ADR 0016 slot scheme — a station number and no letter
+//   `3-00061`  the pre-letter scheme (ADR 0016's now-removed slots) — no letter
 //   `3A-00001` this scheme
 // The letter is therefore OPTIONAL in every parser here, and stays optional forever:
 // old-format acceptance is never removed (ADR 0014's ADR-0017 switchover ordering).
