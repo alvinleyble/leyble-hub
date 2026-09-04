@@ -45,8 +45,9 @@ function formatReceiptNumber(station, sequence) {
 // ── Delivery references (ADR 0015 §8) ───────────────────────────────────────
 //
 // `<station>-DEL-<sequence>`, e.g. `1-DEL-00007`. Same role as a receipt number — a
-// device-issued identity that doubles as the anti-duplicate key for a resent outbox
-// record — stored in the same decomposed pair on supplier_deliveries (migration 036).
+// device-issued identity, unique and stable (the resend key is separate since ADR 0017
+// #9; see lib/idempotency.js) — stored in the same decomposed pair on
+// supplier_deliveries (migration 036).
 // The `DEL` infix keeps the two series from ever being read as one another.
 
 const DELIVERY_REF_RE = /^(\d{1,9})-DEL-(\d{1,9})$/i;

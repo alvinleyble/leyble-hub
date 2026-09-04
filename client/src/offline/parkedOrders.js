@@ -12,8 +12,9 @@ import { api } from '../api/client.js';
 // park here instead — as an ordinary queued 'order' outbox record whose payload
 // carries status: 'draft', the exact shape POST /orders already accepts online.
 //
-// It gets a device-issued receipt number purely as its local identity and anti-
-// duplicate key (D13) — server/src/lib/idempotency.js is deliberately table-agnostic
+// It gets a device-issued receipt number purely as its local identity (the resend key
+// is the outbox record's own request_key, ADR 0017 #9 — see requestKeys.js), and the
+// route it posts to is the ordinary one: idempotency.js is deliberately table-agnostic
 // over any orders row, drafts included, so this is the mechanism already built for
 // it, not a new one. It is never shown to the owners as a printed receipt number,
 // since a draft is never printed; the UI labels it plainly as a draft reference.

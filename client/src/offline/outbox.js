@@ -4,6 +4,7 @@ import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
 import { markOffline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
+import { newRequestKey } from './requestKeys.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -37,7 +38,9 @@ async function nextRecordId() {
  * @param {string}   rec.profileKey   D14 — the profile ACTIVE AT SAVE, captured here
  *                                    and replayed on drain. Never the profile that
  *                                    happens to be on the tablet when the line returns.
- * @param {string}  [rec.receiptNumber] D13 — the record's identity for resend safety.
+ * @param {string}  [rec.receiptNumber] The receipt number of the sale this record
+ *                                    carries, kept for local lookup. It is NOT the
+ *                                    resend key any more — see `request_key` below.
  * @param {number[]}[rec.dependsOn]   outbox ids that must sync first (D5: a locally
  *                                    created customer before any order referencing her).
  */
@@ -62,6 +65,11 @@ export async function enqueue({
     payload,
     profile_key: profileKey,
     receipt_number: receiptNumber,
+    // ADR 0017 #9 — minted once, here, and resent unchanged on every retry of THIS
+    // record. That is what makes a resend recognisable as a resend without the
+    // receipt number having to carry the job, so two sales that collide on a receipt
+    // number stay two sales instead of the second vanishing into the first.
+    request_key: newRequestKey(),
     depends_on: dependsOn,
     status: QUEUED,
     attempts: 0,
@@ -190,6 +198,24 @@ async function pruneRefs(remaining) {
 
 // ── Draining ────────────────────────────────────────────────────────────────
 
+// ADR 0017 #9 — the retry key rides on the body of every POST the outbox sends.
+//
+// Injected here rather than baked into each caller's payload so that every queued
+// create is covered by construction, including ones added later: a route that does not
+// know the field destructures past it, and a route that adopts the mechanism (one entry
+// in server/src/lib/idempotency.js's allowlist) needs nothing on the device at all.
+//
+// Two records deliberately go without. A record queued by a pre-039 build has no
+// `request_key` and must still drain — the server falls back to the receipt number for
+// exactly that case (ADR 0014's mixed-fleet window). And a PATCH or DELETE is not a
+// create: re-sending one is already idempotent, and a queued DELETE that 404s is
+// treated as success further down.
+function withRequestKey(record, body) {
+  if (!record.request_key || record.method !== 'POST') return body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  return { ...body, request_key: record.request_key };
+}
+
 // A thrown error with no HTTP status never reached the server (DNS, no route, a
 // dropped connection, a timeout). That is an outage, not a rejection: the record stays
 // queued and untouched. This is also why the drain must not read a network failure as
@@ -273,7 +299,7 @@ async function runDrainPass() {
 
       let body;
       try {
-        body = await resolvePayload(record.payload);
+        body = withRequestKey(record, await resolvePayload(record.payload));
       } catch (err) {
         if (err.unresolvedRef) {
           // Round 4 Fix 6 safety net — a dependency still present in the outbox

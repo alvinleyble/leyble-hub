@@ -89,8 +89,10 @@ async function migrateLegacyCounter(key, previousStation) {
 //
 // This is what makes a replacement tablet continue Josie's numbering instead of
 // restarting it at 00001 — restarting would re-issue numbers the old tablet already
-// printed, and the idempotency check (ADR 0006) would then answer each new order with
-// the OLD order stored under that number. Taking the max also protects the ordinary
+// printed. Since ADR 0017 #9 that no longer swallows the new order into the old one
+// (the retry key is separate now — see requestKeys.js), but a receipt number is still
+// unique, so the collision surfaces as a 409 the sale cannot sync past until a human
+// re-issues it. Still worth avoiding. Taking the max also protects the ordinary
 // re-confirmation: a tablet holding receipts for THIS slot that it has not drained yet
 // is AHEAD of the server, and must keep its own counter.
 async function seedSequence(key, station, next) {

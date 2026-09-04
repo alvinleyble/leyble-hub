@@ -75,7 +75,8 @@ Base64), `is_active`.
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
-| `receipt_station`, `receipt_sequence` | the device-issued receipt number, decomposed (033). Nullable — orders predating V2.5 have none and are never backfilled. `CHECK` keeps the pair whole; a **partial** `UNIQUE` index over rows that carry one is the anti-duplicate key for a resent outbox record ([ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)) |
+| `receipt_station`, `receipt_sequence` | the device-issued receipt number, decomposed (033). Nullable — orders predating V2.5 have none and are never backfilled. `CHECK` keeps the pair whole, and a **partial** `UNIQUE` index over rows that carry one keeps the number unique ([ADR 0010](../adr/0010-receipt-number-addresses-order-across-sync-boundary.md)). Since 039 it is no longer the retry key — see `request_key` |
+| `request_key` | the anti-duplicate key for a **resent outbox record** (039, [ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #9 revising [ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)). Minted on the device once per outbox record and resent unchanged on every retry of it; partial `UNIQUE` over rows that carry one. Nullable: absent for anything a connected client posted, and for a record queued by a pre-039 build, which still dedupes on the receipt number |
 | `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1-00042'`, derived from the pair above. Never written to |
 | `created_at` | the **sale time**. Supplied by the device on a local-first save (same pattern as `supplier_deliveries.received_at`); defaults to `NOW()` otherwise |
 
@@ -118,10 +119,14 @@ One row per device that has registered ([ADR 0003](../adr/0003-device-issued-rec
 | `label` | optional, e.g. `'Honor Pad X8B'` |
 | `registered_at`, `last_seen_at` | |
 
-### `supplier_deliveries` (008, altered by 029)
+### `supplier_deliveries` (008, altered by 029, 036, 039)
 Incoming stock events. `supplier_name`, `notes`, `received_at`, `created_by`. Soft-void columns
 `voided_at` / `voided_by` (029) — deliveries are **never hard-deleted** (their
 `inventory_audit_logs` rows are append-only); voiding reverses the restock and hides the row.
+Carries the same device-identity columns as `orders`, with the same meanings and the same
+partial unique indexes: `receipt_station` / `receipt_sequence` + `GENERATED delivery_ref`
+(`'1-DEL-00007'`, 036) and `request_key` (039). Deliberately identical column names — that
+is what lets `server/src/lib/idempotency.js` cover both tables from one allowlist.
 
 ### `supplier_delivery_items` (009, altered by 022)
 `delivery_id` (CASCADE), `product_id`, `quantity_received` NUMERIC(10,2) (022), `unit_cost`,

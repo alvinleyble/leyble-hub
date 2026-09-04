@@ -14,12 +14,13 @@ import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 // reconciliation machinery.
 //
 // The delivery carries a device-issued reference, `<station>-DEL-<seq>` (station.js),
-// which is its identity and therefore its anti-duplicate key: a resent record arrives
-// at a POST /incoming that already holds that reference and is answered with the
-// stored delivery and a 200, exactly as ADR 0006 does for receipt numbers. The
-// mechanism in server/src/lib/idempotency.js is table-agnostic and always anticipated
-// this second table; migration 036 gives supplier_deliveries the column pair and
-// partial unique index it needs to join in.
+// which is its identity — what a human names it by. What makes a RESEND safe is the
+// outbox record's own request_key (ADR 0017 #9, requestKeys.js): a resent record
+// arrives at a POST /incoming that already holds that key and is answered with the
+// stored delivery and a 200, never a second truckload of stock. The mechanism in
+// server/src/lib/idempotency.js is table-agnostic and always anticipated this second
+// table; migrations 036 and 039 give supplier_deliveries the columns and partial
+// unique indexes it needs to join in.
 //
 // EDITING an already-synced delivery and VOIDING one stay online-only (§8): a void
 // reverses stock movements on a record other devices can see, which is the same shape

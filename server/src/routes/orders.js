@@ -5,11 +5,16 @@ const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber } = require('../lib/receiptNumbers');
 const { assertIssuableStation } = require('../lib/stationSlots');
-const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
+const {
+  normalizeRequestKey, findByRequestKey, findByReceiptNumber,
+  isDuplicateRequestKey, isDuplicateReceiptNumber,
+} = require('../lib/idempotency');
 
 // Name of the partial unique index from migration 033. Used to tell a genuine
 // duplicate receipt number apart from any other unique violation.
 const RECEIPT_NUMBER_INDEX = 'orders_receipt_number_uniq';
+// Migration 039's partial unique index over the retry key (ADR 0017 #9).
+const REQUEST_KEY_INDEX = 'orders_request_key_uniq';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -507,19 +512,24 @@ router.get('/sync', async (req, res, next) => {
 
 // POST /api/v1/orders — creates a Pending order; no stock check
 //
-// Two optional fields carry the device's version of the truth when the order was
-// created locally (V2.5, D1/D5/D13). Both are absent for an order created straight
-// from a connected client, which behaves exactly as before:
-//   receipt_number  '<station>-<sequence>' issued on the device at Save. It is the
-//                   record's identity, so a resend of a number already stored is
-//                   answered with the stored order and a 200 rather than a second row.
+// Three optional fields carry the device's version of the truth when the order was
+// created locally (V2.5, D1/D5/D13; ADR 0017 #9). All are absent for an order created
+// straight from a connected client, which behaves exactly as before:
+//   request_key     the retry key: generated on the device once per outbox record and
+//                   resent unchanged on every retry OF THAT RECORD. It is the record's
+//                   identity here, so a resend of a key already stored is answered with
+//                   the stored order and a 200 rather than a second row.
+//   receipt_number  '<station>-<sequence>' issued on the device at Save. It names the
+//                   SALE, and stays unique and the route identifier (ADR 0010) — but it
+//                   is no longer what a retry is recognised by. With no request_key it
+//                   still is, as the fallback for a pre-039 queued record.
 //   created_at      the device's clock at Save — the sale time printed on the paper
 //                   the customer is holding, not the moment the outbox drained. Same
 //                   pattern as supplier_deliveries.received_at. No clock policing.
 router.post('/', async (req, res, next) => {
   const {
     customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
-    receipt_number, created_at, adjustment = 0, adjustment_reason,
+    receipt_number, request_key, created_at, adjustment = 0, adjustment_reason,
   } = req.body;
   const isDraft = status === 'draft';
 
@@ -528,6 +538,13 @@ router.post('/', async (req, res, next) => {
   if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
   // A finalized order needs at least one item; a draft may be parked while still empty.
   if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
+
+  let requestKey = null;
+  try {
+    requestKey = normalizeRequestKey(request_key);
+  } catch (err) {
+    return next(err);
+  }
 
   let receipt = null;
   if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
@@ -541,9 +558,26 @@ router.post('/', async (req, res, next) => {
     } catch (err) {
       return next(err);
     }
-    // The ordinary resend: the first attempt committed and only the response was lost.
+  }
+
+  // The ordinary resend: the first attempt committed and only the response was lost.
+  //
+  // ADR 0017 #9 — keyed on the retry key when the device sent one, and ONLY on it. The
+  // receipt number is deliberately not consulted in that case: two sales that collide
+  // on a receipt number are two sales, and answering the second with the first one's
+  // stored order is the silent data loss this decision exists to end. Such a collision
+  // now hits the receipt-number unique index below and is refused, loudly.
+  //
+  // With no retry key, the receipt number is still the identity — the fallback for an
+  // outbox record queued by a pre-039 build and still waiting to drain (ADR 0014's
+  // mixed-fleet window). Never removed.
+  const dedupeBy = requestKey
+    ? () => findByRequestKey(db, 'orders', requestKey)
+    : (receipt ? () => findByReceiptNumber(db, 'orders', receipt) : null);
+
+  if (dedupeBy) {
     try {
-      const existingId = await findByReceiptNumber(db, 'orders', receipt);
+      const existingId = await dedupeBy();
       if (existingId) return res.json(await getFullOrder(existingId));
     } catch (err) {
       return next(err);
@@ -568,11 +602,12 @@ router.post('/', async (req, res, next) => {
 
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
-                           receipt_station, receipt_sequence, created_at, adjustment, adjustment_reason)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()), $8, $9)
+                           receipt_station, receipt_sequence, request_key, created_at,
+                           adjustment, adjustment_reason)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()), $9, $10)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
-       receipt?.station ?? null, receipt?.sequence ?? null, created_at || null,
+       receipt?.station ?? null, receipt?.sequence ?? null, requestKey, created_at || null,
        adjNum, adjReason]
     );
 
@@ -599,16 +634,37 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(await getFullOrder(order.id));
   } catch (err) {
     await client.query('ROLLBACK');
-    // Two drain attempts overlapping: both looked, neither found, both inserted. The
-    // partial unique index caught this one, so answer it with the row the winner
-    // wrote — a success, so the device clears it from the outbox and stops retrying.
-    if (receipt && isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX)) {
+    // Two drain attempts of the SAME record overlapping: both looked, neither found,
+    // both inserted. A partial unique index caught this one, so answer it with the row
+    // the winner wrote — a success, so the device clears it from the outbox and stops
+    // retrying.
+    //
+    // Either index can be the one that fires, and which one Postgres reports first is
+    // not ours to predict: an identical resend collides on the retry key AND on the
+    // receipt number. So the constraint name only decides whether to look; `dedupeBy`
+    // (keyed on the retry key whenever the device sent one) decides what it was. A row
+    // carrying this request's own key means the winner was this same record.
+    if (dedupeBy && (isDuplicateRequestKey(err, REQUEST_KEY_INDEX)
+                  || isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX))) {
       try {
-        const existingId = await findByReceiptNumber(db, 'orders', receipt);
+        const existingId = await dedupeBy();
         if (existingId) return res.json(await getFullOrder(existingId));
       } catch (lookupErr) {
         return next(lookupErr);
       }
+    }
+    // ADR 0017 #9 — the lookup above found nothing under this request's own retry key,
+    // so the row that won the index is a DIFFERENT record arriving on a receipt number
+    // that is already stored. Two separate sales wearing one label: not a retry, so it
+    // must not be answered with the stored order, and not a 500 either, which would
+    // stall the whole outbox behind it. A 409 lands the record in the device's needs-attention list
+    // carrying this reason, where a human decides — ambiguous and recoverable, which is
+    // the whole point of splitting the retry key off the receipt number.
+    if (requestKey && receipt && isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX)) {
+      return res.status(409).json({
+        error: `Receipt number ${receipt_number} is already used by a different order. `
+             + 'Two orders cannot share a receipt number — re-issue this one.',
+      });
     }
     next(err);
   } finally {
