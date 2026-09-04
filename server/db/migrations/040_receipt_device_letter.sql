@@ -19,14 +19,26 @@
 -- expression reproduces today's value byte for byte whenever the letter is absent,
 -- and the rebuilt index keeps its name so the route code that recognises its unique
 -- violation is unaffected.
+--
+-- EVERY statement below is guarded so a second run against an already-migrated
+-- database is a no-op, and so is a run against a database that reached this shape
+-- some other way. The end state is identical whichever path the database arrives
+-- by. This is not decoration: a copy of this change was applied by hand to the
+-- shared development database before it merged (2026-09-04), which left that
+-- database unable to replay the migration at all.
 
 -- ── orders ──────────────────────────────────────────────────────────────────
 
-ALTER TABLE orders ADD COLUMN receipt_device VARCHAR(2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS receipt_device VARCHAR(2);
 
 -- Letters only, and never a letter without the person number it qualifies.
+-- CHECK constraints have no ADD ... IF NOT EXISTS, so each is dropped by name
+-- first; re-adding re-validates against the existing rows, which is the same work
+-- the first run did.
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_receipt_device_shape;
 ALTER TABLE orders ADD CONSTRAINT orders_receipt_device_shape
   CHECK (receipt_device IS NULL OR receipt_device ~ '^[A-Z]{1,2}$');
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_receipt_device_requires_station;
 ALTER TABLE orders ADD CONSTRAINT orders_receipt_device_requires_station
   CHECK (receipt_device IS NULL OR receipt_station IS NOT NULL);
 
@@ -43,8 +55,10 @@ ALTER TABLE orders ADD CONSTRAINT orders_receipt_device_requires_station
 --
 -- The index keeps the name migration 033 gave it: server/src/routes/orders.js reads
 -- err.constraint against RECEIPT_NUMBER_INDEX to tell a duplicate receipt number
--- apart from any other unique violation.
-DROP INDEX orders_receipt_number_uniq;
+-- apart from any other unique violation. Dropping by name and recreating is safe on
+-- a re-run precisely because the name is stable — the index that comes back is the
+-- COALESCE form either way, so the NULLS-safe uniqueness above is never left off.
+DROP INDEX IF EXISTS orders_receipt_number_uniq;
 CREATE UNIQUE INDEX orders_receipt_number_uniq
   ON orders (receipt_station, COALESCE(receipt_device, ''), receipt_sequence)
   WHERE receipt_station IS NOT NULL;
@@ -56,36 +70,75 @@ CREATE UNIQUE INDEX orders_receipt_number_uniq
 --
 -- With no letter this produces exactly what migration 033 produced, which is what
 -- keeps every already-issued number unchanged.
-ALTER TABLE orders DROP COLUMN receipt_number;
-ALTER TABLE orders
-  ADD COLUMN receipt_number TEXT GENERATED ALWAYS AS (
-    CASE
-      WHEN receipt_station IS NULL THEN NULL
-      ELSE receipt_station::TEXT || COALESCE(receipt_device, '')
-           || '-' || LPAD(receipt_sequence::TEXT, 5, '0')
-    END
-  ) STORED;
+--
+-- Unlike the adds above, this one cannot simply be repeated: DROP COLUMN is
+-- unconditionally destructive, and re-running it would rewrite the whole table to
+-- recompute a column that is already correct. So it is guarded on the only thing
+-- that actually distinguishes the two shapes — whether the stored generation
+-- expression already reads receipt_device. Already rebuilt: skip. Anything else
+-- (the 033 expression, or no column at all): rebuild.
+DO $do$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute a
+    JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = 'orders'::regclass
+      AND a.attname = 'receipt_number'
+      AND a.attgenerated = 's'
+      AND NOT a.attisdropped
+      AND pg_get_expr(d.adbin, d.adrelid) LIKE '%receipt_device%'
+  ) THEN
+    ALTER TABLE orders DROP COLUMN IF EXISTS receipt_number;
+    ALTER TABLE orders
+      ADD COLUMN receipt_number TEXT GENERATED ALWAYS AS (
+        CASE
+          WHEN receipt_station IS NULL THEN NULL
+          ELSE receipt_station::TEXT || COALESCE(receipt_device, '')
+               || '-' || LPAD(receipt_sequence::TEXT, 5, '0')
+        END
+      ) STORED;
+  END IF;
+END
+$do$;
 
 -- ── supplier_deliveries (same pair since migration 036, same treatment) ──────
 
-ALTER TABLE supplier_deliveries ADD COLUMN receipt_device VARCHAR(2);
+ALTER TABLE supplier_deliveries ADD COLUMN IF NOT EXISTS receipt_device VARCHAR(2);
 
+ALTER TABLE supplier_deliveries DROP CONSTRAINT IF EXISTS supplier_deliveries_receipt_device_shape;
 ALTER TABLE supplier_deliveries ADD CONSTRAINT supplier_deliveries_receipt_device_shape
   CHECK (receipt_device IS NULL OR receipt_device ~ '^[A-Z]{1,2}$');
+ALTER TABLE supplier_deliveries DROP CONSTRAINT IF EXISTS supplier_deliveries_receipt_device_requires_station;
 ALTER TABLE supplier_deliveries ADD CONSTRAINT supplier_deliveries_receipt_device_requires_station
   CHECK (receipt_device IS NULL OR receipt_station IS NOT NULL);
 
-DROP INDEX supplier_deliveries_receipt_number_uniq;
+DROP INDEX IF EXISTS supplier_deliveries_receipt_number_uniq;
 CREATE UNIQUE INDEX supplier_deliveries_receipt_number_uniq
   ON supplier_deliveries (receipt_station, COALESCE(receipt_device, ''), receipt_sequence)
   WHERE receipt_station IS NOT NULL;
 
-ALTER TABLE supplier_deliveries DROP COLUMN delivery_ref;
-ALTER TABLE supplier_deliveries
-  ADD COLUMN delivery_ref TEXT GENERATED ALWAYS AS (
-    CASE
-      WHEN receipt_station IS NULL THEN NULL
-      ELSE receipt_station::TEXT || COALESCE(receipt_device, '')
-           || '-DEL-' || LPAD(receipt_sequence::TEXT, 5, '0')
-    END
-  ) STORED;
+DO $do$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_attribute a
+    JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = 'supplier_deliveries'::regclass
+      AND a.attname = 'delivery_ref'
+      AND a.attgenerated = 's'
+      AND NOT a.attisdropped
+      AND pg_get_expr(d.adbin, d.adrelid) LIKE '%receipt_device%'
+  ) THEN
+    ALTER TABLE supplier_deliveries DROP COLUMN IF EXISTS delivery_ref;
+    ALTER TABLE supplier_deliveries
+      ADD COLUMN delivery_ref TEXT GENERATED ALWAYS AS (
+        CASE
+          WHEN receipt_station IS NULL THEN NULL
+          ELSE receipt_station::TEXT || COALESCE(receipt_device, '')
+               || '-DEL-' || LPAD(receipt_sequence::TEXT, 5, '0')
+        END
+      ) STORED;
+  END IF;
+END
+$do$;

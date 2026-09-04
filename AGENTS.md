@@ -75,6 +75,14 @@ than treating a passing run as "all correct".
 
 ### Database
 - Migrations live in `server/db/migrations/NNN_name.sql`. **Never modify an applied migration** — always add a new one.
+- **Prove a schema change against a local throwaway database, never against the shared development
+  database** (the `createdb` recipe under [Tests](#tests) is the whole setup). The shared development
+  database is only ever brought forward by a migration that has already merged — applying an unmerged
+  change to it by hand puts it ahead of the landed code, so the migration can no longer replay there.
+- Guard every migration statement so a re-run is a no-op (`IF NOT EXISTS` / `IF EXISTS`, `DROP
+  CONSTRAINT IF EXISTS` before `ADD CONSTRAINT`, a `DO` block around a generated-column rebuild),
+  and make the end state identical whichever path a database arrives by. Reference:
+  [040_receipt_device_letter.sql](server/db/migrations/040_receipt_device_letter.sql).
 - `inventory_audit_logs`, `customer_product_prices`, and `activity_logs` are **append-only** — never `UPDATE` or `DELETE` these tables.
 - `order_items.line_total` is a PostgreSQL `GENERATED` column — never write to it directly. Since migration 023 the formula is `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee` (deposit charged on un-returned bottles).
 - Multiple personnel per order via `order_personnel` join table (not FK columns on `orders`).
