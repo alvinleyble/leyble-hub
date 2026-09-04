@@ -4,6 +4,7 @@
   "description": "Leyble Hub API — beverage distributor internal admin",
   "main": "src/index.js",
   "scripts": {
+    "prestart": "node db/migrate.js",
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "node --test --test-concurrency=1 test/**/*.test.js",
