@@ -199,11 +199,25 @@ test('concurrent Saves never receive the same number', async () => {
   assert.equal(numbers.includes('3-00025'), true);
 });
 
-test('two stations issue the same sequence under different numbers', async () => {
+test('two people issue the same sequence under different numbers', async () => {
   assert.equal(formatReceiptNumber(1, 42), '1-00042');
   assert.equal(formatReceiptNumber(2, 42), '2-00042');
-  assert.deepEqual(parseReceiptNumber('2-00042'), { station: 2, sequence: 42 });
+  assert.deepEqual(parseReceiptNumber('2-00042'), { station: 2, device: null, sequence: 42 });
   assert.equal(parseReceiptNumber('nonsense'), null);
+});
+
+// ADR 0017 — a device letter separates one person's own devices, and the pre-letter
+// shape keeps parsing forever alongside it (three formats coexist permanently, #12).
+// No letter is allocated here; this is the parser accepting one when a later slice
+// starts issuing it.
+test('the same person on two devices issues distinguishable numbers', async () => {
+  assert.equal(formatReceiptNumber(1, 42, 'A'), '1A-00042');
+  assert.equal(formatReceiptNumber(1, 42, 'b'), '1B-00042', 'the letter is normalised to upper case');
+  assert.deepEqual(parseReceiptNumber('1A-00042'), { station: 1, device: 'A', sequence: 42 });
+  assert.deepEqual(parseReceiptNumber('1a-00042'), { station: 1, device: 'A', sequence: 42 });
+  assert.deepEqual(parseReceiptNumber('1AB-00042'), { station: 1, device: 'AB', sequence: 42 });
+  assert.equal(parseReceiptNumber('1A-DEL-00042'), null, 'a delivery reference is never a receipt number');
+  assert.equal(parseReceiptNumber('A-00042'), null);
 });
 
 test('a device with no station cannot issue a receipt number', async () => {

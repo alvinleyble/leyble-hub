@@ -10,8 +10,9 @@ const {
   isDuplicateRequestKey, isDuplicateReceiptNumber,
 } = require('../lib/idempotency');
 
-// Name of the partial unique index from migration 033. Used to tell a genuine
-// duplicate receipt number apart from any other unique violation.
+// Name of the partial unique index from migration 033, rebuilt over the device
+// letter by migration 040 under the same name. Used to tell a genuine duplicate
+// receipt number apart from any other unique violation.
 const RECEIPT_NUMBER_INDEX = 'orders_receipt_number_uniq';
 // Migration 039's partial unique index over the retry key (ADR 0017 #9).
 const REQUEST_KEY_INDEX = 'orders_request_key_uniq';
@@ -48,16 +49,28 @@ function orderLabel(order) {
   return order?.receipt_number ? order.receipt_number : `#${order?.id}`;
 }
 
-// Resolves an order identifier (either numeric DB id or '<station>-<sequence>' receipt number)
-// to the order row id.
+// Resolves an order identifier to the order row id. It has to answer for all three
+// shapes that coexist permanently (ADR 0017 #12), because a receipt number is how an
+// order is addressed across the sync boundary (ADR 0010) and old-format acceptance is
+// never removed (ADR 0014's ADR-0017 switchover ordering, step 4):
+//   '1A-00042'  a receipt number carrying a device letter
+//   '3-00061'   a receipt number from the pre-letter slot scheme
+//   '1240'      a bare row id — every legacy order, which never had a receipt number
+//
+// The letter is matched through the same COALESCE the partial unique index uses, so
+// '3-00061' finds only the letterless row and never a '3A-00061' belonging to a
+// different device.
 async function resolveOrderId(runner, param) {
   if (param === undefined || param === null) return null;
   const str = String(param).trim();
-  if (/^\d{1,9}-\d{1,9}$/.test(str)) {
-    const [station, sequence] = str.split('-').map(Number);
+  const receipt = /^(\d{1,9})([A-Za-z]{0,2})-(\d{1,9})$/.exec(str);
+  if (receipt) {
     const { rows: [row] } = await runner.query(
-      'SELECT id FROM orders WHERE receipt_station = $1 AND receipt_sequence = $2',
-      [station, sequence]
+      `SELECT id FROM orders
+        WHERE receipt_station = $1
+          AND COALESCE(receipt_device, '') = $2
+          AND receipt_sequence = $3`,
+      [Number(receipt[1]), receipt[2].toUpperCase(), Number(receipt[3])]
     );
     return row ? row.id : null;
   }
@@ -519,10 +532,13 @@ router.get('/sync', async (req, res, next) => {
 //                   resent unchanged on every retry OF THAT RECORD. It is the record's
 //                   identity here, so a resend of a key already stored is answered with
 //                   the stored order and a 200 rather than a second row.
-//   receipt_number  '<station>-<sequence>' issued on the device at Save. It names the
-//                   SALE, and stays unique and the route identifier (ADR 0010) — but it
-//                   is no longer what a retry is recognised by. With no request_key it
-//                   still is, as the fallback for a pre-039 queued record.
+//   receipt_number  '<person><device letter>-<sequence>' issued on the device at Save,
+//                   or the pre-letter '<person>-<sequence>' from a tablet that has not
+//                   been updated yet — both are accepted, permanently (ADR 0017 #12).
+//                   It names the SALE, and stays unique and the route identifier
+//                   (ADR 0010) — but it is no longer what a retry is recognised by.
+//                   With no request_key it still is, as the fallback for a pre-039
+//                   queued record.
 //   created_at      the device's clock at Save — the sale time printed on the paper
 //                   the customer is holding, not the moment the outbox drained. Same
 //                   pattern as supplier_deliveries.received_at. No clock policing.
@@ -549,11 +565,12 @@ router.post('/', async (req, res, next) => {
   let receipt = null;
   if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
     try {
+      // Accepts both shapes: '3-00061' from a tablet that has not been updated yet and
+      // '3A-00001' from one that has (ADR 0017 #12, ADR 0014's switchover ordering).
       receipt = parseReceiptNumber(receipt_number);
-      // ADR 0016 — the station component must be one of this store's three slots.
-      // The allocator already guarantees it for any device on a current build; this is
-      // the backstop for a tablet still carrying a station number it claimed under the
-      // old unbounded scheme, which would otherwise store (and print) e.g. '8-00001'.
+      // The leading component is a person (ADR 0017 #1). This is the backstop against
+      // a garbled or impossible one; it no longer caps at ADR 0016's three slots,
+      // because a fourth person's first sale would otherwise be rejected here.
       assertIssuableStation(receipt.station);
     } catch (err) {
       return next(err);
@@ -602,13 +619,13 @@ router.post('/', async (req, res, next) => {
 
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
-                           receipt_station, receipt_sequence, request_key, created_at,
-                           adjustment, adjustment_reason)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()), $9, $10)
+                           receipt_station, receipt_device, receipt_sequence, request_key,
+                           created_at, adjustment, adjustment_reason)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
-       receipt?.station ?? null, receipt?.sequence ?? null, requestKey, created_at || null,
-       adjNum, adjReason]
+       receipt?.station ?? null, receipt?.device ?? null, receipt?.sequence ?? null,
+       requestKey, created_at || null, adjNum, adjReason]
     );
 
     await insertItems(client, order.id, items, isDraft);

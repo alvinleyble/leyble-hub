@@ -99,9 +99,11 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     return key;
   }
 
-  // ADR 0016 caps the station component at this store's three slots, so tests vary
-  // their SEQUENCE rather than their station to stay unique across re-runs against a
-  // reused database. Everything below stays inside 1, 2, 3.
+  // Tests vary their SEQUENCE rather than their station to stay unique across re-runs
+  // against a reused database. `testReceipt` issues the pre-letter format on purpose —
+  // this suite is what pins that a tablet which has NOT been updated is still served
+  // (ADR 0014's ADR-0017 switchover ordering); the letter format is covered in
+  // v3-s17-both-receipt-formats.test.js.
   let sequenceSeed = Date.now() % 80000;
   const testReceipt = (slot = 1) => `${slot}-${String(++sequenceSeed).padStart(5, '0')}`;
 
@@ -229,13 +231,22 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.equal(res.status, 400);
     });
 
-    it('refuses an order whose receipt number comes from a station above 3', async () => {
-      const res = await call('/orders', {
+    // ADR 0017 supersedes the cap this used to pin. The leading component is now a
+    // PERSON, not a device slot, and a new hire takes the next number — so refusing
+    // anything above 3 would reject a fourth person's very first sale. What
+    // assertIssuableStation still refuses is a value that cannot be a person at all.
+    it('accepts a receipt number from a person above 3, and still refuses a nonsense one', async () => {
+      const ok = await call('/orders', {
         method: 'POST',
         body: JSON.stringify(orderBody({ receipt_number: `8-${String(++sequenceSeed).padStart(5, '0')}` })),
       });
-      assert.equal(res.status, 400);
-      assert.match((await res.json()).error, /1, 2 or 3/);
+      assert.equal(ok.status, 201, 'a fourth person must not be rejected at POST /orders');
+
+      const bad = await call('/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderBody({ receipt_number: `0-${String(++sequenceSeed).padStart(5, '0')}` })),
+      });
+      assert.equal(bad.status, 400);
     });
   });
 

@@ -75,9 +75,10 @@ Base64), `is_active`.
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
-| `receipt_station`, `receipt_sequence` | the device-issued receipt number, decomposed (033). Nullable — orders predating V2.5 have none and are never backfilled. `CHECK` keeps the pair whole, and a **partial** `UNIQUE` index over rows that carry one keeps the number unique ([ADR 0010](../adr/0010-receipt-number-addresses-order-across-sync-boundary.md)). Since 039 it is no longer the retry key — see `request_key` |
+| `receipt_station`, `receipt_device`, `receipt_sequence` | the device-issued receipt number, decomposed (033; the letter added by 040). `receipt_station` is the **person** and `receipt_device` their device letter ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md)). All three are nullable — orders predating V2.5 have none, orders from the pre-letter slot scheme have no letter, and neither is ever backfilled. `CHECK`s keep the station/sequence pair whole and the letter shaped `[A-Z]{1,2}` and never orphaned. Since 039 this is no longer the retry key — see `request_key` |
+| `orders_receipt_number_uniq` | a **partial** `UNIQUE` over rows that carry a receipt number, keeping the number itself unique ([ADR 0010](../adr/0010-receipt-number-addresses-order-across-sync-boundary.md)). Since 040 the letter goes through `COALESCE(receipt_device, '')` **inside the index expression** — without that, NULL-is-distinct would silently stop the index protecting every pre-letter row. Match it the same way in any query that looks a receipt number up |
 | `request_key` | the anti-duplicate key for a **resent outbox record** (039, [ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #9 revising [ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)). Minted on the device once per outbox record and resent unchanged on every retry of it; partial `UNIQUE` over rows that carry one. Nullable: absent for anything a connected client posted, and for a record queued by a pre-039 build, which still dedupes on the receipt number |
-| `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1-00042'`, derived from the pair above. Never written to |
+| `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1A-00042'`, or `'1-00042'` with no letter. Derived from the three columns above; never written to. **Never `ORDER BY` it** — `#1240`, `3-00061` and `3A-00001` coexist permanently and do not sort as text ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #12) |
 | `created_at` | the **sale time**. Supplied by the device on a local-first save (same pattern as `supplier_deliveries.received_at`); defaults to `NOW()` otherwise |
 
 > `driver_id` / `helper_id` FK columns were **dropped** (016) — personnel are now in the
@@ -119,14 +120,18 @@ One row per device that has registered ([ADR 0003](../adr/0003-device-issued-rec
 | `label` | optional, e.g. `'Honor Pad X8B'` |
 | `registered_at`, `last_seen_at` | |
 
-### `supplier_deliveries` (008, altered by 029, 036, 039)
+### `supplier_deliveries` (008, altered by 029, 036, 039, 040)
 Incoming stock events. `supplier_name`, `notes`, `received_at`, `created_by`. Soft-void columns
 `voided_at` / `voided_by` (029) — deliveries are **never hard-deleted** (their
 `inventory_audit_logs` rows are append-only); voiding reverses the restock and hides the row.
 Carries the same device-identity columns as `orders`, with the same meanings and the same
-partial unique indexes: `receipt_station` / `receipt_sequence` + `GENERATED delivery_ref`
-(`'1-DEL-00007'`, 036) and `request_key` (039). Deliberately identical column names — that
-is what lets `server/src/lib/idempotency.js` cover both tables from one allowlist.
+partial unique indexes: the `receipt_station` / `receipt_device` / `receipt_sequence` triple
+with its `COALESCE`-ed unique index, the `GENERATED delivery_ref` (`'1A-DEL-00007'`, 036 with
+the letter added by 040), and `request_key` (039). Deliberately identical column names — that
+is what lets `server/src/lib/idempotency.js` cover both tables from one allowlist. `DEL` in
+the middle keeps a delivery reference from ever being read as a customer's receipt number
+([ADR 0015](../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §8,
+[ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #14).
 
 ### `supplier_delivery_items` (009, altered by 022)
 `delivery_id` (CASCADE), `product_id`, `quantity_received` NUMERIC(10,2) (022), `unit_cost`,

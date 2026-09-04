@@ -100,10 +100,15 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
     assert.ok(RECEIPT_TABLES.has('supplier_deliveries'));
   });
 
-  it('parses and formats <station>-DEL-<sequence>, and never confuses it with a receipt number', () => {
-    assert.deepEqual(parseDeliveryRef('7-DEL-00042'), { station: 7, sequence: 42 });
+  it('parses and formats both shapes, and never confuses either with a receipt number', () => {
+    // Pre-letter, still issued by every tablet that has not been updated yet.
+    assert.deepEqual(parseDeliveryRef('7-DEL-00042'), { station: 7, device: null, sequence: 42 });
     assert.equal(formatDeliveryRef(7, 42), '7-DEL-00042');
+    // With the per-person device letter (ADR 0017 #14).
+    assert.deepEqual(parseDeliveryRef('7A-DEL-00042'), { station: 7, device: 'A', sequence: 42 });
+    assert.equal(formatDeliveryRef(7, 42, 'A'), '7A-DEL-00042');
     assert.throws(() => parseDeliveryRef('7-00042'), /Malformed delivery_ref/);
+    assert.throws(() => parseDeliveryRef('7A-00042'), /Malformed delivery_ref/);
   });
 
   it('stores the device-issued reference and returns it on the delivery', async () => {
@@ -166,15 +171,40 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
     assert.equal(res.status, 400);
   });
 
-  // ADR 0016 — the station component is one of this store's three slots and nothing
-  // else. A tablet still running a pre-0016 build carries the number it claimed under
-  // the old unbounded scheme; its deliveries are refused rather than stored under a
-  // station that does not exist.
-  it('a reference from a station above 3 is refused', async () => {
-    const res = await call('/incoming', {
+  // ADR 0017 supersedes ADR 0016's three-slot cap: the leading component is a PERSON,
+  // and a new hire takes the next number. What is still refused is a value that cannot
+  // be a person at all.
+  it('a reference from a person above 3 is accepted; a nonsense one is still refused', async () => {
+    const ok = await call('/incoming', {
       method: 'POST', body: JSON.stringify(body({ delivery_ref: formatDeliveryRef(8, nextSequence()) })),
     });
-    assert.equal(res.status, 400);
+    assert.equal(ok.status, 201);
+    deliveryIds.push((await ok.json()).id);
+
+    const bad = await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body({ delivery_ref: formatDeliveryRef(0, nextSequence()) })),
+    });
+    assert.equal(bad.status, 400);
+  });
+
+  // ADR 0017 #14 — a lettered reference stores and returns the same way, and a
+  // pre-letter reference is never mistaken for the lettered one that shares its digits.
+  it('stores a lettered reference, distinct from the pre-letter one with the same digits', async () => {
+    const seq = nextSequence();
+    const plain = formatDeliveryRef(1, seq);
+    const lettered = formatDeliveryRef(1, seq, 'A');
+
+    const a = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: plain })) })).json();
+    const b = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: lettered })) })).json();
+    deliveryIds.push(a.id, b.id);
+
+    assert.equal(a.delivery_ref, plain);
+    assert.equal(b.delivery_ref, lettered);
+    assert.notEqual(a.id, b.id, 'two devices, two deliveries — not a resend of one another');
+
+    const replay = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: lettered })) });
+    assert.equal(replay.status, 200);
+    assert.equal((await replay.json()).id, b.id);
   });
 
   it('a delivery sent with no reference behaves exactly as before', async () => {
