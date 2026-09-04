@@ -41,7 +41,7 @@ export async function parkOrderLocalFirst({
 }) {
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('parkOrderLocalFirst: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('parkOrderLocalFirst: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   const { receipt_number } = await issueReceiptNumber();

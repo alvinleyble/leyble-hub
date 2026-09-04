@@ -224,9 +224,13 @@ test('a device with no station cannot issue a receipt number', async () => {
   await assert.rejects(() => issueReceiptNumber(), /station number/);
 });
 
-// ── D14: the profile is captured at Save, replayed at drain ─────────────────
+// ── D14: the account is captured at Save and stays on the record ────────────
+// ADR 0017 §5 deleted the `X-Active-Profile` header, so the author is no longer replayed
+// to the server on drain — the request goes out under the signed-in account's own JWT.
+// The record still carries who saved it, because that is what the needs-attention list
+// reads and what slice 5's remembered accounts will put back on the wire.
 
-test('a queued record drains under the profile captured at Save, not the one active now', async () => {
+test('each queued record keeps the account that saved it, and the drain sends no profile with it', async () => {
   const sent = [];
   api.request = async (path, options) => {
     sent.push({ path, profileKey: options.profileKey });
@@ -234,21 +238,27 @@ test('a queued record drains under the profile captured at Save, not the one act
   };
 
   await enqueue({
-    entityType: 'order', endpoint: '/orders', profileKey: 'luis',
+    entityType: 'order', endpoint: '/orders', profileKey: 'luis@leyblestore.com',
     payload: { customer_id: 1 }, receiptNumber: '1-00001',
   });
   await enqueue({
-    entityType: 'order', endpoint: '/orders', profileKey: 'josie',
+    entityType: 'order', endpoint: '/orders', profileKey: 'josie@leyblestore.com',
     payload: { customer_id: 2 }, receiptNumber: '1-00002',
   });
 
+  const queued = await listRecords();
+  assert.deepEqual(
+    queued.map((r) => r.profile_key),
+    ['luis@leyblestore.com', 'josie@leyblestore.com']
+  );
+
   const result = await drainOutbox();
   assert.equal(result.sent, 2);
-  assert.deepEqual(sent.map((s) => s.profileKey), ['luis', 'josie']);
+  assert.deepEqual(sent.map((s) => s.profileKey), [undefined, undefined]);
   assert.equal(await waitingCount(), 0);
 });
 
-test('a record cannot be queued without a profile', async () => {
+test('a record cannot be queued without an account', async () => {
   await assert.rejects(
     () => enqueue({ entityType: 'order', endpoint: '/orders', payload: {} }),
     /profileKey is required/

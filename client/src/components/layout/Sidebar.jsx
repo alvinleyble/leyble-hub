@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import { useProfile } from '../../context/ProfileContext';
 import { V25_OFFLINE_CORE } from '../../config/features';
 import { countDuplicateCustomers } from '../../utils/duplicateCustomers';
 
@@ -22,7 +21,6 @@ const NAV_ITEMS = [
 
 export default function Sidebar({ onClose, offlineMarker }) {
   const { user, logout } = useAuth();
-  const { activeProfile, switchProfile } = useProfile();
   const navigate = useNavigate();
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [dupDismissed, setDupDismissed] = useState(false);
@@ -52,11 +50,6 @@ export default function Sidebar({ onClose, offlineMarker }) {
     navigate('/login', { replace: true });
   };
 
-  const handleSwitchProfile = () => {
-    if (onClose) onClose();
-    switchProfile();
-  };
-
   return (
     <aside
       className="w-56 h-full flex flex-col shrink-0 bg-slate-900 text-slate-100"
@@ -67,7 +60,7 @@ export default function Sidebar({ onClose, offlineMarker }) {
         <div className="min-w-0">
           <p className="text-lg font-bold tracking-tight">Leyble Hub</p>
           <p className="text-xs text-slate-400 mt-0.5 truncate" title={user?.full_name}>
-            {activeProfile?.full_name || user?.full_name}
+            {user?.full_name}
           </p>
           {offlineMarker && <div className="mt-2">{offlineMarker}</div>}
         </div>
@@ -135,18 +128,8 @@ export default function Sidebar({ onClose, offlineMarker }) {
         })}
       </nav>
 
-      {/* Switch profile / Logout */}
+      {/* Logout */}
       <div className="p-3 border-t border-slate-700 flex flex-col gap-1">
-        <button
-          onClick={handleSwitchProfile}
-          className="flex items-center justify-center w-full min-h-[48px] px-4 rounded-lg
-                     text-slate-300 font-medium
-                     hover:bg-slate-800 hover:text-white
-                     transition-colors duration-100
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
-        >
-          Switch profile
-        </button>
         <button
           onClick={handleLogout}
           className="flex items-center justify-center w-full min-h-[48px] px-4 rounded-lg

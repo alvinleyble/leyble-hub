@@ -59,6 +59,12 @@ export async function getLastKnownIdentity() {
 export async function setStoredSession(session) {
   await writeIdentity(SESSION_KEY, session);
   await writeIdentity(LAST_IDENTITY_KEY, session);
+  // ADR 0017 §5 — the signed-in account replaces the picked profile as "who is acting on
+  // this device". Written here, the one place a session becomes real (fresh login, silent
+  // /auth/me refresh, offline resume), and cleared by the 401/logout path in api/client.js.
+  // It is never sent to the server; it is what a queued outbox record records locally so a
+  // save made during an outage still says who made it (D14).
+  if (session?.email) await api.setActiveProfile(session.email);
 }
 
 export async function removeStoredSession() {

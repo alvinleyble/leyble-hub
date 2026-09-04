@@ -35,9 +35,11 @@ async function nextRecordId() {
  * @param {string}   rec.endpoint     API path, e.g. '/orders'
  * @param {string}  [rec.method]      default 'POST'
  * @param {object}   rec.payload      request body, may contain $ref placeholders
- * @param {string}   rec.profileKey   D14 — the profile ACTIVE AT SAVE, captured here
- *                                    and replayed on drain. Never the profile that
- *                                    happens to be on the tablet when the line returns.
+ * @param {string}   rec.profileKey   D14 — the account SIGNED IN AT SAVE, captured here.
+ *                                    Local bookkeeping only since ADR 0017 §5 deleted the
+ *                                    `X-Active-Profile` header; still required, because a
+ *                                    record with no author is exactly the bug D14 exists
+ *                                    to prevent and slice 5 needs the value back.
  * @param {string}  [rec.receiptNumber] The receipt number of the sale this record
  *                                    carries, kept for local lookup. It is NOT the
  *                                    resend key any more — see `request_key` below.
@@ -51,9 +53,9 @@ export async function enqueue({
   if (!entityType) throw new Error('enqueue: entityType is required');
   if (!endpoint) throw new Error('enqueue: endpoint is required');
   if (!profileKey) {
-    // D14 has no sensible default. A record with no profile would be attributed to
+    // D14 has no sensible default. A record with no author would be attributed to
     // whoever drains it, which is the exact bug the rule exists to prevent.
-    throw new Error('enqueue: profileKey is required — capture the profile at Save');
+    throw new Error('enqueue: profileKey is required — capture the signed-in account at Save');
   }
 
   const id = await nextRecordId();
@@ -326,11 +328,13 @@ async function runDrainPass() {
       }
 
       try {
-        // D14 — the profile stored with the record, not the one on the tablet now.
+        // ADR 0017 §5 — the request goes out under the signed-in account's own JWT.
+        // `record.profile_key` (the account that SAVED it, D14) is no longer replayed to
+        // the server because the impersonation header it rode on is gone; it stays on the
+        // record as local bookkeeping and is what the needs-attention list shows.
         const response = await api.request(record.endpoint, {
           method: record.method,
           body: JSON.stringify(body),
-          profileKey: record.profile_key,
         });
         await rememberResult(record.id, response);
         await removeRecord(record.id);
@@ -446,7 +450,7 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
 export async function queueOrderDeletion({ orderRef, profileKey } = {}) {
   if (!orderRef) return null;
   if (!profileKey) {
-    throw new Error('queueOrderDeletion: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('queueOrderDeletion: profileKey is required — capture the signed-in account at Save (D14)');
   }
   const record = await enqueue({
     entityType: 'order_delete',

@@ -94,7 +94,7 @@ export async function recordConflict({
     // Same rule the outbox enforces (D14): whatever the operator finally confirms is
     // written as an edit BY SOMEONE, and it must be the person who made it, not
     // whoever happens to be holding the tablet when the line returns.
-    throw new Error('recordConflict: profileKey is required — capture the profile at Save');
+    throw new Error('recordConflict: profileKey is required — capture the signed-in account at Save');
   }
   const id = await nextConflictId();
   const conflict = {

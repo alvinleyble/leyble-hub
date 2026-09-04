@@ -20,15 +20,19 @@ stale). When in doubt, the migration files are the source of truth.
 
 ## Tables
 
-### `users` (001, altered by 030)
-App accounts. `role` ∈ `('admin','viewer')` default `admin`. `email` unique, `password_hash`
-(bcrypt), `is_active`. Seeded by `server/db/seed.js` using `SEED_ADMIN_*` env vars.
-`profile_key VARCHAR(20) UNIQUE` (030) tags the rows that back the Josie/Luis/Admin profile
-picker — login is now a single shared active account (`josie@leyblestore.com`); the other
-profile rows are `is_active = FALSE` and exist only so `requireAuth` can swap request identity
-to them via the `X-Active-Profile` header. Assigned by the one-off `server/db/setup-profiles.js`
-script (not run automatically by `migrate.js`/`seed.js`). See
-[ARCHITECTURE.md#authentication-flow](ARCHITECTURE.md#authentication-flow).
+### `users` (001, altered by 030, 041)
+App accounts. `role` ∈ `('admin','viewer')` default `admin` — signed into the JWT and read by
+no route guard and no client gate, so it authorizes nothing ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md)).
+`email` unique, `password_hash` (bcrypt), `is_active`. Seeded by `server/db/seed.js` using
+`SEED_ADMIN_*` env vars.
+
+One row per person, and each signs in with their own email ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) §5/§6):
+Alvin/admin, Josie and Luis. An account is deactivated (`is_active = FALSE`), never deleted, so
+its historical `activity_logs.performed_by` references always still resolve. The one-off
+`server/db/setup-accounts.js` script (not run by `migrate.js`/`seed.js`) activates the three and
+deactivates everything else. `profile_key VARCHAR(20) UNIQUE`, added by 030 to back the
+Josie/Luis/Admin picker, was **dropped by 041** along with the `X-Active-Profile` identity swap.
+See [ARCHITECTURE.md#authentication-flow](ARCHITECTURE.md#authentication-flow).
 
 ### `products` (002, altered by 012, 022, 023)
 | Column | Type | Notes |

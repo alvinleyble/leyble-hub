@@ -50,9 +50,10 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
    DATABASE_URL='<supabase-pooled-url>' node db/migrate.js
    # seed the admin user via the existing seed flow (uses SEED_ADMIN_PASSWORD)
    node db/seed.js
-   # then run once to restrict login to a single shared account and wire up the
-   # Josie/Luis/Admin profile picker (uses JOSIE_PASSWORD, default 'leyble123')
-   node db/setup-profiles.js
+   # then run once to activate the three per-person accounts — Alvin, Josie, Luis —
+   # and deactivate everything else (ACCOUNT_PASSWORD, default 'leyble123'; Josie's
+   # existing password is left untouched). See ADR 0017 §5/§6.
+   node db/setup-accounts.js
    ```
    Note: free Supabase projects pause after ~7 days of no activity (un-pause in the dashboard).
 
@@ -65,7 +66,8 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
    - Start command: `node server/src/index.js`
    - Health check path: `/health`
 2. Set env vars (never commit these): `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`,
-   `SEED_ADMIN_PASSWORD`, `JOSIE_PASSWORD`, `NODE_ENV=production`.
+   `SEED_ADMIN_PASSWORD`, `NODE_ENV=production`. (`ACCOUNT_PASSWORD` is only read by the
+   one-off `db/setup-accounts.js` script, so Render does not need it.)
 3. Note the public URL, e.g. `https://leyble-hub.onrender.com`. This is the **API** the APK
    talks to (set as `VITE_API_URL` in `client/.env.production`). It is API-only — opening it in
    a browser returns a 404 JSON, not the app.

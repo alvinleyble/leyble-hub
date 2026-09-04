@@ -45,7 +45,7 @@ export async function saveOrderLocalFirst({
 }) {
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('saveOrderLocalFirst: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('saveOrderLocalFirst: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   const { receipt_number, station, sequence } = await issueReceiptNumber();
@@ -205,7 +205,7 @@ export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {})
   if (draftRef === null || draftRef === undefined || draftRef === '') return;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('cleanupOrphanedDraft: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('cleanupOrphanedDraft: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   if (typeof draftRef === 'string' && (await isDraftUnsynced(draftRef))) {
@@ -232,7 +232,7 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
   if (!order) return null;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('queueReceiptPrinted: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('queueReceiptPrinted: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   const printedAt = new Date().toISOString();
@@ -394,7 +394,7 @@ export async function transitionLocalOrder({ order, newStatus, profileKey = null
 
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('transitionLocalOrder: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('transitionLocalOrder: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   const records = await listRecords();

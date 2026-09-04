@@ -1,11 +1,9 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { ProfileProvider, useProfile } from './context/ProfileContext';
 import { ToastProvider } from './components/ui/Toast';
 import { PrinterProvider } from './context/PrinterContext';
 import AppLayout from './components/layout/AppLayout';
-import ProfilePickerModal from './components/profile/ProfilePickerModal';
 import Spinner from './components/ui/Spinner';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -34,19 +32,13 @@ function ProtectedLayout() {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  return (
-    <ProfileProvider>
-      <ProfileGate />
-    </ProfileProvider>
-  );
+  return <AuthedShell />;
 }
 
-// Renders the V1 shell underneath, overlaying the "who's using this" picker on
-// top when no profile has been chosen yet — the app is never hidden behind a
-// separate screen for it.
-function ProfileGate() {
-  const { needsPick, loading } = useProfile();
-
+// The V1 shell for a signed-in user. ADR 0017 §5 removed the "who's using this" picker
+// that used to overlay it: each person signs in with their own account, so the identity
+// is settled by the time this renders.
+function AuthedShell() {
   // V2.5 (D1) — claim this device's station number once, then keep the outbox
   // draining in the background. A no-op unless the release switch is on (D18), and it
   // runs after sign-in because registration is an authenticated call.
@@ -63,12 +55,7 @@ function ProfileGate() {
   const sync = useSyncGate();
   if (sync.blocking) return <FirstSetupScreen />;
 
-  return (
-    <>
-      <Outlet />
-      {!loading && needsPick && <ProfilePickerModal />}
-    </>
-  );
+  return <Outlet />;
 }
 
 function FirstSetupScreen() {

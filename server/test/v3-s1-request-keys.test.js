@@ -39,7 +39,7 @@ describe('ADR 0017 #9 — the retry key is separate from the receipt number', ()
 
   before(async () => {
     const { rows: [admin] } = await db.query(
-      `SELECT id, email, full_name, role FROM users WHERE profile_key = 'admin' LIMIT 1`
+      `SELECT id, email, full_name, role FROM users WHERE email = 'alvin@leyblestore.com' LIMIT 1`
     );
     authToken = jwt.sign(
       { id: admin.id, email: admin.email, role: admin.role, full_name: admin.full_name },
