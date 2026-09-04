@@ -10,6 +10,11 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
 - `tests/login.test.mjs` — log in with one person's own account and confirm the Dashboard
   renders. (There is no profile picker any more — ADR 0017 §5 deleted it; the Dashboard is
   the first thing after a successful sign-in.)
+  Since ADR 0017 #7 the login screen ALSO lists the accounts this device has already signed
+  in successfully, above the email/password form — tapping one switches to it with no
+  password and no server round trip, which is what has to work during a blackout. The form
+  is unchanged and still the only way a NEW account reaches a device, so `loginAs` drives it
+  exactly as before.
 - `tests/dashboard.test.mjs`, `orders.test.mjs`, `inventory.test.mjs`, `customers.test.mjs`,
   `personnel.test.mjs`, `tickets.test.mjs`, `audit.test.mjs`, `devices.test.mjs` — one basic
   test per core screen: its list loads with real data, a filter/search control narrows it (or
@@ -20,7 +25,9 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
   `withSession(fn)` wraps both plus session teardown around a test body.
 - `helpers/auth.js` — `loginAs(driver)` (the login flow every test starts from; defaults to
   `josie@leyblestore.com`, pass `{ email }` to drive the suite as Alvin or Luis — all three
-  accounts share the same password) and
+  accounts share the same password),
+  `switchAccount(driver, email)` (ADR 0017 #7 — the two-tap, no-password switch between
+  accounts this device already remembers) and
   `navigateTo(driver, 'orders')` (opens the nav drawer and taps a screen's link — see "How
   screen tests navigate" below).
 - `helpers/ui.js` — small `data-testid`-based query/click helpers (`waitForTestId`,
@@ -112,6 +119,12 @@ That means a **successful login persists** across runs: the JWT lives in
 `@capacitor/preferences`, which survives `am force-stop`. Re-running without `pm clear` lands
 directly on `/dashboard` and the test's login-form selectors report "no such element" because
 there's no login form to find. Always `pm clear com.leyble.hub` before a login-flow run.
+
+`pm clear` also wipes the remembered-accounts list (ADR 0017 #7) and every device letter the
+app holds, since all of it lives in the same `@capacitor/preferences` store. That is what you
+want before a login-flow run, and it is the thing to remember when testing the switcher: a
+cleared device remembers nobody, so each account you want to switch between has to sign in
+once, with the backend reachable, before the two-tap switch exists at all.
 
 ## How the debug build reaches your local backend
 

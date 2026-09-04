@@ -3,6 +3,10 @@ import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { api } from '../api/client';
 import { SESSION_KEY, LAST_IDENTITY_KEY } from '../offline/keys';
+import { rememberAccount, markAccountUsed, findRememberedAccount } from '../offline/accounts';
+// Imported from the module itself rather than the `offline` barrel: the barrel pulls in
+// the whole engine (outbox, sync, catalogue), and this file is on the login path.
+import { getStation, ensureStationRegistered } from '../offline/station';
 
 const AuthContext = createContext(null);
 
@@ -56,15 +60,27 @@ export async function getLastKnownIdentity() {
   return readIdentity(LAST_IDENTITY_KEY);
 }
 
+// What is safe to keep on the device as "who is signed in". The login response also
+// carries the JWT itself and `session_replaced`; neither belongs in a stored identity —
+// on the web dev tier these keys fall back to localStorage (nativeStore.js), and a JWT
+// must never land where page script can read it back (CLAUDE.md security rules). The
+// token is stored by api/client.js, which keeps it out of browser storage entirely.
+function identityOnly(session) {
+  if (!session) return session;
+  const { token: _token, session_replaced: _replaced, ...identity } = session;
+  return identity;
+}
+
 export async function setStoredSession(session) {
-  await writeIdentity(SESSION_KEY, session);
-  await writeIdentity(LAST_IDENTITY_KEY, session);
+  const identity = identityOnly(session);
+  await writeIdentity(SESSION_KEY, identity);
+  await writeIdentity(LAST_IDENTITY_KEY, identity);
   // ADR 0017 §5 — the signed-in account replaces the picked profile as "who is acting on
   // this device". Written here, the one place a session becomes real (fresh login, silent
   // /auth/me refresh, offline resume), and cleared by the 401/logout path in api/client.js.
   // It is never sent to the server; it is what a queued outbox record records locally so a
   // save made during an outage still says who made it (D14).
-  if (session?.email) await api.setActiveProfile(session.email);
+  if (identity?.email) await api.setActiveProfile(identity.email);
 }
 
 export async function removeStoredSession() {
@@ -107,15 +123,65 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
 
+  // A password sign-in — the only thing that ever ADDS an account to this device
+  // (ADR 0015 §2: a person's first sign-in on a device requires a connection). The
+  // device_key rides along so the server can say WHERE this account's live session is
+  // when it ends one somewhere else (ADR 0017 #8).
   const login = async (email, password) => {
-    const me = await api.post('/auth/login', { email, password });
-    setUser(me);
-    if (me) await setStoredSession(me);
+    const station = await getStation().catch(() => null);
+    const me = await api.post('/auth/login', {
+      email, password, device_key: station?.device_key || undefined,
+    });
+    const identity = { id: me.id, email: me.email, full_name: me.full_name, role: me.role };
+    setUser(identity);
+    await setStoredSession(identity);
+    // ADR 0017 #7 — this account has now proven itself on this tablet, so switching back
+    // to it is two taps and no password from here on, blackout or not.
+    await rememberAccount(identity, me.token);
     return me;
   };
 
+  /**
+   * ADR 0017 #7 — switch to an account this device already remembers. Two taps, no
+   * password, and no server round trip: this is what has to work mid-blackout when Josie
+   * takes over Alvin's tablet and the receipt has to say Josie.
+   *
+   * The switch is purely local. It moves the active token to that account's own
+   * remembered one (api.useAccountToken), so from here on every request — including each
+   * queued record the outbox drains — goes out as the right person, and station.js reads
+   * the new session to pick that person's device letter for the next receipt number.
+   *
+   * `verified: false` means this device holds no token for them any more: a session
+   * takeover on their other device (ADR 0017 #8), an explicit logout, or the web dev tier
+   * after a reload. They can still sell — that is ADR 0015 §3's offline session — and
+   * will be asked for their password the moment the line is back.
+   */
+  const switchAccount = async (idOrEmail) => {
+    const account = await findRememberedAccount(idOrEmail);
+    if (!account) return null;
+    const identity = {
+      id: account.id, email: account.email, full_name: account.full_name, role: account.role,
+    };
+    const verified = await api.useAccountToken(account.email);
+    setUser(identity);
+    await setStoredSession(identity);
+    await markAccountUsed(account.email);
+    // Re-confirm this person's device letter when there is a line to do it on. Allocation
+    // is idempotent on (account, device) so this never hands out a second letter; offline
+    // it simply fails and the drain loop retries it (offline/index.js).
+    if (verified) ensureStationRegistered().catch(() => {});
+    return { ...identity, verified };
+  };
+
+  // Signing out ends the session — on the server too, which clears the one-session row so
+  // the token this device held is dead. It does NOT un-remember the account: the list is
+  // device state and losing it would strand a tablet that logged out during a blackout
+  // (ADR 0015 §3). Nor does it touch the outbox: receipts waiting to sync are device
+  // state, and ADR 0017 #8 makes that a hard requirement.
   const logout = async () => {
+    const signedOut = user?.email;
     try { await api.post('/auth/logout'); } catch { /* ignore */ }
+    if (signedOut) await api.forgetAccountToken(signedOut);
     setUser(null);
     await removeStoredSession();
   };
@@ -134,7 +200,9 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, checkAuth, resumeOfflineSession }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, logout, checkAuth, resumeOfflineSession, switchAccount }}
+    >
       {children}
     </AuthContext.Provider>
   );

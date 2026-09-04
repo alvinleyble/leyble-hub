@@ -252,6 +252,24 @@ let draining = false;
 // moment the in-flight one finishes.
 let queuedRerun = false;
 
+// The remembered-account key this record should be sent under, or null to use the active
+// session. Null in the two ordinary cases — the author IS the current session, or this
+// device holds no token for them any more (ADR 0017 #7).
+async function authorTokenKey(record) {
+  const author = record?.profile_key;
+  if (!author) return null;
+  try {
+    const active = await api.getActiveProfile();
+    if (active && author === active) return null;
+    return (await api.getAccountToken(author)) ? author : null;
+  } catch {
+    // Never let a storage read decide whether a receipt gets sent. Falling back to the
+    // active session costs attribution, which is honour-system by accepted design; not
+    // sending would cost the sale.
+    return null;
+  }
+}
+
 /**
  * Send what is waiting, oldest first, honouring dependencies.
  *
@@ -328,18 +346,42 @@ async function runDrainPass() {
       }
 
       try {
-        // ADR 0017 §5 — the request goes out under the signed-in account's own JWT.
-        // `record.profile_key` (the account that SAVED it, D14) is no longer replayed to
-        // the server because the impersonation header it rode on is gone; it stays on the
-        // record as local bookkeeping and is what the needs-attention list shows.
+        // ADR 0017 #7 — the per-record author, back on the wire as a REAL CREDENTIAL.
+        //
+        // One device can now hold two signed-in people, so the account that saved a
+        // record and the account holding the tablet when the line returns are routinely
+        // not the same person — and `created_by` on the order is what prints `Sold by:`
+        // on the receipt (ADR 0017 #10). So the record goes out under its own author's
+        // remembered token when this device still holds one, rather than under whoever is
+        // signed in now. That is not the impersonation header ADR 0017 §5 deleted: it is
+        // that person's own JWT, issued to this device by a sign-in they made themselves.
+        //
+        // `authorKey` is null when the author IS the current session (the ordinary case,
+        // and the cheapest path) or when their token has gone — then it falls back to the
+        // active session, and attribution is honour-system exactly as the captain
+        // accepted it to be.
+        const authorKey = await authorTokenKey(record);
         const response = await api.request(record.endpoint, {
           method: record.method,
           body: JSON.stringify(body),
+          ...(authorKey ? { accountKey: authorKey } : {}),
         });
         await rememberResult(record.id, response);
         await removeRecord(record.id);
         sent++;
       } catch (err) {
+        // A 401 is the session ending underneath the drain — a takeover on another
+        // device (ADR 0017 #8), a deactivated account, an expired token. It says nothing
+        // about the RECORD, so the record must not be marked as needing attention and
+        // must certainly not be dropped: receipts waiting to sync are device state and
+        // surviving a takeover is a hard requirement of ADR 0017 #8. Leave it queued
+        // exactly as it is, stop the pass (every record behind it would fail the same
+        // way), and let the sign-in the client is already being sent to resume it.
+        if (err.status === 401) {
+          blocked.add(record.id);
+          break;
+        }
+
         record.attempts = (record.attempts || 0) + 1;
         record.last_error = err.message || String(err);
 
