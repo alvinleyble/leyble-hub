@@ -2,10 +2,175 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
-const { SLOT_NUMBERS, isSlotNumber, ownerName } = require('../lib/stationSlots');
+const { SLOT_NUMBERS, isSlotNumber, ownerName, assertIssuableStation } = require('../lib/stationSlots');
+const { nextDeviceLetter } = require('../lib/deviceLetters');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// ── ADR 0017 — the person number and the per-person device letter ───────────
+//
+// This is what registration is FOR from here on. A receipt number is
+// `<person><device letter>-<sequence>`: the person is the signed-in account, permanent
+// and never reused; the letter is allocated per person-and-device PAIR on that person's
+// first successful ONLINE sign-in on that device, and a replacement device takes a fresh
+// letter rather than inheriting one (ADR 0017 #1/#2/#3). Nothing here is an admin
+// action — no device list, no assignment UI, no slot to move. Signing in IS the setup.
+//
+// The ADR 0016 slot machinery below stays, as the compatibility path for ADR 0014's
+// switchover window: tablets are updated ONE AT A TIME over several days, an un-updated
+// tablet still reads `slot_number` and `next_sequence` out of this response to number its
+// receipts, and stripping those fields would leave it unable to sell. The new fields are
+// additive and separately named for exactly that reason — `next_pair_sequence` is the
+// PAIR's count and must never be confused with `next_sequence`, which is the SLOT's.
+// Removing the slot half belongs to a later cleanup, once every tablet is on the letter
+// build and has reported nothing waiting to sync.
+//
+// Two things about it did have to change, both to stop the two schemes bleeding into
+// each other: `slotHighWater` now ignores lettered rows, and the slot claim takes a real
+// lock. Both are commented where they are.
+
+// Locks used only for the two allocations below, so two sign-ins racing cannot be handed
+// the same number or the same letter. Transaction-scoped: released by COMMIT/ROLLBACK.
+// The first argument is the ADR number, purely so a `pg_locks` reading names its owner.
+const LOCK_NAMESPACE = 17;
+const PERSON_LOCK_KEY = 0;
+// The ADR 0016 slot claim takes one too — see the comment on the claim itself.
+const SLOT_LOCK_KEY = 16;
+
+// The person's own number, allocated on demand and then permanent (ADR 0017 #1).
+//
+// Migration 043 seeds Alvin/Josie/Luis as 1/2/3 deliberately, so their series read as
+// continuing rather than restarting. Anyone else — a new hire, or any account on a
+// database that never had those three — takes the next free number here on their first
+// device claim. A number is NEVER reused: accounts are deactivated, never deleted, and
+// their historical receipts must always still resolve, so MAX+1 is taken over every
+// account rather than over the active ones.
+async function ensurePersonNumber(client, userId) {
+  const { rows: [user] } = await client.query(
+    'SELECT id, full_name, receipt_person FROM users WHERE id = $1', [userId]
+  );
+  if (!user) return null;
+  if (Number.isInteger(user.receipt_person)) return user;
+
+  await client.query('SELECT pg_advisory_xact_lock($1, $2)', [LOCK_NAMESPACE, PERSON_LOCK_KEY]);
+
+  // Re-read under the lock: a concurrent sign-in of the SAME account may have allocated
+  // it while this request was queuing for the lock.
+  const { rows: [fresh] } = await client.query(
+    'SELECT id, full_name, receipt_person FROM users WHERE id = $1', [userId]
+  );
+  if (Number.isInteger(fresh?.receipt_person)) return fresh;
+
+  const { rows: [{ next }] } = await client.query(
+    'SELECT COALESCE(MAX(receipt_person), 0) + 1 AS next FROM users'
+  );
+  assertIssuableStation(Number(next), { field: 'person number' });
+
+  const { rows: [allocated] } = await client.query(
+    'UPDATE users SET receipt_person = $2 WHERE id = $1 RETURNING id, full_name, receipt_person',
+    [userId, Number(next)]
+  );
+  return allocated;
+}
+
+// The letter for THIS person on THIS device, allocated once and then remembered
+// (ADR 0017 #2). Idempotent on the pair, exactly as registration is idempotent on
+// device_key: signing in again on a device you already use returns the letter you
+// already hold, never a second one.
+//
+// Returns `{ row, created }` so the caller can log the allocation the one time it
+// actually happens.
+async function ensureDeviceLetter(client, userId, deviceKey, label) {
+  const { rows: [existing] } = await client.query(
+    `UPDATE user_devices
+        SET last_seen_at = NOW(), label = COALESCE($3, label)
+      WHERE user_id = $1 AND device_key = $2
+      RETURNING *`,
+    [userId, deviceKey, label || null]
+  );
+  if (existing) return { row: existing, created: false };
+
+  // Serialised per person: two of Alvin's devices signing in at the same instant would
+  // otherwise both read the same highest letter and both try to take the next one. The
+  // unique index would refuse the second with a 500; the lock makes it wait and get 'B'.
+  await client.query('SELECT pg_advisory_xact_lock($1, $2)', [LOCK_NAMESPACE, userId]);
+
+  const { rows: [again] } = await client.query(
+    'SELECT * FROM user_devices WHERE user_id = $1 AND device_key = $2', [userId, deviceKey]
+  );
+  if (again) return { row: again, created: false };
+
+  // Strictly forward, never gap-filling — ADR 0017 #3. Ordered the way the enumeration
+  // runs (A..Z then AA..ZZ), not as plain text, which would rank 'AA' before 'B' and
+  // hand back a letter this person already holds.
+  const { rows: [highest] } = await client.query(
+    `SELECT device_letter FROM user_devices
+      WHERE user_id = $1
+      ORDER BY LENGTH(device_letter) DESC, device_letter DESC
+      LIMIT 1`,
+    [userId]
+  );
+
+  const { rows: [row] } = await client.query(
+    `INSERT INTO user_devices (user_id, device_key, device_letter, label, last_seen_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     RETURNING *`,
+    [userId, deviceKey, nextDeviceLetter(highest?.device_letter || null), label || null]
+  );
+  return { row, created: true };
+}
+
+// The highest sequence the server has ever seen for one person-and-device PAIR, across
+// both series that carry a device-issued number.
+//
+// For a freshly allocated letter this is 0 and the device starts at 00001, which is the
+// point of a fresh letter. It is read anyway because the device seeds its counter to at
+// least this and never downwards: a tablet that reinstalled the app but kept its pair
+// must not restart a series it has already printed paper for.
+async function pairHighWater(runner, person, letter) {
+  const { rows: [row] } = await runner.query(
+    `SELECT
+       COALESCE((SELECT MAX(receipt_sequence) FROM orders
+                  WHERE receipt_station = $1 AND COALESCE(receipt_device, '') = $2), 0) AS orders_max,
+       COALESCE((SELECT MAX(receipt_sequence) FROM supplier_deliveries
+                  WHERE receipt_station = $1 AND COALESCE(receipt_device, '') = $2), 0) AS deliveries_max`,
+    [person, letter]
+  );
+  return { orders: Number(row.orders_max), deliveries: Number(row.deliveries_max) };
+}
+
+// Allocates (or re-reads) this sign-in's person number and device letter, and returns
+// the fields the device needs to issue receipt numbers with no further round trip.
+//
+// Answers null when the request carries no usable user id, rather than failing the
+// registration: the slot half of the response is still worth serving, and a device that
+// gets no letter falls back to the number it already holds (see resolveIssuingSeries in
+// client/src/offline/station.js) rather than being unable to sell.
+async function receiptIdentity(client, userId, deviceKey, label) {
+  if (!Number.isInteger(userId)) return null;
+
+  const user = await ensurePersonNumber(client, userId);
+  if (!user || !Number.isInteger(user.receipt_person)) return null;
+
+  const { row: device, created } = await ensureDeviceLetter(client, userId, deviceKey, label);
+  const high = await pairHighWater(client, user.receipt_person, device.device_letter);
+
+  return {
+    created,
+    deviceRowId: device.id,
+    body: {
+      user_id: user.id,
+      person: user.receipt_person,
+      seller_name: user.full_name || null,
+      device_letter: device.device_letter,
+      receipt_prefix: `${user.receipt_person}${device.device_letter}`,
+      device_letter_allocated_at: device.first_seen_at,
+      next_pair_sequence: high.orders + 1,
+      next_pair_delivery_sequence: high.deliveries + 1,
+    },
+  };
+}
 
 // ADR 0016 — this store runs exactly three tablets, one per person, so a device does
 // not CLAIM a station number any more: it is ASSIGNED one of three fixed slots.
@@ -38,11 +203,21 @@ const UNASSIGNED_LIMIT = 25;
 
 // The highest sequence this slot has ever reached on the server, across both series
 // that carry a device-issued number (orders, and supplier_deliveries since ADR 0015 §8).
+//
+// `receipt_device IS NULL` is load-bearing since ADR 0017. A letter-scheme receipt shares
+// this slot's leading number — `1A-00042` stores receipt_station = 1 — but it is a
+// DIFFERENT SERIES, counted within its own pair. Without the filter, every sale an
+// updated tablet makes as `1A-…` would drag slot 1's high-water up with it and seed an
+// un-updated tablet forward past numbers it never issued. Harmless in the sense that
+// matters (a skipped number is invisible, a repeated one is two customers holding the
+// same receipt) but wrong, and it would make the old series jump for no reason mid-window.
 async function slotHighWater(runner, slotNumber) {
   const { rows: [row] } = await runner.query(
     `SELECT
-       COALESCE((SELECT MAX(receipt_sequence) FROM orders WHERE receipt_station = $1), 0)              AS orders_max,
-       COALESCE((SELECT MAX(receipt_sequence) FROM supplier_deliveries WHERE receipt_station = $1), 0) AS deliveries_max`,
+       COALESCE((SELECT MAX(receipt_sequence) FROM orders
+                  WHERE receipt_station = $1 AND receipt_device IS NULL), 0)              AS orders_max,
+       COALESCE((SELECT MAX(receipt_sequence) FROM supplier_deliveries
+                  WHERE receipt_station = $1 AND receipt_device IS NULL), 0) AS deliveries_max`,
     [slotNumber]
   );
   return { orders: Number(row.orders_max), deliveries: Number(row.deliveries_max) };
@@ -85,10 +260,16 @@ function unassignedResponse(station) {
 
 // POST /api/v1/stations/register  { device_key, label? }
 //
-// Called on every app start until the device holds a slot, and once more per start
-// afterwards to re-confirm it: the server is authoritative on who holds which slot, so
-// a tablet whose slot was reassigned to its replacement learns it here and stops
-// issuing receipts, rather than printing into a number space it no longer owns.
+// ADR 0017 — this is the ONLINE SIGN-IN that allocates the signed-in person's device
+// letter for this device, and the only setup step the letter scheme has. The client
+// calls it on every start (and re-confirms periodically), so "first successful online
+// sign-in of that person on that device" is simply the first of those calls that gets
+// through; every later one returns the same letter.
+//
+// ADR 0016 — it is also still the slot re-confirmation an un-updated tablet depends on
+// during the switchover window: the server is authoritative on who holds which slot, so
+// a tablet whose slot was reassigned learns it here and stops issuing, rather than
+// printing into a number space it no longer owns.
 router.post('/register', async (req, res, next) => {
   const { device_key, label } = req.body || {};
 
@@ -128,10 +309,28 @@ router.post('/register', async (req, res, next) => {
       ));
     }
 
+    // ADR 0017 — the half of this response that actually numbers receipts from here on.
+    // Allocated before the slot branches below so all three of them carry it, including
+    // "you hold no slot": under the letter scheme a device needs no slot to sell.
+    const identity = await receiptIdentity(client, req.user?.id, deviceKey, label || null);
+    if (identity?.created) {
+      // The one moment worth recording. There is no admin action to log — the letter
+      // allocates itself — but the owners still need somewhere that says which device
+      // `1D` is when a receipt turns up carrying it. Rendered as "Tablet" in the audit
+      // log, alongside the ADR 0016 slot entries.
+      await logActivity(client, {
+        entityType: 'station', entityId: identity.deviceRowId, action: 'device_letter_allocated',
+        summary: `${identity.body.seller_name || 'This account'} signed in on a new device — `
+          + `receipts from it are numbered ${identity.body.receipt_prefix}-00001 onwards`,
+        performedBy: req.user?.id ?? null,
+      });
+    }
+    const withIdentity = (body) => ({ ...body, ...(identity?.body || {}), created });
+
     if (isSlotNumber(station.slot_number)) {
       const body = await slotResponse(client, station);
       await client.query('COMMIT');
-      return res.status(created ? 201 : 200).json({ ...body, created });
+      return res.status(created ? 201 : 200).json(withIdentity(body));
     }
 
     // No slot yet: take the lowest one nobody holds. The three slots fill themselves on
@@ -139,8 +338,14 @@ router.post('/register', async (req, res, next) => {
     // admin action at all — and the fourth device is left unassigned rather than being
     // handed a number 4, which is the whole point of ADR 0016.
     //
-    // FOR UPDATE on the holders + the unique index together make the claim atomic: two
-    // devices registering at the same instant cannot both take slot 1.
+    // The advisory lock is what actually makes the claim atomic. `FOR UPDATE` below
+    // locks the rows that already hold a slot — and when nobody holds one yet there are
+    // no such rows, so it locks NOTHING: two devices registering at the same instant both
+    // read an empty `taken`, both pick slot 1, and the second one dies on
+    // `stations_slot_number_uniq` with a 500. Reproducible by registering four devices at
+    // once, which is what a test with no `await` between them does and what a store
+    // powering three tablets on at open comes close to.
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [LOCK_NAMESPACE, SLOT_LOCK_KEY]);
     const { rows: held } = await client.query(
       'SELECT slot_number FROM stations WHERE slot_number IS NOT NULL FOR UPDATE'
     );
@@ -150,7 +355,7 @@ router.post('/register', async (req, res, next) => {
     if (free === undefined) {
       const body = unassignedResponse(station);
       await client.query('COMMIT');
-      return res.status(created ? 201 : 200).json({ ...body, created });
+      return res.status(created ? 201 : 200).json(withIdentity(body));
     }
 
     const { rows: [claimed] } = await client.query(
@@ -168,7 +373,7 @@ router.post('/register', async (req, res, next) => {
 
     const body = await slotResponse(client, claimed);
     await client.query('COMMIT');
-    res.status(created ? 201 : 200).json({ ...body, created });
+    res.status(created ? 201 : 200).json(withIdentity(body));
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     next(err);
@@ -188,7 +393,8 @@ router.get('/', async (req, res, next) => {
     );
     const { rows: highs } = await db.query(
       `SELECT receipt_station AS slot, MAX(receipt_sequence) AS max_sequence
-         FROM orders WHERE receipt_station IS NOT NULL GROUP BY receipt_station`
+         FROM orders WHERE receipt_station IS NOT NULL AND receipt_device IS NULL
+        GROUP BY receipt_station`
     );
     const highBySlot = new Map(highs.map((r) => [Number(r.slot), Number(r.max_sequence)]));
 

@@ -15,7 +15,17 @@ export const SESSION_KEY  = `${NS}session`;   // { id, email, full_name, role }
 // §3's "Resume Offline Session" login-screen action possible after either of those.
 export const LAST_IDENTITY_KEY = `${NS}lastIdentity`; // { id, email, full_name, role }
 export const STATION_KEY  = `${NS}station`;   // { station_number, device_key, registered_at }
-export const SEQUENCE_KEY = `${NS}sequence`;  // last receipt sequence issued on this device
+export const SEQUENCE_KEY = `${NS}sequence`;  // last receipt sequence issued, per series
+
+// ADR 0017 #2 — the device letter this device holds FOR EACH PERSON who has signed in
+// on it: `{ [user id]: { person, letter, seller_name, allocated_at } }`.
+//
+// A map rather than a single value, because the letter belongs to a person-and-device
+// PAIR: the same tablet is legitimately `1A` for Alvin and `2B` for Josie, and both
+// have to survive on it at once. Device state, not session state — it stays put across
+// a logout, exactly like the outbox and the receipt history above it (ADR 0015 §3), so
+// signing back in never re-allocates a letter the device already holds.
+export const DEVICE_LETTERS_KEY = `${NS}deviceLetters`;
 
 export const OUTBOX_PREFIX  = `${NS}outbox.`;   // one key per queued record
 export const RECEIPT_PREFIX = `${NS}receipt.`;  // one key per locally held order snapshot

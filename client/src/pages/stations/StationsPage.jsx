@@ -2,9 +2,24 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
-import { getStation, assignStationSlot, getStationSlots } from '../../offline/station.js';
+import {
+  getStation, assignStationSlot, getStationSlots, getReceiptIdentity, receiptSeries,
+} from '../../offline/station.js';
 import { formatReceiptNumber } from '../../offline/receiptNumbers.js';
 
+// ADR 0017 — receipt numbers no longer come from anything on this screen.
+//
+// A receipt number is `<person><device letter>-<sequence>`: the person is the signed-in
+// account and the letter is allocated to this device for that person on their first
+// online sign-in here. A replacement device signs in and takes a fresh letter, so there
+// is nothing left to assign and no admin action to take. The block this screen now leads
+// with says which numbers THIS device is actually printing for whoever is signed in.
+//
+// Everything below that block is the ADR 0016 slot scheme, kept only while tablets are
+// still being updated one at a time (ADR 0014): an un-updated tablet is still numbering
+// from a slot, and this is the only place a slot can be moved onto a replacement for it.
+// Both it and this screen go once every tablet is on the letter build.
+//
 // ADR 0016 — the Devices screen.
 //
 // This store runs exactly three tablets, one per person, so receipt numbers come off
@@ -94,15 +109,22 @@ export default function StationsPage() {
   const [pending, setPending]       = useState(null);   // { slot, target }
   const [busy, setBusy]             = useState(false);
   const [pickFor, setPickFor]       = useState(null);   // device_key awaiting a slot choice
+  const [identity, setIdentity]     = useState(null);   // ADR 0017 { person, letter, ... }
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [roster, local] = await Promise.all([getStationSlots(), getStation()]);
+      const [roster, local, mine] = await Promise.all([
+        getStationSlots(), getStation(), getReceiptIdentity(),
+      ]);
       setSlots(roster.slots || []);
       setUnassigned(roster.unassigned || []);
       setThisDevice(local || null);
+      setIdentity(mine);
     } catch {
+      // The letter is held locally, so it is still worth showing when the roster below
+      // it cannot be read at all.
+      setIdentity(await getReceiptIdentity().catch(() => null));
       addToast('Could not read the device list — this screen needs a connection.', 'error');
     } finally {
       setLoading(false);
@@ -135,9 +157,10 @@ export default function StationsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Devices</h1>
         <p className="mt-1 text-base text-slate-600">
-          Three tablets, three receipt number series. Slot 1 is Alvin&rsquo;s, 2 is Josie&rsquo;s,
-          3 is Luis&rsquo;s. When a tablet is replaced, give its slot to the new one here so the
-          receipt numbers carry on from where they were.
+          Receipt numbers are set up by signing in — there is nothing to assign here.
+          Each person has their own number, and each of their devices gets its own letter
+          after it. The slots further down are the old scheme, kept only until every
+          tablet has been updated.
         </p>
       </div>
 
@@ -145,6 +168,32 @@ export default function StationsPage() {
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : (
         <>
+          {/* ── ADR 0017: what this device prints for whoever is signed in ── */}
+          <section className="mb-8 rounded-xl border border-slate-200 bg-white p-5">
+            <h2 className="text-lg font-bold text-slate-900">Your receipt numbers on this device</h2>
+            {identity ? (
+              <>
+                <p className="mt-2 text-2xl font-bold tabular-nums text-slate-900">
+                  {receiptSeries(identity)}
+                </p>
+                <p className="mt-1 text-base text-slate-600">
+                  Every receipt {identity.seller_name ? `${identity.seller_name} writes` : 'you write'}{' '}
+                  on this device starts with this, counting up from{' '}
+                  <strong className="tabular-nums">
+                    {formatReceiptNumber(identity.person, 1, identity.letter)}
+                  </strong>. Another person signing in on this same device gets their own
+                  number and their own letter — the two never mix.
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900">
+                This device has not been set up for your account yet. Connect to the
+                internet once while signed in and it will set itself up — there is nothing
+                to press.
+              </p>
+            )}
+          </section>
+
           {/* ── This tablet ─────────────────────────────────────────────── */}
           <section className="mb-8 rounded-xl border border-slate-200 bg-white p-5">
             <h2 className="text-lg font-bold text-slate-900">This tablet</h2>
