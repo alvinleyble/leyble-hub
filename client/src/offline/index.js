@@ -1,4 +1,4 @@
-import { ensureStationRegistered, isRegistered } from './station.js';
+import { ensureStationRegistered, getReceiptIdentity } from './station.js';
 import { drainOutbox, waitingCount } from './outbox.js';
 import { resetOfflineAdvisory } from './advisory.js';
 import { handleDrainCompletion } from './drainNotifier.js';
@@ -31,9 +31,9 @@ export { nativeStore } from './nativeStore.js';
 
 const DRAIN_INTERVAL_MS = 30_000;
 
-// ADR 0016 — how often a device that already holds a slot re-asks the server whether it
-// still does. Only ever costs one small request; a slot reassignment reaches a tablet
-// that is left running within this window rather than at its next restart.
+// How often a device that already has what it needs re-asks the server anyway. Only ever
+// costs one small request; under ADR 0016 it is how a slot reassignment reaches a tablet
+// left running, rather than waiting for its next restart.
 const RECONFIRM_INTERVAL_MS = 10 * 60_000;
 
 let timer = null;
@@ -42,11 +42,11 @@ let lastConfirmedAt = 0;
 /**
  * Called once the user is signed in and a profile is chosen.
  *
- * Claims a station number if this device does not have one (D1), kicks off this
- * login's sync (Slice 3.2), and starts the background drain. Registration failing is
- * not an error worth surfacing here: a device that is offline simply has not registered
- * yet, and a brand-new device installed during an outage cannot issue receipts at all —
- * an accepted corner, covered by paper.
+ * Allocates this person's device letter if they do not hold one on this device yet
+ * (ADR 0017 #2), kicks off this login's sync (Slice 3.2), and starts the background
+ * drain. Registration failing is not an error worth surfacing here: a device that is
+ * offline simply has not registered yet, and a brand-new device installed during an
+ * outage cannot issue receipts at all — an accepted corner, covered by paper.
  *
  * G30 — Unconditional Engine Boot. Registration and the drain loop run in every
  * standard build, not only ones compiled with VITE_V25_OFFLINE_CORE=on: V1's rehosted
@@ -96,15 +96,22 @@ export async function startOfflineCore({ label } = {}) {
 
   if (!timer && typeof setInterval === 'function') {
     timer = setInterval(() => {
-      // Registration is retried here too: a device that installed during an outage
-      // gets its slot the moment the line returns. A device that already holds one
-      // re-confirms on the slow cadence below — ADR 0016 makes the server authoritative
-      // on who holds which slot, so a tablet whose slot was moved to its replacement has
-      // to find out without waiting for a restart. Confirming on every 30s tick would be
-      // a pointless request a minute; RECONFIRM_INTERVAL_MS is the compromise.
-      isRegistered()
-        .then((ok) => {
-          if (!ok) return ensureStationRegistered({ label: effectiveLabel });
+      // Registration is retried here too, on every tick, until the SIGNED-IN PERSON
+      // holds a device letter (ADR 0017 #2). Gating that retry on "can this device issue
+      // anything at all" instead would leave a real gap during the switchover window: a
+      // tablet that still holds an ADR 0016 slot can sell the moment someone signs in,
+      // but it sells under the SLOT's number, which belongs to whoever that slot is —
+      // so a sign-in whose registration call did not get through would put Josie's sales
+      // out under Luis's number until the slow re-confirm below came round.
+      //
+      // Once the letter is held, the slow cadence takes over: ADR 0016 makes the server
+      // authoritative on who holds which slot, so a tablet whose slot was moved to its
+      // replacement has to find out without waiting for a restart. Confirming on every
+      // 30s tick would be a pointless request a minute; RECONFIRM_INTERVAL_MS is the
+      // compromise.
+      getReceiptIdentity()
+        .then((identity) => {
+          if (!identity) return ensureStationRegistered({ label: effectiveLabel });
           if (Date.now() - lastConfirmedAt < RECONFIRM_INTERVAL_MS) return null;
           return ensureStationRegistered({ label: effectiveLabel })
             .then((station) => { lastConfirmedAt = Date.now(); return station; });

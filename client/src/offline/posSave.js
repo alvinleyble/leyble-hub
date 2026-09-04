@@ -76,7 +76,7 @@ export async function saveOrderLocalFirst({
   // and for tests. Never fails a save over a missing name.
   const seller = soldByName || (await storedSellerName());
 
-  const { receipt_number, station, sequence } = await issueReceiptNumber();
+  const { receipt_number, station, device, sequence } = await issueReceiptNumber();
   const saleTime = createdAt || new Date().toISOString();
   const adjVal = Number(adjustment?.value) || 0;
   const adjReason = adjVal !== 0 && adjustment?.reason ? String(adjustment.reason).trim() : null;
@@ -99,6 +99,10 @@ export async function saveOrderLocalFirst({
   const localOrder = {
     receipt_number,
     receipt_station: station,
+    // ADR 0017 — the device letter, null on a device still numbering from an ADR 0016
+    // slot. Kept decomposed here so a locally-held order and the server row it becomes
+    // have the same shape; only `receipt_number` itself ever goes on the wire.
+    receipt_device: device ?? null,
     receipt_sequence: sequence,
     sold_by_name: seller,
     created_at: saleTime,
