@@ -42,3 +42,20 @@ project below. There is no separate staging environment.
 ### 4. Migration Rehearsal Environment
 - The development database serves as the rehearsal stage for all database migrations (including migrations `031`, `032`, and `033`) before they are executed against the production database.
 - Developers must execute and verify new migrations against the development database via `node server/db/migrate.js` prior to scheduling production rollout.
+
+### 5. Staging Deployment (Northflank)
+- "Staging" here means the backend *compute* service, distinct from the "staging" database named
+  above (§ Overview) — the Northflank service points at that same dev/test Supabase database.
+  It runs on **Northflank** (buildpack-based), not Render — there is no Northflank config file
+  tracked in this repo, unlike production's [`render.yaml`](../../render.yaml). It already
+  auto-deploys the latest commit on every push to the `staging` branch.
+- Staging now auto-migrates on deploy too, the same way production does, but by a different
+  mechanism: production's `render.yaml` runs `node server/db/migrate.js` in its Render
+  `buildCommand` before `startCommand` starts the server; staging instead runs it via a
+  `prestart` script in [`server/package.json`](../../server/package.json), which `npm start`
+  runs automatically before `start`. This makes the schema advance automatically for whichever
+  platform runs `npm start`, without needing Northflank dashboard access to configure a build
+  step.
+- `server/db/migrate.js` is safe to invoke this way: it tracks applied migrations in a
+  `_migrations` table and applies each `.sql` file transactionally, so re-running it (e.g. on a
+  Northflank restart or rescale) is a no-op past the first successful run.

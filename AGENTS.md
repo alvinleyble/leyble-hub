@@ -888,7 +888,13 @@ returns a 404 JSON. The Android APK is the only way in.
 ### Database environments & deployment
 
 - **Production:** Supabase PostgreSQL (Sydney), ref `prauvokvlhptvkadvfqq`. Render `leyble-hub-api` auto-deploys from `main` on push.
-- **Development database:** Separate Supabase PostgreSQL (Tokyo), ref `yzopwoquzfnyqdmuookw`, full replica set up 2026-08-25. This is the same database the captain calls "staging" — there is no separate staging environment. Local dev points exclusively to development (never production); see [docs/operations/development-database.md](docs/operations/development-database.md).
+- **Development database:** Separate Supabase PostgreSQL (Tokyo), ref `yzopwoquzfnyqdmuookw`, full replica set up 2026-08-25. This is the same database the captain calls "staging" — there is no separate staging database. Local dev points exclusively to development (never production); see [docs/operations/development-database.md](docs/operations/development-database.md).
+- **Staging (compute):** the backend *service* — as opposed to the database above — runs on
+  **Northflank** (buildpack-based, no repo-tracked config), auto-deploying from the `staging`
+  branch against that same dev/test Supabase database. It auto-migrates on deploy via
+  `server/package.json`'s `prestart` script (mirrors `render.yaml`'s buildCommand migrate step,
+  since Northflank has no equivalent file here) — see
+  [docs/operations/development-database.md](docs/operations/development-database.md#5-staging-deployment-northflank).
 - **Google Play Store (Internal Testing):** Android app builds and deploys automatically via GitHub Actions on push to `main` (modifying `client/**` or `.github/workflows/deploy-play.yml`). Tablet users receive background updates automatically through the Play Store.
 - **V3.0 release sequencing:** Migrations deploy early and alone to production; server code and Android APK land together on release day ([ADR 0014](docs/adr/0014-v3-release-sequencing.md)).
 
