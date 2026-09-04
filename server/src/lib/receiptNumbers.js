@@ -93,6 +93,29 @@ function formatDeliveryRef(station, sequence, device = null) {
     `-DEL-${String(Number(sequence)).padStart(SEQUENCE_PAD, '0')}`;
 }
 
+
+// ── Bare-digit lookup (ADR 0017 #11) ────────────────────────────────────────
+//
+// A customer reads the digits off faded thermal paper and skips the prefix. `42` has to
+// find every order whose SEQUENCE is 42, whichever prefix issued it — `1A-00042`,
+// `2B-00042` and the pre-letter `3-00042` alike — and the answer is a short
+// disambiguation list, never a jump straight to one order.
+//
+// Leading zeros are the same number, so `00042` and `42` are one term. `#1240` is bare
+// digits too once the hash is stripped, which is exactly right: for the ~1,300 legacy
+// orders the digits ARE the row id, so the search has to look in both places.
+//
+// Unlike parseReceiptNumber above this NEVER throws — a search term that is not digits
+// is an ordinary text search, not a malformed key. Returns null in that case.
+function parseBareSequence(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/^#/, '');
+  if (!/^\d{1,9}$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return n >= 1 ? n : null;
+}
+
 module.exports = {
-  parseReceiptNumber, formatReceiptNumber, parseDeliveryRef, formatDeliveryRef, SEQUENCE_PAD,
+  parseReceiptNumber, formatReceiptNumber, parseDeliveryRef, formatDeliveryRef,
+  parseBareSequence, SEQUENCE_PAD,
 };

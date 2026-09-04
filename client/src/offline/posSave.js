@@ -1,7 +1,7 @@
 import { issueReceiptNumber } from './station.js';
 import { putReceipt, getReceipt, removeReceipt } from './receiptHistory.js';
 import { enqueue, drainOutbox, listRecords, ref, queueOrderDeletion } from './outbox.js';
-import { outboxKey } from './keys.js';
+import { outboxKey, SESSION_KEY } from './keys.js';
 import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
 import { orderTotals } from '../components/pos/posMath.js';
@@ -17,6 +17,20 @@ import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
 // 30-day receipt history (D9), and enqueues the record for the outbox to drain (D13/D14).
 // It does NOT wait for the server.
 
+// The signed-in account's display name, straight out of the session AuthContext wrote
+// (client/src/offline/keys.js SESSION_KEY: `{ id, email, full_name, role }`). Same
+// store, no React. Returns null rather than throwing — an unnamed receipt is a smaller
+// problem than a save that fails.
+async function storedSellerName() {
+  try {
+    const session = await nativeStore.getJson(SESSION_KEY);
+    const name = session?.full_name;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Saves an order locally on the device (D2).
  *
@@ -27,6 +41,7 @@ import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
  * @param {object} params.adjustment { value, reason }
  * @param {Array}  params.items
  * @param {string} [params.profileKey]
+ * @param {string} [params.soldByName] ADR 0017 #10 — overrides the stored session's name
  * @param {string} [params.createdAt]
  * @param {Function} [params.addToast]
  * @returns {Promise<object>} The local order object
@@ -39,6 +54,7 @@ export async function saveOrderLocalFirst({
   items = [],
   personnel = [],
   profileKey = null,
+  soldByName = null,
   createdAt = null,
   addToast = null,
   offlineCoreEnabled = V25_OFFLINE_CORE,
@@ -47,6 +63,18 @@ export async function saveOrderLocalFirst({
   if (!activeProfileKey) {
     throw new Error('saveOrderLocalFirst: profileKey is required — capture the signed-in account at Save (D14)');
   }
+
+  // ADR 0017 #10 — the seller's name in words, for the receipt's `Sold by:` line.
+  // The server stamps `orders.created_by` when the record drains, but the paper comes
+  // out HERE, seconds after Save and possibly days before the line is back, so the
+  // name has to be in the local snapshot too.
+  //
+  // Sourced from the stored session rather than from a React context on purpose: this
+  // module is the offline core and must not pull AuthContext (and React) into its
+  // import graph, and every screen that saves would otherwise have to remember to pass
+  // it. `soldByName` stays as an override for a caller that already holds the user,
+  // and for tests. Never fails a save over a missing name.
+  const seller = soldByName || (await storedSellerName());
 
   const { receipt_number, station, sequence } = await issueReceiptNumber();
   const saleTime = createdAt || new Date().toISOString();
@@ -72,6 +100,7 @@ export async function saveOrderLocalFirst({
     receipt_number,
     receipt_station: station,
     receipt_sequence: sequence,
+    sold_by_name: seller,
     created_at: saleTime,
     status: 'pending',
     customer_id: localCustomerId,

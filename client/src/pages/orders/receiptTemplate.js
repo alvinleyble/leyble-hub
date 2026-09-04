@@ -21,6 +21,12 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   // number ('1-00042') when the order has one; otherwise the row id, zero-padded, as
   // every receipt printed before V2.5 was.
   const receiptNo = order.receipt_number || String(order.id).padStart(5, '0');
+  // ADR 0017 #10 — the seller, printed in words next to the number. This is the exit
+  // ramp the decision names: once the name is on the paper, the person digit leading
+  // the receipt number is an optional convenience rather than the only record of who
+  // sold it. Orders from before migration 042 carry no seller and are never backfilled
+  // (ADR 0017 #12), so the line is simply omitted rather than printed empty.
+  const soldBy = (order.sold_by_name || '').trim();
   const isPickupOrder = order.order_type === 'pickup';
   // Deposit only appears on the closing receipt (status = completed/delivered).
   // Pending receipts assume full bottle return — no deposit charged.
@@ -164,6 +170,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
     <span>No: ${receiptNo}</span>
     <span>${dateStr} ${timeStr}</span>
   </div>
+  ${soldBy ? `<div style="margin-top:2px">Sold by: ${soldBy}</div>` : ''}
 
   <div class="hr"></div>
 

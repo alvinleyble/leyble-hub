@@ -68,3 +68,25 @@ export function parseDeliveryRef(value) {
   if (station < 1 || sequence < 1) return null;
   return { station, device: match[2] ? match[2].toUpperCase() : null, sequence };
 }
+
+// ── Bare-digit lookup (ADR 0017 #11) ────────────────────────────────────────
+//
+// A customer reads the digits off faded thermal paper and skips the prefix: they say
+// "forty-two", not "one-A-dash-zero-zero-zero-four-two". So `42` has to find every
+// order whose SEQUENCE is 42, whichever prefix issued it — `1A-00042`, `2B-00042` and
+// the pre-letter `3-00042` alike — and the answer is a short disambiguation list, never
+// a jump straight to one order. The number of parallel series only grows.
+//
+// Leading zeros are the same number, so `00042` and `42` are one term. `#1240` is also
+// bare digits once the hash is stripped, which is exactly right: for the ~1,300 legacy
+// orders the digits ARE the row id, so a bare-digit search has to look in both places.
+//
+// Returns null for anything that is not purely digits (a full receipt number, a
+// customer's name), which is the caller's signal to fall back to ordinary text search.
+export function parseBareSequence(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/^#/, '');
+  if (!/^\d{1,9}$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return n >= 1 ? n : null;
+}

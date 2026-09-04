@@ -53,6 +53,13 @@ node --test audit-client.test.mjs
 
 On-device UI (Appium, manual/on-demand — not part of CI): [e2e/appium/README.md](e2e/appium/README.md).
 
+The server suite is **timezone-sensitive**: on a local Postgres running `Asia/Manila` three cases
+fail before any code change (two forward-cursor cases in `v3-s32-orders-sync.test.js`, and the
+`to_date` end-of-day case in `v3-s7-orders-pagination.test.js`, whose 20:00 UTC fixture lands the
+next day locally). Put the throwaway database in UTC once and all 158 pass —
+`psql -d <db> -c "ALTER DATABASE <db> SET timezone TO 'UTC'"`. `PGTZ` does **not** work; node-pg
+does not pass it through.
+
 `server/test/v2-accuracy-audit.test.js` + `audit-client.test.mjs` come from the V2 accuracy audit
 and deliberately **pin some still-broken behaviour** (the closed-order deposit total, the ESC/POS
 non-ASCII bytes, the blank no-SKU receipt line). Invert those assertions as each fix lands rather
@@ -355,6 +362,16 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   NULL-is-distinct silently stops the index protecting every pre-letter row, which is
   invisible from the app — see `server/test/v3-s17-both-receipt-formats.test.js`.
   Letters are not allocated yet; the client still issues the pre-letter shape.
+- **Bare digits in order search are a SEQUENCE, never a substring** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md)
+  #11). Customers read the digits off faded thermal paper and skip the prefix, so `42`
+  answers with every order whose sequence is 42 across all prefixes — a disambiguation
+  list carrying customer name and date, never a jump to one order. `%42%` cannot say
+  that: it also drags in `3-00420`. `parseBareSequence` (both `receiptNumbers.js`
+  mirrors) is the shared primitive; `orderMatchesSearch` in
+  `client/src/utils/orderSearch.js` and the `search` branch of `GET /orders` are the two
+  places that apply it and **must stay in step**, or the instant client-side filter and
+  the server answer disagree on the same term. The row id stays in the OR because for a
+  legacy order the digits ARE the id.
 - **The retry key is `request_key`, NOT the receipt number** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md)
   #9, revising [ADR 0006](docs/adr/0006-receipt-number-as-idempotency-key.md), migration
   039). `outbox.js` mints one per queued record (`requestKeys.js`) and injects it into
@@ -776,6 +793,13 @@ WHERE op.order_id = $1
 - Shows **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on `order.order_type`
 - Footer: terms text (left) + "Received the above merchandise…" + `By:` signature line (right)
 - Business name on receipt: **LEYBLE GENERAL MERCHANDISE** (not "Leyble Hub")
+- **`Sold by: <name>` under the number** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) #10),
+  from `orders.created_by` (migration 042) surfaced as `sold_by_name`. It is the exit ramp the ADR
+  names: once the seller is on the paper in words, the person digit leading the receipt number is an
+  optional convenience. Nothing is backfilled — an order without one prints no line, and the ESC/POS
+  copy in [escposReceipt.js](client/src/pages/orders/escposReceipt.js) must always say the same thing
+  as the HTML one. A blind save stamps the name from the stored session, because the paper comes out
+  seconds after Save and possibly days before the line is back.
 
 ---
 
