@@ -10,6 +10,15 @@ A dedicated **development** PostgreSQL database hosted on Supabase was provision
 
 This database provides an isolated development tier for local testing, browser-based UI development, and migration rehearsal without risking live store operations.
 
+**"Staging" and "dev/test" are the same database.** The captain refers to this database as
+"staging"; these docs call it "dev/test" or "development" — both names point at the one Supabase
+project below. There is no separate staging environment.
+
+| Environment | Supabase project ref | Region |
+|---|---|---|
+| Production | `prauvokvlhptvkadvfqq` | Sydney (`ap-southeast-2`) |
+| Development / staging / dev-test | `yzopwoquzfnyqdmuookw` | Tokyo (`ap-northeast-1`) |
+
 ## Operational Rules
 
 ### 1. Absolute Isolation of Production Data
@@ -26,8 +35,8 @@ This database provides an isolated development tier for local testing, browser-b
 - **Security Rule:** Never commit connection strings, passwords, project references, or credentials to git. All credentials remain strictly within uncommitted local `.env` files.
 
 ### 3. Regional Latency Characteristics
-- **Production Database:** Located in the **Sydney** region (`ap-southeast-2`).
-- **Development Database:** Located in the **Tokyo** region (`ap-northeast-1`).
+- **Production Database:** ref `prauvokvlhptvkadvfqq`, located in the **Sydney** region (`ap-southeast-2`).
+- **Development Database:** ref `yzopwoquzfnyqdmuookw`, located in the **Tokyo** region (`ap-northeast-1`).
 - Because the development instance is hosted in Tokyo, database queries executed from the Philippines experience measurably higher latency compared to production. This latency is expected and affects only local developer workstations; production tablet performance is unaffected.
 
 ### 4. Migration Rehearsal Environment

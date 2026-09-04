@@ -454,8 +454,8 @@ returns a 404 JSON. The Android APK is the only way in.
 
 ### Database environments & deployment
 
-- **Production:** Supabase PostgreSQL (Sydney). Render `leyble-hub-api` auto-deploys from `main` on push.
-- **Development database:** Separate Supabase PostgreSQL (Tokyo), full replica set up 2026-08-25. Local dev points exclusively to development (never production); see [docs/operations/development-database.md](docs/operations/development-database.md).
+- **Production:** Supabase PostgreSQL (Sydney), ref `prauvokvlhptvkadvfqq`. Render `leyble-hub-api` auto-deploys from `main` on push.
+- **Development database:** Separate Supabase PostgreSQL (Tokyo), ref `yzopwoquzfnyqdmuookw`, full replica set up 2026-08-25. This is the same database the captain calls "staging" — there is no separate staging environment. Local dev points exclusively to development (never production); see [docs/operations/development-database.md](docs/operations/development-database.md).
 - **Google Play Store (Internal Testing):** Android app builds and deploys automatically via GitHub Actions on push to `main` (modifying `client/**` or `.github/workflows/deploy-play.yml`). Tablet users receive background updates automatically through the Play Store.
 - **V3.0 release sequencing:** Migrations deploy early and alone to production; server code and Android APK land together on release day ([ADR 0014](docs/adr/0014-v3-release-sequencing.md)).
 
