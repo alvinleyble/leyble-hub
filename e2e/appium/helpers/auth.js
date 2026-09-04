@@ -34,6 +34,30 @@ export async function loginAs(driver, { email = LOGIN_EMAIL, password = LOGIN_PA
   assert(true, `Dashboard heading visible after signing in as ${email} — login flow verified end to end`);
 }
 
+// ADR 0017 #7 — the two-tap switch between accounts this device already remembers. No
+// password, no server round trip: this is the flow that has to work mid-blackout when one
+// person hands the tablet to another, and it is what replaced the profile picker slice 3
+// deleted.
+//
+// Only works for an account that has ALREADY signed in successfully on this device (a
+// person's first sign-in still needs a connection — ADR 0015 §2), so drive `loginAs` for
+// each account once before calling this. `pm clear` wipes the list; see the README.
+export async function switchAccount(driver, email) {
+  await clickTestId(driver, 'nav-menu-button');
+  // AppLayout mounts <Sidebar> twice (see navigateTo below), so pick the copy that is
+  // actually laid out rather than the permanently-hidden desktop rail.
+  const opened = await driver.execute((selector) => {
+    const nodes = Array.from(document.querySelectorAll(selector));
+    const visible = nodes.find((n) => n.getBoundingClientRect().width > 0);
+    if (visible) { visible.click(); return true; }
+    return false;
+  }, '[data-testid="account-switcher-button"]');
+  assert(opened === true, 'opened the account switcher from the sidebar');
+
+  await clickTestId(driver, `account-switch-${email}`);
+  assert(true, `switched this tablet to ${email} with no password`);
+}
+
 // Opens the slide-in nav drawer (today's tablet layout — the emulator this suite runs
 // against renders below the `desktop:` breakpoint, see client/src/components/layout/
 // AppLayout.jsx) and taps the given screen's link. `navPath` is the route without its

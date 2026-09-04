@@ -27,6 +27,23 @@ export const SEQUENCE_KEY = `${NS}sequence`;  // last receipt sequence issued, p
 // signing back in never re-allocates a letter the device already holds.
 export const DEVICE_LETTERS_KEY = `${NS}deviceLetters`;
 
+// ADR 0017 #7 — the accounts this device has successfully signed in, so switching
+// between them is two taps and no password:
+// `{ [user id]: { id, email, full_name, role, remembered_at, last_used_at } }`.
+//
+// "Accounts that have proven themselves on this tablet", not "people we know about" — a
+// person's FIRST sign-in on a device still needs a connection (ADR 0015 §2), and this is
+// only ever written by one that succeeded. Device state, like the two keys above it: it
+// survives logout, a 401 and a session takeover, because the alternative is a tablet that
+// cannot say who is selling during a blackout, which is exactly what the deleted profile
+// picker was for.
+//
+// NO TOKEN IS STORED HERE. The account's JWT lives beside the active one in
+// client/src/api/client.js — native-only @capacitor/preferences, memory on the web dev
+// tier — because this key falls back to localStorage in a dev browser (nativeStore.js)
+// and a JWT must never land where page script can read it back (CLAUDE.md security rules).
+export const REMEMBERED_ACCOUNTS_KEY = `${NS}accounts`;
+
 export const OUTBOX_PREFIX  = `${NS}outbox.`;   // one key per queued record
 export const RECEIPT_PREFIX = `${NS}receipt.`;  // one key per locally held order snapshot
 

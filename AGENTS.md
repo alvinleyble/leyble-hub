@@ -342,6 +342,32 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   overlapping calls on a device that has never registered would each mint their own
   `device_key` and burn a second letter, which React StrictMode's double-invoked effect
   reproduces on every dev sign-in.
+- **Remembered accounts and offline switching** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md)
+  #7, `client/src/offline/accounts.js`). A device remembers every account that has
+  **successfully signed in on it** (`v25.accounts`, one entry per account) and switching
+  between them is two taps, no password, no server round trip — that is what replaced the
+  deleted profile picker, and it has to work mid-blackout. A person's FIRST sign-in on a
+  device still needs a connection (ADR 0015 §2), which is why nothing but a successful
+  login ever adds to the list. `switchAccount` in `AuthContext` swaps `v25.session`, which
+  is what `station.js` reads to pick that person's device letter for the next receipt.
+  Device state, so it survives logout, a 401 and a takeover; only an explicit "forget"
+  removes an account. **The account's JWT is deliberately NOT in `v25.` storage** — it
+  sits in `api/client.js` under `accountToken.<email>`, native `@capacitor/preferences`
+  only, memory on the web dev tier, because `nativeStore` falls back to `localStorage` in
+  a dev browser and the security rules forbid a JWT landing there. An entry with no held
+  token is still switchable (an ADR 0015 §3 offline session); it just asks for the
+  password once the line is back.
+- **The outbox drains each record under the account that SAVED it.** Now that one device
+  can hold two signed-in people, `record.profile_key` (D14) is back on the wire — not as
+  the impersonation header ADR 0017 §5 deleted, but as that person's own remembered token,
+  via `api.request(..., { accountKey })`. It matters because `orders.created_by` is what
+  prints `Sold by:` on the receipt. No token held, or the author IS the active session:
+  the ordinary active token, and attribution stays honour-system as accepted.
+- **A 401 during a drain leaves every record QUEUED and stops the pass.** A dead session
+  says nothing about the records, and ADR 0017 #8 makes "a takeover never discards
+  receipts waiting to sync" a hard requirement — never mark them `NEEDS_ATTENTION`, never
+  drop them. The 401 path in `api/client.js` clears session state **by name** (the active
+  token, `activeProfile`, that one account's remembered token) and nothing under `v25.`.
 - **The ADR 0016 slot registry is still there, and is legacy** ([ADR 0016](docs/adr/0016-three-fixed-station-slots.md),
   migration 037): `stations.slot_number`, `POST /stations/slots/:slot/assign`, the owner
   names in `server/src/lib/stationSlots.js` and the slot half of the `/devices` screen.
@@ -780,6 +806,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
 | no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |
 | no device/person identity behind a receipt number | `users.receipt_person` (the permanent person number) and the `user_devices` table (one row per person-and-device pair, holding that pair's `device_letter`) added (migration 043) |
+| no session concept on `users` | `session_id` / `session_device` / `session_started_at` added (migration 044) — ADR 0017 #8's one session per account; all nullable, and a token with no `sid` claim is still accepted |
 | receipt number has no device letter | `orders.receipt_device` + `supplier_deliveries.receipt_device` added and both `GENERATED` display columns rebuilt over them (migration 040) — ADR 0017's `1A-00042`. Both partial unique indexes rebuilt with the letter `COALESCE`d **inside the index expression**, which is what keeps them protecting pre-letter rows |
 | `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots. `activity_logs.entity_type` widened to accept `'station'` in the same migration |
 | `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_device`/`receipt_sequence` triple + partial unique index, and a `GENERATED` `delivery_ref` (`1A-DEL-00007`) added (migrations 036, 040) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8, ADR 0017 #14) |
@@ -840,6 +867,21 @@ returns a 404 JSON. The Android APK is the only way in.
   in ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) §5/§6, migration 041).
   Shared password and no password reset are accepted gaps, not oversights — attribution is
   honour-system, exactly as the picker it replaces was. `users.role` authorizes nothing.
+- **One session per account** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md)
+  #8, migration 044). Login mints `users.session_id` and signs it into the JWT as `sid`;
+  `requireAuth` refuses a token whose `sid` no longer matches, with `code:
+  'session_superseded'`, and also refuses any token for a deactivated account. It is
+  **never load-bearing for receipt uniqueness** — a takeover is a server-side act an
+  offline tablet cannot hear, so uniqueness comes from the device letter alone — and it
+  must never cost a device the receipts it is holding. A token with **no `sid` is
+  accepted**: every pre-slice-5 token has none and tablets update one at a time over
+  several days (ADR 0017 #13). `requireAuth` fails **open** if the database read itself
+  errors; a DB hiccup must not sign the whole store out.
+- **Bearer beats the cookie** in `requireAuth`. One browser cookie can only ever name one
+  account, so a device holding a remembered account's own token has to be able to speak as
+  that account explicitly. On the web dev tier `api/client.js` also drops the cookie
+  (`credentials: 'omit'`) when it names someone other than the active account, rather than
+  filing one person's sale under another's name.
 - Full build & automated Play Store deploy steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
 ### Database environments & deployment
@@ -871,7 +913,7 @@ returns a 404 JSON. The Android APK is the only way in.
 - **Local browser dev only:** `npm run dev` runs in a browser, where the JWT is set as an
   HTTP-only, SameSite=Strict cookie (never localStorage, never log the token). This path exists
   solely so login works during local dev — production serves no web client.
-- `requireAuth` accepts both cookie and Bearer.
+- `requireAuth` accepts both cookie and Bearer, and **Bearer wins** (ADR 0017 #7).
 - `server/.env` must never be committed or exposed — contains `JWT_SECRET` and `SEED_ADMIN_PASSWORD`
 - All API routes require `requireAuth` middleware except `POST /api/v1/auth/login`
 - Parameterized queries only — no string interpolation into SQL
