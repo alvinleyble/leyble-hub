@@ -39,7 +39,7 @@ describe('V3.0 Slice 3.2: GET /orders/sync and the reference-data deltas', () =>
 
   before(async () => {
     const { rows: [admin] } = await db.query(
-      `SELECT id, email, full_name, role FROM users WHERE profile_key = 'admin' LIMIT 1`
+      `SELECT id, email, full_name, role FROM users WHERE email = 'alvin@leyblestore.com' LIMIT 1`
     );
     authToken = jwt.sign(
       { id: admin.id, email: admin.email, role: admin.role, full_name: admin.full_name },
@@ -128,7 +128,7 @@ describe('V3.0 Slice 3.2: GET /orders/sync and the reference-data deltas', () =>
 
   async function get(path) {
     const res = await fetch(`${baseUrl}${path}`, {
-      headers: { Authorization: `Bearer ${authToken}`, 'X-Active-Profile': 'admin' },
+      headers: { Authorization: `Bearer ${authToken}` },
     });
     return { status: res.status, body: await res.json() };
   }

@@ -77,13 +77,21 @@ phones/tablets get a hamburger drawer.
    for local development.
 4. [`requireAuth`](../../server/src/middleware/auth.js) accepts **either** the cookie or the
    Bearer header. On any `401` the client clears the token and redirects to `/login`.
-5. **Profile picker (migration 030):** login is now a single shared account
-   (`josie@leyblestore.com`); after logging in, the client must pick a profile (Josie / Luis /
-   Admin, from `GET /auth/profiles`) via `ProfileContext`/`ProfilePickerModal`, and sends it as an
-   `X-Active-Profile` header on every subsequent request. `requireAuth` swaps `req.user.id`/
-   `full_name` to that profile's `users` row (looked up by `profile_key`), so `activity_logs.performed_by`
-   and `GET /auth/me` reflect *who's driving the app*, not the shared login identity. See
-   `server/db/setup-profiles.js` for how `profile_key` is assigned.
+5. **One account per person ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) §5/§6):**
+   each of Alvin, Josie and Luis signs in with their own email
+   (`alvin@leyblestore.com`, `josie@leyblestore.com`, `luis@leyblestore.com`) and the JWT is the
+   whole identity — `req.user.id` is who signed in, so `activity_logs.performed_by` and
+   `GET /auth/me` are that person with nothing in between. The three are long-standing `users`
+   rows that `performed_by` already pointed at; `server/db/setup-accounts.js` re-activates the
+   two that the old shared-login setup had deactivated. All three share the same password by
+   captain decision — attribution is honour-system, exactly as the profile picker it replaces
+   was. There is no password reset, no user-management screen and no authorization: every
+   account can do everything (ADR 0017, Accepted Open Issues).
+   *Superseded:* migration 030's shared `josie@leyblestore.com` login plus a Josie/Luis/Admin
+   profile pick sent as an `X-Active-Profile` header. `users.profile_key` (dropped in migration
+   041), the header swap, `GET /auth/profiles`, `ProfileContext.jsx` and `ProfilePickerModal.jsx`
+   are all gone; `requireAuth` ignores a stray header from a pre-0017 APK rather than rejecting
+   it, so old tablets keep working through the update window.
 
 CORS (`index.js`) allows only `localhost:5173` (Vite dev), `https://localhost` +
 `capacitor://localhost` (the native Capacitor WebView's origin).

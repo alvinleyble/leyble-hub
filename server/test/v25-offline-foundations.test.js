@@ -2,7 +2,7 @@
 //
 // Three things are load-bearing here and nothing else in the release can compensate
 // for getting them wrong: station numbers never repeat (D1), a resent receipt number
-// never becomes a second order (D13), and a drained record is attributed to the profile
+// never becomes a second order (D13), and a drained record is attributed to the account
 // that made it rather than the one draining it (D14). Plus the device's sale time (D5).
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,19 +24,22 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
   let baseUrl;
   let authToken;
   let adminUserId;
+
+  const tokenFor = (user) => jwt.sign(
+    { id: user.id, email: user.email, role: user.role, full_name: user.full_name },
+    process.env.JWT_SECRET
+  );
+
   let customerId;
   let productId;
   const deviceKeys = [];
 
   before(async () => {
     const { rows: [admin] } = await db.query(
-      `SELECT id, email, full_name, role FROM users WHERE profile_key = 'admin' LIMIT 1`
+      `SELECT id, email, full_name, role FROM users WHERE email = 'alvin@leyblestore.com' LIMIT 1`
     );
     adminUserId = admin.id;
-    authToken = jwt.sign(
-      { id: admin.id, email: admin.email, role: admin.role, full_name: admin.full_name },
-      process.env.JWT_SECRET
-    );
+    authToken = tokenFor(admin);
 
     const { rows: [customer] } = await db.query(
       `INSERT INTO customers (name, customer_type) VALUES ('TEST_V25_CUSTOMER', 'regular') RETURNING id`
@@ -81,16 +84,25 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     }
   });
 
-  function call(path, { profile, ...options } = {}) {
+  // ADR 0017 §5 — identity is the JWT and nothing else; there is no `X-Active-Profile`
+  // header to swap it. `as` takes a token minted for a different account, which is how a
+  // request made by Luis is expressed now that Luis has his own login.
+  function call(path, { as, ...options } = {}) {
     return fetch(`${baseUrl}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-        ...(profile ? { 'X-Active-Profile': profile } : {}),
+        Authorization: `Bearer ${as || authToken}`,
         ...(options.headers || {}),
       },
     });
+  }
+
+  async function accountToken(email) {
+    const { rows: [user] } = await db.query(
+      `SELECT id, email, full_name, role FROM users WHERE email = $1 LIMIT 1`, [email]
+    );
+    return { id: user.id, token: tokenFor(user) };
   }
 
   function newDeviceKey(tag) {
@@ -366,18 +378,18 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     });
   });
 
-  // ── D14: attribution follows the record, not the drain ────────────────────
+  // ── D14: attribution follows the signing-in account ───────────────────────
 
-  describe('D14 — per-record profile attribution', () => {
-    it('credits the profile sent with the record, in the activity log and the stock movement', async () => {
-      const { rows: [luis] } = await db.query(`SELECT id FROM users WHERE profile_key = 'luis'`);
+  describe('D14 — attribution follows the account that made the request', () => {
+    it('credits the signed-in account, in the activity log and the stock movement', async () => {
+      const luis = await accountToken('luis@leyblestore.com');
       const receipt = testReceipt(3);
 
-      // The drain replays Luis's Tuesday receipt. The tablet is signed in on the shared
-      // account (JWT above) and could be sitting on any profile; the header is what
-      // decides, and the outbox takes it from the record.
+      // Luis's Tuesday receipt, drained under Luis's own account. Before ADR 0017 the
+      // tablet was signed in on a shared login and an `X-Active-Profile` header decided
+      // who got the credit; now the JWT is the only thing that says so.
       const res = await call('/orders', {
-        method: 'POST', profile: 'luis',
+        method: 'POST', as: luis.token,
         body: JSON.stringify(orderBody({ receipt_number: receipt })),
       });
       const order = await res.json();
@@ -391,9 +403,9 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.match(activity.summary, new RegExp(receipt), 'and names the order by its receipt number');
 
       // The stock movement is a separate, later act (ADR 0012 — deduct at dispatch), and it
-      // is credited to whoever dispatches, replayed the same way through the header.
+      // is credited to whoever dispatches, on the same account basis.
       await call(`/orders/${receipt}/status`, {
-        method: 'POST', profile: 'luis', body: JSON.stringify({ status: 'in_transit' }),
+        method: 'POST', as: luis.token, body: JSON.stringify({ status: 'in_transit' }),
       });
       const { rows: [movement] } = await db.query(
         `SELECT performed_by FROM inventory_audit_logs WHERE related_order_id = $1 ORDER BY id DESC LIMIT 1`,
@@ -403,15 +415,15 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.notEqual(movement.performed_by, adminUserId);
     });
 
-    it('two records drained back to back keep their own profiles', async () => {
-      const { rows: [josie] } = await db.query(`SELECT id FROM users WHERE profile_key = 'josie'`);
-      const { rows: [luis] } = await db.query(`SELECT id FROM users WHERE profile_key = 'luis'`);
+    it('two records drained back to back keep their own authors', async () => {
+      const josie = await accountToken('josie@leyblestore.com');
+      const luis = await accountToken('luis@leyblestore.com');
       const one = await (await call('/orders', {
-        method: 'POST', profile: 'josie',
+        method: 'POST', as: josie.token,
         body: JSON.stringify(orderBody({ receipt_number: testReceipt(2) })),
       })).json();
       const two = await (await call('/orders', {
-        method: 'POST', profile: 'luis',
+        method: 'POST', as: luis.token,
         body: JSON.stringify(orderBody({ receipt_number: testReceipt(2) })),
       })).json();
 

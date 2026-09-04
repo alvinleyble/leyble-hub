@@ -1,0 +1,16 @@
+-- ADR 0017 decision 5: profiles are deleted as a concept. Each person now signs in with
+-- their own account, so there is no `X-Active-Profile` impersonation header left and
+-- nothing to key a profile on. The rows themselves are untouched — they are ordinary
+-- `users` rows and `activity_logs.performed_by` already points at their ids, so dropping
+-- the tag muddies no historical attribution and no data migration is needed.
+--
+-- DEPLOY NOTE — this migration is NOT eligible for ADR 0014's stage-1 "migrations deploy
+-- early and alone" run. Every other V3 migration is additive; this one drops a column the
+-- PRE-0017 server still SELECTs in requireAuth's profile cache, so applying it ahead of
+-- the server code would 500 every request carrying the header. It must land in the same
+-- deploy as the server change that stops reading it (this PR).
+--
+-- Numbered 041, not 040: 040 is claimed by ADR 0017 slice 2 (the receipt device letter),
+-- which lands ahead of this one. A gap in the sequence is harmless; two migrations
+-- sharing a number is not.
+ALTER TABLE users DROP COLUMN IF EXISTS profile_key;

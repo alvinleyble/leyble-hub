@@ -15,7 +15,7 @@ export async function waitForTestId(driver, id, { timeout = 20000 } = {}) {
 // Clicked via executeScript rather than a plain WebDriver click: several elements in
 // this app (flex-centered icon buttons, elements inside the app's forced sensorLandscape
 // orientation) report "element not interactable" for a native click — first hit and
-// documented for the profile picker in the original login.test.mjs, and again here for
+// documented for the profile picker ADR 0017 has since removed, and again here for
 // the hamburger nav button. A JS click sidesteps it uniformly rather than special-casing
 // each element that turns out to need it.
 export async function clickTestId(driver, id, { timeout = 15000 } = {}) {

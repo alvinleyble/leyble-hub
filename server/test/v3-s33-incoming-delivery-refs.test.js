@@ -32,7 +32,7 @@ describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', 
 
   before(async () => {
     const { rows: [admin] } = await db.query(
-      `SELECT id, email, full_name, role FROM users WHERE profile_key = 'admin' LIMIT 1`
+      `SELECT id, email, full_name, role FROM users WHERE email = 'alvin@leyblestore.com' LIMIT 1`
     );
     authToken = jwt.sign(
       { id: admin.id, email: admin.email, role: admin.role, full_name: admin.full_name },

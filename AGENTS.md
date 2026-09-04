@@ -33,13 +33,13 @@ DB: `DATABASE_URL` (points to the development Supabase database; see [docs/opera
 ```bash
 # API integration suites — run against a throwaway DB, never the dev one
 createdb leyble_hub_v2audit && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit node server/db/migrate.js
-# The V2.5+ suites resolve their acting user by profile_key, so a migrated-only DB
+# The V2.5+ suites resolve their acting user by email, so a migrated-only DB
 # cancels them wholesale with "Cannot read properties of undefined (reading 'id')".
-# setup-profiles.js only TAGS existing rows — a fresh DB has none, so insert them:
-psql -d leyble_hub_v2audit -c "INSERT INTO users (email, password_hash, full_name, role, profile_key, is_active) VALUES \
-  ('josie@leyblestore.com','x','Josie','admin','josie',TRUE), \
-  ('luis@leyblestore.com','x','Luis','admin','luis',TRUE), \
-  ('alvin@leyblestore.com','x','Admin','admin','admin',TRUE);"
+# setup-accounts.js only ACTIVATES existing rows — a fresh DB has none, so insert them:
+psql -d leyble_hub_v2audit -c "INSERT INTO users (email, password_hash, full_name, role, is_active) VALUES \
+  ('josie@leyblestore.com','x','Josie','admin',TRUE), \
+  ('luis@leyblestore.com','x','Luis','admin',TRUE), \
+  ('alvin@leyblestore.com','x','Admin','admin',TRUE);"
 cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit \
   JWT_SECRET='test-jwt-secret-key-32-chars-minimum!!' npm test
 
@@ -379,10 +379,14 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   logout or a genuine 401 still clear `v25.session` as before but never touch this second
   key, so `getLastKnownIdentity()`/`resumeOfflineSession()` can restore the user (and
   re-populate `v25.session`) with zero server round trip after either.
-- **A queued record carries the profile that made it.** `enqueue()` requires a
-  `profileKey` captured at Save, and the drain replays it as `X-Active-Profile` per
-  record — otherwise the whole outage gets credited to whoever is holding the tablet when
-  the line returns.
+- **A queued record carries the account that made it.** `enqueue()` still requires a
+  `profileKey` (the signed-in account, captured at Save), but since [ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) §5
+  deleted the `X-Active-Profile` header it is **local bookkeeping only** — the drain sends
+  each record under the signed-in account's own JWT, and `record.profile_key` is what the
+  needs-attention list shows. The parameter and the stored field keep their pre-0017 names
+  on purpose: renaming the persisted `profile_key` would orphan records already queued on a
+  device that upgrades mid-outage. Slice 5's remembered accounts is what puts a per-record
+  author back on the wire, once one device can hold more than one signed-in person.
 - **An order's `created_at` is the device's sale time**, passed explicitly (same pattern
   as `supplier_deliveries.received_at`). No clock-skew detection — deliberately.
 - **Parked orders (`client/src/offline/parkedOrders.js`):** online, unchanged —
@@ -778,12 +782,13 @@ returns a 404 JSON. The Android APK is the only way in.
 - **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
 - `npm run dev` (separate Vite + Express servers) is **dev-only** — local development still runs
   in a browser, which is why the cookie auth path is kept (see Security rules).
-- Login: single shared account `josie@leyblestore.com` / (value of `JOSIE_PASSWORD`, default
-  `leyble123` — set via the one-off `node server/db/setup-profiles.js` script, see migration 030).
-  After login, the app requires picking a profile (Josie / Luis / Admin); the client sends the
-  chosen profile as an `X-Active-Profile` header on every request, and `requireAuth` swaps the
-  request identity to that profile so `activity_logs.performed_by` reflects who's actually driving,
-  not the shared login.
+- Login: **one account per person** — `alvin@leyblestore.com`, `josie@leyblestore.com`,
+  `luis@leyblestore.com`, all on the same password (`ACCOUNT_PASSWORD`, default `leyble123`),
+  activated by the one-off `node server/db/setup-accounts.js`. The JWT is the whole identity:
+  no profile picker, no `X-Active-Profile`, and `activity_logs.performed_by` is whoever signed
+  in ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) §5/§6, migration 041).
+  Shared password and no password reset are accepted gaps, not oversights — attribution is
+  honour-system, exactly as the picker it replaces was. `users.role` authorizes nothing.
 - Full build & automated Play Store deploy steps: **[docs/operations/android.md](docs/operations/android.md)**.
 
 ### Database environments & deployment

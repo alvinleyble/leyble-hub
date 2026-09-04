@@ -7,8 +7,9 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
 
 ## What's here
 
-- `tests/login.test.mjs` — log in, confirm the profile picker appears, pick a profile, confirm
-  the Dashboard renders.
+- `tests/login.test.mjs` — log in with one person's own account and confirm the Dashboard
+  renders. (There is no profile picker any more — ADR 0017 §5 deleted it; the Dashboard is
+  the first thing after a successful sign-in.)
 - `tests/dashboard.test.mjs`, `orders.test.mjs`, `inventory.test.mjs`, `customers.test.mjs`,
   `personnel.test.mjs`, `tickets.test.mjs`, `audit.test.mjs`, `devices.test.mjs` — one basic
   test per core screen: its list loads with real data, a filter/search control narrows it (or
@@ -17,7 +18,9 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
   these as the template for a new test.
 - `helpers/driver.js` — connects to Appium, switches into the Capacitor WebView context, and
   `withSession(fn)` wraps both plus session teardown around a test body.
-- `helpers/auth.js` — `loginAs(driver)` (the shared login flow every test starts from) and
+- `helpers/auth.js` — `loginAs(driver)` (the login flow every test starts from; defaults to
+  `josie@leyblestore.com`, pass `{ email }` to drive the suite as Alvin or Luis — all three
+  accounts share the same password) and
   `navigateTo(driver, 'orders')` (opens the nav drawer and taps a screen's link — see "How
   screen tests navigate" below).
 - `helpers/ui.js` — small `data-testid`-based query/click helpers (`waitForTestId`,
@@ -31,8 +34,7 @@ Every screen's list container, filter/search control, list item, and detail-view
 `data-testid` (e.g. `orders-list`, `orders-search-input`, `orders-row`, `order-detail`) so tests
 don't depend on visible copy or DOM structure — grep the relevant `client/src/pages/**` file for
 `data-testid` to see a screen's hooks. Navigation carries them too: `nav-menu-button` (the
-hamburger) and `nav-link-<path>` (e.g. `nav-link-orders`) on each drawer link, and
-`profile-picker`/`profile-picker-<key>` on the post-login profile picker.
+hamburger) and `nav-link-<path>` (e.g. `nav-link-orders`) on each drawer link.
 
 Nothing here touches `client/` or `server/`'s own build or test setup. The one thing it does
 depend on outside this directory is a debug-build-only Android networking override — see
@@ -97,9 +99,7 @@ Expected output:
 ```
 Found webview context: WEBVIEW_com.leyble.hub
 PASS: found a "Sign in" button on the login screen
-PASS: profile picker appeared after login (auth succeeded)
-PASS: profile picker shows at least one profile button and it was clicked
-PASS: Dashboard heading visible after profile pick — login flow verified end to end
+PASS: Dashboard heading visible after signing in as josie@leyblestore.com — login flow verified end to end
 
 ALL ASSERTIONS PASSED
 ```

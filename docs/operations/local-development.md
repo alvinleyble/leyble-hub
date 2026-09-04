@@ -48,9 +48,11 @@ cd client && npm run dev
 ```
 
 Open **http://localhost:5173** (Vite dev-proxies `/api` → `http://localhost:3000`).
-Login: single shared account `josie@leyblestore.com` / *(`JOSIE_PASSWORD`, default `leyble123`)* —
-run `node server/db/setup-profiles.js` once after seeding to set this password and wire up the
-Josie/Luis/Admin profile picker (see [ARCHITECTURE.md#authentication-flow](../architecture/ARCHITECTURE.md#authentication-flow)).
+Login: one account per person — `alvin@leyblestore.com`, `josie@leyblestore.com` or
+`luis@leyblestore.com`, all on the same password *(`ACCOUNT_PASSWORD`, default `leyble123`)*.
+Run `node server/db/setup-accounts.js` once after seeding to activate the three (see
+[ARCHITECTURE.md#authentication-flow](../architecture/ARCHITECTURE.md#authentication-flow)).
+There is no profile picker — signing in lands straight on the Dashboard.
 
 ## Database Environments & Isolation
 
@@ -87,7 +89,7 @@ A dedicated **development database** (Supabase PostgreSQL, full replica of produ
 | `SEED_ADMIN_EMAIL` | No | Admin email for seed, default `admin@leyblevhub.local` |
 | `SEED_ADMIN_PASSWORD` | Yes | Admin password created by `node db/seed.js` |
 | `SEED_ADMIN_NAME` | No | Admin display name, default `Admin` |
-| `JOSIE_PASSWORD` | No | Login password for the shared account, used by `node db/setup-profiles.js`, default `leyble123` |
+| `ACCOUNT_PASSWORD` | No | Password written to the re-activated Alvin/Luis accounts by `node db/setup-accounts.js`, default `leyble123` |
 
 ## Migrations
 

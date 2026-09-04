@@ -55,16 +55,4 @@ router.get('/me', requireAuth, (req, res) => {
   res.json(req.user);
 });
 
-// GET /api/v1/auth/profiles — the Josie/Luis/Admin picker options (see migration 030).
-router.get('/profiles', requireAuth, async (req, res, next) => {
-  try {
-    const { rows } = await db.query(
-      `SELECT profile_key, full_name FROM users WHERE profile_key IS NOT NULL ORDER BY profile_key`
-    );
-    res.json(rows);
-  } catch (err) {
-    next(err);
-  }
-});
-
 module.exports = router;

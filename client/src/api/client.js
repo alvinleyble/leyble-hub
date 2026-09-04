@@ -9,7 +9,12 @@ const BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1';
 // localStorage) and sends it as an Authorization: Bearer header instead.
 const isNative = Capacitor.isNativePlatform();
 const TOKEN_KEY = 'authToken';
-const PROFILE_KEY = 'activeProfile';
+// The account signed in on this device. ADR 0017 §5 deleted profiles, so this is no
+// longer a picked persona — it is written from the login response and cleared on logout
+// or a genuine 401, exactly like the token beside it. Nothing is sent to the server from
+// it: the JWT already carries the identity. It exists so a record queued in the outbox
+// can record WHO SAVED IT locally (D14) even after the app is closed and reopened.
+const ACCOUNT_KEY = 'activeProfile';
 
 async function getToken() {
   if (!isNative) return null;
@@ -23,37 +28,38 @@ async function setToken(token) {
   else await Preferences.remove({ key: TOKEN_KEY });
 }
 
-// Which of Josie / Luis / Admin is currently driving the app — see server/src/middleware/auth.js.
+// Who is signed in on this device, as a stable string (the account's email).
 // Native: @capacitor/preferences (app-sandboxed, survives restarts). Web dev: localStorage.
+// The storage key keeps its pre-0017 name so a device upgrading mid-outage does not lose
+// the value already sitting beside its still-queued outbox records.
 async function getActiveProfile() {
-  if (!isNative) return localStorage.getItem(PROFILE_KEY);
-  const { value } = await Preferences.get({ key: PROFILE_KEY });
+  if (!isNative) return localStorage.getItem(ACCOUNT_KEY);
+  const { value } = await Preferences.get({ key: ACCOUNT_KEY });
   return value || null;
 }
 
-async function setActiveProfile(profileKey) {
+async function setActiveProfile(accountKey) {
   if (!isNative) {
-    if (profileKey) localStorage.setItem(PROFILE_KEY, profileKey);
-    else localStorage.removeItem(PROFILE_KEY);
+    if (accountKey) localStorage.setItem(ACCOUNT_KEY, accountKey);
+    else localStorage.removeItem(ACCOUNT_KEY);
     return;
   }
-  if (profileKey) await Preferences.set({ key: PROFILE_KEY, value: profileKey });
-  else await Preferences.remove({ key: PROFILE_KEY });
+  if (accountKey) await Preferences.set({ key: ACCOUNT_KEY, value: accountKey });
+  else await Preferences.remove({ key: ACCOUNT_KEY });
 }
 
-// `options.profileKey` overrides the currently active profile for this one call.
-// D14: a record queued in the outbox carries the profile that was active when it was
-// SAVED, and the drain replays that profile per record. Without this override every
-// receipt from a Tuesday outage would be filed under whoever happens to be holding the
-// tablet when the line comes back — Josie credited with Luis's day, in the activity log
-// and in the stock movements alike.
+// ADR 0017 §5 — there is no `X-Active-Profile` header any more. Each person signs in
+// with their own account, so the JWT alone says who is acting and the server has nothing
+// to swap. The outbox still stores the account that made each record (D14), but that is
+// now local-only bookkeeping; slice 5's remembered accounts is what will give it a wire
+// form again once one device can hold more than one signed-in person.
 async function request(path, options = {}) {
-  const { profileKey, ...fetchOptions } = options;
+  // `profileKey` is pulled off and dropped rather than ignored in place, so a caller
+  // still passing the per-record author (the outbox drain does) can't leak it into fetch.
+  const { profileKey: _localAuthor, ...fetchOptions } = options;
   const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
   const token = await getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const activeProfile = profileKey ?? (await getActiveProfile());
-  if (activeProfile) headers['X-Active-Profile'] = activeProfile;
 
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
@@ -101,8 +107,8 @@ export const api = {
   post:  (path, body, opts) => request(path, { ...opts, method: 'POST',  body: JSON.stringify(body) }),
   patch: (path, body, opts) => request(path, { ...opts, method: 'PATCH', body: JSON.stringify(body) }),
   del:   (path,       opts) => request(path, { ...opts, method: 'DELETE' }),
-  // The outbox drain builds its own request (method, body and per-record profile all
-  // come off the queued record), so it needs the raw form.
+  // The outbox drain builds its own request (method and body come off the queued
+  // record), so it needs the raw form.
   request,
   getActiveProfile,
   setActiveProfile,
