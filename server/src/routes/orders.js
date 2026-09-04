@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, isStockOut } = require('../lib/inventory');
-const { parseReceiptNumber } = require('../lib/receiptNumbers');
+const { parseReceiptNumber, parseBareSequence } = require('../lib/receiptNumbers');
 const { assertIssuableStation } = require('../lib/stationSlots');
 const {
   normalizeRequestKey, findByRequestKey, findByReceiptNumber,
@@ -201,11 +201,16 @@ async function getFullOrder(orderId) {
             c.name  AS customer_name, c.customer_type,
             c.address AS customer_address, c.phone AS customer_phone,
             up.full_name AS pending_receipt_printed_by_name,
-            ud.full_name AS delivered_receipt_printed_by_name
+            ud.full_name AS delivered_receipt_printed_by_name,
+            -- ADR 0017 #10 — the seller, in words, for the receipt's "Sold by:" line.
+            -- NULL for every order created before migration 042; nothing is backfilled
+            -- and the line is simply omitted, exactly like a missing receipt number.
+            uc.full_name AS sold_by_name
      FROM orders o
      JOIN customers c ON c.id = o.customer_id
      LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
      LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
+     LEFT JOIN users uc ON uc.id = o.created_by
      WHERE o.id = $1`,
     [resolvedId]
   );
@@ -320,19 +325,38 @@ router.get('/', async (req, res, next) => {
 
     const searchTerm = String(search || q || '').trim();
     if (searchTerm) {
-      const cleanTerm = searchTerm.replace(/^#/, '');
-      const p1 = `%${searchTerm}%`;
-      const p2 = `%${cleanTerm}%`;
-      if (p1 === p2) {
-        const pIdx = idx++;
-        params.push(p1);
-        conditions.push(`(c.name ILIKE $${pIdx} OR o.id::text ILIKE $${pIdx} OR (o.receipt_number IS NOT NULL AND o.receipt_number ILIKE $${pIdx}))`);
+      // ADR 0017 #11 — BARE DIGITS ARE A SEQUENCE, not a substring.
+      //
+      // Customers read the digits off faded thermal paper and skip the prefix, so `42`
+      // must return every order whose sequence is 42 across all prefixes — `1A-00042`,
+      // `2B-00042`, the pre-letter `3-00042` — as a short disambiguation list. A
+      // substring match cannot express that: `%42%` also drags in `3-00420` and
+      // `1-00142`, and the number of parallel series only grows, so the noise grows
+      // with it. Equality on receipt_sequence says exactly what is meant.
+      //
+      // The row id stays in the OR because for the ~1,300 legacy orders the digits ARE
+      // the id — they have no sequence at all and are never backfilled (ADR 0017 #12).
+      // Exact there too, for the same reason: `42` means order 42, not 420 and 142.
+      const bareSequence = parseBareSequence(searchTerm);
+      if (bareSequence !== null) {
+        const seqIdx = idx++;
+        params.push(bareSequence);
+        conditions.push(`(o.receipt_sequence = $${seqIdx} OR o.id = $${seqIdx})`);
       } else {
-        const p1Idx = idx++;
-        params.push(p1);
-        const p2Idx = idx++;
-        params.push(p2);
-        conditions.push(`(c.name ILIKE $${p1Idx} OR o.id::text ILIKE $${p2Idx} OR (o.receipt_number IS NOT NULL AND (o.receipt_number ILIKE $${p1Idx} OR o.receipt_number ILIKE $${p2Idx})))`);
+        const cleanTerm = searchTerm.replace(/^#/, '');
+        const p1 = `%${searchTerm}%`;
+        const p2 = `%${cleanTerm}%`;
+        if (p1 === p2) {
+          const pIdx = idx++;
+          params.push(p1);
+          conditions.push(`(c.name ILIKE $${pIdx} OR o.id::text ILIKE $${pIdx} OR (o.receipt_number IS NOT NULL AND o.receipt_number ILIKE $${pIdx}))`);
+        } else {
+          const p1Idx = idx++;
+          params.push(p1);
+          const p2Idx = idx++;
+          params.push(p2);
+          conditions.push(`(c.name ILIKE $${p1Idx} OR o.id::text ILIKE $${p2Idx} OR (o.receipt_number IS NOT NULL AND (o.receipt_number ILIKE $${p1Idx} OR o.receipt_number ILIKE $${p2Idx})))`);
+        }
       }
     }
 
@@ -346,6 +370,7 @@ router.get('/', async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT o.*,
               c.name AS customer_name,
+              uc.full_name AS sold_by_name,
               (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
                FROM order_personnel op
                JOIN personnel per ON per.id = op.personnel_id
@@ -353,7 +378,11 @@ router.get('/', async (req, res, next) => {
               COUNT(*) OVER()::int AS total_count
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN users uc ON uc.id = o.created_by
        ${whereClause}
+       -- ADR 0017 #12 — NEVER order by receipt number. '#1240', '3-00061' and
+       -- '1A-00001' coexist permanently and do not sort as text; every list, export
+       -- and report orders by time.
        ORDER BY o.created_at DESC
        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`,
       params
@@ -459,11 +488,13 @@ router.get('/sync', async (req, res, next) => {
               c.name    AS customer_name, c.customer_type,
               c.address AS customer_address, c.phone AS customer_phone,
               up.full_name AS pending_receipt_printed_by_name,
-              ud.full_name AS delivered_receipt_printed_by_name
+              ud.full_name AS delivered_receipt_printed_by_name,
+              uc.full_name AS sold_by_name
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
        LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
        LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
+       LEFT JOIN users uc ON uc.id = o.created_by
        ${whereClause}
        ORDER BY o.updated_at ${forward ? 'ASC' : 'DESC'}, o.id ${forward ? 'ASC' : 'DESC'}
        LIMIT $${limitIdx}`,
@@ -620,12 +651,18 @@ router.post('/', async (req, res, next) => {
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
                            receipt_station, receipt_device, receipt_sequence, request_key,
-                           created_at, adjustment, adjustment_reason)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11)
+                           created_at, adjustment, adjustment_reason, created_by)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11, $12)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
        receipt?.station ?? null, receipt?.device ?? null, receipt?.sequence ?? null,
-       requestKey, created_at || null, adjNum, adjReason]
+       requestKey, created_at || null, adjNum, adjReason,
+       // ADR 0017 #10 — who sold it, for the receipt's `Sold by:` line. The JWT is the
+       // whole identity since ADR 0017 §5, so this is whoever is signed in on the
+       // device that sent it — including a drain hours later, which replays under the
+       // same account that made the sale. Slice 5's remembered accounts is what will
+       // let one device drain records made by two different people.
+       req.user.id]
     );
 
     await insertItems(client, order.id, items, isDraft);

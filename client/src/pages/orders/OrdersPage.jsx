@@ -7,6 +7,8 @@ import Spinner from '../../components/ui/Spinner';
 import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
+import { orderMatchesSearch } from '../../utils/orderSearch';
+import { parseBareSequence } from '../../offline/receiptNumbers';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
 import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
 import {
@@ -257,8 +259,7 @@ export default function OrdersPage() {
 
   // Instant client-side search & filtering (G20, G21)
   const filteredOrders = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const qClean = q.replace(/^#/, '');
+    const q = searchQuery.trim();
     // Slice 3.2 — a still-queued order is written to local history at Save as well as
     // sitting in the outbox, so when the table is being served FROM local history it
     // would otherwise appear twice: once here and once in the "Waiting to sync" block
@@ -276,15 +277,9 @@ export default function OrdersPage() {
       if (printFilter === 'printed' && !printed) return false;
       if (printFilter === 'unprinted' && printed) return false;
 
-      if (q) {
-        const matches = (
-          (o.customer_name || '').toLowerCase().includes(q) ||
-          String(o.id || '').toLowerCase().includes(qClean) ||
-          String(o.receipt_number || '').toLowerCase().includes(q) ||
-          orderRef(o).toLowerCase().includes(q)
-        );
-        if (!matches) return false;
-      }
+      // ADR 0017 #11 — bare digits are a SEQUENCE, matched across every prefix, and
+      // the same rule the server's `search` parameter applies (utils/orderSearch.js).
+      if (!orderMatchesSearch(o, q)) return false;
 
       return true;
     });
@@ -299,25 +294,24 @@ export default function OrdersPage() {
   const visibleLocalUnsyncedOrders = useMemo(() => {
     if (doubleOnly) return [];
     if (statusTab !== 'all' && statusTab !== 'pending') return [];
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
 
     return localUnsyncedOrders.filter((o) => {
       const printed = isOrderPrinted(o);
       if (printFilter === 'printed' && !printed) return false;
       if (printFilter === 'unprinted' && printed) return false;
 
-      if (q) {
-        const matches = (
-          (o.customer_name || '').toLowerCase().includes(q) ||
-          String(o.receipt_number || '').toLowerCase().includes(q) ||
-          orderRef(o).toLowerCase().includes(q)
-        );
-        if (!matches) return false;
-      }
+      if (!orderMatchesSearch(o, q)) return false;
 
       return true;
     });
   }, [localUnsyncedOrders, statusTab, doubleOnly, searchQuery, printFilter]);
+
+  // ADR 0017 #11 — a bare-digit search is a lookup by SEQUENCE, and several parallel
+  // series can hold the same one, so the answer is a disambiguation list. Non-null only
+  // while the term is bare digits; the hint it drives stays silent for a name search.
+  const searchedSequence = parseBareSequence(searchQuery);
+  const matchCount = filteredOrders.length + visibleLocalUnsyncedOrders.length;
 
   const openDraft = async (o) => {
     // A draft this device parked is already complete in hand — it has no server row to
@@ -552,7 +546,7 @@ export default function OrdersPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search orders by customer or #..."
+            placeholder="Search by customer or number (e.g. 42)"
             className="w-full h-10 pl-9 pr-8 border border-slate-300 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
             aria-label="Search orders"
             data-testid="orders-search-input"
@@ -707,6 +701,17 @@ export default function OrdersPage() {
             : 'No orders match the search and filter criteria.'}
         </p>
       ) : (
+        <>
+        {/* ADR 0017 #11 — a bare number can belong to several series at once
+            (1A-00042, 2B-00042, the pre-letter 3-00042), so say so rather than
+            letting the extra rows read as a bug. The rows below carry the customer
+            name and the date, which is what tells them apart. */}
+        {searchedSequence !== null && matchCount > 1 && (
+          <p className="mb-3 text-base text-slate-600" data-testid="orders-sequence-hint">
+            {matchCount} orders numbered <strong>{searchedSequence}</strong> — check the
+            customer and date.
+          </p>
+        )}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="orders-list">
           {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
           <div className="lg:hidden divide-y divide-slate-200">
@@ -983,6 +988,7 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Bottom Pagination Bar */}

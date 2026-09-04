@@ -57,6 +57,10 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   const timeStr  = `${docHours % 12 || 12}:${String(docDate.getMinutes()).padStart(2, '0')} ${docHours < 12 ? 'AM' : 'PM'}`;
   // D1 — see receiptTemplate.js; the two receipts must always agree.
   const receiptNo = order.receipt_number || String(order.id).padStart(5, '0');
+  // ADR 0017 #10 — the seller in words. ASCII only, like every other string written
+  // through `s()` below: this buffer goes straight to the printer, which has no
+  // notion of UTF-8, so a name carrying an accent would print as mojibake bytes.
+  const soldBy = (order.sold_by_name || '').trim().replace(/[^\x20-\x7E]/g, '');
 
   const printAdj       = Number(overrides.adjustment !== undefined ? overrides.adjustment : (order.adjustment || 0)) || 0;
   const printAdjReason = overrides.adjustment_reason !== undefined ? overrides.adjustment_reason : order.adjustment_reason;
@@ -93,6 +97,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   ln(isPickup ? 'PICKUP RECEIPT' : 'DELIVERY RECEIPT');
   b(ESC, 0x45, 0x00);
   ln(padLR(`No: ${receiptNo}`, `${dateStr} ${timeStr}`));
+  if (soldBy) ln(`Sold by: ${soldBy}`);
 
   // ── Customer / personnel ───────────────────────────────────────────────────
   hr();
