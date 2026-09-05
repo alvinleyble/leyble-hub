@@ -13,19 +13,20 @@ const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base tex
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Resolves a uniform adjustment (percent/fixed/set, increase/decrease) against one
-// product's current price. Negative results are clamped to 0 but flagged as clamped
+// Resolves a uniform adjustment (percent/fixed/set) against one product's current
+// price. The adjustment direction depends on the sign of adjValue: positive increases,
+// negative decreases. Negative results are clamped to 0 but flagged as clamped
 // so the preview can call it out instead of silently changing what the owner typed.
-function computeUniformPrice(current, adjType, adjDirection, adjValue) {
+export function computeUniformPrice(current, adjType, adjValue) {
   const val = Number(adjValue) || 0;
   let next;
   if (adjType === 'set') {
     next = val;
   } else if (adjType === 'percent') {
     const delta = current * (val / 100);
-    next = adjDirection === 'decrease' ? current - delta : current + delta;
+    next = current + delta;
   } else {
-    next = adjDirection === 'decrease' ? current - val : current + val;
+    next = current + val;
   }
   return { clamped: Math.max(0, round2(next)), wasClamped: next < 0 };
 }
@@ -34,11 +35,6 @@ const ADJ_TYPES = [
   { value: 'percent', label: 'Percent (%)' },
   { value: 'fixed',   label: 'Fixed (₱)' },
   { value: 'set',     label: 'Set to (₱)' },
-];
-
-const ADJ_DIRECTIONS = [
-  { value: 'increase', label: '+ Increase' },
-  { value: 'decrease', label: '− Decrease' },
 ];
 
 function SegmentedControl({ options, value, onChange }) {
@@ -67,8 +63,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
   const { addToast } = useToast();
 
   const [mode, setMode]             = useState('uniform'); // 'uniform' | 'individual'
-  const [adjType, setAdjType]       = useState('percent');  // 'percent' | 'fixed' | 'set'
-  const [adjDirection, setAdjDirection] = useState('increase'); // 'increase' | 'decrease'
+  const [adjType, setAdjType]       = useState('fixed');    // 'percent' | 'fixed' | 'set'
   const [adjValue, setAdjValue]     = useState('');
   const [individualPrices, setIndividualPrices] = useState(() =>
     Object.fromEntries(products.map((p) => [p.id, String(p.base_wholesale_price)]))
@@ -93,7 +88,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
       return { product, current, next: Math.max(0, round2(num)), wasClamped: num < 0, invalid: false };
     }
 
-    const { clamped, wasClamped } = computeUniformPrice(current, adjType, adjDirection, adjValue);
+    const { clamped, wasClamped } = computeUniformPrice(current, adjType, adjValue);
     return { product, current, next: clamped, wasClamped, invalid: false };
   });
 
@@ -174,28 +169,28 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
 
           {mode === 'uniform' && (
             <div className="mb-5 p-4 bg-slate-50 rounded-lg border border-slate-200">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                <div>
-                  <span className="text-sm font-semibold text-slate-700 mb-1.5 block">Adjustment type</span>
-                  <SegmentedControl options={ADJ_TYPES} value={adjType} onChange={setAdjType} />
-                </div>
-
-                {adjType !== 'set' && (
-                  <div>
-                    <span className="text-sm font-semibold text-slate-700 mb-1.5 block">Direction</span>
-                    <SegmentedControl options={ADJ_DIRECTIONS} value={adjDirection} onChange={setAdjDirection} />
-                  </div>
-                )}
+              <div className="mb-3">
+                <span className="text-sm font-semibold text-slate-700 mb-1.5 block">Adjustment type</span>
+                <SegmentedControl options={ADJ_TYPES} value={adjType} onChange={setAdjType} />
               </div>
 
               <FormField
                 label={adjType === 'percent' ? 'Percent' : adjType === 'set' ? 'New price (₱)' : 'Amount (₱)'}
               >
                 <input
-                  type="number" min="0" step="0.01" value={adjValue}
+                  type="number"
+                  min={adjType === 'set' ? '0' : undefined}
+                  step="0.01"
+                  value={adjValue}
                   onChange={(e) => setAdjValue(e.target.value)}
                   className={INPUT}
-                  placeholder={adjType === 'percent' ? 'e.g. 5' : 'e.g. 2.00'}
+                  placeholder={
+                    adjType === 'percent'
+                      ? 'e.g. 5 or -5'
+                      : adjType === 'set'
+                      ? 'e.g. 2.00'
+                      : 'e.g. 2.00 or -2.00'
+                  }
                 />
               </FormField>
             </div>
