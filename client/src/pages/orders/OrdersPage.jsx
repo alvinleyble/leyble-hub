@@ -11,6 +11,7 @@ import { orderMatchesSearch } from '../../utils/orderSearch';
 import { parseBareSequence } from '../../offline/receiptNumbers';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
 import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
+import { formatCardDateTime } from '../../utils/dateFormat';
 import {
   listRecords, subscribeOutbox, getReceipt, listReceipts, putOrderSnapshot,
   loadParkedOrders, discardLocalDraft,
@@ -725,24 +726,37 @@ export default function OrdersPage() {
                 onClick={() => navigate(`/orders/${o.receipt_number}`)}
                 className="p-4 active:bg-blue-50 cursor-pointer"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-sm text-slate-500">{orderRef(o)}</p>
-                    <p className="font-semibold text-slate-900 truncate">{o.customer_name}</p>
-                  </div>
+                {/* Row 1: Receipt reference & Total */}
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-mono text-sm text-slate-500">{orderRef(o)}</p>
                   <p className="font-bold text-slate-900 tabular-nums shrink-0">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-1.5 items-center mt-2">
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                    ⏳ Waiting to sync
+
+                {/* Row 2: Customer Name & Date/Time */}
+                <div className="flex justify-between items-baseline gap-2 mt-1">
+                  <p className="font-semibold text-slate-900 min-w-0 truncate">{o.customer_name}</p>
+                  <span className="shrink-0 text-xs text-slate-500">
+                    {formatCardDateTime(o.created_at)}
                   </span>
-                  {o.order_type === 'pickup' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
-                      Pickup
+                </div>
+
+                {/* Row 3: Status pills & Sold by */}
+                <div className="flex justify-between items-center gap-2 mt-2">
+                  <div className="flex flex-wrap gap-1.5 items-center shrink-0">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      ⏳ Waiting to sync
                     </span>
-                  )}
+                    {o.order_type === 'pickup' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                        Pickup
+                      </span>
+                    )}
+                  </div>
+                  <span className="min-w-0 truncate text-xs text-slate-500 text-right">
+                    Sold by: {o.sold_by_name?.trim() || '—'}
+                  </span>
                 </div>
               </div>
             ))}
@@ -755,8 +769,9 @@ export default function OrdersPage() {
                 data-testid="orders-row"
                 className="p-4 active:bg-blue-50 cursor-pointer"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex items-start gap-2">
+                {/* Row 1: Receipt reference & Total */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-2">
                     {showCheckboxes && !o._local && (
                       <label
                         className="flex items-center justify-center w-8 h-8 -m-1 shrink-0 cursor-pointer"
@@ -772,56 +787,68 @@ export default function OrdersPage() {
                         />
                       </label>
                     )}
-                    <div className="min-w-0">
-                      <p className="font-mono text-sm text-slate-500">
-                        {o._local ? (o.receipt_number || 'Draft') : orderRef(o)}
-                      </p>
-                      <p className="font-semibold text-slate-900 truncate">{o.customer_name}</p>
-                    </div>
+                    <p className="font-mono text-sm text-slate-500">
+                      {o._local ? (o.receipt_number || 'Draft') : orderRef(o)}
+                    </p>
                   </div>
                   <p className="font-bold text-slate-900 tabular-nums shrink-0">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-1.5 items-center mt-2">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                    {STATUS_LABEL[o.status] ?? o.status}
+
+                {/* Row 2: Customer Name & Date/Time */}
+                <div className="flex justify-between items-baseline gap-2 mt-1">
+                  <p className="font-semibold text-slate-900 min-w-0 truncate">{o.customer_name}</p>
+                  <span className="shrink-0 text-xs text-slate-500">
+                    {formatCardDateTime(o.created_at)}
                   </span>
-                  {o._local && (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                      ⏳ Waiting to sync
+                </div>
+
+                {/* Row 3: Status pills & Sold by */}
+                <div className="flex justify-between items-center gap-2 mt-2">
+                  <div className="flex flex-wrap gap-1.5 items-center shrink-0">
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                      {STATUS_LABEL[o.status] ?? o.status}
                     </span>
-                  )}
-                  {o.order_type === 'pickup' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
-                      Pickup
-                    </span>
-                  )}
-                  {((o.status === 'pending' && o.pending_receipt_printed_at)
-                    || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
-                      🖶 Printed
-                    </span>
-                  )}
-                  {possibleDoubleIds.has(o.id) && (
-                    // A <div>, not <span>, on purpose: client/test/v3-orders-list-search-filters.test.mjs
-                    // counts `r.all('span')` matching this text to verify duplicate-flagged
-                    // row count — reusing <span> here would double that count against the
-                    // table's own badge below.
-                    <div className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold">
-                      ⚠️ possible duplicates
-                    </div>
-                  )}
-                  {statusTab === 'draft' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="ml-auto"
-                      onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
-                    >
-                      Discard
-                    </Button>
-                  )}
+                    {o._local && (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                        ⏳ Waiting to sync
+                      </span>
+                    )}
+                    {o.order_type === 'pickup' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                        Pickup
+                      </span>
+                    )}
+                    {((o.status === 'pending' && o.pending_receipt_printed_at)
+                      || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                        🖶 Printed
+                      </span>
+                    )}
+                    {possibleDoubleIds.has(o.id) && (
+                      // A <div>, not <span>, on purpose: client/test/v3-orders-list-search-filters.test.mjs
+                      // counts `r.all('span')` matching this text to verify duplicate-flagged
+                      // row count — reusing <span> here would double that count against the
+                      // table's own badge below.
+                      <div className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold">
+                        ⚠️ possible duplicates
+                      </div>
+                    )}
+                    {statusTab === 'draft' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="ml-auto"
+                        onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
+                      >
+                        Discard
+                      </Button>
+                    )}
+                  </div>
+                  <span className="min-w-0 truncate text-xs text-slate-500 text-right">
+                    Sold by: {o.sold_by_name?.trim() || '—'}
+                  </span>
                 </div>
               </div>
             ))}
