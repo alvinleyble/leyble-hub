@@ -5,6 +5,7 @@ import { StatusBadge } from '../components/ui/Badge';
 import Spinner from '../components/ui/Spinner';
 import OfflineBanner from '../components/ui/OfflineBanner';
 import { orderRef } from '../utils/orderRef';
+import { formatCardDateTime } from '../utils/dateFormat';
 import { loadWithCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
 
 const PHP = (amount) =>
@@ -163,29 +164,42 @@ export default function DashboardPage() {
                     onClick={() => navigate(`/orders/${order.id}`)}
                     className="p-4 active:bg-blue-50 cursor-pointer"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <Link
-                          to={`/orders/${order.id}`}
-                          className="font-mono text-sm text-slate-500
-                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
-                        >
-                          {orderRef(order)}
-                        </Link>
-                        <p className="font-medium text-slate-900 mt-0.5 truncate">{order.customer_name}</p>
-                      </div>
+                    {/* Row 1: Receipt reference & Total */}
+                    <div className="flex items-start justify-between gap-2">
+                      <Link
+                        to={`/orders/${order.id}`}
+                        className="font-mono text-sm text-slate-500
+                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+                      >
+                        {orderRef(order)}
+                      </Link>
                       <p className="text-right font-semibold text-slate-900 tabular-nums shrink-0">
                         {PHP(order.total_amount)}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-1.5 items-center mt-2">
-                      <StatusBadge status={order.status} />
-                      {((order.status === 'pending' && order.pending_receipt_printed_at)
-                        || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)) && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
-                          🖶 Printed
-                        </span>
-                      )}
+
+                    {/* Row 2: Customer Name & Date/Time */}
+                    <div className="flex justify-between items-baseline gap-2 mt-1">
+                      <p className="font-semibold text-slate-900 min-w-0 truncate">{order.customer_name}</p>
+                      <span className="shrink-0 text-xs text-slate-500">
+                        {formatCardDateTime(order.created_at)}
+                      </span>
+                    </div>
+
+                    {/* Row 3: Status pills & Sold by */}
+                    <div className="flex justify-between items-center gap-2 mt-2">
+                      <div className="flex flex-wrap gap-1.5 items-center shrink-0">
+                        <StatusBadge status={order.status} />
+                        {((order.status === 'pending' && order.pending_receipt_printed_at)
+                          || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)) && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                            🖶 Printed
+                          </span>
+                        )}
+                      </div>
+                      <span className="min-w-0 truncate text-xs text-slate-500 text-right">
+                        Sold by: {order.sold_by_name?.trim() || '—'}
+                      </span>
                     </div>
                   </div>
                 ))}
