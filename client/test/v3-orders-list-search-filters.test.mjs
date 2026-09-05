@@ -343,4 +343,100 @@ test('G23: Personnel column is removed from table header and rows', async () => 
 
   // Ensure table body row does not render the personnel summary string
   assert.ok(!r.text().includes('Driver Dan'), 'Table row should not render personnel summary');
+  r.unmount();
 });
+
+test('OrdersPage: displays "Sold by" column header and renders seller name or em-dash fallback', async () => {
+  const mockOrders = [
+    makeOrder(601, { customer_name: 'Alpha Store', sold_by_name: 'Cashier 1' }),
+    makeOrder(602, { customer_name: 'Bravo Shop', sold_by_name: null }),
+    makeOrder(603, { customer_name: 'Charlie Market', sold_by_name: '   ' }),
+  ];
+
+  api.get = async (path) => {
+    if (path.startsWith('/orders?status=draft')) return [];
+    if (path.startsWith('/orders')) return mockOrders;
+    return [];
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrdersPage, null)
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
+
+  // 1. Column header exists and is positioned between "Customer" and "Total"
+  const thElements = r.all('th');
+  const thTexts = thElements.map((th) => th.textContent.trim());
+  assert.ok(thTexts.includes('Sold by'), `"Sold by" column header should exist: ${thTexts.join(', ')}`);
+
+  const customerIdx = thTexts.indexOf('Customer');
+  const soldByIdx = thTexts.indexOf('Sold by');
+  const totalIdx = thTexts.indexOf('Total');
+  assert.ok(customerIdx !== -1 && soldByIdx !== -1 && totalIdx !== -1, 'Customer, Sold by, Total headers present');
+  assert.equal(soldByIdx, customerIdx + 1, 'Sold by should be immediately after Customer');
+  assert.equal(totalIdx, soldByIdx + 1, 'Total should be immediately after Sold by');
+
+  // 2. Table rows display seller name when present and em-dash when null or empty
+  const tableRows = r.all('table tbody tr');
+  assert.equal(tableRows.length, 3);
+  assert.ok(tableRows[0].textContent.includes('Cashier 1'), 'Row 1 should display seller name');
+  assert.ok(tableRows[1].textContent.includes('—'), 'Row 2 should display em-dash fallback when sold_by_name is null');
+  assert.ok(tableRows[2].textContent.includes('—'), 'Row 3 should display em-dash fallback when sold_by_name is whitespace');
+
+  r.unmount();
+});
+
+test('G20: OrdersPage instant client-side search matches sold_by_name', async () => {
+  const mockOrders = [
+    makeOrder(701, { customer_name: 'Alpha Store', sold_by_name: 'Cashier 1' }),
+    makeOrder(702, { customer_name: 'Bravo Shop', sold_by_name: 'Manager Luis' }),
+    makeOrder(703, { customer_name: 'Charlie Market', sold_by_name: null }),
+  ];
+
+  api.get = async (path) => {
+    if (path.startsWith('/orders?status=draft')) return [];
+    if (path.startsWith('/orders')) return mockOrders;
+    return [];
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrdersPage, null)
+    )
+  );
+
+  await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
+
+  const searchInput = r.byLabel('Search orders');
+  assert.ok(searchInput, 'Search input should exist');
+
+  // Search by exact seller name
+  act(() => {
+    changeInput(searchInput, 'Cashier 1');
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  let rows = r.all('tbody tr');
+  assert.equal(rows.length, 1);
+  assert.ok(r.text().includes('Alpha Store'));
+  assert.ok(r.text().includes('Cashier 1'));
+  assert.ok(!r.text().includes('Bravo Shop'));
+
+  // Search case-insensitively by partial seller name
+  act(() => {
+    changeInput(searchInput, 'luis');
+  });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  rows = r.all('tbody tr');
+  assert.equal(rows.length, 1);
+  assert.ok(r.text().includes('Bravo Shop'));
+  assert.ok(r.text().includes('Manager Luis'));
+  assert.ok(!r.text().includes('Alpha Store'));
+
+  r.unmount();
+});
+

@@ -260,6 +260,7 @@ export default function OrdersPage() {
   // Instant client-side search & filtering (G20, G21)
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim();
+    const qLower = q.toLowerCase();
     // Slice 3.2 — a still-queued order is written to local history at Save as well as
     // sitting in the outbox, so when the table is being served FROM local history it
     // would otherwise appear twice: once here and once in the "Waiting to sync" block
@@ -279,7 +280,8 @@ export default function OrdersPage() {
 
       // ADR 0017 #11 — bare digits are a SEQUENCE, matched across every prefix, and
       // the same rule the server's `search` parameter applies (utils/orderSearch.js).
-      if (!orderMatchesSearch(o, q)) return false;
+      const matchesSearch = orderMatchesSearch(o, q) || (o.sold_by_name || '').toLowerCase().includes(qLower);
+      if (!matchesSearch) return false;
 
       return true;
     });
@@ -295,13 +297,15 @@ export default function OrdersPage() {
     if (doubleOnly) return [];
     if (statusTab !== 'all' && statusTab !== 'pending') return [];
     const q = searchQuery.trim();
+    const qLower = q.toLowerCase();
 
     return localUnsyncedOrders.filter((o) => {
       const printed = isOrderPrinted(o);
       if (printFilter === 'printed' && !printed) return false;
       if (printFilter === 'unprinted' && printed) return false;
 
-      if (!orderMatchesSearch(o, q)) return false;
+      const matchesSearch = orderMatchesSearch(o, q) || (o.sold_by_name || '').toLowerCase().includes(qLower);
+      if (!matchesSearch) return false;
 
       return true;
     });
@@ -842,6 +846,7 @@ export default function OrdersPage() {
                 )}
                 <th className="text-left px-5 py-3 font-semibold w-28">Receipt</th>
                 <th className="text-left px-5 py-3 font-semibold">Customer</th>
+                <th className="text-left px-5 py-3 font-semibold w-36">Sold by</th>
                 <th className="text-right px-5 py-3 font-semibold w-36">Total</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell w-36">Date</th>
                 <th className="text-left px-5 py-3 font-semibold w-64">
@@ -880,6 +885,7 @@ export default function OrdersPage() {
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>
+                  <td className="px-5 py-4 text-sm text-slate-600 w-36">{o.sold_by_name?.trim() || '—'}</td>
                   <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
@@ -937,6 +943,7 @@ export default function OrdersPage() {
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>
+                  <td className="px-5 py-4 text-sm text-slate-600 w-36">{o.sold_by_name?.trim() || '—'}</td>
                   <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
