@@ -1,10 +1,8 @@
 // ADR 0017 slice 7 — the human-facing half: what the paper says, and how a customer's
 // half-remembered number gets found.
 //
-// #10  `Sold by: Luis` is printed alongside the number, on both the HTML receipt and
-//      the ESC/POS one — they must always agree. This is the exit ramp the ADR names:
-//      once the name is on the paper, the person digit leading the receipt number is
-//      an optional convenience rather than the only record of who sold it.
+// #10  "Sold by" is removed from paper receipts (displayed on-screen instead).
+//      Both the HTML receipt and the ESC/POS one omit "Sold by" and always agree.
 // #11  Order search accepts BARE DIGITS. `42` returns every order whose SEQUENCE is 42
 //      across all prefixes, as a disambiguation list showing customer name and date —
 //      customers read digits off faded thermal paper and skip the prefix.
@@ -20,7 +18,12 @@ import { generateEscPos } from '../src/pages/orders/escposReceipt.js';
 import { parseBareSequence } from '../src/offline/receiptNumbers.js';
 import { orderMatchesSearch } from '../src/utils/orderSearch.js';
 
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
+
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
+const OrderDetailPage = (await import('../src/pages/orders/OrderDetailPage.jsx')).default;
+const ReviewQueueModal = (await import('../src/pages/orders/ReviewQueueModal.jsx')).default;
+const { createRoot } = await import('react-dom/client');
 
 let originalApiGet;
 beforeEach(() => { originalApiGet = api.get; });
@@ -56,36 +59,32 @@ const receiptOrder = (over = {}) => ({
   ...over,
 });
 
-// ── #10 — the seller's name, on the paper ───────────────────────────────────
+// ── #10 — paper receipt omits "Sold by" (displayed on-screen instead) ────────
 
-test('#10: the printed receipt names the seller in words, next to the number', () => {
+test('#10: the printed HTML receipt does not include Sold by', () => {
   const html = generateReceiptHtml(receiptOrder({ sold_by_name: 'Luis' }));
-  assert.ok(html.includes('Sold by: Luis'), 'the HTML receipt carries the seller');
-  assert.ok(html.includes('No: 3A-00042'), 'alongside the number, not instead of it');
-  assert.ok(
-    html.indexOf('No: 3A-00042') < html.indexOf('Sold by: Luis'),
-    'the number stays first; the name sits under it'
-  );
+  assert.ok(!html.includes('Sold by:'), 'the HTML receipt does not carry the seller');
+  assert.ok(html.includes('No: 3A-00042'), 'receipt number is still printed');
 });
 
-test('#10: the ESC/POS receipt says the same thing — the two must never disagree', () => {
+test('#10: the ESC/POS receipt omits Sold by — the two must never disagree', () => {
   const text = decode(generateEscPos(receiptOrder({ sold_by_name: 'Luis' })));
-  assert.ok(text.includes('Sold by: Luis'));
-  assert.ok(text.includes('No: 3A-00042'));
+  assert.ok(!text.includes('Sold by:'), 'the ESC/POS receipt does not carry the seller');
+  assert.ok(text.includes('No: 3A-00042'), 'receipt number is still printed');
 });
 
-test('#10: an order with no seller prints no line at all, rather than an empty one', () => {
+test('#10: an order prints no Sold by line regardless of whether seller is present or missing', () => {
   // Every order created before migration 042 — nothing is backfilled (ADR 0017 #12).
-  for (const missing of [undefined, null, '', '   ']) {
+  for (const missing of [undefined, null, '', '   ', 'Luis', 'José Ñoño']) {
     const order = receiptOrder({ sold_by_name: missing });
     assert.ok(!generateReceiptHtml(order).includes('Sold by:'), `HTML, sold_by_name=${JSON.stringify(missing)}`);
     assert.ok(!decode(generateEscPos(order)).includes('Sold by:'), `ESC/POS, sold_by_name=${JSON.stringify(missing)}`);
   }
 });
 
-test('#10: the ESC/POS name is stripped to ASCII, like every other string sent to the printer', () => {
+test('#10: the ESC/POS output contains only valid ASCII, even with non-ASCII order data', () => {
   const text = decode(generateEscPos(receiptOrder({ sold_by_name: 'José Ñoño' })));
-  assert.ok(text.includes('Sold by: Jos oo'), `got: ${text.match(/Sold by:.*/)?.[0]}`);
+  assert.ok(!text.includes('Sold by:'), 'no Sold by line printed');
   assert.ok(!/[^\x00-\x7F]/.test(text.split('TERMS')[0]), 'no non-ASCII reaches the printer');
 });
 
@@ -220,5 +219,103 @@ test('#12: the list keeps the time order it was given, whatever the numbers sort
   assert.ok(names[1].includes('Middle'));
   assert.ok(names[2].includes('Legacy'));
 
+  r.unmount();
+});
+
+// ── On-screen staff attribution (ReviewQueueModal + OrderDetailPage) ───────
+
+function renderWithEntries(element, initialEntries = ['/']) {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(
+      React.createElement(MemoryRouter, { initialEntries },
+        React.createElement(ToastProvider, null, element)
+      )
+    );
+  });
+  return {
+    container,
+    text: () => container.textContent,
+    unmount: () => act(() => { root.unmount(); }),
+  };
+}
+
+test('#10 on-screen: ReviewQueueModal displays "Sold by: <name>" when present', async () => {
+  api.get = async (path) => {
+    if (path === '/orders/901') {
+      return receiptOrder({ id: 901, sold_by_name: 'Luis' });
+    }
+    return {};
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(ReviewQueueModal, { orderIds: [901], onClose: () => {} })
+    )
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.ok(r.text().includes('Sold by: Luis'), 'ReviewQueueModal renders staff attribution');
+  r.unmount();
+});
+
+test('#10 on-screen: ReviewQueueModal omits "Sold by" when sold_by_name is missing', async () => {
+  api.get = async (path) => {
+    if (path === '/orders/902') {
+      return receiptOrder({ id: 902, sold_by_name: null });
+    }
+    return {};
+  };
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(ReviewQueueModal, { orderIds: [902], onClose: () => {} })
+    )
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.ok(!r.text().includes('Sold by:'), 'ReviewQueueModal omits staff attribution when absent');
+  r.unmount();
+});
+
+test('#10 on-screen: OrderDetailPage displays "Sold by: <name>" when present', async () => {
+  api.get = async (path) => {
+    if (path === '/orders/901') {
+      return receiptOrder({ id: 901, sold_by_name: 'Luis' });
+    }
+    return {};
+  };
+
+  const r = renderWithEntries(
+    React.createElement(Routes, null,
+      React.createElement(Route, { path: '/orders/:id', element: React.createElement(OrderDetailPage) })
+    ),
+    ['/orders/901']
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.ok(r.text().includes('Sold by: Luis'), 'OrderDetailPage renders staff attribution');
+  r.unmount();
+});
+
+test('#10 on-screen: OrderDetailPage omits "Sold by" when sold_by_name is missing', async () => {
+  api.get = async (path) => {
+    if (path === '/orders/902') {
+      return receiptOrder({ id: 902, sold_by_name: null });
+    }
+    return {};
+  };
+
+  const r = renderWithEntries(
+    React.createElement(Routes, null,
+      React.createElement(Route, { path: '/orders/:id', element: React.createElement(OrderDetailPage) })
+    ),
+    ['/orders/902']
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  assert.ok(!r.text().includes('Sold by:'), 'OrderDetailPage omits staff attribution when absent');
   r.unmount();
 });

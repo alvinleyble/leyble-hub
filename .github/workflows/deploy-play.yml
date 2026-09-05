@@ -30,6 +30,8 @@ jobs:
         run: |
           npm ci
           npm run build
+        env:
+          VITE_V25_OFFLINE_CORE: on
 
       - name: Capacitor sync
         working-directory: client
