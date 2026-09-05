@@ -419,6 +419,9 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   order, a review-queue tab) use `orderRefFromId(id, receiptNumber)` and get the receipt
   number from a `LEFT JOIN orders` their query now carries — the id alone is never the
   display name ([ADR 0010](docs/adr/0010-receipt-number-addresses-order-across-sync-boundary.md)).
+  A **draft** never falls back to `#<id>`: the server burns no sequence number on an
+  unfinalized order, so `orderRef()` names a `status: 'draft'` order by its device-issued
+  number if it parked with one, and plain `Draft` otherwise.
 - **Three receipt-number formats coexist permanently and the server takes all three**
   ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md), which supersedes
   ADR 0016): the ~1,300 legacy `#1240` orders (no receipt number at all), the pre-letter

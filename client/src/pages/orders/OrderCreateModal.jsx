@@ -901,7 +901,10 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
           <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-200 shrink-0 bg-white">
             <div className="min-w-0">
               <h2 id="order-modal-title" className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? `Draft ${editOrder?._local ? editOrder.receipt_number : orderRef(editOrder)}` : 'New Order'}</span>
+                {/* Only a draft parked on this device carries a number to append; a
+                    server draft has none (one is burned at finalize, not before), and
+                    its row id must not stand in for one — so the title is just 'Draft'. */}
+                <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? (editOrder?.receipt_number ? `Draft ${editOrder.receipt_number}` : 'Draft') : 'New Order'}</span>
               </h2>
               {isDraftMode && draftId && (
                 <p className="text-xs font-medium mt-0.5 text-slate-500">
