@@ -1,7 +1,15 @@
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
+import { markOffline } from '../offline/status.js';
 
 const BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1';
+
+// Lie-Fi detection — a request that never even fails, just hangs (a captive portal, a
+// dead upstream link that still accepts the TCP connection), used to cost every caller
+// 60-120s of browser/fetch default timeout before anything told the operator. Every
+// request now aborts after REQUEST_TIMEOUT_MS so a black-holed network fails fast
+// instead of hanging the screen.
+const REQUEST_TIMEOUT_MS = 5000;
 
 // Web (dev) authenticates with an HTTP-only cookie. The native Android app
 // (Capacitor) can't use SameSite=strict cookies cross-origin, so it stores the
@@ -200,11 +208,48 @@ async function request(path, options = {}) {
     && cookieAccount !== (await getActiveProfile());
   const useCookie = isAuthTransition || (!token && !asAccount && !cookieNamesSomeoneElse);
 
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: useCookie ? 'include' : 'omit',
-    ...fetchOptions,
-    headers,
-  });
+  // Lie-Fi: a request that hangs (dead upstream, captive portal) is indistinguishable
+  // from a slow one until something imposes a deadline. `controller` is what enforces
+  // REQUEST_TIMEOUT_MS; a caller-supplied `signal` (component unmount, cancelled search)
+  // is combined in rather than overridden, and its own abort must NOT be read as a
+  // network failure below.
+  const callerSignal = fetchOptions.signal;
+  let timedOut = false;
+  let callerAborted = false;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
+  let onCallerAbort;
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      callerAborted = true;
+      controller.abort();
+    } else {
+      onCallerAbort = () => { callerAborted = true; controller.abort(); };
+      callerSignal.addEventListener('abort', onCallerAbort);
+    }
+  }
+
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      credentials: useCookie ? 'include' : 'omit',
+      ...fetchOptions,
+      headers,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // A rejected fetch here is a network error, a DNS failure, or our own timeout abort
+    // — the request never reached the server at all. That is the Lie-Fi signal: flip to
+    // offline immediately rather than waiting for the caller to notice a hung screen or
+    // for the next periodic probe. A caller-initiated abort is not a network condition
+    // and must not flip the app offline.
+    if (timedOut) err.timedOut = true;
+    if (!callerAborted) markOffline();
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+    if (onCallerAbort) callerSignal.removeEventListener('abort', onCallerAbort);
+  }
 
   if (res.status === 401) {
     // ADR 0017 #8 — a takeover is the one 401 that has a story worth telling. The

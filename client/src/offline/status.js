@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { V25_OFFLINE_CORE, isSimulatedOffline } from '../config/features.js';
-import { waitingCount, listNeedsAttention, subscribeOutbox } from './outbox.js';
+import { waitingCount, listNeedsAttention, subscribeOutbox, drainOutbox } from './outbox.js';
 
 // D7 / Reachability — Genuine server reachability check (captain revised 2026-08-24).
 //
@@ -22,11 +22,86 @@ let inFlightProbe = null;
 export function markOffline() {
   cachedOnline = false;
   lastProbeTime = Date.now();
+  startReachabilityWatcher();
 }
 
 export function markOnline() {
   cachedOnline = true;
   lastProbeTime = Date.now();
+  stopReachabilityWatcher();
+}
+
+// ── Lie-Fi recovery watcher ──────────────────────────────────────────────────
+//
+// markOffline() can now fire from a hung request (client.js's timeout abort) with no
+// screen necessarily mounted to notice the line coming back — useOfflineStatus's own
+// polling only runs while some component using the hook is on screen. This runs
+// independently of any screen: a lightweight GET /health every RECOVERY_INTERVAL_MS
+// while offline, self-stopping the moment it succeeds (or the moment anything else
+// marks the app online first).
+
+const RECOVERY_INTERVAL_MS = 7_000;
+const RECOVERY_PROBE_TIMEOUT_MS = 2_000;
+
+let recoveryTimer = null;
+let recoveryInFlight = false;
+
+async function attemptRecovery(enabled) {
+  // probeReachability already de-dupes concurrent calls via its own in-flight guard,
+  // but this flag also skips scheduling a redundant call in the first place.
+  if (recoveryInFlight) return;
+  recoveryInFlight = true;
+  try {
+    const reachable = await probeReachability({ force: true, timeoutMs: RECOVERY_PROBE_TIMEOUT_MS, enabled });
+    if (reachable) {
+      markOnline();
+      // A genuine 'online' event, not a bespoke one — so every existing listener for it
+      // (this file's own useOfflineStatus hook, offline/index.js's reconnect sync) fires
+      // exactly as it would for the browser's own transition, even though navigator.onLine
+      // never flipped (that's the Lie-Fi case: the interface stayed up throughout).
+      if (typeof window !== 'undefined' && typeof window.CustomEvent === 'function') {
+        window.dispatchEvent(new window.CustomEvent('online'));
+      }
+      drainOutbox().catch(() => {});
+    }
+  } catch {
+    // probeReachability catches internally and never rejects, but a probe failure must
+    // never wedge this loop — the next tick simply tries again.
+  } finally {
+    recoveryInFlight = false;
+  }
+}
+
+/**
+ * Starts the periodic reachability probe that watches for the line coming back while
+ * offline. Idempotent (a second call while already running is a no-op) and self-stops
+ * once reachability is confirmed. `enabled`/`intervalMs` are test seams — production
+ * callers (markOffline, above) rely on the defaults.
+ */
+export function startReachabilityWatcher({
+  enabled = V25_OFFLINE_CORE, intervalMs = RECOVERY_INTERVAL_MS,
+} = {}) {
+  if (!enabled) return;
+  if (recoveryTimer || typeof setInterval !== 'function') return;
+  recoveryTimer = setInterval(() => {
+    if (cachedOnline) {
+      // Recovered through some other path (the browser's own 'online' event, an
+      // interactive save's own probe) — nothing left for this loop to do.
+      stopReachabilityWatcher();
+      return;
+    }
+    attemptRecovery(enabled).catch(() => {});
+  }, intervalMs);
+  // G30-style Node test liveness: without unref(), this interval keeps `node --test`
+  // runners alive indefinitely. No-op in a browser (the timer is a plain number there).
+  recoveryTimer.unref?.();
+}
+
+export function stopReachabilityWatcher() {
+  if (recoveryTimer) {
+    clearInterval(recoveryTimer);
+    recoveryTimer = null;
+  }
 }
 
 /**
@@ -60,24 +135,25 @@ export async function probeReachability({ force = false, timeoutMs = PROBE_TIMEO
   const healthUrl = `${baseUrl}/health`;
 
   inFlightProbe = (async () => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    let timer = null;
+    if (controller && typeof setTimeout === 'function') {
+      timer = setTimeout(() => controller.abort(), timeoutMs);
+    }
     try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      let timer = null;
-      if (controller && typeof setTimeout === 'function') {
-        timer = setTimeout(() => controller.abort(), timeoutMs);
-      }
-
       const res = await fetch(healthUrl, {
         method: 'GET',
         signal: controller?.signal,
         cache: 'no-store',
       });
-
-      if (timer) clearTimeout(timer);
       cachedOnline = Boolean(res && res.ok);
     } catch {
       cachedOnline = false;
     } finally {
+      // Must run on the failure path too — a rejected fetch (the common case while
+      // genuinely offline) used to leave this timer running for the full timeoutMs on
+      // every single probe, which the recovery watcher now fires every few seconds.
+      if (timer) clearTimeout(timer);
       lastProbeTime = Date.now();
       inFlightProbe = null;
     }
@@ -181,4 +257,6 @@ export function __resetStatusState() {
   cachedOnline = true;
   lastProbeTime = 0;
   inFlightProbe = null;
+  stopReachabilityWatcher();
+  recoveryInFlight = false;
 }

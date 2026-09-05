@@ -327,6 +327,22 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   from one login). Production is unaffected — the APK always uses `preferencesBackend`.
   Tests are unaffected — every offline test file forces the in-memory backend via
   `__resetMemoryBackend()` in its own `beforeEach`, regardless of what's available.
+- **Lie-Fi detection (request timeout + reachability recovery watcher):** `client/src/api/client.js`'s
+  `request()` aborts any request after `REQUEST_TIMEOUT_MS` (5s) via `AbortController` and calls
+  `markOffline()` immediately on a network error, DNS failure, or that timeout abort — never on an
+  ordinary HTTP 4xx/5xx (the server was reached) or a caller's own `options.signal` abort. This is
+  what keeps a black-holed connection (wifi up, server unreachable) from riding the browser's
+  60-120s default fetch timeout before anything tells the operator. `markOffline()`
+  (`client/src/offline/status.js`) now self-starts a periodic `probeReachability()` watcher
+  (`startReachabilityWatcher`/`stopReachabilityWatcher`, ~7s cadence, in-flight-guarded so it never
+  overlaps itself) that runs independently of any mounted screen — `useOfflineStatus`'s own polling
+  only runs while a component using it is on screen. The moment a probe succeeds it calls
+  `markOnline()`, dispatches a real `online` event (so every existing listener — this hook,
+  `offline/index.js`'s reconnect sync — fires exactly as it would for the browser's own transition,
+  even though `navigator.onLine` never flipped) and triggers `drainOutbox()`. `probeReachability`'s
+  abort-timer `clearTimeout` now runs in a `finally`, not just the success path — it used to leak a
+  real timer on every failed probe, harmless at the old on-demand call rate but not at this
+  watcher's cadence.
 - **The off switch is `V25_OFFLINE_CORE`** in `client/src/config/features.js` — build-time
   (`VITE_V25_OFFLINE_CORE=on`), off by default, reused by every piece. Off must be
   indistinguishable from today. **Migrations are NOT behind it** (Render runs
