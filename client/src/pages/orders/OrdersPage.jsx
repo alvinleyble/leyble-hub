@@ -787,8 +787,10 @@ export default function OrdersPage() {
                         />
                       </label>
                     )}
+                    {/* orderRef() names a draft 'Draft' — a parked one by its own
+                        device-issued number — so neither kind can show a row id. */}
                     <p className="font-mono text-sm text-slate-500">
-                      {o._local ? (o.receipt_number || 'Draft') : orderRef(o)}
+                      {orderRef(o)}
                     </p>
                   </div>
                   <p className="font-bold text-slate-900 tabular-nums shrink-0">
@@ -963,9 +965,11 @@ export default function OrdersPage() {
                     </td>
                   )}
                   {/* A parked draft has no row id yet, so its device-issued reference IS
-                      its name here — never `#` from an id that does not exist. */}
+                      its name here — never `#` from an id that does not exist. A server
+                      draft has no number either (none is burned until it is finalized),
+                      and orderRef() names that one 'Draft' rather than leaking `#<id>`. */}
                   <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">
-                    {o._local ? (o.receipt_number || 'Draft') : orderRef(o)}
+                    {orderRef(o)}
                   </td>
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
