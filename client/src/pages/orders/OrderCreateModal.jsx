@@ -15,7 +15,7 @@ import {
   saveOrderLocalFirst, updateLocalOrder, cleanupOrphanedDraftDirect,
   parkOrderLocalFirst, updateLocalDraft, discardLocalDraft,
   enqueue, drainOutbox, loadCustomerPrices, loadCatalogue, queuedCustomersFromOutbox,
-  checkIsOnline,
+  checkIsOnline, ref,
 } from '../../offline/index.js';
 
 const PHP = (n) =>
@@ -771,7 +771,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
       // customer/product would both land with no signal to either operator. The line-item
       // override this order actually charges is unaffected — only remembering it as the
       // customer's new standing price waits for a connection. Skips silently; no toast.
-      if (dirtyItems.length && selectedCustomer && !isLocalCustomer(customerId) && checkIsOnline()) {
+      //
+      // A customer created moments ago in this same order (isLocalCustomer(customerId))
+      // is not excluded: she deserves the prompt exactly as much as an existing customer
+      // does, and persistPriceSave below queues her price behind a $ref on her own
+      // outbox record rather than needing her real id already.
+      if (dirtyItems.length && selectedCustomer && checkIsOnline()) {
         setPriceSavePrompt({
           step: 'first', orderId, customer: selectedCustomer, orderType,
           dirty: dirtyItems, busy: false,
@@ -799,16 +804,22 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   // Routed through the outbox (matching handleCreateCustomer above) rather than a bare
   // api.post — this prompt fires from inside saveOrderLocalFirst's otherwise fully
   // offline-safe save flow, so a price agreed during an outage used to vanish silently
-  // instead of queuing like the rest of the order. priceSavePrompt.customer is always a
-  // real (non-local) customer — the prompt only opens when isLocalCustomer is false.
+  // instead of queuing like the rest of the order. priceSavePrompt.customer may still be
+  // local (isLocalCustomer) when she was quick-created earlier in this same order — her
+  // real id doesn't exist yet, so the record's endpoint carries a `:customerId`
+  // placeholder resolved from her own outbox record (see `endpointParams` on enqueue)
+  // once her POST /customers drains, same pass or a later one.
   const persistPriceSave = async () => {
     setPriceSavePrompt((p) => ({ ...p, busy: true }));
     try {
       const profileKey = await api.getActiveProfile();
+      const customer = priceSavePrompt.customer;
+      const local = isLocalCustomer(customer.id);
       await Promise.all(priceSavePrompt.dirty.map((d) =>
         enqueue({
           entityType: 'customer_price',
-          endpoint:   `/customers/${priceSavePrompt.customer.id}/prices`,
+          endpoint:   local ? '/customers/:customerId/prices' : `/customers/${customer.id}/prices`,
+          endpointParams: local ? { customerId: ref(customer._outboxId, 'id') } : null,
           method:     'POST',
           payload: {
             product_id:        d.product_id,
@@ -816,6 +827,7 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
             order_type:        priceSavePrompt.orderType,
           },
           profileKey,
+          dependsOn: local ? [customer._outboxId] : [],
         })
       ));
       addToast('Custom price saved.', 'success');

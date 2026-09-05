@@ -294,6 +294,16 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   attention itself) surfaces immediately in the attention list instead of staying
   silently `queued` forever — there was previously no in-app recovery path for this at
   all (a stuck record had to be hand-patched in native storage).
+- **`enqueue()`'s `endpointParams` resolves a `:name` placeholder in `endpoint` itself**,
+  not just in `payload` — for a record whose URL path (not just its body) depends on
+  another record's real id, e.g. `POST /customers/:customerId/prices` for a customer
+  quick-created earlier in the same order. Pass `endpoint: '/customers/:customerId/prices'`
+  + `endpointParams: { customerId: ref(customer._outboxId, 'id') }` + `dependsOn:
+  [customer._outboxId]`; the drain loop resolves it via the same `$ref`/`resolvePayload`
+  machinery as everything else, same pass or a later one. `OrderCreateModal.jsx`'s "Save
+  Custom Price?" prompt is the first caller — it used to skip entirely for a still-local
+  customer (`isLocalCustomer(customerId)` excluded her from the prompt), since her real id
+  didn't exist yet to build the URL with.
 - **OrdersPage merges in locally-created/unsynced orders** (Round 4 Fix 7), the same
   `listRecords()`-into-the-server-list pattern G29 already established for
   `CustomersPage.jsx`. Before this, a purely server-driven list meant navigating away

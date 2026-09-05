@@ -45,10 +45,15 @@ async function nextRecordId() {
  *                                    resend key any more — see `request_key` below.
  * @param {number[]}[rec.dependsOn]   outbox ids that must sync first (D5: a locally
  *                                    created customer before any order referencing her).
+ * @param {object}  [rec.endpointParams] `:name` placeholders in `endpoint`, resolved the
+ *                                    same way as `$ref`s in `payload` (see `ref()` below)
+ *                                    — for a record whose URL itself depends on another
+ *                                    record's real id (e.g. POST /customers/:customerId/prices
+ *                                    for a customer created earlier in this same save).
  */
 export async function enqueue({
   entityType, endpoint, method = 'POST', payload, profileKey,
-  receiptNumber = null, dependsOn = [], createdAt = null,
+  receiptNumber = null, dependsOn = [], createdAt = null, endpointParams = null,
 }) {
   if (!entityType) throw new Error('enqueue: entityType is required');
   if (!endpoint) throw new Error('enqueue: endpoint is required');
@@ -63,6 +68,7 @@ export async function enqueue({
     id,
     entity_type: entityType,
     endpoint,
+    endpoint_params: endpointParams,
     method,
     payload,
     profile_key: profileKey,
@@ -318,7 +324,15 @@ async function runDrainPass() {
       if (record.guard && !isFreshlyScreened(record.guard)) continue;
 
       let body;
+      let endpoint = record.endpoint;
       try {
+        if (record.endpoint_params) {
+          const resolvedParams = await resolvePayload(record.endpoint_params);
+          endpoint = Object.entries(resolvedParams).reduce(
+            (acc, [key, value]) => acc.split(`:${key}`).join(encodeURIComponent(value)),
+            endpoint,
+          );
+        }
         body = withRequestKey(record, await resolvePayload(record.payload));
       } catch (err) {
         if (err.unresolvedRef) {
@@ -361,7 +375,7 @@ async function runDrainPass() {
         // active session, and attribution is honour-system exactly as the captain
         // accepted it to be.
         const authorKey = await authorTokenKey(record);
-        const response = await api.request(record.endpoint, {
+        const response = await api.request(endpoint, {
           method: record.method,
           body: JSON.stringify(body),
           ...(authorKey ? { accountKey: authorKey } : {}),

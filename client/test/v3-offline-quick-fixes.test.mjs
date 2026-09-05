@@ -13,8 +13,9 @@ import { Preferences } from '@capacitor/preferences';
 import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { nativeStore, __resetMemoryBackend } from '../src/offline/nativeStore.js';
-import { PRODUCTS_KEY, CUSTOMERS_KEY, PERSONNEL_KEY, SESSION_KEY, LAST_IDENTITY_KEY, DRAFTS_KEY } from '../src/offline/keys.js';
-import { __clearOutbox, listRecords } from '../src/offline/outbox.js';
+import { PRODUCTS_KEY, CUSTOMERS_KEY, PERSONNEL_KEY, SESSION_KEY, LAST_IDENTITY_KEY, DRAFTS_KEY, STATION_KEY } from '../src/offline/keys.js';
+import { __clearOutbox, listRecords, drainOutbox } from '../src/offline/outbox.js';
+import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import { putReceipt } from '../src/offline/receiptHistory.js';
 import {
   AuthProvider, useAuth,
@@ -207,6 +208,126 @@ test('OrderCreateModal: the "Save Custom Price?" prompt queues a customer_price 
   assert.equal(priceRecords[0].payload.product_id, 1);
   assert.equal(Number(priceRecords[0].payload.custom_unit_price), 45);
   assert.equal(apiPostCalledForPrices, false, 'the price save must be queued, never a direct api.post');
+
+  r.unmount();
+});
+
+// ── 3b. A customer quick-created inline still gets the Save Custom Price prompt ─
+//
+// Regression: the prompt's gate excluded isLocalCustomer(customerId), so a customer
+// quick-created via handleCreateCustomer earlier in the SAME order (still carrying a
+// `local-<outboxId>` id because her POST /customers hasn't drained yet) was silently
+// skipped, even though her price can queue behind a $ref on her own outbox record
+// exactly like the order itself already does (posSave.js's saveOrderLocalFirst).
+
+function changeInput(input, value) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis.window.HTMLInputElement.prototype, 'value');
+  descriptor.set.call(input, value);
+  const reactPropsKey = Object.keys(input).find((k) => k.startsWith('__reactProps'));
+  if (reactPropsKey && input[reactPropsKey]?.onChange) {
+    input[reactPropsKey].onChange({ target: { value, type: 'text' } });
+  }
+  input.dispatchEvent(new globalThis.window.Event('input', { bubbles: true }));
+}
+
+test('OrderCreateModal: quick-creating a customer inline still opens "Save Custom Price?", queued behind her own outbox record and resolved once she syncs', async () => {
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device-3b', station_number: 4 });
+  __resetIssuance();
+
+  api.get = async (path) => {
+    if (path.startsWith('/customers?') || path === '/customers') return [];
+    if (path.startsWith('/products')) return [{
+      id: 1, name: 'Coke 1.5L', sku: 'C-1.5', category: 'Soda', is_active: true,
+      base_wholesale_price: 50, units_per_case: 24, requires_bottle_return: false, deposit_fee: 0,
+    }];
+    if (path.startsWith('/personnel')) return [];
+    if (path.startsWith('/orders?status=draft')) return [];
+    if (path.includes('/prices')) return [];
+    return [];
+  };
+  api.post = async (path) => (path === '/stations/register'
+    ? { registered_at: '2026-09-05T00:00:00.000Z' }
+    : {});
+
+  // The customer's own POST /customers stays a network failure at first — the same
+  // "Failed to fetch" shape offlineError() throws elsewhere in this file — so her
+  // outbox record survives long enough to inspect its shape before anything drains.
+  api.request = async () => offlineError();
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrderCreateModal, { onClose: () => {}, onSaved: () => {} }))
+  );
+  await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+
+  const custInput = r.byLabel('Customer');
+  act(() => { custInput.focus(); changeInput(custInput, 'Test New Customer'); });
+  await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
+
+  const createBtn = r.all('button').find((b) => b.textContent.includes('as a new Customer'));
+  assert.ok(createBtn, 'expected the inline "Create … as a new Customer" row');
+  await act(async () => {
+    createBtn.dispatchEvent(new globalThis.window.MouseEvent('mousedown', { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 30));
+  });
+  assert.match(r.text(), /Test New Customer added as Customer/);
+
+  const afterCreate = await listRecords();
+  const customerRecord = afterCreate.find((rec) => rec.entity_type === 'customer');
+  assert.ok(customerRecord, 'expected the quick-created customer queued in the outbox');
+  assert.equal(customerRecord.status, 'queued', 'the customer POST must still be queued (network failure), not resolved yet');
+
+  // Add a line and drop its price below the wholesale base (50 → 40).
+  const productBtn = r.all('button').find((b) => b.getAttribute('aria-label')?.includes('Coke 1.5L'));
+  assert.ok(productBtn, 'expected the Coke product tile');
+  r.click(productBtn);
+  await act(async () => { await new Promise((res) => setTimeout(res, 10)); });
+
+  const priceInput = r.all('input[type="number"]').find((i) => i.value === '50');
+  assert.ok(priceInput, 'expected the line unit-price input defaulted to the base price');
+  act(() => { changeInput(priceInput, '40'); });
+  await act(async () => { await new Promise((res) => setTimeout(res, 10)); });
+
+  const submitBtn = r.all('button').find((b) => b.textContent.includes('Create Order'));
+  assert.ok(submitBtn, 'expected the "Create Order" button');
+  await act(async () => { r.click(submitBtn); await new Promise((res) => setTimeout(res, 40)); });
+
+  const confirmBtn = r.all('button').find((b) => b.textContent.trim() === 'Yes, Save');
+  assert.ok(confirmBtn, 'expected the "Save Custom Price?" prompt for the still-local customer (unit_price 40 differs from base 50)');
+
+  await act(async () => { r.click(confirmBtn); await new Promise((res) => setTimeout(res, 40)); });
+
+  const afterPrompt = await listRecords();
+  const priceRecord = afterPrompt.find((rec) => rec.entity_type === 'customer_price');
+  assert.ok(priceRecord, 'expected a queued customer_price outbox record');
+  assert.equal(priceRecord.endpoint, '/customers/:customerId/prices');
+  assert.deepEqual(priceRecord.endpoint_params, { customerId: { $ref: customerRecord.id, field: 'id' } });
+  assert.deepEqual(priceRecord.depends_on, [customerRecord.id]);
+  assert.equal(priceRecord.payload.product_id, 1);
+  assert.equal(Number(priceRecord.payload.custom_unit_price), 40);
+
+  // Now let her sync for real, and prove the placeholder resolves to her real id.
+  let pricePostEndpoint = null;
+  let pricePostBody = null;
+  api.request = async (path, opts = {}) => {
+    const method = opts.method || 'GET';
+    if (path === '/customers' && method === 'POST') {
+      return { id: 777, name: 'Test New Customer', customer_type: 'regular' };
+    }
+    if (/^\/customers\/\d+\/prices$/.test(path) && method === 'POST') {
+      pricePostEndpoint = path;
+      pricePostBody = JSON.parse(opts.body);
+      return { id: 1 };
+    }
+    return { id: 900, receipt_number: '4-00002', status: 'pending' };
+  };
+
+  await drainOutbox();
+  await drainOutbox(); // second pass: the price record's $ref is only remembered after the first
+
+  assert.equal(pricePostEndpoint, '/customers/777/prices', 'the templated endpoint must resolve to her real, synced id');
+  assert.equal(pricePostBody.custom_unit_price, 40);
+  assert.equal(pricePostBody.product_id, 1);
 
   r.unmount();
 });
