@@ -32,6 +32,7 @@ jobs:
           npm run build
         env:
           VITE_API_URL: https://site--leyble-hub--tkm4pp6r2kky.code.run
+          VITE_V25_OFFLINE_CORE: on
 
       - name: Capacitor sync
         working-directory: client

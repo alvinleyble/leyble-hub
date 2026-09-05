@@ -361,7 +361,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   can hold two signed-in people, `record.profile_key` (D14) is back on the wire — not as
   the impersonation header ADR 0017 §5 deleted, but as that person's own remembered token,
   via `api.request(..., { accountKey })`. It matters because `orders.created_by` is what
-  prints `Sold by:` on the receipt. No token held, or the author IS the active session:
+  attributes the order (surfaced as `sold_by_name` on-screen). No token held, or the author IS the active session:
   the ordinary active token, and attribution stays honour-system as accepted.
 - **A 401 during a drain leaves every record QUEUED and stops the pass.** A dead session
   says nothing about the records, and ADR 0017 #8 makes "a takeover never discards
@@ -840,13 +840,11 @@ WHERE op.order_id = $1
 - Shows **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on `order.order_type`
 - Footer: terms text (left) + "Received the above merchandise…" + `By:` signature line (right)
 - Business name on receipt: **LEYBLE GENERAL MERCHANDISE** (not "Leyble Hub")
-- **`Sold by: <name>` under the number** ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) #10),
-  from `orders.created_by` (migration 042) surfaced as `sold_by_name`. It is the exit ramp the ADR
-  names: once the seller is on the paper in words, the person digit leading the receipt number is an
-  optional convenience. Nothing is backfilled — an order without one prints no line, and the ESC/POS
-  copy in [escposReceipt.js](client/src/pages/orders/escposReceipt.js) must always say the same thing
-  as the HTML one. A blind save stamps the name from the stored session, because the paper comes out
-  seconds after Save and possibly days before the line is back.
+- **Staff attribution (`Sold by: <name>`) displayed on-screen, omitted from paper receipts**
+  ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) #10), from `orders.created_by`
+  (migration 042) surfaced as `sold_by_name`. Displayed in OrderDetailPage and ReviewQueueModal;
+  removed from both HTML and ESC/POS printed receipts. Nothing is backfilled — historical orders
+  without one omit the attribution line on-screen.
 
 ---
 

@@ -404,6 +404,9 @@ export default function OrderDetailPage() {
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order</p>
             <h1 className="text-2xl font-bold text-slate-900">{orderRef(order)}</h1>
             <p className="text-sm text-slate-500 mt-1">{fmtDate(order.created_at)}</p>
+            {order.sold_by_name?.trim() && (
+              <p className="text-sm text-slate-500 mt-0.5">Sold by: {order.sold_by_name.trim()}</p>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border
