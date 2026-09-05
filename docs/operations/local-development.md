@@ -105,3 +105,15 @@ Migrations live in `server/db/migrations/NNN_name.sql` and are tracked in a `_mi
 **Never modify an applied migration — add a new numbered file.** Schema details:
 [../architecture/DATABASE.md](../architecture/DATABASE.md).
 
+## Android Emulator Local Connectivity
+
+When running the Android debug APK in an Android emulator against your local Express backend:
+- **Emulator Host Loopback:** Android emulators access the host development machine via `http://10.0.2.2:3000` (port 3000 is the local Express server).
+- **Vite Build Override:** Because `vite build` executes in production mode, `client/.env.production`'s `VITE_API_URL` outranks `client/.env.local`. Pass `VITE_API_URL` explicitly on the command line when building/syncing the web bundle:
+  ```bash
+  cd client && VITE_API_URL=http://10.0.2.2:3000 npm run android:sync
+  ```
+- **CORS Setup:** Ensure `DEV_CORS_EXTRA_ORIGINS` in `server/.env` includes `http://localhost` (the debug APK's WebView origin).
+- For complete emulator workflow and on-device test instructions, see [e2e/appium/README.md](../../e2e/appium/README.md).
+
+

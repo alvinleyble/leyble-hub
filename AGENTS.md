@@ -755,7 +755,7 @@ the host machine's dev backend: `client/.env.production`'s `VITE_API_URL` outran
 `client/.env.local` under `vite build` (mode defaults to `production`), so
 `VITE_API_URL=http://10.0.2.2:3000 npm run android:sync` (env var on the command line,
 not just in `.env.local`) is what actually bakes the emulator's host-loopback alias
-into the bundle — `e2e/appium/README.md` doesn't call this out.
+into the bundle — documented in `e2e/appium/README.md`.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
