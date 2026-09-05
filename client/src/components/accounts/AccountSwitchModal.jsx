@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../../context/AuthContext';
 import { listSwitchableAccounts } from '../../offline/accounts';
 import Button from '../ui/Button';
@@ -59,7 +60,7 @@ export default function AccountSwitchModal({ onClose, onSwitched, onAddAccount }
     }
   };
 
-  return (
+  const modalContent = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto"
       role="dialog"
@@ -211,4 +212,6 @@ export default function AccountSwitchModal({ onClose, onSwitched, onAddAccount }
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }

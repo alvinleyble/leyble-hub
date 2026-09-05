@@ -40,7 +40,7 @@ test('AccountSwitchModal renders viewport-centered without mt-16 or items-start'
   );
   await act(async () => { await Promise.resolve(); });
 
-  const dialog = view.container.querySelector('[role="dialog"]');
+  const dialog = document.body.querySelector('[role="dialog"]');
   assert.ok(dialog, 'dialog exists');
   assert.ok(dialog.className.includes('items-center'), 'dialog container has items-center');
   assert.ok(dialog.className.includes('justify-center'), 'dialog container has justify-center');
@@ -63,15 +63,15 @@ test('account buttons and secondary button have 52px+ touch targets and proper e
   );
   await act(async () => { await Promise.resolve(); });
 
-  const josieBtn = view.container.querySelector('[data-testid="account-switch-josie@leyblestore.com"]');
-  const luisBtn = view.container.querySelector('[data-testid="account-switch-luis@leyblestore.com"]');
+  const josieBtn = document.body.querySelector('[data-testid="account-switch-josie@leyblestore.com"]');
+  const luisBtn = document.body.querySelector('[data-testid="account-switch-luis@leyblestore.com"]');
   assert.ok(josieBtn, 'Josie button rendered');
   assert.ok(luisBtn, 'Luis button rendered');
 
   assert.ok(josieBtn.className.includes('min-h-[64px]'), 'account button has min-h-[64px] (>= 52px)');
   assert.ok(luisBtn.className.includes('min-h-[64px]'), 'account button has min-h-[64px] (>= 52px)');
 
-  const addAccountBtn = view.container.querySelector('button.w-full.min-h-\\[52px\\]');
+  const addAccountBtn = document.body.querySelector('button.w-full.min-h-\\[52px\\]');
   assert.ok(addAccountBtn, 'Sign in as someone else button has 52px+ touch target');
 
   // Check internal ergonomics: avatar, name, email
@@ -92,7 +92,7 @@ test('offline warning notice banner renders for accounts without token with stat
   );
   await act(async () => { await Promise.resolve(); });
 
-  const luisBtn = view.container.querySelector('[data-testid="account-switch-luis@leyblestore.com"]');
+  const luisBtn = document.body.querySelector('[data-testid="account-switch-luis@leyblestore.com"]');
   const warningBanner = luisBtn.querySelector('[role="status"]');
   assert.ok(warningBanner, 'offline warning banner has role="status"');
   assert.match(warningBanner.textContent, /Works offline — will ask for their password once there is internet/);
@@ -100,7 +100,7 @@ test('offline warning notice banner renders for accounts without token with stat
   assert.ok(warningBanner.className.includes('border-amber-300'), 'banner has amber border');
 
   // Josie has token, so she should NOT have the warning banner
-  const josieBtn = view.container.querySelector('[data-testid="account-switch-josie@leyblestore.com"]');
+  const josieBtn = document.body.querySelector('[data-testid="account-switch-josie@leyblestore.com"]');
   assert.equal(josieBtn.querySelector('[role="status"]'), null, 'Josie does not have warning banner');
 
   view.unmount();
@@ -125,7 +125,7 @@ test('clicking another account triggers switch and callback', async () => {
   );
   await act(async () => { await Promise.resolve(); });
 
-  const luisBtn = view.container.querySelector('[data-testid="account-switch-luis@leyblestore.com"]');
+  const luisBtn = document.body.querySelector('[data-testid="account-switch-luis@leyblestore.com"]');
   await act(async () => {
     view.click(luisBtn);
     await Promise.resolve();
@@ -150,7 +150,7 @@ test('close button and Escape key dismiss the modal', async () => {
   );
   await act(async () => { await Promise.resolve(); });
 
-  const closeBtn = view.container.querySelector('button[aria-label="Close"]');
+  const closeBtn = document.body.querySelector('button[aria-label="Close"]');
   assert.ok(closeBtn, 'close button exists');
   assert.ok(closeBtn.className.includes('w-12') && closeBtn.className.includes('h-12'), 'close button is 48px touch target');
 
