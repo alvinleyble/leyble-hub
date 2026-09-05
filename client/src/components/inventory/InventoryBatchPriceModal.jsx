@@ -63,7 +63,7 @@ export default function InventoryBatchPriceModal({ products, onClose, onSaved })
   const { addToast } = useToast();
 
   const [mode, setMode]             = useState('uniform'); // 'uniform' | 'individual'
-  const [adjType, setAdjType]       = useState('percent');
+  const [adjType, setAdjType]       = useState('fixed');
   const [adjValue, setAdjValue]     = useState('');
   const [individualPrices, setIndividualPrices] = useState(() =>
     Object.fromEntries(products.map((p) => [p.id, String(p.base_wholesale_price)]))

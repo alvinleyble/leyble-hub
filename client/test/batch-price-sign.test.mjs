@@ -87,7 +87,7 @@ test('computeUniformPrice (V1 & V2): rounding to 2 decimal places', () => {
   }
 });
 
-test('BatchPriceEditModal (V1): direction toggle removed, allows negative inputs and updates prices', async () => {
+test('BatchPriceEditModal (V1): direction toggle removed, defaults to fixed, allows negative inputs and updates prices', async () => {
   const view = render(
     React.createElement(ToastProvider, null,
       React.createElement(BatchPriceEditModal, {
@@ -103,29 +103,29 @@ test('BatchPriceEditModal (V1): direction toggle removed, allows negative inputs
   assert.equal(document.body.textContent.includes('− Decrease'), false);
   assert.equal(document.body.textContent.includes('Direction'), false);
 
-  // Default mode is percent
+  // Default mode is fixed
   const input = document.body.querySelector('input[type="number"]');
   assert.ok(input, 'adjustment input exists');
-  assert.equal(input.placeholder, 'e.g. 5 or -5');
-  assert.equal(input.getAttribute('min'), null, 'no min="0" on percent input');
+  assert.equal(input.placeholder, 'e.g. 2.00 or -2.00');
+  assert.equal(input.getAttribute('min'), null, 'no min="0" on fixed input');
 
-  // Type negative percent: -10
+  // Type negative fixed: -10
   await act(async () => {
     changeInput(input, '-10');
   });
 
-  // Table should show ₱90.00 for Product 1 (current 100) and ₱45.00 for Product 2 (current 50)
+  // Table should show ₱90.00 for Product 1 (current 100) and ₱40.00 for Product 2 (current 50)
   assert.ok(document.body.textContent.includes('₱90.00'), 'product 1 decreased to 90');
-  assert.ok(document.body.textContent.includes('₱45.00'), 'product 2 decreased to 45');
+  assert.ok(document.body.textContent.includes('₱40.00'), 'product 2 decreased to 40');
 
-  // Switch to Fixed
-  const fixedBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent.includes('Fixed'));
-  assert.ok(fixedBtn, 'fixed button exists');
+  // Switch to Percent
+  const percentBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent.includes('Percent'));
+  assert.ok(percentBtn, 'percent button exists');
   await act(async () => {
-    fixedBtn.click();
+    percentBtn.click();
   });
-  assert.equal(input.placeholder, 'e.g. 2.00 or -2.00');
-  assert.equal(input.getAttribute('min'), null, 'no min="0" on fixed input');
+  assert.equal(input.placeholder, 'e.g. 5 or -5');
+  assert.equal(input.getAttribute('min'), null, 'no min="0" on percent input');
 
   // Switch to Set
   const setBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent.includes('Set to'));
@@ -139,7 +139,7 @@ test('BatchPriceEditModal (V1): direction toggle removed, allows negative inputs
   view.unmount();
 });
 
-test('InventoryBatchPriceModal (V2): direction toggle removed, allows negative inputs and updates prices', async () => {
+test('InventoryBatchPriceModal (V2): direction toggle removed, defaults to fixed, allows negative inputs and updates prices', async () => {
   const view = render(
     React.createElement(ToastProvider, null,
       React.createElement(InventoryBatchPriceModal, {
@@ -155,29 +155,29 @@ test('InventoryBatchPriceModal (V2): direction toggle removed, allows negative i
   assert.equal(document.body.textContent.includes('− Decrease'), false);
   assert.equal(document.body.textContent.includes('Direction'), false);
 
-  // Default mode is percent
+  // Default mode is fixed
   const input = document.body.querySelector('#batch-adj-value');
   assert.ok(input, 'batch-adj-value input exists');
-  assert.equal(input.placeholder, 'e.g. 5 or -5');
-  assert.equal(input.getAttribute('min'), null, 'no min="0" on percent input');
+  assert.equal(input.placeholder, 'e.g. 2.00 or -2.00');
+  assert.equal(input.getAttribute('min'), null, 'no min="0" on fixed input');
 
-  // Type negative percent: -20
+  // Type negative fixed: -20
   await act(async () => {
     changeInput(input, '-20');
   });
 
-  // Table should show ₱80.00 for Product 1 (current 100) and ₱40.00 for Product 2 (current 50)
+  // Table should show ₱80.00 for Product 1 (current 100) and ₱30.00 for Product 2 (current 50)
   assert.ok(document.body.textContent.includes('₱80.00'), 'product 1 decreased to 80');
-  assert.ok(document.body.textContent.includes('₱40.00'), 'product 2 decreased to 40');
+  assert.ok(document.body.textContent.includes('₱30.00'), 'product 2 decreased to 30');
 
-  // Switch to Fixed
-  const fixedBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent.includes('Fixed'));
-  assert.ok(fixedBtn, 'fixed button exists');
+  // Switch to Percent
+  const percentBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent.includes('Percent'));
+  assert.ok(percentBtn, 'percent button exists');
   await act(async () => {
-    fixedBtn.click();
+    percentBtn.click();
   });
-  assert.equal(input.placeholder, 'e.g. 2.00 or -2.00');
-  assert.equal(input.getAttribute('min'), null, 'no min="0" on fixed input');
+  assert.equal(input.placeholder, 'e.g. 5 or -5');
+  assert.equal(input.getAttribute('min'), null, 'no min="0" on percent input');
 
   // Switch to Set
   const setBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent.includes('Set to'));

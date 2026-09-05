@@ -63,7 +63,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
   const { addToast } = useToast();
 
   const [mode, setMode]             = useState('uniform'); // 'uniform' | 'individual'
-  const [adjType, setAdjType]       = useState('percent');  // 'percent' | 'fixed' | 'set'
+  const [adjType, setAdjType]       = useState('fixed');    // 'percent' | 'fixed' | 'set'
   const [adjValue, setAdjValue]     = useState('');
   const [individualPrices, setIndividualPrices] = useState(() =>
     Object.fromEntries(products.map((p) => [p.id, String(p.base_wholesale_price)]))
