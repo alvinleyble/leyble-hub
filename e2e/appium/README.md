@@ -75,9 +75,11 @@ until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep
 # 2. Start the backend, pointed at the dev database as usual.
 cd server && node src/index.js
 
-# 3. Build and install the debug APK (picks up the debug-only networking override
-#    automatically — see below).
-cd client && npm run android:sync   # vite build && cap sync android
+# 3. Build and install the debug APK pointed at your local backend.
+#    NOTE: client/.env.production's VITE_API_URL outranks client/.env.local under vite build
+#    (which defaults to production mode). You must pass VITE_API_URL on the command line to bake
+#    the emulator loopback alias (http://10.0.2.2:3000) into the web bundle:
+cd client && VITE_API_URL=http://10.0.2.2:3000 npm run android:sync   # vite build && cap sync android
 cd android && ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
@@ -128,7 +130,7 @@ once, with the backend reachable, before the two-tap switch exists at all.
 
 ## How the debug build reaches your local backend
 
-Two independent Android rules would otherwise block a debug APK from talking to a backend on
+Two independent Android rules plus a Vite build precedence rule would otherwise block a debug APK from talking to a backend on
 your own machine (`http://10.0.2.2:<port>`, the emulator's host-loopback alias):
 
 1. **Cleartext (plain HTTP) is blocked by default** above API 28 (`targetSdkVersion` here is
@@ -137,6 +139,12 @@ your own machine (`http://10.0.2.2:<port>`, the emulator's host-loopback alias):
    (`client/capacitor.config.json`) makes the production app's WebView load its own pages from
    `https://localhost`; a page loaded over HTTPS fetching plain `http://` is blocked by
    Chrome/WebView itself, separate from the Android-level cleartext rule.
+3. **Frontend API URL configuration (`VITE_API_URL`).** By default, `vite build` runs in
+   production mode where `client/.env.production`'s `VITE_API_URL` outranks `client/.env.local`.
+   To target your local backend running on your development host machine, you must explicitly
+   supply `VITE_API_URL=http://10.0.2.2:3000` on the command line when running `android:sync`:
+   `cd client && VITE_API_URL=http://10.0.2.2:3000 npm run android:sync`. Without this override,
+   the APK bundle bakes in the remote production API URL instead of your local development server.
 
 The fix is scoped to the **debug build variant only**, via Android's standard source-set
 override mechanism — Gradle merges `src/debug/*` on top of `src/main/*` for `assembleDebug`,

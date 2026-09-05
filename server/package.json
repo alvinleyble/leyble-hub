@@ -10,6 +10,7 @@
     "test": "node --test --test-concurrency=1 test/**/*.test.js",
     "migrate": "node db/migrate.js",
     "seed": "node db/seed.js",
+    "seed-tickets": "node db/seed-tickets.js",
     "reset-data": "node db/reset-data.js",
     "create-user": "node db/create-user.js"
   },

@@ -74,6 +74,7 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
    - Free tier sleeps after ~15 min idle (first request ~30–60s). Upgrade to Starter (~$7/mo)
      for always-on. **Do not use Render's free Postgres** — it is deleted ~30 days after
      creation; the DB lives on Supabase.
+   - **Local Android Emulator Testing:** When testing on an Android emulator against a local backend instead of Render/cloud, point the build to `http://10.0.2.2:3000` via `VITE_API_URL=http://10.0.2.2:3000 npm run android:sync`. See [e2e/appium/README.md](../../e2e/appium/README.md).
 
 ---
 
