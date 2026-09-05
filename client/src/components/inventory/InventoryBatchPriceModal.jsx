@@ -10,19 +10,20 @@ const FIELD = `w-full h-11 rounded-lg border border-v2-border bg-v2-bg px-3 text
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Resolves a uniform adjustment (percent/fixed/set, increase/decrease) against one
-// product's current price. Negative results are clamped to 0 but flagged as clamped
+// Resolves a uniform adjustment (percent/fixed/set) against one product's current
+// price. The adjustment direction depends on the sign of adjValue: positive increases,
+// negative decreases. Negative results are clamped to 0 but flagged as clamped
 // so the preview can call it out instead of silently changing what the owner typed.
-function computeUniformPrice(current, adjType, adjDirection, adjValue) {
+export function computeUniformPrice(current, adjType, adjValue) {
   const val = Number(adjValue) || 0;
   let next;
   if (adjType === 'set') {
     next = val;
   } else if (adjType === 'percent') {
     const delta = current * (val / 100);
-    next = adjDirection === 'decrease' ? current - delta : current + delta;
+    next = current + delta;
   } else {
-    next = adjDirection === 'decrease' ? current - val : current + val;
+    next = current + val;
   }
   return { clamped: Math.max(0, round2(next)), wasClamped: next < 0 };
 }
@@ -31,11 +32,6 @@ const ADJ_TYPES = [
   { value: 'percent', label: 'Percent (%)' },
   { value: 'fixed',   label: 'Fixed (₱)' },
   { value: 'set',     label: 'Set to (₱)' },
-];
-
-const ADJ_DIRECTIONS = [
-  { value: 'increase', label: '+ Increase' },
-  { value: 'decrease', label: '− Decrease' },
 ];
 
 function SegmentedControl({ options, value, onChange }) {
@@ -68,7 +64,6 @@ export default function InventoryBatchPriceModal({ products, onClose, onSaved })
 
   const [mode, setMode]             = useState('uniform'); // 'uniform' | 'individual'
   const [adjType, setAdjType]       = useState('percent');
-  const [adjDirection, setAdjDirection] = useState('increase');
   const [adjValue, setAdjValue]     = useState('');
   const [individualPrices, setIndividualPrices] = useState(() =>
     Object.fromEntries(products.map((p) => [p.id, String(p.base_wholesale_price)]))
@@ -93,7 +88,7 @@ export default function InventoryBatchPriceModal({ products, onClose, onSaved })
       return { product, current, next: Math.max(0, round2(num)), wasClamped: num < 0, invalid: false };
     }
 
-    const { clamped, wasClamped } = computeUniformPrice(current, adjType, adjDirection, adjValue);
+    const { clamped, wasClamped } = computeUniformPrice(current, adjType, adjValue);
     return { product, current, next: clamped, wasClamped, invalid: false };
   });
 
@@ -169,18 +164,9 @@ export default function InventoryBatchPriceModal({ products, onClose, onSaved })
 
           {mode === 'uniform' && (
             <div className="mb-5 rounded-xl border border-v2-border bg-v2-bg p-4">
-              <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <span className="mb-1.5 block text-sm font-bold text-v2-muted">Adjustment type</span>
-                  <SegmentedControl options={ADJ_TYPES} value={adjType} onChange={setAdjType} />
-                </div>
-
-                {adjType !== 'set' && (
-                  <div>
-                    <span className="mb-1.5 block text-sm font-bold text-v2-muted">Direction</span>
-                    <SegmentedControl options={ADJ_DIRECTIONS} value={adjDirection} onChange={setAdjDirection} />
-                  </div>
-                )}
+              <div className="mb-3">
+                <span className="mb-1.5 block text-sm font-bold text-v2-muted">Adjustment type</span>
+                <SegmentedControl options={ADJ_TYPES} value={adjType} onChange={setAdjType} />
               </div>
 
               <label className="mb-1.5 block text-sm font-bold text-v2-muted" htmlFor="batch-adj-value">
@@ -188,10 +174,19 @@ export default function InventoryBatchPriceModal({ products, onClose, onSaved })
               </label>
               <input
                 id="batch-adj-value"
-                type="number" min="0" step="0.01" value={adjValue}
+                type="number"
+                min={adjType === 'set' ? '0' : undefined}
+                step="0.01"
+                value={adjValue}
                 onChange={(e) => setAdjValue(e.target.value)}
                 className={FIELD}
-                placeholder={adjType === 'percent' ? 'e.g. 5' : 'e.g. 2.00'}
+                placeholder={
+                  adjType === 'percent'
+                    ? 'e.g. 5 or -5'
+                    : adjType === 'set'
+                    ? 'e.g. 2.00'
+                    : 'e.g. 2.00 or -2.00'
+                }
               />
             </div>
           )}
