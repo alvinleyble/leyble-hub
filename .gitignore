@@ -3,13 +3,40 @@ node_modules/
 
 # Environment — never commit secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
 
-# Build output
+# Android Signing & Google Play credentials
+*.jks
+*.keystore
+*.key
+*.p12
+*.pem
+google-services.json
+*service-account*.json
+play-service-account*.json
+release.jks
+
+# Android & build artifacts
 dist/
 build/
 .gradle/
+**/build/
+**/dist/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local databases, test coverage, and AI caches
+*.sqlite
+*.sqlite3
+*.db
+coverage/
+.nyc_output/
+.claude/
+.agents/
+.gemini/
 
 # Logs
 *.log
@@ -25,4 +52,3 @@ Thumbs.db
 
 # Vite cache
 .vite/
-*.jks
