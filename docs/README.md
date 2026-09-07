@@ -18,8 +18,8 @@ Antipolo, Philippines. This folder is the single home for project documentation.
 - [product/proposals/v2-5-offline-accessibility.md](product/proposals/v2-5-offline-accessibility.md) — V2.5 offline / local-first POS, all eighteen settled decisions.
 
 ### Architecture & technical
-- [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) — stack, topology, auth, layout.
-- [architecture/DATABASE.md](architecture/DATABASE.md) — current schema (reconciled to migrations 001–033).
+- [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) — stack, topology, 3-tier environments, auth, layout.
+- [architecture/DATABASE.md](architecture/DATABASE.md) — current schema (reconciled to migrations 001–045).
 - [architecture/API.md](architecture/API.md) — REST endpoint reference.
 - [architecture/order-lifecycle.md](architecture/order-lifecycle.md) — order status, stock, deposit/bottle-return math.
 
@@ -29,7 +29,7 @@ Antipolo, Philippines. This folder is the single home for project documentation.
     [0003](adr/0003-device-issued-receipt-numbers.md) device-issued receipt numbers,
     [0004](adr/0004-local-first-pos.md) local-first POS,
     [0005](adr/0005-offline-scope-by-operation.md) offline scope by operation *(partially superseded by 0015)*,
-    [0006](adr/0006-receipt-number-as-idempotency-key.md) receipt number as idempotency key,
+    [0006](adr/0006-receipt-number-as-idempotency-key.md) receipt number as idempotency key *(revised by 0017)*,
     [0007](adr/0007-native-storage-for-device-state.md) native storage for device state,
     [0008](adr/0008-release-switch-for-the-offline-core.md) release switch *(superseded by 0013)*.
   - V3.0 architecture:
@@ -44,10 +44,12 @@ Antipolo, Philippines. This folder is the single home for project documentation.
   - Receipt numbering, current:
     [0016](adr/0016-three-fixed-station-slots.md) three fixed station slots *(superseded by 0017)*,
     [0017](adr/0017-receipt-numbers-keyed-to-user-accounts.md) receipt numbers keyed to user accounts *(supersedes 0016, revises 0006)*.
+  - Database security:
+    [0018](adr/0018-supabase-rls-lockdown.md) Supabase Row Level Security (RLS) lockdown across all tables.
 
 ### Operations
-- [operations/local-development.md](operations/local-development.md) — run it locally.
-- [operations/development-database.md](operations/development-database.md) — development database replica & isolation rules.
+- [operations/local-development.md](operations/local-development.md) — run it locally (3-tier model).
+- [operations/development-database.md](operations/development-database.md) — development database replica, staging environment & isolation rules.
 - [operations/android.md](operations/android.md) — build & sideload the Android APK; cloud setup.
 
 ### Archive (historical, not maintained)
