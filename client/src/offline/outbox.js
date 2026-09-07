@@ -4,6 +4,7 @@ import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
 import { markOffline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
+import { newRequestKey } from './requestKeys.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -34,23 +35,32 @@ async function nextRecordId() {
  * @param {string}   rec.endpoint     API path, e.g. '/orders'
  * @param {string}  [rec.method]      default 'POST'
  * @param {object}   rec.payload      request body, may contain $ref placeholders
- * @param {string}   rec.profileKey   D14 — the profile ACTIVE AT SAVE, captured here
- *                                    and replayed on drain. Never the profile that
- *                                    happens to be on the tablet when the line returns.
- * @param {string}  [rec.receiptNumber] D13 — the record's identity for resend safety.
+ * @param {string}   rec.profileKey   D14 — the account SIGNED IN AT SAVE, captured here.
+ *                                    Local bookkeeping only since ADR 0017 §5 deleted the
+ *                                    `X-Active-Profile` header; still required, because a
+ *                                    record with no author is exactly the bug D14 exists
+ *                                    to prevent and slice 5 needs the value back.
+ * @param {string}  [rec.receiptNumber] The receipt number of the sale this record
+ *                                    carries, kept for local lookup. It is NOT the
+ *                                    resend key any more — see `request_key` below.
  * @param {number[]}[rec.dependsOn]   outbox ids that must sync first (D5: a locally
  *                                    created customer before any order referencing her).
+ * @param {object}  [rec.endpointParams] `:name` placeholders in `endpoint`, resolved the
+ *                                    same way as `$ref`s in `payload` (see `ref()` below)
+ *                                    — for a record whose URL itself depends on another
+ *                                    record's real id (e.g. POST /customers/:customerId/prices
+ *                                    for a customer created earlier in this same save).
  */
 export async function enqueue({
   entityType, endpoint, method = 'POST', payload, profileKey,
-  receiptNumber = null, dependsOn = [], createdAt = null,
+  receiptNumber = null, dependsOn = [], createdAt = null, endpointParams = null,
 }) {
   if (!entityType) throw new Error('enqueue: entityType is required');
   if (!endpoint) throw new Error('enqueue: endpoint is required');
   if (!profileKey) {
-    // D14 has no sensible default. A record with no profile would be attributed to
+    // D14 has no sensible default. A record with no author would be attributed to
     // whoever drains it, which is the exact bug the rule exists to prevent.
-    throw new Error('enqueue: profileKey is required — capture the profile at Save');
+    throw new Error('enqueue: profileKey is required — capture the signed-in account at Save');
   }
 
   const id = await nextRecordId();
@@ -58,10 +68,16 @@ export async function enqueue({
     id,
     entity_type: entityType,
     endpoint,
+    endpoint_params: endpointParams,
     method,
     payload,
     profile_key: profileKey,
     receipt_number: receiptNumber,
+    // ADR 0017 #9 — minted once, here, and resent unchanged on every retry of THIS
+    // record. That is what makes a resend recognisable as a resend without the
+    // receipt number having to carry the job, so two sales that collide on a receipt
+    // number stay two sales instead of the second vanishing into the first.
+    request_key: newRequestKey(),
     depends_on: dependsOn,
     status: QUEUED,
     attempts: 0,
@@ -190,12 +206,39 @@ async function pruneRefs(remaining) {
 
 // ── Draining ────────────────────────────────────────────────────────────────
 
+// ADR 0017 #9 — the retry key rides on the body of every POST the outbox sends.
+//
+// Injected here rather than baked into each caller's payload so that every queued
+// create is covered by construction, including ones added later: a route that does not
+// know the field destructures past it, and a route that adopts the mechanism (one entry
+// in server/src/lib/idempotency.js's allowlist) needs nothing on the device at all.
+//
+// Two records deliberately go without. A record queued by a pre-039 build has no
+// `request_key` and must still drain — the server falls back to the receipt number for
+// exactly that case (ADR 0014's mixed-fleet window). And a PATCH or DELETE is not a
+// create: re-sending one is already idempotent, and a queued DELETE that 404s is
+// treated as success further down.
+function withRequestKey(record, body) {
+  if (!record.request_key || record.method !== 'POST') return body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  return { ...body, request_key: record.request_key };
+}
+
 // A thrown error with no HTTP status never reached the server (DNS, no route, a
 // dropped connection, a timeout). That is an outage, not a rejection: the record stays
 // queued and untouched. This is also why the drain must not read a network failure as
 // an authentication problem — D15.
 function isNetworkFailure(err) {
   return !err?.status;
+}
+
+// Comfortably longer than the drain loop's own 30s period, so the loop's screen is
+// always fresh enough for the drain that immediately follows it.
+const SCREEN_FRESHNESS_MS = 90_000;
+
+function isFreshlyScreened(guard) {
+  const at = guard?.screened_at;
+  return typeof at === 'number' && (Date.now() - at) < SCREEN_FRESHNESS_MS;
 }
 
 let draining = false;
@@ -214,6 +257,24 @@ let draining = false;
 // unrelated trigger, a skipped call now schedules an immediate follow-up pass the
 // moment the in-flight one finishes.
 let queuedRerun = false;
+
+// The remembered-account key this record should be sent under, or null to use the active
+// session. Null in the two ordinary cases — the author IS the current session, or this
+// device holds no token for them any more (ADR 0017 #7).
+async function authorTokenKey(record) {
+  const author = record?.profile_key;
+  if (!author) return null;
+  try {
+    const active = await api.getActiveProfile();
+    if (active && author === active) return null;
+    return (await api.getAccountToken(author)) ? author : null;
+  } catch {
+    // Never let a storage read decide whether a receipt gets sent. Falling back to the
+    // active session costs attribution, which is honour-system by accepted design; not
+    // sending would cost the sale.
+    return null;
+  }
+}
 
 /**
  * Send what is waiting, oldest first, honouring dependencies.
@@ -252,10 +313,27 @@ async function runDrainPass() {
       // A dependency that has not synced blocks its dependants but not unrelated
       // receipts behind them.
       if ((record.depends_on || []).some((id) => blocked.has(id))) continue;
+      // ADR 0015 §6 — a record carrying a `guard` holds a stock count or a price that
+      // another tablet may have corrected in the meantime, and §6 forbids resolving
+      // that silently. `screenProductMutations()` (productMutations.js) is what asks
+      // the server and stamps `screened_at`; this skip is the fail-safe that makes
+      // "never sent unscreened" true of EVERY drain path, not just the two that
+      // remember to screen first. The freshness window matters because a stamp from an
+      // hour ago says nothing about now: the periodic loop screens immediately before
+      // it drains, so anything genuinely ready is stamped seconds ago.
+      if (record.guard && !isFreshlyScreened(record.guard)) continue;
 
       let body;
+      let endpoint = record.endpoint;
       try {
-        body = await resolvePayload(record.payload);
+        if (record.endpoint_params) {
+          const resolvedParams = await resolvePayload(record.endpoint_params);
+          endpoint = Object.entries(resolvedParams).reduce(
+            (acc, [key, value]) => acc.split(`:${key}`).join(encodeURIComponent(value)),
+            endpoint,
+          );
+        }
+        body = withRequestKey(record, await resolvePayload(record.payload));
       } catch (err) {
         if (err.unresolvedRef) {
           // Round 4 Fix 6 safety net — a dependency still present in the outbox
@@ -282,16 +360,42 @@ async function runDrainPass() {
       }
 
       try {
-        // D14 — the profile stored with the record, not the one on the tablet now.
-        const response = await api.request(record.endpoint, {
+        // ADR 0017 #7 — the per-record author, back on the wire as a REAL CREDENTIAL.
+        //
+        // One device can now hold two signed-in people, so the account that saved a
+        // record and the account holding the tablet when the line returns are routinely
+        // not the same person — and `created_by` on the order is what prints `Sold by:`
+        // on the receipt (ADR 0017 #10). So the record goes out under its own author's
+        // remembered token when this device still holds one, rather than under whoever is
+        // signed in now. That is not the impersonation header ADR 0017 §5 deleted: it is
+        // that person's own JWT, issued to this device by a sign-in they made themselves.
+        //
+        // `authorKey` is null when the author IS the current session (the ordinary case,
+        // and the cheapest path) or when their token has gone — then it falls back to the
+        // active session, and attribution is honour-system exactly as the captain
+        // accepted it to be.
+        const authorKey = await authorTokenKey(record);
+        const response = await api.request(endpoint, {
           method: record.method,
           body: JSON.stringify(body),
-          profileKey: record.profile_key,
+          ...(authorKey ? { accountKey: authorKey } : {}),
         });
         await rememberResult(record.id, response);
         await removeRecord(record.id);
         sent++;
       } catch (err) {
+        // A 401 is the session ending underneath the drain — a takeover on another
+        // device (ADR 0017 #8), a deactivated account, an expired token. It says nothing
+        // about the RECORD, so the record must not be marked as needing attention and
+        // must certainly not be dropped: receipts waiting to sync are device state and
+        // surviving a takeover is a hard requirement of ADR 0017 #8. Leave it queued
+        // exactly as it is, stop the pass (every record behind it would fail the same
+        // way), and let the sign-in the client is already being sent to resume it.
+        if (err.status === 401) {
+          blocked.add(record.id);
+          break;
+        }
+
         record.attempts = (record.attempts || 0) + 1;
         record.last_error = err.message || String(err);
 
@@ -402,7 +506,7 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
 export async function queueOrderDeletion({ orderRef, profileKey } = {}) {
   if (!orderRef) return null;
   if (!profileKey) {
-    throw new Error('queueOrderDeletion: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('queueOrderDeletion: profileKey is required — capture the signed-in account at Save (D14)');
   }
   const record = await enqueue({
     entityType: 'order_delete',

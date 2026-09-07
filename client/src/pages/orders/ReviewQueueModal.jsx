@@ -321,6 +321,12 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                     </div>
                   </div>
 
+                  {order.sold_by_name?.trim() && (
+                    <p className="text-sm text-slate-500 mt-2">
+                      Sold by: {order.sold_by_name.trim()}
+                    </p>
+                  )}
+
                   {cfg.showPrint && order[cfg.printedAtField] && (
                     <p className="text-sm text-slate-500 mt-2">
                       {cfg.printedLabel} {fmtDate(order[cfg.printedAtField])} by {order[cfg.printedByField]}

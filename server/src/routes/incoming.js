@@ -2,6 +2,17 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { applyStockDelta, applyDeltaMap } = require('../lib/inventory');
+const { parseDeliveryRef } = require('../lib/receiptNumbers');
+const { assertIssuableStation } = require('../lib/personNumbers');
+const {
+  normalizeRequestKey, findByRequestKey, findByReceiptNumber,
+  isDuplicateRequestKey, isDuplicateReceiptNumber,
+} = require('../lib/idempotency');
+
+// Matches the partial unique index created by migration 036.
+const DELIVERY_REF_INDEX = 'supplier_deliveries_receipt_number_uniq';
+// Migration 039's partial unique index over the retry key (ADR 0017 #9).
+const REQUEST_KEY_INDEX = 'supplier_deliveries_request_key_uniq';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -31,6 +42,11 @@ async function getFullDelivery(deliveryId) {
 
 // Reconcile stock after editing/voiding a delivery. Deliveries ADD stock, so the
 // per-product change is (newQty − oldQty); pass newItems = [] to fully reverse.
+//
+// `delivery_edit`, not `manual_adjustment` (migration 038): this is business activity,
+// not somebody's stock recount, and the offline guard's HUMAN_ACTION_FOR_FIELD map
+// reads `manual_adjustment` on current_stock as exactly that. Labelling a delivery
+// reversal that way raised a reconciliation question about a value nobody disputed.
 async function reconcileDeliveryStock(client, oldItems, newItems, deliveryId, userId, reason) {
   const deltas = {};
   for (const it of oldItems) {
@@ -39,7 +55,7 @@ async function reconcileDeliveryStock(client, oldItems, newItems, deliveryId, us
   for (const it of newItems) {
     deltas[it.product_id] = (deltas[it.product_id] || 0) + Number(it.quantity_received);
   }
-  await applyDeltaMap(client, deltas, { actionType: 'manual_adjustment', reason, userId, deliveryId });
+  await applyDeltaMap(client, deltas, { actionType: 'delivery_edit', reason, userId, deliveryId });
 }
 
 // ─── routes ─────────────────────────────────────────────────────────────────
@@ -86,8 +102,22 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/v1/incoming — log delivery and restock products
+//
+// Two optional fields carry the device's version of the truth when the delivery was
+// logged locally (ADR 0015 §8; ADR 0017 #9). Both are absent for a delivery logged from
+// a connected client, which behaves exactly as before:
+//   request_key   the retry key: generated on the device once per outbox record and
+//                 resent unchanged on every retry OF THAT RECORD. It is the record's
+//                 identity here, so a resend of a key already stored is answered with
+//                 the stored delivery and a 200 rather than a second truckload of stock.
+//   delivery_ref  '<person><device letter>-DEL-<sequence>' issued on the device at Save,
+//                 or the pre-letter '<person>-DEL-<sequence>' from a tablet that has not
+//                 been updated yet — both are accepted, permanently (ADR 0017 #14). It
+//                 names the DELIVERY and stays unique, but is no longer what a retry is
+//                 recognised by. With no request_key it still is, as the fallback for a
+//                 pre-039 queued record (ADR 0006's mechanism, second table).
 router.post('/', async (req, res, next) => {
-  const { supplier_name, notes, received_at, items } = req.body;
+  const { supplier_name, notes, received_at, items, delivery_ref, request_key } = req.body;
 
   // Validate input before opening a connection/transaction — an early return after
   // BEGIN would release the client mid-transaction (pg won't auto-rollback).
@@ -97,15 +127,55 @@ router.post('/', async (req, res, next) => {
     return res.status(400).json({ error: 'Each item requires product_id and quantity_received' });
   }
 
+  let requestKey = null;
+  try {
+    requestKey = normalizeRequestKey(request_key);
+  } catch (err) {
+    return next(err);
+  }
+
+  let ref = null;
+  if (delivery_ref !== undefined && delivery_ref !== null && delivery_ref !== '') {
+    try {
+      // Accepts both shapes: '1-DEL-00007' from a tablet that has not been updated yet
+      // and '1A-DEL-00007' from one that has (ADR 0017 #14).
+      ref = parseDeliveryRef(delivery_ref);
+      // Same person-number backstop the receipt numbers carry; a delivery reference is
+      // issued off the same person-and-device pair.
+      assertIssuableStation(ref.station, { field: 'delivery_ref' });
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  // The ordinary resend: the first attempt committed and only the response was lost.
+  // Keyed on the retry key when the device sent one, and only on it (ADR 0017 #9);
+  // on the delivery reference otherwise, which is the pre-039 fallback and stays.
+  const dedupeBy = requestKey
+    ? () => findByRequestKey(db, 'supplier_deliveries', requestKey)
+    : (ref ? () => findByReceiptNumber(db, 'supplier_deliveries', ref) : null);
+
+  if (dedupeBy) {
+    try {
+      const existingId = await dedupeBy();
+      if (existingId) return res.json(await getFullDelivery(existingId));
+    } catch (err) {
+      return next(err);
+    }
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
 
     const { rows: [delivery] } = await client.query(
-      `INSERT INTO supplier_deliveries (supplier_name, notes, received_at, created_by)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO supplier_deliveries
+         (supplier_name, notes, received_at, created_by,
+          receipt_station, receipt_device, receipt_sequence, request_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [supplier_name, notes || null, received_at || new Date().toISOString(), req.user.id]
+      [supplier_name, notes || null, received_at || new Date().toISOString(), req.user.id,
+       ref?.station ?? null, ref?.device ?? null, ref?.sequence ?? null, requestKey]
     );
 
     for (const item of items) {
@@ -131,6 +201,28 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(await getFullDelivery(delivery.id));
   } catch (err) {
     await client.query('ROLLBACK');
+    // Two drain attempts of the SAME record overlapping: both looked, neither found,
+    // both inserted. Either index can be the one that fires — an identical resend
+    // collides on both — so the constraint name only decides whether to look, and
+    // `dedupeBy` decides what it was. See orders.js for the full reasoning.
+    if (dedupeBy && (isDuplicateRequestKey(err, REQUEST_KEY_INDEX)
+                  || isDuplicateReceiptNumber(err, DELIVERY_REF_INDEX))) {
+      try {
+        const existingId = await dedupeBy();
+        if (existingId) return res.json(await getFullDelivery(existingId));
+      } catch (lookupErr) {
+        return next(lookupErr);
+      }
+    }
+    // ADR 0017 #9 — a DIFFERENT record arriving on a delivery reference already stored.
+    // Two separate truckloads wearing one label: never answered with the stored one, and
+    // refused rather than 500'd so the outbox is not stalled behind it. See orders.js.
+    if (requestKey && ref && isDuplicateReceiptNumber(err, DELIVERY_REF_INDEX)) {
+      return res.status(409).json({
+        error: `Delivery reference ${delivery_ref} is already used by a different delivery. `
+             + 'Two deliveries cannot share a reference — re-issue this one.',
+      });
+    }
     next(err);
   } finally {
     client.release();

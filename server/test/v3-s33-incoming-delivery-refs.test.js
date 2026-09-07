@@ -1,0 +1,267 @@
+// V3.0 Slice 3.3 — the server half of ADR 0015 §8: offline incoming-delivery logging.
+//
+// One thing here is load-bearing and nothing on the device can compensate for getting
+// it wrong. A delivery logged on a blind tablet is queued, and a queued record can be
+// SENT MORE THAN ONCE — a POST that commits and then loses its response on the way back
+// is retried by the outbox. Without an identity of its own that retry becomes a second
+// truckload of stock in the ledger, silently. This is ADR 0006's mechanism applied to
+// its second table, so these tests mirror the receipt-number ones in
+// v25-offline-foundations.test.js deliberately.
+const { describe, it, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
+const http = require('node:http');
+
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost/leyble_hub';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-key-32-chars-minimum!!';
+
+const db = require('../src/db');
+const incomingRoutes = require('../src/routes/incoming');
+const { errorHandler } = require('../src/middleware/errorHandler');
+const { RECEIPT_TABLES } = require('../src/lib/idempotency');
+const { parseDeliveryRef, formatDeliveryRef } = require('../src/lib/receiptNumbers');
+
+describe('V3.0 Slice 3.3 — device-issued delivery references (ADR 0015 §8)', () => {
+  let server;
+  let baseUrl;
+  let authToken;
+  let productId;
+  const deliveryIds = [];
+
+  before(async () => {
+    const { rows: [admin] } = await db.query(
+      `SELECT id, email, full_name, role FROM users WHERE email = 'alvin@leyblestore.com' LIMIT 1`
+    );
+    authToken = jwt.sign(
+      { id: admin.id, email: admin.email, role: admin.role, full_name: admin.full_name },
+      process.env.JWT_SECRET
+    );
+
+    const { rows: [product] } = await db.query(
+      `INSERT INTO products (name, category, unit, sku, base_wholesale_price, deposit_fee, current_stock, is_active)
+       VALUES ('TEST_S33_PROD', 'Beer', 'case', $1, 100, 0, 100, TRUE) RETURNING id`,
+      [`SKU_S33_${Date.now()}`]
+    );
+    productId = product.id;
+
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use('/api/v1/incoming', incomingRoutes);
+    app.use(errorHandler);
+    server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    baseUrl = `http://localhost:${server.address().port}/api/v1`;
+  });
+
+  after(async () => {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await db.query('DELETE FROM inventory_audit_logs WHERE product_id = $1', [productId]);
+    await db.query('DELETE FROM supplier_delivery_items WHERE product_id = $1', [productId]);
+    if (deliveryIds.length) {
+      await db.query('DELETE FROM supplier_deliveries WHERE id = ANY($1::int[])', [deliveryIds]);
+    }
+    await db.query('DELETE FROM products WHERE id = $1', [productId]);
+  });
+
+  function call(path, options = {}) {
+    return fetch(`${baseUrl}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+        ...(options.headers || {}),
+      },
+    });
+  }
+
+  // ADR 0016 caps the station component at this store's three slots, so each test
+  // varies its SEQUENCE (not its station) to keep a re-run against a reused database
+  // from colliding with a delivery an earlier run already stored.
+  let sequenceSeed = Math.floor(Date.now() / 1000) % 80000;
+  const nextSequence = () => ++sequenceSeed;
+
+  const body = (over = {}) => ({
+    supplier_name: 'TEST_S33 San Miguel Brewery',
+    received_at: '2026-08-29',
+    items: [{ product_id: productId, quantity_received: 5 }],
+    ...over,
+  });
+
+  const stockNow = async () => {
+    const { rows: [p] } = await db.query('SELECT current_stock FROM products WHERE id = $1', [productId]);
+    return Number(p.current_stock);
+  };
+
+  it('the shared idempotency mechanism now covers supplier_deliveries, not only orders', () => {
+    assert.ok(RECEIPT_TABLES.has('orders'));
+    assert.ok(RECEIPT_TABLES.has('supplier_deliveries'));
+  });
+
+  it('parses and formats both shapes, and never confuses either with a receipt number', () => {
+    // Pre-letter, still issued by every tablet that has not been updated yet.
+    assert.deepEqual(parseDeliveryRef('7-DEL-00042'), { station: 7, device: null, sequence: 42 });
+    assert.equal(formatDeliveryRef(7, 42), '7-DEL-00042');
+    // With the per-person device letter (ADR 0017 #14).
+    assert.deepEqual(parseDeliveryRef('7A-DEL-00042'), { station: 7, device: 'A', sequence: 42 });
+    assert.equal(formatDeliveryRef(7, 42, 'A'), '7A-DEL-00042');
+    assert.throws(() => parseDeliveryRef('7-00042'), /Malformed delivery_ref/);
+    assert.throws(() => parseDeliveryRef('7A-00042'), /Malformed delivery_ref/);
+  });
+
+  it('stores the device-issued reference and returns it on the delivery', async () => {
+    const ref = formatDeliveryRef(1, nextSequence());
+    const res = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) });
+    assert.equal(res.status, 201);
+    const delivery = await res.json();
+    deliveryIds.push(delivery.id);
+    assert.equal(delivery.delivery_ref, ref);
+  });
+
+  it('a second arrival of the same reference is a SUCCESS and leaves exactly one row', async () => {
+    const ref = formatDeliveryRef(1, nextSequence());
+    const first = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) })).json();
+    deliveryIds.push(first.id);
+
+    const res = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) });
+    assert.equal(res.status, 200, 'a resend is answered, never refused — the device has to be able to clear its outbox');
+    const second = await res.json();
+    assert.equal(second.id, first.id);
+
+    const { rows } = await db.query(
+      'SELECT id FROM supplier_deliveries WHERE receipt_station = $1 AND receipt_sequence = $2',
+      [parseDeliveryRef(ref).station, parseDeliveryRef(ref).sequence]
+    );
+    assert.equal(rows.length, 1);
+  });
+
+  it('a resend does not restock a second time', async () => {
+    const ref = formatDeliveryRef(1, nextSequence());
+    const before = await stockNow();
+
+    const first = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) })).json();
+    deliveryIds.push(first.id);
+    assert.equal(await stockNow(), before + 5);
+
+    await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) });
+    assert.equal(await stockNow(), before + 5, 'the ledger must not gain a second truckload');
+  });
+
+  it('two overlapping drains of the same reference still leave one row', async () => {
+    const ref = formatDeliveryRef(1, nextSequence());
+    const before = await stockNow();
+
+    // Both look, neither finds, both insert: the partial unique index catches the
+    // loser and the route answers it with the winner's row.
+    const [a, b] = await Promise.all([
+      call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) }),
+      call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: ref })) }),
+    ]);
+    assert.ok(a.ok && b.ok);
+    const [ja, jb] = [await a.json(), await b.json()];
+    deliveryIds.push(ja.id, jb.id);
+    assert.equal(ja.id, jb.id);
+    assert.equal(await stockNow(), before + 5);
+  });
+
+  it('a malformed reference is refused rather than silently dropped', async () => {
+    const res = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: 'not-a-ref' })) });
+    assert.equal(res.status, 400);
+  });
+
+  // ADR 0017 supersedes ADR 0016's three-slot cap: the leading component is a PERSON,
+  // and a new hire takes the next number. What is still refused is a value that cannot
+  // be a person at all.
+  it('a reference from a person above 3 is accepted; a nonsense one is still refused', async () => {
+    const ok = await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body({ delivery_ref: formatDeliveryRef(8, nextSequence()) })),
+    });
+    assert.equal(ok.status, 201);
+    deliveryIds.push((await ok.json()).id);
+
+    const bad = await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body({ delivery_ref: formatDeliveryRef(0, nextSequence()) })),
+    });
+    assert.equal(bad.status, 400);
+  });
+
+  // ADR 0017 #14 — a lettered reference stores and returns the same way, and a
+  // pre-letter reference is never mistaken for the lettered one that shares its digits.
+  it('stores a lettered reference, distinct from the pre-letter one with the same digits', async () => {
+    const seq = nextSequence();
+    const plain = formatDeliveryRef(1, seq);
+    const lettered = formatDeliveryRef(1, seq, 'A');
+
+    const a = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: plain })) })).json();
+    const b = await (await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: lettered })) })).json();
+    deliveryIds.push(a.id, b.id);
+
+    assert.equal(a.delivery_ref, plain);
+    assert.equal(b.delivery_ref, lettered);
+    assert.notEqual(a.id, b.id, 'two devices, two deliveries — not a resend of one another');
+
+    const replay = await call('/incoming', { method: 'POST', body: JSON.stringify(body({ delivery_ref: lettered })) });
+    assert.equal(replay.status, 200);
+    assert.equal((await replay.json()).id, b.id);
+  });
+
+  it('a delivery sent with no reference behaves exactly as before', async () => {
+    const res = await call('/incoming', { method: 'POST', body: JSON.stringify(body()) });
+    assert.equal(res.status, 201);
+    const delivery = await res.json();
+    deliveryIds.push(delivery.id);
+    assert.equal(delivery.delivery_ref, null);
+    assert.equal(delivery.receipt_station, null);
+  });
+
+  // Migration 038. A delivery edit/void reverses stock the delivery once added — that
+  // is business activity, not somebody's stock recount. It used to be logged
+  // `manual_adjustment`, which is precisely the action type the offline guard reads as
+  // "another human counted this shelf" (HUMAN_ACTION_FOR_FIELD in
+  // client/src/offline/productMutations.js), so a delivery correction landing next to a
+  // queued manual count raised a reconciliation question about a value nobody disputed.
+  it('a delivery edit logs its stock reversal as delivery_edit, not manual_adjustment', async () => {
+    const created = await (await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body()),
+    })).json();
+    deliveryIds.push(created.id);
+    const before = await stockNow();
+
+    const res = await call(`/incoming/${created.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...body(), items: [{ product_id: productId, quantity_received: 2 }] }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(await stockNow(), before - 3);
+
+    const { rows } = await db.query(
+      `SELECT action_type, delta FROM inventory_audit_logs
+       WHERE related_delivery_id = $1 AND field_changed = 'current_stock'
+       ORDER BY id DESC LIMIT 1`,
+      [created.id]
+    );
+    assert.equal(rows[0].action_type, 'delivery_edit');
+    assert.equal(Number(rows[0].delta), -3);
+  });
+
+  it('voiding a delivery logs its full reversal the same way', async () => {
+    const created = await (await call('/incoming', {
+      method: 'POST', body: JSON.stringify(body()),
+    })).json();
+    deliveryIds.push(created.id);
+
+    const res = await call(`/incoming/${created.id}`, { method: 'DELETE' });
+    assert.equal(res.status, 204);
+
+    const { rows } = await db.query(
+      `SELECT action_type, delta FROM inventory_audit_logs
+       WHERE related_delivery_id = $1 AND field_changed = 'current_stock'
+       ORDER BY id DESC LIMIT 1`,
+      [created.id]
+    );
+    assert.equal(rows[0].action_type, 'delivery_edit');
+    assert.equal(Number(rows[0].delta), -5);
+  });
+});

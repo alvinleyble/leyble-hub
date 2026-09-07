@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -7,8 +7,15 @@ import Spinner from '../../components/ui/Spinner';
 import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
+import { orderMatchesSearch } from '../../utils/orderSearch';
+import { parseBareSequence } from '../../offline/receiptNumbers';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
-import { listRecords, subscribeOutbox, getReceipt } from '../../offline/index.js';
+import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
+import { formatCardDateTime } from '../../utils/dateFormat';
+import {
+  listRecords, subscribeOutbox, getReceipt, listReceipts, putOrderSnapshot,
+  loadParkedOrders, discardLocalDraft,
+} from '../../offline/index.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -47,6 +54,9 @@ export default function OrdersPage() {
 
   const [orders, setOrders]       = useState([]);
   const [loading, setLoading]     = useState(true);
+  // Slice 3.2 — true when the table below is being served from this device's own
+  // synced order history because the server could not be reached.
+  const [fromLocalHistory, setFromLocalHistory] = useState(false);
   const [statusTab, setStatusTab] = useState('all');
   const [fromDate, setFromDate]   = useState('');
   const [toDate, setToDate]       = useState('');
@@ -84,7 +94,11 @@ export default function OrdersPage() {
   // { ids: number[], mode: 'pending' | 'in_transit' | 'delivered' } | null
   const [reviewQueue, setReviewQueue]     = useState(null);
 
-  const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab);
+  // Slice 3.2 — bulk transitions all POST to the server, so they are meaningless (and
+  // would fail one by one) while the table is being served from local history. Hide the
+  // selection column entirely rather than offering rows the operator cannot act on.
+  const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab)
+    && !fromLocalHistory;
 
   // Round 4 Fix 7 — locally-created orders (saveOrderLocalFirst, G27) are not on the
   // server yet, so the server-driven list above can never include them: navigating
@@ -94,6 +108,13 @@ export default function OrdersPage() {
   // outbox rather than the server, merge in, badge "Waiting to sync", and navigate by
   // receipt number (never a numeric id, since there isn't one yet).
   const [localUnsyncedOrders, setLocalUnsyncedOrders] = useState([]);
+  const loadDraftsRef = useRef(null);
+  // The Drafts tab's own list is served by load() (it is not a slice of the orders
+  // list), so a drain that turns a local park into a server draft has to re-run THAT,
+  // not just the banner — otherwise the row sits on "Waiting to sync" until the
+  // operator happens to switch tabs.
+  const loadRef       = useRef(null);
+  const statusTabRef  = useRef(null);
 
   const loadLocalUnsyncedOrders = useCallback(async () => {
     try {
@@ -114,11 +135,42 @@ export default function OrdersPage() {
 
   useEffect(() => {
     loadLocalUnsyncedOrders();
-    return subscribeOutbox(() => loadLocalUnsyncedOrders());
+    // A draft parked or drained by the outbox changes the parked-drafts list too, so
+    // the banner and the Drafts tab follow it rather than waiting for a remount.
+    return subscribeOutbox(() => {
+      loadLocalUnsyncedOrders();
+      loadDraftsRef.current?.();
+      if (statusTabRef.current === 'draft') loadRef.current?.();
+    });
   }, [loadLocalUnsyncedOrders]);
 
   const load = useCallback(() => {
     setLoading(true);
+
+    // Criteria 5.1/5.6 — the Drafts tab is not a slice of the orders list, it is the
+    // parked-drafts list, and it has to load blind. `GET /orders/sync` deliberately
+    // never mirrors a draft (working state, not history), so the local-history
+    // fallback the other tabs use could only ever come back empty here — which is
+    // exactly what an offline operator saw. loadParkedOrders() is one code path for
+    // both: the server's drafts when it answers (cached on the way past), the last
+    // cached copy when it does not, unioned either way with the drafts this device
+    // parked itself and still holds.
+    if (statusTab === 'draft') {
+      loadParkedOrders()
+        .then(({ drafts: parked, fromCache }) => {
+          setFromLocalHistory(fromCache);
+          const matched = filterLocalHistory(parked, {
+            statusTab: 'draft', fromDate, toDate, search: debouncedSearch,
+          });
+          const start = (page - 1) * pageSize;
+          setOrders(matched.slice(start, start + pageSize));
+          setTotalOrders(matched.length);
+          setTotalPages(Math.max(1, Math.ceil(matched.length / pageSize)));
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     const params = new URLSearchParams();
     if (statusTab !== 'all') params.set('status', statusTab);
     if (fromDate) params.set('from_date', fromDate);
@@ -129,6 +181,7 @@ export default function OrdersPage() {
 
     api.get(`/orders?${params}`)
       .then((res) => {
+        setFromLocalHistory(false);
         if (res && res.orders && res.pagination) {
           setOrders(res.orders);
           setTotalOrders(res.pagination.total);
@@ -143,17 +196,46 @@ export default function OrdersPage() {
           setTotalPages(1);
         }
       })
-      .catch(() => addToast('Failed to load orders', 'error'))
+      .catch(async () => {
+        // Slice 3.2 — the Orders Amnesia fix. This used to be a bare error toast that
+        // left the directory empty, so relaunching the tablet during an outage erased
+        // every past sale from view. The device now syncs the FULL order history ahead
+        // of time (offline/sync.js), so the fallback is a real directory, not a
+        // consolation: the same status/date/search filters applied to the local
+        // snapshots, paginated the same way.
+        try {
+          const local = await listReceipts();
+          const matched = filterLocalHistory(local, {
+            statusTab, fromDate, toDate, search: debouncedSearch,
+          });
+          const start = (page - 1) * pageSize;
+          setOrders(matched.slice(start, start + pageSize));
+          setTotalOrders(matched.length);
+          setTotalPages(Math.max(1, Math.ceil(matched.length / pageSize)));
+          setFromLocalHistory(true);
+        } catch {
+          setFromLocalHistory(false);
+          addToast('Failed to load orders', 'error');
+        }
+      })
       .finally(() => setLoading(false));
   }, [statusTab, fromDate, toDate, debouncedSearch, page, pageSize, addToast]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadRef.current = load; }, [load]);
+  useEffect(() => { statusTabRef.current = statusTab; }, [statusTab]);
 
+  // The purple banner reads the same merged list the Drafts tab does, so it survives an
+  // outage instead of silently emptying (criterion 5.1). It used to fall back to this
+  // device's synced order history, which by construction never contains a draft.
   const loadDrafts = useCallback(() => {
-    api.get('/orders?status=draft').then(setDrafts).catch(() => {});
+    loadParkedOrders()
+      .then(({ drafts: parked }) => setDrafts(parked))
+      .catch(() => setDrafts([]));
   }, []);
 
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
+  useEffect(() => { loadDraftsRef.current = loadDrafts; }, [loadDrafts]);
 
   // Reset page to 1 when filters or search criteria change
   useEffect(() => {
@@ -178,29 +260,33 @@ export default function OrdersPage() {
 
   // Instant client-side search & filtering (G20, G21)
   const filteredOrders = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const qClean = q.replace(/^#/, '');
+    const q = searchQuery.trim();
+    const qLower = q.toLowerCase();
+    // Slice 3.2 — a still-queued order is written to local history at Save as well as
+    // sitting in the outbox, so when the table is being served FROM local history it
+    // would otherwise appear twice: once here and once in the "Waiting to sync" block
+    // rendered above it. The outbox row is the better one (it carries the badge), so
+    // drop the history copy rather than the other way round.
+    const localUnsyncedRefs = new Set(
+      localUnsyncedOrders.map((o) => String(o.receipt_number)).filter(Boolean)
+    );
 
     return orders.filter((o) => {
+      if (fromLocalHistory && o.receipt_number && localUnsyncedRefs.has(String(o.receipt_number))) return false;
       if (doubleOnly && !possibleDoubleIds.has(o.id)) return false;
 
       const printed = isOrderPrinted(o);
       if (printFilter === 'printed' && !printed) return false;
       if (printFilter === 'unprinted' && printed) return false;
 
-      if (q) {
-        const matches = (
-          (o.customer_name || '').toLowerCase().includes(q) ||
-          String(o.id || '').toLowerCase().includes(qClean) ||
-          String(o.receipt_number || '').toLowerCase().includes(q) ||
-          orderRef(o).toLowerCase().includes(q)
-        );
-        if (!matches) return false;
-      }
+      // ADR 0017 #11 — bare digits are a SEQUENCE, matched across every prefix, and
+      // the same rule the server's `search` parameter applies (utils/orderSearch.js).
+      const matchesSearch = orderMatchesSearch(o, q) || (o.sold_by_name || '').toLowerCase().includes(qLower);
+      if (!matchesSearch) return false;
 
       return true;
     });
-  }, [orders, searchQuery, doubleOnly, possibleDoubleIds, printFilter]);
+  }, [orders, searchQuery, doubleOnly, possibleDoubleIds, printFilter, fromLocalHistory, localUnsyncedOrders]);
 
   // Round 4 Fix 7 — same instant client-side matching filteredOrders applies, minus
   // duplicate detection (that needs the full loaded page of server orders, and a
@@ -211,32 +297,56 @@ export default function OrdersPage() {
   const visibleLocalUnsyncedOrders = useMemo(() => {
     if (doubleOnly) return [];
     if (statusTab !== 'all' && statusTab !== 'pending') return [];
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
+    const qLower = q.toLowerCase();
 
     return localUnsyncedOrders.filter((o) => {
       const printed = isOrderPrinted(o);
       if (printFilter === 'printed' && !printed) return false;
       if (printFilter === 'unprinted' && printed) return false;
 
-      if (q) {
-        const matches = (
-          (o.customer_name || '').toLowerCase().includes(q) ||
-          String(o.receipt_number || '').toLowerCase().includes(q) ||
-          orderRef(o).toLowerCase().includes(q)
-        );
-        if (!matches) return false;
-      }
+      const matchesSearch = orderMatchesSearch(o, q) || (o.sold_by_name || '').toLowerCase().includes(qLower);
+      if (!matchesSearch) return false;
 
       return true;
     });
   }, [localUnsyncedOrders, statusTab, doubleOnly, searchQuery, printFilter]);
 
+  // ADR 0017 #11 — a bare-digit search is a lookup by SEQUENCE, and several parallel
+  // series can hold the same one, so the answer is a disambiguation list. Non-null only
+  // while the term is bare digits; the hint it drives stays silent for a name search.
+  const searchedSequence = parseBareSequence(searchQuery);
+  const matchCount = filteredOrders.length + visibleLocalUnsyncedOrders.length;
+
   const openDraft = async (o) => {
+    // A draft this device parked is already complete in hand — it has no server row to
+    // fetch, and it is the one kind of draft that IS editable offline (criterion 5.8:
+    // created here, never synced).
+    if (o._local) { setResumeDraft(o); return; }
     try {
       const full = await api.get(`/orders/${o.id}`);
+      // A historical draft never rode the delta sync (GET /orders/sync deliberately
+      // excludes drafts, working state not history) and this fetch used to discard its
+      // result the moment it displayed — so a later outage had no snapshot to fall back
+      // to and a live draft this device had opened moments earlier still failed offline.
+      // Write it the same way OrderDetailPage.jsx does for every other order it sees.
+      putOrderSnapshot(full).catch(() => {});
       setResumeDraft(full);
     } catch (err) {
-      addToast(err.message || 'Failed to open draft.', 'error');
+      // Captain decision 2026-09-02: a historical (already-synced) draft is locked to
+      // the same offline posture as any other synced order — no edit, no conversion to
+      // a real order. So the offline fallback here is OrderDetailPage.jsx's read-only
+      // view (via its own local-snapshot fallback), never the editable draft form.
+      const offlineOrMissing = err.status === 404 || !err.status;
+      if (offlineOrMissing && await getReceipt(o.id).catch(() => null)) {
+        navigate(`/orders/${o.id}`);
+        return;
+      }
+      addToast(
+        err?.status ? (err.message || 'Failed to open draft.')
+                    : 'Offline — this draft is on the server and needs a connection to open.',
+        'error'
+      );
     }
   };
 
@@ -244,13 +354,24 @@ export default function OrdersPage() {
     if (!discardConfirm) return;
     setDiscarding(true);
     try {
-      await api.del(`/orders/${discardConfirm.id}`);
+      // Same split as opening one: a locally parked draft is removed from this
+      // device's outbox with no network at all; a server draft is a synced row and
+      // deleting it stays online-only (ADR 0015 §5).
+      if (discardConfirm._local) {
+        await discardLocalDraft(discardConfirm.receipt_number);
+      } else {
+        await api.del(`/orders/${discardConfirm.id}`);
+      }
       addToast('Draft discarded.', 'success');
       setDiscardConfirm(null);
       load();
       loadDrafts();
     } catch (err) {
-      addToast(err.message || 'Failed to discard draft.', 'error');
+      addToast(
+        err?.status ? (err.message || 'Failed to discard draft.')
+                    : 'Offline — this draft is on the server and needs a connection to discard.',
+        'error'
+      );
     } finally {
       setDiscarding(false);
     }
@@ -264,10 +385,14 @@ export default function OrdersPage() {
     });
   };
 
-  const allSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
+  // A row still waiting to reach the server has no id to act on — same exclusion the
+  // "Waiting to sync" order rows already carry (Round 4 Fix 7).
+  const selectableOrders = filteredOrders.filter((o) => !o._local);
+
+  const allSelected = selectableOrders.length > 0 && selectableOrders.every((o) => selectedIds.has(o.id));
 
   const toggleSelectAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(filteredOrders.map((o) => o.id)));
+    setSelectedIds(allSelected ? new Set() : new Set(selectableOrders.map((o) => o.id)));
   };
 
   const runBulkTransition = async (targetStatus, pastTenseLabel) => {
@@ -368,6 +493,20 @@ export default function OrdersPage() {
         <Button onClick={() => setCreating(true)}>+ New Order</Button>
       </div>
 
+      {/* Slice 3.2 — calm, factual, and never a blocker: the table below IS the real
+          directory, just served from this device (ADR 0015 §9's banner tone). */}
+      {fromLocalHistory && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-5 py-3
+                        text-sm font-medium text-amber-800">
+          <span aria-hidden="true">⏳</span>
+          <span>
+            {statusTab === 'draft'
+              ? "Offline — showing the drafts this device holds. Only drafts started here can be opened or edited."
+              : "Offline — showing this device's saved order history. Status changes need a connection."}
+          </span>
+        </div>
+      )}
+
       {/* Parked-drafts banner — visible from any tab so an in-progress order is never lost */}
       {drafts.length > 0 && statusTab !== 'draft' && (
         <div className="mb-4 rounded-xl border border-violet-300 bg-violet-50 px-5 py-3
@@ -392,6 +531,7 @@ export default function OrdersPage() {
           <button
             key={tab.value}
             onClick={() => setStatusTab(tab.value)}
+            data-testid={`orders-tab-${tab.value}`}
             className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors
               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
               ${statusTab === tab.value
@@ -411,9 +551,10 @@ export default function OrdersPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search orders by customer or #..."
+            placeholder="Search by customer or number (e.g. 42)"
             className="w-full h-10 pl-9 pr-8 border border-slate-300 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
             aria-label="Search orders"
+            data-testid="orders-search-input"
           />
           <span className="absolute left-3 top-2.5 text-slate-400 text-sm select-none pointer-events-none">🔍</span>
           {searchQuery && (
@@ -565,8 +706,157 @@ export default function OrdersPage() {
             : 'No orders match the search and filter criteria.'}
         </p>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
-          <table className="w-full text-base">
+        <>
+        {/* ADR 0017 #11 — a bare number can belong to several series at once
+            (1A-00042, 2B-00042, the pre-letter 3-00042), so say so rather than
+            letting the extra rows read as a bug. The rows below carry the customer
+            name and the date, which is what tells them apart. */}
+        {searchedSequence !== null && matchCount > 1 && (
+          <p className="mb-3 text-base text-slate-600" data-testid="orders-sequence-hint">
+            {matchCount} orders numbered <strong>{searchedSequence}</strong> — check the
+            customer and date.
+          </p>
+        )}
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="orders-list">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {visibleLocalUnsyncedOrders.map((o) => (
+              <div
+                key={o.id}
+                onClick={() => navigate(`/orders/${o.receipt_number}`)}
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                {/* Row 1: Receipt reference & Total */}
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-mono text-sm text-slate-500">{orderRef(o)}</p>
+                  <p className="font-bold text-slate-900 tabular-nums shrink-0">
+                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                  </p>
+                </div>
+
+                {/* Row 2: Customer Name & Date/Time */}
+                <div className="flex justify-between items-baseline gap-2 mt-1">
+                  <p className="font-semibold text-slate-900 min-w-0 truncate">{o.customer_name}</p>
+                  <span className="shrink-0 text-xs text-slate-500">
+                    {formatCardDateTime(o.created_at)}
+                  </span>
+                </div>
+
+                {/* Row 3: Status pills & Sold by */}
+                <div className="flex justify-between items-center gap-2 mt-2">
+                  <div className="flex flex-wrap gap-1.5 items-center shrink-0">
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      ⏳ Waiting to sync
+                    </span>
+                    {o.order_type === 'pickup' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                        Pickup
+                      </span>
+                    )}
+                  </div>
+                  <span className="min-w-0 truncate text-xs text-slate-500 text-right">
+                    Sold by: {o.sold_by_name?.trim() || '—'}
+                  </span>
+                </div>
+              </div>
+            ))}
+            {filteredOrders.map((o) => (
+              <div
+                key={o.id ?? `local-draft-${o._outboxId}`}
+                onClick={() => o.status === 'draft'
+                  ? openDraft(o)
+                  : navigate(`/orders/${localOrderRoute(o)}`)}
+                data-testid="orders-row"
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                {/* Row 1: Receipt reference & Total */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-2">
+                    {showCheckboxes && !o._local && (
+                      <label
+                        className="flex items-center justify-center w-8 h-8 -m-1 shrink-0 cursor-pointer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(o.id)}
+                          onChange={() => toggleSelected(o.id)}
+                          className="w-5 h-5 rounded border-slate-300 text-blue-700
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                          aria-label={`Select order #${o.id}`}
+                        />
+                      </label>
+                    )}
+                    {/* orderRef() names a draft 'Draft' — a parked one by its own
+                        device-issued number — so neither kind can show a row id. */}
+                    <p className="font-mono text-sm text-slate-500">
+                      {orderRef(o)}
+                    </p>
+                  </div>
+                  <p className="font-bold text-slate-900 tabular-nums shrink-0">
+                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                  </p>
+                </div>
+
+                {/* Row 2: Customer Name & Date/Time */}
+                <div className="flex justify-between items-baseline gap-2 mt-1">
+                  <p className="font-semibold text-slate-900 min-w-0 truncate">{o.customer_name}</p>
+                  <span className="shrink-0 text-xs text-slate-500">
+                    {formatCardDateTime(o.created_at)}
+                  </span>
+                </div>
+
+                {/* Row 3: Status pills & Sold by */}
+                <div className="flex justify-between items-center gap-2 mt-2">
+                  <div className="flex flex-wrap gap-1.5 items-center shrink-0">
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                      {STATUS_LABEL[o.status] ?? o.status}
+                    </span>
+                    {o._local && (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                        ⏳ Waiting to sync
+                      </span>
+                    )}
+                    {o.order_type === 'pickup' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
+                        Pickup
+                      </span>
+                    )}
+                    {((o.status === 'pending' && o.pending_receipt_printed_at)
+                      || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
+                        🖶 Printed
+                      </span>
+                    )}
+                    {possibleDoubleIds.has(o.id) && (
+                      // A <div>, not <span>, on purpose: client/test/v3-orders-list-search-filters.test.mjs
+                      // counts `r.all('span')` matching this text to verify duplicate-flagged
+                      // row count — reusing <span> here would double that count against the
+                      // table's own badge below.
+                      <div className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold">
+                        ⚠️ possible duplicates
+                      </div>
+                    )}
+                    {statusTab === 'draft' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="ml-auto"
+                        onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
+                      >
+                        Discard
+                      </Button>
+                    )}
+                  </div>
+                  <span className="min-w-0 truncate text-xs text-slate-500 text-right">
+                    Sold by: {o.sold_by_name?.trim() || '—'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 {showCheckboxes && (
@@ -585,6 +875,7 @@ export default function OrdersPage() {
                 )}
                 <th className="text-left px-5 py-3 font-semibold w-28">Receipt</th>
                 <th className="text-left px-5 py-3 font-semibold">Customer</th>
+                <th className="text-left px-5 py-3 font-semibold w-36">Sold by</th>
                 <th className="text-right px-5 py-3 font-semibold w-36">Total</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell w-36">Date</th>
                 <th className="text-left px-5 py-3 font-semibold w-64">
@@ -623,6 +914,7 @@ export default function OrdersPage() {
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>
+                  <td className="px-5 py-4 text-sm text-slate-600 w-36">{o.sold_by_name?.trim() || '—'}</td>
                   <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
@@ -647,11 +939,18 @@ export default function OrdersPage() {
               ))}
               {filteredOrders.map((o) => (
                 <tr
-                  key={o.id}
-                  onClick={() => o.status === 'draft' ? openDraft(o) : navigate(`/orders/${o.id}`)}
+                  key={o.id ?? `local-draft-${o._outboxId}`}
+                  onClick={() => o.status === 'draft'
+                    ? openDraft(o)
+                    : navigate(`/orders/${localOrderRoute(o)}`)}
+                  data-testid="orders-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
-                  {showCheckboxes && (
+                  {showCheckboxes && o._local && (
+                    // Nothing to bulk-act on yet — this draft has no server row.
+                    <td className="px-5 py-4 w-12" />
+                  )}
+                  {showCheckboxes && !o._local && (
                     <td className="px-5 py-4 w-12" onClick={(e) => e.stopPropagation()}>
                       <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                         <input
@@ -665,10 +964,17 @@ export default function OrdersPage() {
                       </label>
                     </td>
                   )}
-                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">{orderRef(o)}</td>
+                  {/* A parked draft has no row id yet, so its device-issued reference IS
+                      its name here — never `#` from an id that does not exist. A server
+                      draft has no number either (none is burned until it is finalized),
+                      and orderRef() names that one 'Draft' rather than leaking `#<id>`. */}
+                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">
+                    {orderRef(o)}
+                  </td>
                   <td className="px-5 py-4">
                     <p className="font-semibold text-slate-900">{o.customer_name}</p>
                   </td>
+                  <td className="px-5 py-4 text-sm text-slate-600 w-36">{o.sold_by_name?.trim() || '—'}</td>
                   <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
@@ -682,6 +988,11 @@ export default function OrdersPage() {
                       <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                         {STATUS_LABEL[o.status] ?? o.status}
                       </span>
+                      {o._local && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                          ⏳ Waiting to sync
+                        </span>
+                      )}
                       {o.order_type === 'pickup' && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
                           Pickup
@@ -715,6 +1026,7 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Bottom Pagination Bar */}

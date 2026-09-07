@@ -3,7 +3,12 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
+import OfflineBanner from '../../components/ui/OfflineBanner';
 import { orderRefFromId } from '../../utils/orderRef';
+import { getCachedEntity } from '../../offline/catalogue.js';
+import {
+  loadWithCache, AUDIT_INVENTORY_CACHE, AUDIT_ACTIVITY_CACHE,
+} from '../../offline/backOfficeCache.js';
 
 const ACTION_LABELS = {
   manual_adjustment: 'Manual Adjustment',
@@ -12,6 +17,7 @@ const ACTION_LABELS = {
   order_fulfillment: 'Order Fulfilled',
   order_edit:        'Order Edit',
   order_cancel:      'Order Cancelled',
+  delivery_edit:     'Delivery Edited',
 };
 
 const ACTION_COLORS = {
@@ -21,6 +27,7 @@ const ACTION_COLORS = {
   order_fulfillment: 'bg-slate-100  text-slate-700  border-slate-300',
   order_edit:        'bg-amber-100  text-amber-800  border-amber-300',
   order_cancel:      'bg-red-100    text-red-800    border-red-300',
+  delivery_edit:     'bg-teal-100   text-teal-800   border-teal-300',
 };
 
 const ACTION_TYPES = Object.keys(ACTION_LABELS);
@@ -31,6 +38,7 @@ const ENTITY_LABELS = {
   product:   'Product',
   personnel: 'Personnel',
   ticket:    'Ticket',
+  station:   'Tablet',
 };
 
 const ENTITY_TYPES = Object.keys(ENTITY_LABELS);
@@ -43,6 +51,11 @@ const ACTIVITY_ACTION_LABELS = {
   closed:         'Closed',
   resolved:       'Resolved',
   price_set:      'Price Set',
+  // ADR 0017 removed the slot concept, so nothing writes this action any more. The label
+  // stays because `activity_logs` is append-only: the entries already recorded must keep
+  // reading as words rather than falling back to the raw key.
+  slot_assigned:  'Slot Assigned',
+  device_letter_allocated: 'New Tablet',
 };
 
 const ACTIVITY_ACTION_COLORS = {
@@ -78,6 +91,7 @@ function EntityRef({ entry }) {
         to={`/orders/${entry.entity_id}`}
         className="text-blue-700 hover:underline font-medium"
         onClick={(ev) => ev.stopPropagation()}
+        data-testid="audit-order-ref-link"
       >
         Order {orderRefFromId(entry.entity_id, entry.entity_receipt_number)}
       </Link>
@@ -87,6 +101,34 @@ function EntityRef({ entry }) {
     <span className="font-medium text-slate-900">
       {label}{entry.entity_id ? ` #${entry.entity_id}` : ''}
     </span>
+  );
+}
+
+// The filters the server applies to a live read, applied here instead when the rows
+// came out of the local cache. Same predicates, same meaning — the only difference is
+// that the cached copy can't reach further back than the window it holds.
+function withinDates(createdAt, fromDate, toDate) {
+  const t = Date.parse(createdAt);
+  if (Number.isNaN(t)) return true;
+  if (fromDate && t < Date.parse(fromDate)) return false;
+  // Inclusive of the whole "to" day, matching the server's `created_at <= to_date`
+  // applied against a date-only string.
+  if (toDate && t > Date.parse(toDate) + 24 * 60 * 60 * 1000 - 1) return false;
+  return true;
+}
+
+export function filterInventoryRows(rows, { productId, actionType, fromDate, toDate }) {
+  return rows.filter((e) =>
+    (!productId  || String(e.product_id) === String(productId)) &&
+    (!actionType || e.action_type === actionType) &&
+    withinDates(e.created_at, fromDate, toDate)
+  );
+}
+
+export function filterActivityRows(rows, { entityType, fromDate, toDate }) {
+  return rows.filter((e) =>
+    (!entityType || e.entity_type === entityType) &&
+    withinDates(e.created_at, fromDate, toDate)
   );
 }
 
@@ -105,12 +147,22 @@ export default function AuditPage() {
   const [fromDate, setFromDate]       = useState('');
   const [toDate, setToDate]           = useState('');
 
-  // Load product list once (including inactive — old logs may reference them)
+  const [fromCache, setFromCache] = useState(false);
+  const [cachedAt, setCachedAt]   = useState(null);
+
+  // Load product list once (including inactive — old logs may reference them).
+  // Offline this comes from the catalogue the tablet already holds, so the product
+  // filter still names things instead of collapsing to "All Products".
   useEffect(() => {
     api.get('/products?include_inactive=true')
       .then((p) => setProducts(p.sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {});
+      .catch(async () => {
+        const cached = await getCachedEntity('products');
+        setProducts([...cached].sort((a, b) => a.name.localeCompare(b.name)));
+      });
   }, []);
+
+  const hasFilters = Boolean(productId || actionType || fromDate || toDate);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -122,15 +174,25 @@ export default function AuditPage() {
     params.set('limit', '500');
     const qs = params.toString();
 
-    api.get(`/audit?${qs}`)
-      .then(setEntries)
-      .catch(() => addToast('Failed to load audit log.', 'error'))
+    // ADR 0015 §9 supersedes the audit report's older "Audit Log requires internet"
+    // recommendation: the log is readable offline like every other back-office screen.
+    //
+    // Only the UNFILTERED baseline is cached (see backOfficeCache.js) — a bounded,
+    // quietly-refreshed window rather than a mirror of an append-only table that grows
+    // forever. When the live call fails, the held copy is filtered here instead, so
+    // the same filter controls keep working on the copy.
+    loadWithCache(AUDIT_INVENTORY_CACHE, () => api.get(`/audit?${qs}`), { cacheable: !hasFilters })
+      .then(({ data, fromCache: cached, cachedAt: at }) => {
+        const rows = Array.isArray(data) ? data : [];
+        setEntries(cached ? filterInventoryRows(rows, { productId, actionType, fromDate, toDate }) : rows);
+        setFromCache(cached);
+        setCachedAt(at);
+      })
+      .catch(() => addToast('Offline and this device has no audit log saved yet — connect once to set it up.', 'error'))
       .finally(() => setLoading(false));
-  }, [productId, actionType, fromDate, toDate, addToast]);
+  }, [productId, actionType, fromDate, toDate, hasFilters, addToast]);
 
   useEffect(() => { if (tab === 'inventory') load(); }, [tab, load]);
-
-  const hasFilters = productId || actionType || fromDate || toDate;
 
   const clearFilters = () => {
     setProductId('');
@@ -147,6 +209,8 @@ export default function AuditPage() {
   const [activityFromDate, setActivityFromDate] = useState('');
   const [activityToDate, setActivityToDate]     = useState('');
 
+  const hasActivityFilters = Boolean(entityType || activityFromDate || activityToDate);
+
   const loadActivity = useCallback(() => {
     setActivityLoading(true);
     const params = new URLSearchParams();
@@ -156,15 +220,20 @@ export default function AuditPage() {
     params.set('limit', '500');
     const qs = params.toString();
 
-    api.get(`/audit/activity?${qs}`)
-      .then(setActivityEntries)
-      .catch(() => addToast('Failed to load activity log.', 'error'))
+    loadWithCache(AUDIT_ACTIVITY_CACHE, () => api.get(`/audit/activity?${qs}`), { cacheable: !hasActivityFilters })
+      .then(({ data, fromCache: cached, cachedAt: at }) => {
+        const rows = Array.isArray(data) ? data : [];
+        setActivityEntries(cached
+          ? filterActivityRows(rows, { entityType, fromDate: activityFromDate, toDate: activityToDate })
+          : rows);
+        setFromCache(cached);
+        setCachedAt(at);
+      })
+      .catch(() => addToast('Offline and this device has no activity log saved yet — connect once to set it up.', 'error'))
       .finally(() => setActivityLoading(false));
-  }, [entityType, activityFromDate, activityToDate, addToast]);
+  }, [entityType, activityFromDate, activityToDate, hasActivityFilters, addToast]);
 
   useEffect(() => { if (tab === 'activity') loadActivity(); }, [tab, loadActivity]);
-
-  const hasActivityFilters = entityType || activityFromDate || activityToDate;
 
   const clearActivityFilters = () => {
     setEntityType('');
@@ -199,13 +268,15 @@ export default function AuditPage() {
 
       {/* ── Tab switcher ─────────────────────────────────────────── */}
       <div className="flex gap-1.5 mb-6">
-        <button type="button" onClick={() => setTab('inventory')} className={TAB_BUTTON(tab === 'inventory')}>
+        <button type="button" onClick={() => setTab('inventory')} data-testid="audit-tab-inventory" className={TAB_BUTTON(tab === 'inventory')}>
           Inventory
         </button>
-        <button type="button" onClick={() => setTab('activity')} className={TAB_BUTTON(tab === 'activity')}>
+        <button type="button" onClick={() => setTab('activity')} data-testid="audit-tab-activity" className={TAB_BUTTON(tab === 'activity')}>
           Activity
         </button>
       </div>
+
+      {fromCache && <OfflineBanner cachedAt={cachedAt} />}
 
       {tab === 'inventory' ? (
         <>
@@ -230,6 +301,7 @@ export default function AuditPage() {
               onChange={(e) => setActionType(e.target.value)}
               className={SELECT}
               aria-label="Filter by action type"
+              data-testid="audit-filter-action"
             >
               <option value="">All Actions</option>
               {ACTION_TYPES.map((a) => (
@@ -281,8 +353,44 @@ export default function AuditPage() {
             </p>
           ) : (
             <>
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
-                <table className="w-full text-sm min-w-[640px]">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
+                {/* Phone-width cards (D5) — same rows/testids as the table below, hidden
+                    at lg. The action badge's data-testid lives ONLY here (not on the
+                    table's copy below) because e2e/appium/tests/audit.test.mjs reads its
+                    text with getText(), which returns "" for a display:none element. */}
+                <div className="lg:hidden divide-y divide-slate-200">
+                  {entries.map((e) => (
+                    <div key={e.id} data-testid="audit-row" className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-900">{e.sku || e.product_name}</p>
+                          <p className="text-xs text-slate-400 tabular-nums mt-0.5">
+                            {new Date(e.created_at).toLocaleString('en-PH', {
+                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                            })}
+                          </p>
+                        </div>
+                        {e.delta != null ? (
+                          <span className={`font-bold tabular-nums shrink-0 ${Number(e.delta) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                            {Number(e.delta) >= 0 ? '+' : ''}{e.delta}
+                          </span>
+                        ) : (
+                          <span className="text-slate-300 font-normal shrink-0">—</span>
+                        )}
+                      </div>
+                      <div className="mt-2">
+                        <span
+                          data-testid="audit-action-badge"
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
+                          ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          {ACTION_LABELS[e.action_type] ?? e.action_type}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <table className="hidden lg:table w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
@@ -296,7 +404,7 @@ export default function AuditPage() {
                   </thead>
                   <tbody>
                     {entries.map((e) => (
-                      <tr key={e.id} className="border-t border-slate-300 hover:bg-slate-50">
+                      <tr key={e.id} data-testid="audit-row" className="border-t border-slate-300 hover:bg-slate-50">
                         <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>
@@ -304,7 +412,8 @@ export default function AuditPage() {
                           {e.sku || e.product_name}
                         </td>
                         <td className="px-5 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
                             ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                             {ACTION_LABELS[e.action_type] ?? e.action_type}
                           </span>
@@ -331,6 +440,7 @@ export default function AuditPage() {
                                     to={`/orders/${e.related_order_id}`}
                                     className="text-blue-700 hover:underline"
                                     onClick={(ev) => ev.stopPropagation()}
+                                    data-testid="audit-order-ref-link"
                                   >
                                     Order {orderRefFromId(e.related_order_id, e.related_order_receipt_number)}
                                   </Link>
@@ -365,6 +475,7 @@ export default function AuditPage() {
               onChange={(e) => setEntityType(e.target.value)}
               className={SELECT}
               aria-label="Filter by entity type"
+              data-testid="audit-filter-entity"
             >
               <option value="">All Types</option>
               {ENTITY_TYPES.map((t) => (
@@ -416,8 +527,31 @@ export default function AuditPage() {
             </p>
           ) : (
             <>
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto">
-                <table className="w-full text-sm min-w-[640px]">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
+                {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+                <div className="lg:hidden divide-y divide-slate-200">
+                  {activityEntries.map((e) => (
+                    <div key={e.id} data-testid="audit-row" className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <EntityRef entry={e} />
+                          <p className="text-xs text-slate-400 tabular-nums mt-0.5">
+                            {new Date(e.created_at).toLocaleString('en-PH', {
+                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                            })}
+                          </p>
+                        </div>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap shrink-0
+                          ${ACTIVITY_ACTION_COLORS[e.action] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          {ACTIVITY_ACTION_LABELS[e.action] ?? e.action}
+                        </span>
+                      </div>
+                      <p className="text-slate-600 text-sm mt-2">{e.summary}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <table className="hidden lg:table w-full text-sm min-w-[640px]">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
@@ -429,7 +563,7 @@ export default function AuditPage() {
                   </thead>
                   <tbody>
                     {activityEntries.map((e) => (
-                      <tr key={e.id} className="border-t border-slate-300 hover:bg-slate-50">
+                      <tr key={e.id} data-testid="audit-row" className="border-t border-slate-300 hover:bg-slate-50">
                         <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>

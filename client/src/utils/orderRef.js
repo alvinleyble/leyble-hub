@@ -18,6 +18,15 @@ export function orderRef(order) {
 // so this is how both sides of it get tested.
 export function orderRefWith(order, offlineCoreEnabled) {
   if (offlineCoreEnabled && order?.receipt_number) return order.receipt_number;
+  // A draft is an unfinalized scratchpad, not a sale. The server deliberately leaves
+  // its receipt_number NULL so no sequence number is burned on an order that may never
+  // happen — which means falling through to `#<id>` here would put the internal row id
+  // back on screen, the exact numbering ADR 0017 discontinued. Name it for what it is.
+  //
+  // A draft this device parked while blind is the one draft that DOES carry a number
+  // (its own device-issued identity, and its anti-duplicate key), and it has no row id
+  // at all, so that number is its name here regardless of the release switch.
+  if (order?.status === 'draft') return order?.receipt_number || 'Draft';
   return `#${order?.id ?? ''}`;
 }
 

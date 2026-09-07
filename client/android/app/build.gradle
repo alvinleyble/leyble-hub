@@ -4,13 +4,16 @@ android {
     namespace = "com.leyble.hub"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.leyble.hub"
+        applicationId System.getenv("ANDROID_APPLICATION_ID") ?: "com.leyble.hub"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         def runNum = System.getenv("GITHUB_RUN_NUMBER") ?: System.getenv("BUILD_NUMBER")
         versionCode runNum ? (runNum.toInteger() + 1) : 4
         versionName "1.2.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders = [
+            appName: System.getenv("ANDROID_APP_NAME") ?: "Leyble Hub"
+        ]
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -36,7 +39,12 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
+            def ksPath = System.getenv("PLAY_KEYSTORE_PATH") ?: "release.jks"
+            def ksPass = System.getenv("PLAY_KEYSTORE_PASSWORD")
+            def ksFile = file(ksPath).exists() ? file(ksPath) : rootProject.file(ksPath)
+            if (ksPass != null && ksFile.exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

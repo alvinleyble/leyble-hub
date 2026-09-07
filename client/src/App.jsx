@@ -1,11 +1,9 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { ProfileProvider, useProfile } from './context/ProfileContext';
 import { ToastProvider } from './components/ui/Toast';
 import { PrinterProvider } from './context/PrinterContext';
 import AppLayout from './components/layout/AppLayout';
-import ProfilePickerModal from './components/profile/ProfilePickerModal';
 import Spinner from './components/ui/Spinner';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -17,7 +15,7 @@ import OrderDetailPage from './pages/orders/OrderDetailPage';
 import IncomingPage from './pages/incoming/IncomingPage';
 import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
-import { startOfflineCore, stopOfflineCore } from './offline';
+import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 
 // Layout route: guards all children behind auth check.
 function ProtectedLayout() {
@@ -33,32 +31,42 @@ function ProtectedLayout() {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  return (
-    <ProfileProvider>
-      <ProfileGate />
-    </ProfileProvider>
-  );
+  return <AuthedShell />;
 }
 
-// Renders the V1 shell underneath, overlaying the "who's using this" picker on
-// top when no profile has been chosen yet — the app is never hidden behind a
-// separate screen for it.
-function ProfileGate() {
-  const { needsPick, loading } = useProfile();
-
-  // V2.5 (D1) — claim this device's station number once, then keep the outbox
-  // draining in the background. A no-op unless the release switch is on (D18), and it
-  // runs after sign-in because registration is an authenticated call.
+// The V1 shell for a signed-in user. ADR 0017 §5 removed the "who's using this" picker
+// that used to overlay it: each person signs in with their own account, so the identity
+// is settled by the time this renders.
+function AuthedShell() {
+  // V2.5 (D1) / ADR 0017 #2 — allocate this person's device letter once, then keep the
+  // outbox draining in the background. It runs after sign-in because registration is an
+  // authenticated call, and because the letter belongs to the account, not the tablet.
   useEffect(() => {
     startOfflineCore();
     return stopOfflineCore;
   }, []);
 
+  // Slice 3.2 — the ONE time a tablet is held up by a sync: its very first, when it
+  // holds no catalogue at all and there is genuinely nothing to sell from. Only the
+  // three small reference pulls gate it (products, customers, personnel); the order
+  // history streams in behind an already-unlocked app, so nobody waits on years of
+  // invoices. Every later login and reconnect is a delta and never reaches this.
+  const sync = useSyncGate();
+  if (sync.blocking) return <FirstSetupScreen />;
+
+  return <Outlet />;
+}
+
+function FirstSetupScreen() {
   return (
-    <>
-      <Outlet />
-      {!loading && needsPick && <ProfilePickerModal />}
-    </>
+    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center">
+      <Spinner size="lg" />
+      <p className="text-lg font-semibold text-slate-800">Setting up this tablet</p>
+      <p className="max-w-sm text-base text-slate-600">
+        Copying the product list, customers and staff onto this device so it keeps working
+        without internet. This happens once.
+      </p>
+    </div>
   );
 }
 

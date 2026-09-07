@@ -3,12 +3,19 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { applyDeltaMap, isStockOut } = require('../lib/inventory');
-const { parseReceiptNumber } = require('../lib/receiptNumbers');
-const { findByReceiptNumber, isDuplicateReceiptNumber } = require('../lib/idempotency');
+const { parseReceiptNumber, parseBareSequence } = require('../lib/receiptNumbers');
+const { assertIssuableStation } = require('../lib/personNumbers');
+const {
+  normalizeRequestKey, findByRequestKey, findByReceiptNumber,
+  isDuplicateRequestKey, isDuplicateReceiptNumber,
+} = require('../lib/idempotency');
 
-// Name of the partial unique index from migration 033. Used to tell a genuine
-// duplicate receipt number apart from any other unique violation.
+// Name of the partial unique index from migration 033, rebuilt over the device
+// letter by migration 040 under the same name. Used to tell a genuine duplicate
+// receipt number apart from any other unique violation.
 const RECEIPT_NUMBER_INDEX = 'orders_receipt_number_uniq';
+// Migration 039's partial unique index over the retry key (ADR 0017 #9).
+const REQUEST_KEY_INDEX = 'orders_request_key_uniq';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -42,16 +49,28 @@ function orderLabel(order) {
   return order?.receipt_number ? order.receipt_number : `#${order?.id}`;
 }
 
-// Resolves an order identifier (either numeric DB id or '<station>-<sequence>' receipt number)
-// to the order row id.
+// Resolves an order identifier to the order row id. It has to answer for all three
+// shapes that coexist permanently (ADR 0017 #12), because a receipt number is how an
+// order is addressed across the sync boundary (ADR 0010) and old-format acceptance is
+// never removed (ADR 0014's ADR-0017 switchover ordering, step 4):
+//   '1A-00042'  a receipt number carrying a device letter
+//   '3-00061'   a receipt number from the pre-letter scheme
+//   '1240'      a bare row id — every legacy order, which never had a receipt number
+//
+// The letter is matched through the same COALESCE the partial unique index uses, so
+// '3-00061' finds only the letterless row and never a '3A-00061' belonging to a
+// different device.
 async function resolveOrderId(runner, param) {
   if (param === undefined || param === null) return null;
   const str = String(param).trim();
-  if (/^\d{1,9}-\d{1,9}$/.test(str)) {
-    const [station, sequence] = str.split('-').map(Number);
+  const receipt = /^(\d{1,9})([A-Za-z]{0,2})-(\d{1,9})$/.exec(str);
+  if (receipt) {
     const { rows: [row] } = await runner.query(
-      'SELECT id FROM orders WHERE receipt_station = $1 AND receipt_sequence = $2',
-      [station, sequence]
+      `SELECT id FROM orders
+        WHERE receipt_station = $1
+          AND COALESCE(receipt_device, '') = $2
+          AND receipt_sequence = $3`,
+      [Number(receipt[1]), receipt[2].toUpperCase(), Number(receipt[3])]
     );
     return row ? row.id : null;
   }
@@ -182,11 +201,16 @@ async function getFullOrder(orderId) {
             c.name  AS customer_name, c.customer_type,
             c.address AS customer_address, c.phone AS customer_phone,
             up.full_name AS pending_receipt_printed_by_name,
-            ud.full_name AS delivered_receipt_printed_by_name
+            ud.full_name AS delivered_receipt_printed_by_name,
+            -- ADR 0017 #10 — the seller, in words, for the receipt's "Sold by:" line.
+            -- NULL for every order created before migration 042; nothing is backfilled
+            -- and the line is simply omitted, exactly like a missing receipt number.
+            uc.full_name AS sold_by_name
      FROM orders o
      JOIN customers c ON c.id = o.customer_id
      LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
      LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
+     LEFT JOIN users uc ON uc.id = o.created_by
      WHERE o.id = $1`,
     [resolvedId]
   );
@@ -301,19 +325,38 @@ router.get('/', async (req, res, next) => {
 
     const searchTerm = String(search || q || '').trim();
     if (searchTerm) {
-      const cleanTerm = searchTerm.replace(/^#/, '');
-      const p1 = `%${searchTerm}%`;
-      const p2 = `%${cleanTerm}%`;
-      if (p1 === p2) {
-        const pIdx = idx++;
-        params.push(p1);
-        conditions.push(`(c.name ILIKE $${pIdx} OR o.id::text ILIKE $${pIdx} OR (o.receipt_number IS NOT NULL AND o.receipt_number ILIKE $${pIdx}))`);
+      // ADR 0017 #11 — BARE DIGITS ARE A SEQUENCE, not a substring.
+      //
+      // Customers read the digits off faded thermal paper and skip the prefix, so `42`
+      // must return every order whose sequence is 42 across all prefixes — `1A-00042`,
+      // `2B-00042`, the pre-letter `3-00042` — as a short disambiguation list. A
+      // substring match cannot express that: `%42%` also drags in `3-00420` and
+      // `1-00142`, and the number of parallel series only grows, so the noise grows
+      // with it. Equality on receipt_sequence says exactly what is meant.
+      //
+      // The row id stays in the OR because for the ~1,300 legacy orders the digits ARE
+      // the id — they have no sequence at all and are never backfilled (ADR 0017 #12).
+      // Exact there too, for the same reason: `42` means order 42, not 420 and 142.
+      const bareSequence = parseBareSequence(searchTerm);
+      if (bareSequence !== null) {
+        const seqIdx = idx++;
+        params.push(bareSequence);
+        conditions.push(`(o.receipt_sequence = $${seqIdx} OR o.id = $${seqIdx})`);
       } else {
-        const p1Idx = idx++;
-        params.push(p1);
-        const p2Idx = idx++;
-        params.push(p2);
-        conditions.push(`(c.name ILIKE $${p1Idx} OR o.id::text ILIKE $${p2Idx} OR (o.receipt_number IS NOT NULL AND (o.receipt_number ILIKE $${p1Idx} OR o.receipt_number ILIKE $${p2Idx})))`);
+        const cleanTerm = searchTerm.replace(/^#/, '');
+        const p1 = `%${searchTerm}%`;
+        const p2 = `%${cleanTerm}%`;
+        if (p1 === p2) {
+          const pIdx = idx++;
+          params.push(p1);
+          conditions.push(`(c.name ILIKE $${pIdx} OR o.id::text ILIKE $${pIdx} OR (o.receipt_number IS NOT NULL AND o.receipt_number ILIKE $${pIdx}))`);
+        } else {
+          const p1Idx = idx++;
+          params.push(p1);
+          const p2Idx = idx++;
+          params.push(p2);
+          conditions.push(`(c.name ILIKE $${p1Idx} OR o.id::text ILIKE $${p2Idx} OR (o.receipt_number IS NOT NULL AND (o.receipt_number ILIKE $${p1Idx} OR o.receipt_number ILIKE $${p2Idx})))`);
+        }
       }
     }
 
@@ -327,6 +370,7 @@ router.get('/', async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT o.*,
               c.name AS customer_name,
+              uc.full_name AS sold_by_name,
               (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
                FROM order_personnel op
                JOIN personnel per ON per.id = op.personnel_id
@@ -334,7 +378,11 @@ router.get('/', async (req, res, next) => {
               COUNT(*) OVER()::int AS total_count
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN users uc ON uc.id = o.created_by
        ${whereClause}
+       -- ADR 0017 #12 — NEVER order by receipt number. '#1240', '3-00061' and
+       -- '1A-00001' coexist permanently and do not sort as text; every list, export
+       -- and report orders by time.
        ORDER BY o.created_at DESC
        LIMIT $${limitParamIdx} OFFSET $${offsetParamIdx}`,
       params
@@ -363,21 +411,172 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// GET /api/v1/orders/sync — full order snapshots for a tablet's local history.
+//
+// ADR 0015 §4 / Slice 3.2. This is NOT the list endpoint above with extra fields: the
+// list is what a screen paginates through, this is what a device mirrors. Two things
+// make it its own route rather than a flag on `GET /`:
+//
+//   Complete snapshots. Every row carries its line items (with deposit fees and
+//   returned-bottle counts) and its assigned personnel, because a summary row is
+//   precisely what used to crash the offline order detail page. Three batched queries
+//   per page, never one per order.
+//
+//   The SERVER mints the cursors. A client cannot build one from the `updated_at` it
+//   receives: JSON timestamps are millisecond-precision, Postgres stores microseconds,
+//   and a cursor rebuilt from the truncated value sits fractionally BEFORE the row it
+//   was meant to mark — so that row comes back on every future delta forever, and a
+//   page full of such rows never advances at all. `first_cursor`/`next_cursor` below
+//   are rendered with full microsecond precision and are the only cursors anyone
+//   should ever send back.
+//
+//   Keyset pagination on (updated_at, id), in both directions. `direction=back` walks
+//   newest → oldest and is how a brand-new tablet backfills history it has never seen,
+//   resumably: a stream cut off halfway resumes from its last cursor instead of
+//   starting over. `direction=forward` walks oldest → newest from the newest row the
+//   device already holds, and is the delta every later login and reconnect asks for —
+//   including orders created on OTHER tablets, which is the whole reason a device
+//   cannot just remember its own writes.
+//
+// Drafts ARE included, unlike the list endpoint's default. That default (drafts hidden
+// unless `status=draft` is asked for explicitly) exists so a screen doesn't show
+// in-progress paperwork next to real orders — a display concern. This route mirrors
+// history for offline reading, and a draft is exactly as historical as any other order
+// once it has synced: Captain decision 2026-09-02 (following the read-only lock added
+// the same day) is that a historical draft the device has never individually opened
+// must still open read-only offline, the same unconditional way a regular order
+// already does — not only when this device happened to view that specific draft while
+// online (client/src/pages/orders/OrdersPage.jsx's `openDraft`, kept as a belt-and-
+// braces per-view fallback). Draft volume in practice is a small fraction of order
+// history (dozens, not thousands) and drafts are covered by the same keyset delta as
+// everything else, so an edited draft simply reappears in the next forward page like
+// any other touched order — no special-casing needed here.
+//
+// MUST stay above `GET /:id`, or Express reads "sync" as an order id.
+router.get('/sync', async (req, res, next) => {
+  try {
+    const { cursor, direction = 'back' } = req.query;
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const forward = String(direction) === 'forward';
+
+    const conditions = [];
+    const params = [];
+    let idx = 1;
+
+    if (cursor) {
+      const sep = String(cursor).lastIndexOf('|');
+      const cursorAt = sep === -1 ? String(cursor) : String(cursor).slice(0, sep);
+      const cursorId = sep === -1 ? null : Number(String(cursor).slice(sep + 1));
+      if (!cursorAt || !Number.isFinite(cursorId)) {
+        return res.status(400).json({ error: 'cursor must be "<updated_at>|<id>"' });
+      }
+      // Row-value comparison, so an id tie inside the same microsecond still advances
+      // rather than looping on the same page forever.
+      conditions.push(
+        `(o.updated_at, o.id) ${forward ? '>' : '<'} ($${idx++}::timestamptz, $${idx++}::int)`
+      );
+      params.push(cursorAt, cursorId);
+    }
+
+    const limitIdx = idx++;
+    params.push(limit + 1); // one extra row purely to answer has_more
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { rows } = await db.query(
+      `SELECT o.*,
+              to_char(o.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sync_cursor_at,
+              c.name    AS customer_name, c.customer_type,
+              c.address AS customer_address, c.phone AS customer_phone,
+              up.full_name AS pending_receipt_printed_by_name,
+              ud.full_name AS delivered_receipt_printed_by_name,
+              uc.full_name AS sold_by_name
+       FROM orders o
+       JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN users up ON up.id = o.pending_receipt_printed_by
+       LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
+       LEFT JOIN users uc ON uc.id = o.created_by
+       ${whereClause}
+       ORDER BY o.updated_at ${forward ? 'ASC' : 'DESC'}, o.id ${forward ? 'ASC' : 'DESC'}
+       LIMIT $${limitIdx}`,
+      params
+    );
+
+    const hasMore = rows.length > limit;
+    const orders = hasMore ? rows.slice(0, limit) : rows;
+    const ids = orders.map((o) => o.id);
+
+    let items = [];
+    let personnel = [];
+    if (ids.length > 0) {
+      ({ rows: items } = await db.query(
+        `SELECT oi.*, p.name AS product_name, p.sku, p.unit, p.category, p.requires_bottle_return
+         FROM order_items oi
+         JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ANY($1::int[])
+         ORDER BY oi.order_id, oi.id`,
+        [ids]
+      ));
+      ({ rows: personnel } = await db.query(
+        `SELECT op.order_id, op.id, op.personnel_id, op.role, p.full_name, p.phone
+         FROM order_personnel op
+         JOIN personnel p ON p.id = op.personnel_id
+         WHERE op.order_id = ANY($1::int[])
+         ORDER BY op.order_id, op.id`,
+        [ids]
+      ));
+    }
+
+    const itemsByOrder = new Map(ids.map((id) => [id, []]));
+    for (const item of items) itemsByOrder.get(item.order_id)?.push(item);
+    const personnelByOrder = new Map(ids.map((id) => [id, []]));
+    for (const p of personnel) {
+      const { order_id, ...rest } = p;
+      personnelByOrder.get(order_id)?.push(rest);
+    }
+
+    const cursorFor = (row) => (row ? `${row.sync_cursor_at}|${row.id}` : null);
+
+    res.json({
+      orders: orders.map(({ sync_cursor_at, ...o }) => ({
+        ...o,
+        items: itemsByOrder.get(o.id) || [],
+        personnel: personnelByOrder.get(o.id) || [],
+      })),
+      has_more: hasMore,
+      // Where this page starts and ends, in the direction it was walked. A backward
+      // page's `first_cursor` is the newest row there is, which is exactly what seeds
+      // a device's forward delta watermark on its first setup.
+      first_cursor: cursorFor(orders[0]),
+      next_cursor: cursorFor(orders[orders.length - 1]),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/orders — creates a Pending order; no stock check
 //
-// Two optional fields carry the device's version of the truth when the order was
-// created locally (V2.5, D1/D5/D13). Both are absent for an order created straight
-// from a connected client, which behaves exactly as before:
-//   receipt_number  '<station>-<sequence>' issued on the device at Save. It is the
-//                   record's identity, so a resend of a number already stored is
-//                   answered with the stored order and a 200 rather than a second row.
+// Three optional fields carry the device's version of the truth when the order was
+// created locally (V2.5, D1/D5/D13; ADR 0017 #9). All are absent for an order created
+// straight from a connected client, which behaves exactly as before:
+//   request_key     the retry key: generated on the device once per outbox record and
+//                   resent unchanged on every retry OF THAT RECORD. It is the record's
+//                   identity here, so a resend of a key already stored is answered with
+//                   the stored order and a 200 rather than a second row.
+//   receipt_number  '<person><device letter>-<sequence>' issued on the device at Save,
+//                   or the pre-letter '<person>-<sequence>' from a tablet that has not
+//                   been updated yet — both are accepted, permanently (ADR 0017 #12).
+//                   It names the SALE, and stays unique and the route identifier
+//                   (ADR 0010) — but it is no longer what a retry is recognised by.
+//                   With no request_key it still is, as the fallback for a pre-039
+//                   queued record.
 //   created_at      the device's clock at Save — the sale time printed on the paper
 //                   the customer is holding, not the moment the outbox drained. Same
 //                   pattern as supplier_deliveries.received_at. No clock policing.
 router.post('/', async (req, res, next) => {
   const {
     customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
-    receipt_number, created_at, adjustment = 0, adjustment_reason,
+    receipt_number, request_key, created_at, adjustment = 0, adjustment_reason,
   } = req.body;
   const isDraft = status === 'draft';
 
@@ -387,16 +586,46 @@ router.post('/', async (req, res, next) => {
   // A finalized order needs at least one item; a draft may be parked while still empty.
   if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
 
+  let requestKey = null;
+  try {
+    requestKey = normalizeRequestKey(request_key);
+  } catch (err) {
+    return next(err);
+  }
+
   let receipt = null;
   if (receipt_number !== undefined && receipt_number !== null && receipt_number !== '') {
     try {
+      // Accepts both shapes: '3-00061' from a tablet that has not been updated yet and
+      // '3A-00001' from one that has (ADR 0017 #12, ADR 0014's switchover ordering).
       receipt = parseReceiptNumber(receipt_number);
+      // The leading component is a person (ADR 0017 #1). This is the backstop against
+      // a garbled or impossible one; it no longer caps at ADR 0016's three slots,
+      // because a fourth person's first sale would otherwise be rejected here.
+      assertIssuableStation(receipt.station);
     } catch (err) {
       return next(err);
     }
-    // The ordinary resend: the first attempt committed and only the response was lost.
+  }
+
+  // The ordinary resend: the first attempt committed and only the response was lost.
+  //
+  // ADR 0017 #9 — keyed on the retry key when the device sent one, and ONLY on it. The
+  // receipt number is deliberately not consulted in that case: two sales that collide
+  // on a receipt number are two sales, and answering the second with the first one's
+  // stored order is the silent data loss this decision exists to end. Such a collision
+  // now hits the receipt-number unique index below and is refused, loudly.
+  //
+  // With no retry key, the receipt number is still the identity — the fallback for an
+  // outbox record queued by a pre-039 build and still waiting to drain (ADR 0014's
+  // mixed-fleet window). Never removed.
+  const dedupeBy = requestKey
+    ? () => findByRequestKey(db, 'orders', requestKey)
+    : (receipt ? () => findByReceiptNumber(db, 'orders', receipt) : null);
+
+  if (dedupeBy) {
     try {
-      const existingId = await findByReceiptNumber(db, 'orders', receipt);
+      const existingId = await dedupeBy();
       if (existingId) return res.json(await getFullOrder(existingId));
     } catch (err) {
       return next(err);
@@ -421,12 +650,19 @@ router.post('/', async (req, res, next) => {
 
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
-                           receipt_station, receipt_sequence, created_at, adjustment, adjustment_reason)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()), $8, $9)
+                           receipt_station, receipt_device, receipt_sequence, request_key,
+                           created_at, adjustment, adjustment_reason, created_by)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11, $12)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
-       receipt?.station ?? null, receipt?.sequence ?? null, created_at || null,
-       adjNum, adjReason]
+       receipt?.station ?? null, receipt?.device ?? null, receipt?.sequence ?? null,
+       requestKey, created_at || null, adjNum, adjReason,
+       // ADR 0017 #10 — who sold it, for the receipt's `Sold by:` line. The JWT is the
+       // whole identity since ADR 0017 §5, so this is whoever is signed in on the
+       // device that sent it — including a drain hours later, which replays under the
+       // same account that made the sale. Slice 5's remembered accounts is what will
+       // let one device drain records made by two different people.
+       req.user.id]
     );
 
     await insertItems(client, order.id, items, isDraft);
@@ -452,16 +688,37 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(await getFullOrder(order.id));
   } catch (err) {
     await client.query('ROLLBACK');
-    // Two drain attempts overlapping: both looked, neither found, both inserted. The
-    // partial unique index caught this one, so answer it with the row the winner
-    // wrote — a success, so the device clears it from the outbox and stops retrying.
-    if (receipt && isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX)) {
+    // Two drain attempts of the SAME record overlapping: both looked, neither found,
+    // both inserted. A partial unique index caught this one, so answer it with the row
+    // the winner wrote — a success, so the device clears it from the outbox and stops
+    // retrying.
+    //
+    // Either index can be the one that fires, and which one Postgres reports first is
+    // not ours to predict: an identical resend collides on the retry key AND on the
+    // receipt number. So the constraint name only decides whether to look; `dedupeBy`
+    // (keyed on the retry key whenever the device sent one) decides what it was. A row
+    // carrying this request's own key means the winner was this same record.
+    if (dedupeBy && (isDuplicateRequestKey(err, REQUEST_KEY_INDEX)
+                  || isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX))) {
       try {
-        const existingId = await findByReceiptNumber(db, 'orders', receipt);
+        const existingId = await dedupeBy();
         if (existingId) return res.json(await getFullOrder(existingId));
       } catch (lookupErr) {
         return next(lookupErr);
       }
+    }
+    // ADR 0017 #9 — the lookup above found nothing under this request's own retry key,
+    // so the row that won the index is a DIFFERENT record arriving on a receipt number
+    // that is already stored. Two separate sales wearing one label: not a retry, so it
+    // must not be answered with the stored order, and not a 500 either, which would
+    // stall the whole outbox behind it. A 409 lands the record in the device's needs-attention list
+    // carrying this reason, where a human decides — ambiguous and recoverable, which is
+    // the whole point of splitting the retry key off the receipt number.
+    if (requestKey && receipt && isDuplicateReceiptNumber(err, RECEIPT_NUMBER_INDEX)) {
+      return res.status(409).json({
+        error: `Receipt number ${receipt_number} is already used by a different order. `
+             + 'Two orders cannot share a receipt number — re-issue this one.',
+      });
     }
     next(err);
   } finally {

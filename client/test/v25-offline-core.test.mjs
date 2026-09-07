@@ -40,30 +40,95 @@ afterEach(() => {
   api.request = savedApi.request;
 });
 
+// ADR 0017 slice 6 removed the slot concept, so nothing on the server hands a device its
+// leading number any more. This suite predates device letters and asserts on the
+// pre-letter `1-00001` shape, so it stands the device up the way a tablet mid-switchover
+// actually is: already carrying its own number, which registration keeps rather than
+// re-derives (see persistRegistration in src/offline/station.js).
 async function registerStation(number = 1) {
-  api.post = async () => ({ station_number: number, registered_at: '2026-08-23T00:00:00.000Z' });
+  await nativeStore.setJson(STATION_KEY, { device_key: 'test-device', station_number: number });
+  api.post = async () => ({ registered_at: '2026-08-23T00:00:00.000Z' });
   return ensureStationRegistered();
 }
 
 // ── D1: station registration ────────────────────────────────────────────────
 
-test('registers once and keeps the station number it was given', async () => {
-  let calls = 0;
+test('registers with one device_key and keeps the number it is already carrying', async () => {
+  const keys = [];
+  await nativeStore.setJson(STATION_KEY, { device_key: 'mid-switchover', station_number: 2 });
   api.post = async (path, body) => {
-    calls++;
     assert.equal(path, '/stations/register');
     assert.ok(body.device_key, 'a device_key is sent so the server can be idempotent');
-    return { station_number: 2, registered_at: '2026-08-23T00:00:00.000Z' };
+    keys.push(body.device_key);
+    return { registered_at: '2026-08-23T00:00:00.000Z' };
   };
 
   const first = await ensureStationRegistered();
   assert.equal(first.station_number, 2);
   assert.equal(await isRegistered(), true);
 
-  // Every later start is a no-op: the device never asks for a second number.
+  // A later start re-confirms rather than short-circuiting, but sends the SAME
+  // device_key — and since ADR 0017 removed the slot concept, no response can take this
+  // device's number away or hand it a different one.
   const second = await ensureStationRegistered();
   assert.equal(second.station_number, 2);
-  assert.equal(calls, 1);
+  assert.equal(new Set(keys).size, 1);
+});
+
+// ── ADR 0017 #3: the slot concept is gone ──────────────────────────────────
+//
+// What used to be pinned here — a "no slot" answer stopping the device, a replacement
+// tablet seeded past the outgoing one's high-water plus REASSIGN_RESERVE, and a device
+// moved 2 -> 1 -> 3 resuming each slot's own count — all tested machinery that only
+// existed because the number was tied to hardware. A replacement device now signs in and
+// takes a FRESH letter (covered in v3-s4-device-letters.test.mjs), so there is no
+// reassignment to survive and nothing a server answer can take away.
+//
+// Two things outlive it and are pinned below: a number this device is ALREADY carrying
+// survives registration untouched (ADR 0014's switchover window), and the per-series
+// counters that keep it from bleeding into the letter series.
+
+test('a number this device already carries survives registration — nothing can take it away', async () => {
+  await registerStation(3);
+  assert.equal((await issueReceiptNumber()).receipt_number, '3-00001');
+
+  // The response carries no leading number at all any more. The device keeps selling.
+  api.post = async () => ({ registered_at: '2026-08-23T00:00:00.000Z' });
+  await ensureStationRegistered();
+
+  assert.equal(await isRegistered(), true);
+  assert.equal((await getStation()).station_number, 3);
+  assert.equal((await issueReceiptNumber()).receipt_number, '3-00002');
+});
+
+test('a tablet upgrading from the single-counter build keeps its count under its own number', async () => {
+  // What a pre-fix device holds: one bare scalar, and the number it was selling under.
+  await nativeStore.setJson(STATION_KEY, { device_key: 'upgrading-tablet', station_number: 2 });
+  await nativeStore.setString(SEQUENCE_KEY, 55);
+
+  // It launches blind and sells before it can re-register. The scalar is read as this
+  // device's count — restarting at 00001 here would reprint numbers already on paper.
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00056');
+
+  // The line returns. Registration files the carried-over scalar under series '2' as a
+  // map, and keeps issuing from it — the upgrade must not cost the device its count.
+  api.post = async () => ({ registered_at: '2026-08-29T00:00:00.000Z' });
+  await ensureStationRegistered();
+  assert.deepEqual(await nativeStore.getJson(SEQUENCE_KEY), { 2: 56 });
+  assert.equal((await issueReceiptNumber()).receipt_number, '2-00057');
+});
+
+test('re-confirming never winds a device back behind receipts it has already issued', async () => {
+  await registerStation(1);
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00001');
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00002');
+
+  // The server has seen neither of those yet (still queued) — and since ADR 0017 it does
+  // not answer a sequence for this series at all, so there is nothing to wind back to.
+  api.post = async () => ({ registered_at: '2026-08-23T00:00:00.000Z' });
+  await ensureStationRegistered();
+
+  assert.equal((await issueReceiptNumber()).receipt_number, '1-00003');
 });
 
 test('a device_key is persisted before registering, so a lost response cannot burn a second number', async () => {
@@ -77,7 +142,7 @@ test('a device_key is persisted before registering, so a lost response cannot bu
   let sentKey = null;
   api.post = async (_path, body) => {
     sentKey = body.device_key;
-    return { station_number: 1, registered_at: '2026-08-23T00:00:00.000Z' };
+    return { registered_at: '2026-08-23T00:00:00.000Z' };
   };
   await ensureStationRegistered();
   assert.equal(sentKey, stored.device_key, 'the retry re-sends the same device_key');
@@ -98,7 +163,8 @@ test('the sequence is stored before the number is handed out, so a crash skips r
   await registerStation(1);
   const issued = await issueReceiptNumber();
   assert.equal(issued.sequence, 1);
-  assert.equal(await nativeStore.getString(SEQUENCE_KEY), '1');
+  // Stored per series, so the key holds a map rather than a bare number.
+  assert.deepEqual(await nativeStore.getJson(SEQUENCE_KEY), { 1: 1 });
 });
 
 test('concurrent Saves never receive the same number', async () => {
@@ -110,20 +176,38 @@ test('concurrent Saves never receive the same number', async () => {
   assert.equal(numbers.includes('3-00025'), true);
 });
 
-test('two stations issue the same sequence under different numbers', async () => {
+test('two people issue the same sequence under different numbers', async () => {
   assert.equal(formatReceiptNumber(1, 42), '1-00042');
   assert.equal(formatReceiptNumber(2, 42), '2-00042');
-  assert.deepEqual(parseReceiptNumber('2-00042'), { station: 2, sequence: 42 });
+  assert.deepEqual(parseReceiptNumber('2-00042'), { station: 2, device: null, sequence: 42 });
   assert.equal(parseReceiptNumber('nonsense'), null);
+});
+
+// ADR 0017 — a device letter separates one person's own devices, and the pre-letter
+// shape keeps parsing forever alongside it (three formats coexist permanently, #12).
+// No letter is allocated here; this is the parser accepting one when a later slice
+// starts issuing it.
+test('the same person on two devices issues distinguishable numbers', async () => {
+  assert.equal(formatReceiptNumber(1, 42, 'A'), '1A-00042');
+  assert.equal(formatReceiptNumber(1, 42, 'b'), '1B-00042', 'the letter is normalised to upper case');
+  assert.deepEqual(parseReceiptNumber('1A-00042'), { station: 1, device: 'A', sequence: 42 });
+  assert.deepEqual(parseReceiptNumber('1a-00042'), { station: 1, device: 'A', sequence: 42 });
+  assert.deepEqual(parseReceiptNumber('1AB-00042'), { station: 1, device: 'AB', sequence: 42 });
+  assert.equal(parseReceiptNumber('1A-DEL-00042'), null, 'a delivery reference is never a receipt number');
+  assert.equal(parseReceiptNumber('A-00042'), null);
 });
 
 test('a device with no station cannot issue a receipt number', async () => {
   await assert.rejects(() => issueReceiptNumber(), /station number/);
 });
 
-// ── D14: the profile is captured at Save, replayed at drain ─────────────────
+// ── D14: the account is captured at Save and stays on the record ────────────
+// ADR 0017 §5 deleted the `X-Active-Profile` header, so the author is no longer replayed
+// to the server on drain — the request goes out under the signed-in account's own JWT.
+// The record still carries who saved it, because that is what the needs-attention list
+// reads and what slice 5's remembered accounts will put back on the wire.
 
-test('a queued record drains under the profile captured at Save, not the one active now', async () => {
+test('each queued record keeps the account that saved it, and the drain sends no profile with it', async () => {
   const sent = [];
   api.request = async (path, options) => {
     sent.push({ path, profileKey: options.profileKey });
@@ -131,21 +215,27 @@ test('a queued record drains under the profile captured at Save, not the one act
   };
 
   await enqueue({
-    entityType: 'order', endpoint: '/orders', profileKey: 'luis',
+    entityType: 'order', endpoint: '/orders', profileKey: 'luis@leyblestore.com',
     payload: { customer_id: 1 }, receiptNumber: '1-00001',
   });
   await enqueue({
-    entityType: 'order', endpoint: '/orders', profileKey: 'josie',
+    entityType: 'order', endpoint: '/orders', profileKey: 'josie@leyblestore.com',
     payload: { customer_id: 2 }, receiptNumber: '1-00002',
   });
 
+  const queued = await listRecords();
+  assert.deepEqual(
+    queued.map((r) => r.profile_key),
+    ['luis@leyblestore.com', 'josie@leyblestore.com']
+  );
+
   const result = await drainOutbox();
   assert.equal(result.sent, 2);
-  assert.deepEqual(sent.map((s) => s.profileKey), ['luis', 'josie']);
+  assert.deepEqual(sent.map((s) => s.profileKey), [undefined, undefined]);
   assert.equal(await waitingCount(), 0);
 });
 
-test('a record cannot be queued without a profile', async () => {
+test('a record cannot be queued without an account', async () => {
   await assert.rejects(
     () => enqueue({ entityType: 'order', endpoint: '/orders', payload: {} }),
     /profileKey is required/

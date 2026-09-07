@@ -20,15 +20,19 @@ stale). When in doubt, the migration files are the source of truth.
 
 ## Tables
 
-### `users` (001, altered by 030)
-App accounts. `role` ∈ `('admin','viewer')` default `admin`. `email` unique, `password_hash`
-(bcrypt), `is_active`. Seeded by `server/db/seed.js` using `SEED_ADMIN_*` env vars.
-`profile_key VARCHAR(20) UNIQUE` (030) tags the rows that back the Josie/Luis/Admin profile
-picker — login is now a single shared active account (`josie@leyblestore.com`); the other
-profile rows are `is_active = FALSE` and exist only so `requireAuth` can swap request identity
-to them via the `X-Active-Profile` header. Assigned by the one-off `server/db/setup-profiles.js`
-script (not run automatically by `migrate.js`/`seed.js`). See
-[ARCHITECTURE.md#authentication-flow](ARCHITECTURE.md#authentication-flow).
+### `users` (001, altered by 030, 041)
+App accounts. `role` ∈ `('admin','viewer')` default `admin` — signed into the JWT and read by
+no route guard and no client gate, so it authorizes nothing ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md)).
+`email` unique, `password_hash` (bcrypt), `is_active`. Seeded by `server/db/seed.js` using
+`SEED_ADMIN_*` env vars.
+
+One row per person, and each signs in with their own email ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) §5/§6):
+Alvin/admin, Josie and Luis. An account is deactivated (`is_active = FALSE`), never deleted, so
+its historical `activity_logs.performed_by` references always still resolve. The one-off
+`server/db/setup-accounts.js` script (not run by `migrate.js`/`seed.js`) activates the three and
+deactivates everything else. `profile_key VARCHAR(20) UNIQUE`, added by 030 to back the
+Josie/Luis/Admin picker, was **dropped by 041** along with the `X-Active-Profile` identity swap.
+See [ARCHITECTURE.md#authentication-flow](ARCHITECTURE.md#authentication-flow).
 
 ### `products` (002, altered by 012, 022, 023)
 | Column | Type | Notes |
@@ -75,8 +79,10 @@ Base64), `is_active`.
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
-| `receipt_station`, `receipt_sequence` | the device-issued receipt number, decomposed (033). Nullable — orders predating V2.5 have none and are never backfilled. `CHECK` keeps the pair whole; a **partial** `UNIQUE` index over rows that carry one is the anti-duplicate key for a resent outbox record ([ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)) |
-| `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1-00042'`, derived from the pair above. Never written to |
+| `receipt_station`, `receipt_device`, `receipt_sequence` | the device-issued receipt number, decomposed (033; the letter added by 040). `receipt_station` is the **person** and `receipt_device` their device letter ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md)). All three are nullable — orders predating V2.5 have none, orders from the pre-letter scheme have no letter, and neither is ever backfilled. `CHECK`s keep the station/sequence pair whole and the letter shaped `[A-Z]{1,2}` and never orphaned. Since 039 this is no longer the retry key — see `request_key` |
+| `orders_receipt_number_uniq` | a **partial** `UNIQUE` over rows that carry a receipt number, keeping the number itself unique ([ADR 0010](../adr/0010-receipt-number-addresses-order-across-sync-boundary.md)). Since 040 the letter goes through `COALESCE(receipt_device, '')` **inside the index expression** — without that, NULL-is-distinct would silently stop the index protecting every pre-letter row. Match it the same way in any query that looks a receipt number up |
+| `request_key` | the anti-duplicate key for a **resent outbox record** (039, [ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #9 revising [ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md)). Minted on the device once per outbox record and resent unchanged on every retry of it; partial `UNIQUE` over rows that carry one. Nullable: absent for anything a connected client posted, and for a record queued by a pre-039 build, which still dedupes on the receipt number |
+| `receipt_number` | `GENERATED ALWAYS AS ... STORED` — `'1A-00042'`, or `'1-00042'` with no letter. Derived from the three columns above; never written to. **Never `ORDER BY` it** — `#1240`, `3-00061` and `3A-00001` coexist permanently and do not sort as text ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #12) |
 | `created_at` | the **sale time**. Supplied by the device on a local-first save (same pattern as `supplier_deliveries.received_at`); defaults to `NOW()` otherwise |
 
 > `driver_id` / `helper_id` FK columns were **dropped** (016) — personnel are now in the
@@ -106,19 +112,31 @@ quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposi
 i.e. deposit is charged on the bottles that were *not* returned. With defaults
 (`units_per_case=1, bottles_returned=0`) this reduces to the old `quantity*(price+deposit)`.
 
-### `stations` (033)
-One row per device that has completed the one-time install registration ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
+### `stations` (033, altered by 037)
+One row per device that has registered ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
+Since [ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) this is a plain device
+registry and nothing here is any part of a receipt number — the person is `users.receipt_person`
+and the letter is `user_devices.device_letter` (043).
 | Column | Notes |
 |---|---|
-| `device_key` | UNIQUE. Generated on the device; the idempotency key for registration, so a retried register call returns the same station instead of claiming a second number |
-| `station_number` | UNIQUE, defaulted from `station_number_seq`. A sequence rather than `MAX+1`: concurrency-safe without locking, and it never hands the same value out twice. Numbers only creep upward — a wiped device registers afresh and gets a new one |
+| `device_key` | UNIQUE. Generated on the device; the idempotency key for registration, so a retried register call returns the same station instead of claiming a second one |
+| `slot_number`, `slot_assigned_at`, `slot_assigned_by` | (037) **dead columns.** ADR 0016's three fixed slots — which device held each of 1/2/3, when it moved there and who moved it. ADR 0017 removed the slot concept along with the Devices screen and the assignment endpoint; nothing reads or writes these any longer. Kept rather than dropped so historical rows and any device still mid-switchover stay describable |
+| `station_number` | UNIQUE, defaulted from `station_number_seq`. The registry's internal id for a device — it is **not** a receipt number component and never leaves the server |
 | `label` | optional, e.g. `'Honor Pad X8B'` |
 | `registered_at`, `last_seen_at` | |
 
-### `supplier_deliveries` (008, altered by 029)
+### `supplier_deliveries` (008, altered by 029, 036, 039, 040)
 Incoming stock events. `supplier_name`, `notes`, `received_at`, `created_by`. Soft-void columns
 `voided_at` / `voided_by` (029) — deliveries are **never hard-deleted** (their
 `inventory_audit_logs` rows are append-only); voiding reverses the restock and hides the row.
+Carries the same device-identity columns as `orders`, with the same meanings and the same
+partial unique indexes: the `receipt_station` / `receipt_device` / `receipt_sequence` triple
+with its `COALESCE`-ed unique index, the `GENERATED delivery_ref` (`'1A-DEL-00007'`, 036 with
+the letter added by 040), and `request_key` (039). Deliberately identical column names — that
+is what lets `server/src/lib/idempotency.js` cover both tables from one allowlist. `DEL` in
+the middle keeps a delivery reference from ever being read as a customer's receipt number
+([ADR 0015](../adr/0015-full-app-offline-accessibility-and-mutation-boundaries.md) §8,
+[ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #14).
 
 ### `supplier_delivery_items` (009, altered by 022)
 `delivery_id` (CASCADE), `product_id`, `quantity_received` NUMERIC(10,2) (022), `unit_cost`,

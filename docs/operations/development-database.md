@@ -10,6 +10,15 @@ A dedicated **development** PostgreSQL database hosted on Supabase was provision
 
 This database provides an isolated development tier for local testing, browser-based UI development, and migration rehearsal without risking live store operations.
 
+**"Staging" and "dev/test" are the same database.** The captain refers to this database as
+"staging"; these docs call it "dev/test" or "development" — both names point at the one Supabase
+project below. There is no separate staging environment.
+
+| Environment | Supabase project ref | Region |
+|---|---|---|
+| Production | `prauvokvlhptvkadvfqq` | Sydney (`ap-southeast-2`) |
+| Development / staging / dev-test | `yzopwoquzfnyqdmuookw` | Tokyo (`ap-northeast-1`) |
+
 ## Operational Rules
 
 ### 1. Absolute Isolation of Production Data
@@ -26,10 +35,27 @@ This database provides an isolated development tier for local testing, browser-b
 - **Security Rule:** Never commit connection strings, passwords, project references, or credentials to git. All credentials remain strictly within uncommitted local `.env` files.
 
 ### 3. Regional Latency Characteristics
-- **Production Database:** Located in the **Sydney** region (`ap-southeast-2`).
-- **Development Database:** Located in the **Tokyo** region (`ap-northeast-1`).
+- **Production Database:** ref `prauvokvlhptvkadvfqq`, located in the **Sydney** region (`ap-southeast-2`).
+- **Development Database:** ref `yzopwoquzfnyqdmuookw`, located in the **Tokyo** region (`ap-northeast-1`).
 - Because the development instance is hosted in Tokyo, database queries executed from the Philippines experience measurably higher latency compared to production. This latency is expected and affects only local developer workstations; production tablet performance is unaffected.
 
 ### 4. Migration Rehearsal Environment
 - The development database serves as the rehearsal stage for all database migrations (including migrations `031`, `032`, and `033`) before they are executed against the production database.
 - Developers must execute and verify new migrations against the development database via `node server/db/migrate.js` prior to scheduling production rollout.
+
+### 5. Staging Deployment (Northflank)
+- "Staging" here means the backend *compute* service, distinct from the "staging" database named
+  above (§ Overview) — the Northflank service points at that same dev/test Supabase database.
+  It runs on **Northflank** (buildpack-based), not Render — there is no Northflank config file
+  tracked in this repo, unlike production's [`render.yaml`](../../render.yaml). It already
+  auto-deploys the latest commit on every push to the `staging` branch.
+- Staging now auto-migrates on deploy too, the same way production does, but by a different
+  mechanism: production's `render.yaml` runs `node server/db/migrate.js` in its Render
+  `buildCommand` before `startCommand` starts the server; staging instead runs it via a
+  `prestart` script in [`server/package.json`](../../server/package.json), which `npm start`
+  runs automatically before `start`. This makes the schema advance automatically for whichever
+  platform runs `npm start`, without needing Northflank dashboard access to configure a build
+  step.
+- `server/db/migrate.js` is safe to invoke this way: it tracks applied migrations in a
+  `_migrations` table and applies each `.sql` file transactionally, so re-running it (e.g. on a
+  Northflank restart or rescale) is a no-op past the first successful run.

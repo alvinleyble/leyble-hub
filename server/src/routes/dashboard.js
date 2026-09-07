@@ -13,11 +13,13 @@ router.get('/', async (req, res, next) => {
       `SELECT o.*,
               c.name    AS customer_name,
               c.address AS customer_address,
+              uc.full_name AS sold_by_name,
               (SELECT STRING_AGG(per.full_name || ' (' || op.role || ')', ', ' ORDER BY op.id)
                FROM order_personnel op JOIN personnel per ON per.id = op.personnel_id
                WHERE op.order_id = o.id) AS personnel_summary
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
+       LEFT JOIN users uc ON uc.id = o.created_by
        WHERE o.status IN ('pending', 'in_transit', 'completed')
           OR o.created_at >= NOW() - INTERVAL '5 days'
        ORDER BY

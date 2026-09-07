@@ -10,6 +10,10 @@ import Combobox from '../../components/ui/Combobox';
 import CustomerMergeModal from '../../components/customers/CustomerMergeModal';
 import { productMatches } from '../../utils/productSearch';
 import { CUSTOMER_TYPE_OPTIONS, customerTypeBadge, customerTypeLabel, normalizeCustomerType } from '../../utils/customerTypes';
+import OfflineBanner from '../../components/ui/OfflineBanner';
+import { getCachedEntity } from '../../offline/catalogue.js';
+import { updateCustomerLocalFirst } from '../../offline/queuedCustomers.js';
+import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -37,9 +41,14 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const [orders, setOrders]         = useState([]);
   const [loading, setLoading]       = useState(true);
   const [form, setForm]             = useState(null);
+  // The values `form` was seeded with at load time — the snapshot a save's diff is
+  // computed against, so a full-form resend never restates a field the operator never
+  // touched (item 4, offline-multi-device clobber audit).
+  const [snapshot, setSnapshot]     = useState(null);
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving]         = useState(false);
   const [mergeOpen, setMergeOpen]   = useState(false);
+  const [fromCache, setFromCache]   = useState(false);
 
   const [customPrices, setCustomPrices]     = useState([]);
   const [priceTab, setPriceTab]             = useState('delivery');
@@ -67,23 +76,55 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       .then(async (data) => {
         setCustomer(data);
         setOrders(data.orders ?? []);
-        setForm({
-          name:          data.name,
-          customer_type: normalizeCustomerType(data.customer_type),
-          phone:         data.phone ?? '',
-          address:       data.address ?? '',
-          notes:         data.notes ?? '',
-          is_active:     data.is_active,
-        });
+        {
+          const seeded = {
+            name:          data.name,
+            customer_type: normalizeCustomerType(data.customer_type),
+            phone:         data.phone ?? '',
+            address:       data.address ?? '',
+            notes:         data.notes ?? '',
+            is_active:     data.is_active,
+          };
+          setForm(seeded);
+          setSnapshot(seeded);
+        }
         // ADR 0009 — saved prices are the pricing source, so every customer has a
         // Custom Prices panel. Nothing is hidden behind the descriptive tag.
         await loadCustomPrices(priceTabRef.current);
       })
-      .catch(() => addToast('Failed to load customer.', 'error'))
+      .catch(async () => {
+        // ADR 0015 §7 — the directory this device already holds answers "what's her
+        // address" during an outage. Order history and saved prices still need the
+        // server; the profile itself does not.
+        const held = (await getCachedEntity('customers'))
+          .find((c) => String(c.id) === String(customerId));
+        if (!held) { addToast('Failed to load customer.', 'error'); return; }
+        setCustomer(held);
+        setOrders([]);
+        setFromCache(true);
+        {
+          const seeded = {
+            name:          held.name,
+            customer_type: normalizeCustomerType(held.customer_type),
+            phone:         held.phone ?? '',
+            address:       held.address ?? '',
+            notes:         held.notes ?? '',
+            is_active:     held.is_active,
+          };
+          setForm(seeded);
+          setSnapshot(seeded);
+        }
+        await loadCustomPrices(priceTabRef.current);
+      })
       .finally(() => {
         if (!silent) setLoading(false);
       });
   }, [customerId, loadCustomPrices, addToast]);
+
+  // §7 — profile edits queue; merges and deletions never do. A merge re-parents order
+  // history, unpaid bottle balances and audit rows irreversibly, and a concurrent one
+  // across two blind devices cannot be untangled afterwards.
+  const sharedMutationsBlocked = fromCache || !checkIsOnline();
 
   useEffect(() => { load(); }, [load]);
 
@@ -100,15 +141,47 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
     setSaving(true);
     try {
-      await api.patch(`/customers/${customerId}`, {
+      const profileKey = await api.getActiveProfile();
+      const finalValues = {
         name:          form.name.trim(),
         customer_type: form.customer_type,
         phone:         form.phone.trim() || null,
         address:       form.address.trim() || null,
         notes:         form.notes.trim() || null,
         is_active:     form.is_active,
-      });
-      addToast('Customer updated.', 'success');
+      };
+      // Diff against the snapshot this form was seeded with, not the field's current
+      // server value — only what the operator actually changed belongs on the wire.
+      // A full-form resend of every field, changed or not, is what let a blind save on
+      // one tablet silently revert a field another tablet had already changed while this
+      // one's cached snapshot went stale (item 4, offline-multi-device clobber audit).
+      // `snapshot` mirrors `form`'s '' fallback for optional fields, so normalize it the
+      // same way `finalValues` normalizes an untouched field to null before comparing.
+      const baseline = {
+        name:          snapshot.name,
+        customer_type: snapshot.customer_type,
+        phone:         snapshot.phone || null,
+        address:       snapshot.address || null,
+        notes:         snapshot.notes || null,
+        is_active:     snapshot.is_active,
+      };
+      const patch = {};
+      for (const field of ['name', 'customer_type', 'phone', 'address', 'notes']) {
+        if (finalValues[field] !== baseline[field]) patch[field] = finalValues[field];
+      }
+      // 8.5 — the toggle is disabled offline (below), so this would only ever restate
+      // the value already stored; the diff above already drops it when untouched, but
+      // this is what keeps it off the wire even offline where a cached snapshot itself
+      // may be stale. Leaving it out of the body is what stops a blind save from
+      // reversing a deactivation another tablet just made.
+      if (!sharedMutationsBlocked && finalValues.is_active !== baseline.is_active) {
+        patch.is_active = finalValues.is_active;
+      }
+      const { synced } = await updateCustomerLocalFirst(customerId, patch, { profileKey });
+      addToast(
+        synced ? 'Customer updated.' : 'Saved on this device \u00b7 will sync when connected.',
+        'success'
+      );
       onSaved?.();
       await load(true);
     } catch (err) {
@@ -119,6 +192,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   };
 
   const openPricingForm = async () => {
+    if (sharedMutationsBlocked) return;
     if (products.length === 0) {
       try {
         const prods = await api.get('/products');
@@ -142,6 +216,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   const setP = (field) => (e) => setPriceForm((f) => ({ ...f, [field]: e.target.value }));
 
   const handleSetPrice = async () => {
+    if (sharedMutationsBlocked) return;
     const errs = {};
     if (!priceForm.product_id) errs.product_id = 'Select a product.';
     if (priceForm.custom_unit_price === '') errs.custom_unit_price = 'Enter a price.';
@@ -175,11 +250,12 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       <div
         className="fixed top-0 right-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl flex flex-col"
         role="dialog" aria-modal="true" aria-labelledby="customer-detail-title"
+        data-testid="customer-detail"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-400 shrink-0">
           <h2 id="customer-detail-title" className="text-xl font-bold text-slate-900 truncate pr-4">
-            {loading ? 'Loading…' : customer?.name}
+            {loading ? 'Loading…' : (customer?.name ?? 'Customer')}
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
@@ -193,21 +269,37 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
+        ) : !customer ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <p className="text-base font-medium text-slate-500">Customer details not available offline.</p>
+            <Button variant="secondary" className="mt-4" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
 
+            {fromCache && (
+              <div className="px-6 pt-5">
+                <OfflineBanner
+                  className="mb-0"
+                  message="Viewing offline data · Contact details you change here sync when connected"
+                />
+              </div>
+            )}
+
             {/* ── Summary bar ──────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(customer.customer_type)}`}>
-                {customerTypeLabel(customer.customer_type)}
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(customer?.customer_type)}`}>
+                {customerTypeLabel(customer?.customer_type)}
               </span>
-              {!customer.is_active && (
+              {customer?.is_active === false && (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-300">
                   Inactive
                 </span>
               )}
               <span className="text-sm text-slate-400 ml-auto">
-                {orders.length} order{orders.length !== 1 ? 's' : ''}
+                {(orders || []).length} order{(orders || []).length !== 1 ? 's' : ''}
               </span>
             </div>
 
@@ -244,12 +336,28 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                  focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none" />
                   </FormField>
 
-                  <div className="sm:col-span-2 flex items-center gap-3 min-h-[48px]">
-                    <input type="checkbox" id="cust_active" checked={form.is_active}
-                      onChange={set('is_active')} className="w-6 h-6 accent-blue-700" />
-                    <label htmlFor="cust_active" className="text-base font-medium text-slate-700 cursor-pointer">
-                      Active
-                    </label>
+                  {/* 8.5 — everything else on this form still saves blind; only the
+                      active flag waits, because it decides what every other tablet can
+                      sell to and there is no second value to reconcile. */}
+                  <div className="sm:col-span-2 min-h-[48px]" title={sharedMutationsBlocked ? 'Needs a connection' : undefined}>
+                    <div className="flex items-center gap-3 min-h-[48px]">
+                      <input type="checkbox" id="cust_active" checked={form.is_active}
+                        onChange={set('is_active')} disabled={sharedMutationsBlocked}
+                        className="w-6 h-6 accent-blue-700 disabled:opacity-50" />
+                      <label
+                        htmlFor="cust_active"
+                        className={`text-base font-medium ${sharedMutationsBlocked
+                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                      >
+                        Active
+                      </label>
+                    </div>
+                    {sharedMutationsBlocked && (
+                      <p className="text-sm text-slate-500">
+                        Deactivating or restoring a customer needs a connection — the rest of
+                        this form still saves offline.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -264,11 +372,24 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Prices</p>
                 {!pricingOpen && (
-                  <Button size="sm" variant="secondary" onClick={openPricingForm}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={openPricingForm}
+                    disabled={sharedMutationsBlocked}
+                    title={sharedMutationsBlocked ? 'Needs a connection' : undefined}
+                  >
                     + Set Price
                   </Button>
                 )}
               </div>
+              {sharedMutationsBlocked && (
+                <p className="text-sm text-slate-500 mb-4">
+                  Setting a custom price needs a connection — two offline tablets could
+                  otherwise save different prices for the same product with no way to tell
+                  which one wins.
+                </p>
+              )}
 
               {/* Delivery / Pickup tab switcher */}
               <div className="flex gap-1.5 mb-4">
@@ -339,7 +460,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                         }}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={handleSetPrice} loading={priceSaving}>
+                      <Button size="sm" onClick={handleSetPrice} loading={priceSaving}
+                        disabled={sharedMutationsBlocked}>
                         Save Price
                       </Button>
                     </div>
@@ -387,13 +509,13 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             {/* ── Order history ─────────────────────────────────── */}
             <div className="px-6 py-5">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
-                Order History ({orders.length})
+                Order History ({(orders || []).length})
               </p>
-              {orders.length === 0 ? (
+              {(orders || []).length === 0 ? (
                 <p className="text-sm text-slate-400">No orders yet.</p>
               ) : (
                 <ol className="space-y-3">
-                  {orders.map((o) => {
+                  {(orders || []).map((o) => {
                     const st = ORDER_STATUS[o.status] ?? {
                       label: o.status,
                       color: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -434,9 +556,16 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                 variant="secondary"
                 onClick={() => setMergeOpen(true)}
                 className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                disabled={sharedMutationsBlocked}
+                title={sharedMutationsBlocked ? 'Needs a connection' : undefined}
               >
                 🔀 Merge customer
               </Button>
+              {sharedMutationsBlocked && (
+                <p className="text-sm text-slate-500 mt-2">
+                  Merging re-parents order history and bottle balances permanently, so it needs a connection.
+                </p>
+              )}
             </div>
 
             {/* ── Danger Zone ───────────────────────────────────── */}
@@ -444,6 +573,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               endpoint={`/customers/${customerId}`}
               entityLabel="customer"
               onDeleted={() => { onSaved(); onClose(); }}
+              disabled={sharedMutationsBlocked}
+              disabledReason="Deleting a customer needs a connection — it touches order history every device shares."
             />
 
           </div>
@@ -453,7 +584,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
       {mergeOpen && customer && (
         <CustomerMergeModal
           customer={customer}
-          orderCount={orders.length}
+          orderCount={(orders || []).length}
           onClose={() => setMergeOpen(false)}
           onMerged={() => {
             setMergeOpen(false);

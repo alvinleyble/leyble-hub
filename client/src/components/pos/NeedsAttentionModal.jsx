@@ -165,7 +165,7 @@ export default function NeedsAttentionModal({ onClose }) {
                         {rec.receipt_number || `#${rec.id}`}
                       </span>
                       <span className="rounded bg-v2-raised px-2 py-0.5 text-xs text-v2-muted font-medium">
-                        Profile: {rec.profile_key || 'Unknown'}
+                        Saved by: {rec.profile_key || 'Unknown'}
                       </span>
                     </div>
                     <div className="text-xs text-v2-muted">

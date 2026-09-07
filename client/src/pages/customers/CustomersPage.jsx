@@ -10,7 +10,9 @@ import { usePrintList } from '../shared/usePrintList';
 import { customerListHtml } from '../shared/listPrintTemplate';
 import { customerListEscPos } from '../shared/listEscPos';
 import { customerTypeBadge, customerTypeLabel } from '../../utils/customerTypes';
-import { listRecords, subscribeOutbox } from '../../offline/index.js';
+import { subscribeOutbox, queuedCustomersFromOutbox, pendingCustomerEditIds } from '../../offline/index.js';
+import { getCachedCustomers, getCachedEntity } from '../../offline/catalogue.js';
+import { customerMatches } from '../../utils/customerSearch';
 
 
 export default function CustomersPage() {
@@ -23,9 +25,13 @@ export default function CustomersPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
+  const [menuOpen, setMenuOpen]         = useState(false);
   // G29 — customers quick-created offline (OrderCreateModal), still queued in the
   // outbox and not yet visible to the server's own /customers list.
   const [queuedCustomers, setQueuedCustomers] = useState([]);
+  // G7 — an existing customer carrying an undrained offline EDIT, mirroring
+  // InventoryPage.jsx's pendingEditIds for products.
+  const [pendingEditIds, setPendingEditIds] = useState(() => new Set());
 
   // Debounce search so we don't fire on every keystroke
   useEffect(() => {
@@ -33,6 +39,9 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
+  // customers (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
+  // from; this page just never asked for it, so a blind tablet showed a blank table.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
     const params = new URLSearchParams();
@@ -41,7 +50,16 @@ export default function CustomersPage() {
 
     api.get(`/customers?${params}`)
       .then(setCustomers)
-      .catch(() => addToast('Failed to load customers', 'error'))
+      .catch(async () => {
+        const cached = showInactive ? await getCachedEntity('customers') : await getCachedCustomers();
+        if (cached.length === 0) {
+          addToast('Offline and this device has no customer directory yet — connect once to set it up.', 'error');
+          return;
+        }
+        setCustomers(debouncedSearch.trim()
+          ? cached.filter((c) => customerMatches(c, debouncedSearch))
+          : cached);
+      })
       .finally(() => {
         if (!silent) setLoading(false);
       });
@@ -54,23 +72,12 @@ export default function CustomersPage() {
   // disappears the moment its queued POST /customers actually drains — no page
   // reload, no spinner, matching the same silent-refresh spirit as G27.
   const loadQueuedCustomers = useCallback(async () => {
-    try {
-      const records = await listRecords();
-      const queued = records
-        .filter((r) => r.entity_type === 'customer' && r.status === 'queued')
-        .map((r) => ({
-          id: `local-${r.id}`,
-          name: r.payload?.name || 'Customer',
-          customer_type: r.payload?.customer_type || 'regular',
-          phone: r.payload?.phone || null,
-          address: r.payload?.address || null,
-          is_active: true,
-          _unsynced: true,
-        }));
-      setQueuedCustomers(queued);
-    } catch {
-      // Best-effort only — a local listing failure here should not block the page.
-    }
+    const [created, editIds] = await Promise.all([
+      queuedCustomersFromOutbox(),
+      pendingCustomerEditIds(),
+    ]);
+    setQueuedCustomers(created);
+    setPendingEditIds(editIds);
   }, []);
 
   useEffect(() => {
@@ -98,15 +105,53 @@ export default function CustomersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={handlePrintList} loading={printing} disabled={customers.length === 0}>
+          {/* Phone width: Print List collapses into a "⋮" overflow menu. */}
+          <div className="relative lg:hidden">
+            <button
+              type="button"
+              aria-label="More actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+              className="flex items-center justify-center w-12 h-12 rounded-lg border border-slate-300
+                         bg-white text-xl text-slate-700
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <div role="menu" className="absolute left-0 z-30 mt-1 w-56 rounded-lg border border-slate-200
+                                          bg-white shadow-lg py-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={customers.length === 0}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setMenuOpen(false); handlePrintList(); }}
+                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
+                             disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  🖶 Print List
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Tablet: full button, unchanged. */}
+          <Button
+            variant="secondary" onClick={handlePrintList} loading={printing} disabled={customers.length === 0}
+            className="hidden lg:inline-flex"
+          >
             🖶 Print List
           </Button>
+
           <Button onClick={() => setCreating(true)}>+ Add Customer</Button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="flex flex-row gap-3 mb-6">
         <input
           type="search"
           placeholder="Search by name or phone…"
@@ -115,8 +160,26 @@ export default function CustomersPage() {
           className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                      focus:outline-none focus:ring-2 focus:ring-blue-600"
           aria-label="Search customers"
+          data-testid="customers-search-input"
         />
-        <label className="flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
+        {/* Phone width: compact inline switch beside the search bar. */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showInactive}
+          onClick={() => setShowInactive((v) => !v)}
+          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
+                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        >
+          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
+          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
+                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
+                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
+          </span>
+        </button>
+        {/* Tablet: original box, unchanged. */}
+        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
                           bg-white cursor-pointer select-none">
           <input
             type="checkbox" checked={showInactive}
@@ -135,8 +198,53 @@ export default function CustomersPage() {
           {search ? 'No customers match your search.' : 'No customers yet. Add one to get started.'}
         </p>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-base">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="customers-list">
+          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {displayCustomers.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => {
+                  if (c._unsynced) {
+                    addToast('Customer is queued for sync — details and editing will be available once connected.', 'info');
+                    return;
+                  }
+                  setSelectedId(c.id);
+                }}
+                data-testid="customers-row"
+                className="p-4 active:bg-blue-50 cursor-pointer"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className={`font-semibold truncate ${c.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                      {c.name}
+                    </p>
+                    <p className="text-sm text-slate-500 mt-0.5">{c.phone ?? '—'}</p>
+                  </div>
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
+                    {customerTypeLabel(c.customer_type)}
+                  </span>
+                </div>
+                <div className="mt-2">
+                  {(c._unsynced || pendingEditIds.has(String(c.id))) ? (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      ⏳ Waiting to sync
+                    </span>
+                  ) : c.is_active ? (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
+                      Active
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                      Inactive
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-5 py-3 font-semibold">Name</th>
@@ -160,6 +268,7 @@ export default function CustomersPage() {
                     }
                     setSelectedId(c.id);
                   }}
+                  data-testid="customers-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-4">
@@ -179,7 +288,7 @@ export default function CustomersPage() {
                     <span className="block max-w-[220px] truncate">{c.address ?? '—'}</span>
                   </td>
                   <td className="px-5 py-4">
-                    {c._unsynced ? (
+                    {(c._unsynced || pendingEditIds.has(String(c.id))) ? (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
                         ⏳ Waiting to sync
                       </span>

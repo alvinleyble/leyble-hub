@@ -15,8 +15,7 @@ REST API under **`/api/v1`**. JSON in, JSON out. Source: `server/src/routes/`.
 |---|---|---|---|
 | POST | `/auth/login` | — | Body `{ email, password }`. Web: sets HTTP-only cookie. Native: returns `{ token, user }` to store as Bearer. |
 | POST | `/auth/logout` | — | Clears the cookie; native client drops its stored token. |
-| GET | `/auth/me` | ✔ | Current user (reflects the active profile if `X-Active-Profile` is set). |
-| GET | `/auth/profiles` | ✔ | `[{ profile_key, full_name }]` — options for the Josie/Luis/Admin picker. |
+| GET | `/auth/me` | ✔ | Current user — whoever the JWT was issued to. |
 
 ## Products — `products.js`
 | Method | Path | Notes |

@@ -48,13 +48,20 @@ cd client && npm run dev
 ```
 
 Open **http://localhost:5173** (Vite dev-proxies `/api` → `http://localhost:3000`).
-Login: single shared account `josie@leyblestore.com` / *(`JOSIE_PASSWORD`, default `leyble123`)* —
-run `node server/db/setup-profiles.js` once after seeding to set this password and wire up the
-Josie/Luis/Admin profile picker (see [ARCHITECTURE.md#authentication-flow](../architecture/ARCHITECTURE.md#authentication-flow)).
+Login: one account per person — `alvin@leyblestore.com`, `josie@leyblestore.com` or
+`luis@leyblestore.com`, all on the same password *(`ACCOUNT_PASSWORD`, default `leyble123`)*.
+Run `node server/db/setup-accounts.js` once after seeding to activate the three (see
+[ARCHITECTURE.md#authentication-flow](../architecture/ARCHITECTURE.md#authentication-flow)).
+There is no profile picker — signing in lands straight on the Dashboard.
 
 ## Database Environments & Isolation
 
 A dedicated **development database** (Supabase PostgreSQL, full replica of production) was provisioned on 2026-08-25. See [development-database.md](development-database.md) for full operational policy.
+
+**"Staging" and "dev/test" name the same database** — the captain calls it "staging", these docs
+call it "dev/test" or "development"; there is no separate staging environment. Project refs:
+production `prauvokvlhptvkadvfqq` (Sydney), development/staging/dev-test `yzopwoquzfnyqdmuookw`
+(Tokyo).
 
 > **The Supabase project already wired into `server/.env` (ref `yzopwoquzfnyqdmuookw`) IS the
 > standing dev/test database.** Captain-confirmed 2026-08-26 — "we've been using this." Do not
@@ -71,7 +78,7 @@ A dedicated **development database** (Supabase PostgreSQL, full replica of produ
 
 - **Isolation Rule:** Local development points at the development database; **local development must NEVER point at the production database.** (Connecting local dev to production was how test orders and exploratory customer tagging reached live data in the past.)
 - **Configuration (`server/.env`):** `DATABASE_URL` is configured to the development database connection string. The production connection string is kept in `server/.env` under a disabled variable name (`PROD_DATABASE_URL_DISABLED`); switching environments requires deliberately swapping variable names.
-- **Regional Latency:** The development database is hosted in Tokyo (`ap-northeast-1`), while production is in Sydney (`ap-southeast-2`). Queries from the Philippines against the dev database will be measurably slower due to network latency; this is expected and affects only local dev.
+- **Regional Latency:** The development database (ref `yzopwoquzfnyqdmuookw`) is hosted in Tokyo (`ap-northeast-1`), while production (ref `prauvokvlhptvkadvfqq`) is in Sydney (`ap-southeast-2`). Queries from the Philippines against the dev database will be measurably slower due to network latency; this is expected and affects only local dev.
 - **Migration Rehearsal:** The development database is the rehearsal stage where all migrations (`031`, `032`, `033`) are tested and verified before deployment to production.
 
 ## Environment variables (backend)
@@ -87,7 +94,7 @@ A dedicated **development database** (Supabase PostgreSQL, full replica of produ
 | `SEED_ADMIN_EMAIL` | No | Admin email for seed, default `admin@leyblevhub.local` |
 | `SEED_ADMIN_PASSWORD` | Yes | Admin password created by `node db/seed.js` |
 | `SEED_ADMIN_NAME` | No | Admin display name, default `Admin` |
-| `JOSIE_PASSWORD` | No | Login password for the shared account, used by `node db/setup-profiles.js`, default `leyble123` |
+| `ACCOUNT_PASSWORD` | No | Password written to the re-activated Alvin/Luis accounts by `node db/setup-accounts.js`, default `leyble123` |
 
 ## Migrations
 
@@ -97,4 +104,16 @@ cd server && node db/migrate.js   # run all pending migrations
 Migrations live in `server/db/migrations/NNN_name.sql` and are tracked in a `_migrations` table.
 **Never modify an applied migration — add a new numbered file.** Schema details:
 [../architecture/DATABASE.md](../architecture/DATABASE.md).
+
+## Android Emulator Local Connectivity
+
+When running the Android debug APK in an Android emulator against your local Express backend:
+- **Emulator Host Loopback:** Android emulators access the host development machine via `http://10.0.2.2:3000` (port 3000 is the local Express server).
+- **Vite Build Override:** Because `vite build` executes in production mode, `client/.env.production`'s `VITE_API_URL` outranks `client/.env.local`. Pass `VITE_API_URL` explicitly on the command line when building/syncing the web bundle:
+  ```bash
+  cd client && VITE_API_URL=http://10.0.2.2:3000 npm run android:sync
+  ```
+- **CORS Setup:** Ensure `DEV_CORS_EXTRA_ORIGINS` in `server/.env` includes `http://localhost` (the debug APK's WebView origin).
+- For complete emulator workflow and on-device test instructions, see [e2e/appium/README.md](../../e2e/appium/README.md).
+
 

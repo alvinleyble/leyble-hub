@@ -1,7 +1,8 @@
 # The Receipt Number is the Anti-Duplicate Key for a Resent Record
 
-**Status:** Settled (2026-08-23)  
+**Status:** Settled (2026-08-23); revised 2026-09-03 by [ADR 0017](0017-receipt-numbers-keyed-to-user-accounts.md) on one point only - which value is the retry key  
 **Origin:** Captain decision D13 (2026-08-23)  
+**Revised by:** [ADR 0017: Receipt Numbers Keyed to User Accounts](0017-receipt-numbers-keyed-to-user-accounts.md). Option B below (a separate client-generated key per request) is now **accepted**, so the receipt number stops being the anti-duplicate key. Everything else in this ADR stands: the decomposed storage and generated display column (#2), the partial unique index and `CHECK` (#3), a second arrival answered as a success rather than a `409` (#4, #5), and the table-agnostic mechanism in `server/src/lib/idempotency.js` (#6) all remain in force, now protecting whichever value carries the retry key.  
 **See also:** [docs/product/proposals/v2-5-offline-accessibility.md](../product/proposals/v2-5-offline-accessibility.md), [ADR 0003](0003-device-issued-receipt-numbers.md), [ADR 0004](0004-local-first-pos.md), [docs/architecture/DATABASE.md](../architecture/DATABASE.md)
 
 ## Context
@@ -28,7 +29,7 @@ The receipt number is the record's identity on the server, and therefore its ant
 ## Considered Options
 
 - **Option A: The Receipt Number as the Key (Chosen)** — The device already generates a value that is unique, stable across retries, and meaningful to a human reading the paper. Reusing it costs one column pair and one index, adds no new concept for the owners, and makes the resend rule legible in the database itself.
-- **Option B: A Separate Client-Generated UUID per Request (Rejected)** — A second identifier alongside the receipt number, serving only the retry logic. Rejected as a duplicate of a key that already exists: two identities for one record invites them to disagree, and a UUID means nothing to anyone reading a row or a receipt.
+- **Option B: A Separate Client-Generated UUID per Request (Rejected here; ACCEPTED by [ADR 0017](0017-receipt-numbers-keyed-to-user-accounts.md) #9)** — A second identifier alongside the receipt number, serving only the retry logic. Rejected at the time as a duplicate of a key that already exists: two identities for one record invites them to disagree, and a UUID means nothing to anyone reading a row or a receipt. ADR 0017 overturns both halves of that: an idempotency key and a receipt number are not two identities for one thing (one labels the *sale*, the other labels the *attempt to send it*), and a retry key is not read by humans. The deciding factor is the blast radius of a duplicated receipt number - coupled, the second sale is silently answered with the first sale's stored order and vanishes; decoupled, it is merely two orders sharing a label.
 - **Option C: Answer a Duplicate With `409 Conflict` (Rejected)** — Technically the more conventional status. Rejected because the device needs a *success* to clear the record from its outbox: an error response leaves it retrying forever an order the server already has, which is the stuck state this ADR exists to prevent. The response has to tell the device the truth — the receipt is safely stored — and a conflict does not say that.
 - **Option D: Server-Side Dedupe by Content Hash (Rejected)** — Match on customer, items, total and timestamp. Rejected because two genuinely separate sales of the same goods to the same customer in the same minute are ordinary in this shop, and would be silently collapsed into one.
 

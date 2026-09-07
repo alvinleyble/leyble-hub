@@ -2,7 +2,7 @@
 //
 // Three things are load-bearing here and nothing else in the release can compensate
 // for getting them wrong: station numbers never repeat (D1), a resent receipt number
-// never becomes a second order (D13), and a drained record is attributed to the profile
+// never becomes a second order (D13), and a drained record is attributed to the account
 // that made it rather than the one draining it (D14). Plus the device's sale time (D5).
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,19 +24,22 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
   let baseUrl;
   let authToken;
   let adminUserId;
+
+  const tokenFor = (user) => jwt.sign(
+    { id: user.id, email: user.email, role: user.role, full_name: user.full_name },
+    process.env.JWT_SECRET
+  );
+
   let customerId;
   let productId;
   const deviceKeys = [];
 
   before(async () => {
     const { rows: [admin] } = await db.query(
-      `SELECT id, email, full_name, role FROM users WHERE profile_key = 'admin' LIMIT 1`
+      `SELECT id, email, full_name, role FROM users WHERE email = 'alvin@leyblestore.com' LIMIT 1`
     );
     adminUserId = admin.id;
-    authToken = jwt.sign(
-      { id: admin.id, email: admin.email, role: admin.role, full_name: admin.full_name },
-      process.env.JWT_SECRET
-    );
+    authToken = tokenFor(admin);
 
     const { rows: [customer] } = await db.query(
       `INSERT INTO customers (name, customer_type) VALUES ('TEST_V25_CUSTOMER', 'regular') RETURNING id`
@@ -81,16 +84,25 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     }
   });
 
-  function call(path, { profile, ...options } = {}) {
+  // ADR 0017 §5 — identity is the JWT and nothing else; there is no `X-Active-Profile`
+  // header to swap it. `as` takes a token minted for a different account, which is how a
+  // request made by Luis is expressed now that Luis has his own login.
+  function call(path, { as, ...options } = {}) {
     return fetch(`${baseUrl}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-        ...(profile ? { 'X-Active-Profile': profile } : {}),
+        Authorization: `Bearer ${as || authToken}`,
         ...(options.headers || {}),
       },
     });
+  }
+
+  async function accountToken(email) {
+    const { rows: [user] } = await db.query(
+      `SELECT id, email, full_name, role FROM users WHERE email = $1 LIMIT 1`, [email]
+    );
+    return { id: user.id, token: tokenFor(user) };
   }
 
   function newDeviceKey(tag) {
@@ -99,59 +111,83 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     return key;
   }
 
+  // Tests vary their SEQUENCE rather than their person number to stay unique across
+  // re-runs against a reused database. `testReceipt` issues the pre-letter format on
+  // purpose — this suite is what pins that a tablet which has NOT been updated is still
+  // served (ADR 0014's ADR-0017 switchover ordering); the letter format is covered in
+  // v3-s17-both-receipt-formats.test.js.
+  let sequenceSeed = Date.now() % 80000;
+  const testReceipt = (person = 1) => `${person}-${String(++sequenceSeed).padStart(5, '0')}`;
+
   const orderBody = (over = {}) => ({
     customer_id: customerId,
     items: [{ product_id: productId, quantity: 1, unit_price: 100 }],
     ...over,
   });
 
-  // ── D1: station registration ──────────────────────────────────────────────
+  // ── D1 / ADR 0017: device registration ────────────────────────────────────
+  //
+  // ADR 0016's three fixed slots are gone with the rest of the slot concept
+  // (ADR 0017 #3), and so are the cases that pinned them: the roster, the
+  // assignment endpoint, and the reserve gap a replacement tablet was seeded past.
+  // What has to keep holding is what was never about slots — registration is
+  // idempotent on device_key, it refuses a request without one, and the leading
+  // component of a receipt number is validated as a PERSON rather than capped at
+  // three. The letter allocation itself lives in v3-s4-device-letters.test.js.
 
-  describe('D1 — station registration', () => {
-    it('hands a device its own station number, and a second device a different one', async () => {
-      const a = await (await call('/stations/register', {
-        method: 'POST', body: JSON.stringify({ device_key: newDeviceKey('A'), label: 'Honor Pad X8B' }),
-      })).json();
-      const b = await (await call('/stations/register', {
-        method: 'POST', body: JSON.stringify({ device_key: newDeviceKey('B') }),
-      })).json();
+  describe('ADR 0017 — device registration', () => {
+    const register = (key) => call('/stations/register', {
+      method: 'POST', body: JSON.stringify({ device_key: key }),
+    }).then((r) => r.json());
 
-      assert.ok(Number.isInteger(a.station_number));
-      assert.ok(Number.isInteger(b.station_number));
-      assert.notEqual(a.station_number, b.station_number);
-      assert.equal(a.created, true);
-      assert.equal(b.created, true);
-    });
-
-    it('is idempotent on device_key — a retried registration does not claim a second number', async () => {
-      const key = newDeviceKey('RETRY');
-      const first = await (await call('/stations/register', {
-        method: 'POST', body: JSON.stringify({ device_key: key }),
-      })).json();
-      const second = await (await call('/stations/register', {
-        method: 'POST', body: JSON.stringify({ device_key: key }),
-      })).json();
-
-      assert.equal(second.station_number, first.station_number);
+    it('is idempotent on device_key — a retried registration is not a second device', async () => {
+      const key = newDeviceKey('REG_RETRY');
+      const first = await register(key);
+      const second = await register(key);
+      assert.equal(first.created, true);
       assert.equal(second.created, false);
+      assert.equal(second.device_key, first.device_key);
+
+      const { rows } = await db.query('SELECT id FROM stations WHERE device_key = $1', [key]);
+      assert.equal(rows.length, 1);
     });
 
-    it('a wiped device gets a NEW number rather than reclaiming its old one', async () => {
-      const before = await (await call('/stations/register', {
-        method: 'POST', body: JSON.stringify({ device_key: newDeviceKey('WIPE_BEFORE') }),
-      })).json();
-      // A wipe loses the stored device_key, so the reinstall registers as a stranger.
-      const after = await (await call('/stations/register', {
-        method: 'POST', body: JSON.stringify({ device_key: newDeviceKey('WIPE_AFTER') }),
-      })).json();
+    it('answers no slot fields at all — nothing hands a number to hardware any more', async () => {
+      const body = await register(newDeviceKey('REG_NO_SLOTS'));
+      for (const gone of ['slot_number', 'station_number', 'owner_name', 'unassigned',
+                          'next_sequence', 'next_delivery_sequence']) {
+        assert.ok(!(gone in body), `${gone} is part of the removed slot concept`);
+      }
+    });
 
-      assert.notEqual(after.station_number, before.station_number);
-      assert.ok(after.station_number > before.station_number, 'numbers only creep upward');
+    it('has no roster and no slot-assignment endpoint left to call', async () => {
+      assert.equal((await call('/stations')).status, 404);
+      assert.equal((await call('/stations/slots/1/assign', {
+        method: 'POST', body: JSON.stringify({ device_key: 'anything' }),
+      })).status, 404);
     });
 
     it('refuses a registration with no device_key', async () => {
       const res = await call('/stations/register', { method: 'POST', body: JSON.stringify({}) });
       assert.equal(res.status, 400);
+    });
+
+    // ADR 0017 supersedes the cap ADR 0016 imposed. The leading component is now a
+    // PERSON, not a device slot, and a new hire takes the next number — so refusing
+    // anything above 3 would reject a fourth person's very first sale. What
+    // assertIssuableStation still refuses is a value that cannot be a person at all.
+    it('accepts a receipt number from a person above 3, and still refuses a nonsense one', async () => {
+      const ok = await call('/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderBody({ receipt_number: `8-${String(++sequenceSeed).padStart(5, '0')}` })),
+      });
+      assert.equal(ok.status, 201, 'a fourth person must not be rejected at POST /orders');
+
+      const bad = await call('/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderBody({ receipt_number: `0-${String(++sequenceSeed).padStart(5, '0')}` })),
+      });
+      assert.equal(bad.status, 400);
     });
   });
 
@@ -159,16 +195,16 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
 
   describe('D13 — resending a receipt number', () => {
     it('stores the device-issued number and returns it on the order', async () => {
-      const receipt = `9-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(3);
       const res = await call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt })) });
       assert.equal(res.status, 201);
       const order = await res.json();
       assert.equal(order.receipt_number, receipt);
-      assert.equal(order.receipt_station, 9);
+      assert.equal(order.receipt_station, 3);
     });
 
     it('a second arrival of the same number is a SUCCESS and leaves exactly one row', async () => {
-      const receipt = `8-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(2);
 
       const first = await call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt })) });
       assert.equal(first.status, 201);
@@ -183,13 +219,13 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
 
       const { rows } = await db.query(
         'SELECT id FROM orders WHERE receipt_station = $1 AND receipt_sequence = $2',
-        [8, Number(receipt.split('-')[1])]
+        [Number(receipt.split('-')[0]), Number(receipt.split('-')[1])]
       );
       assert.equal(rows.length, 1, 'exactly one order row');
     });
 
     it('a resend does not deduct stock a second time', async () => {
-      const receipt = `7-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(1);
       const stock = async () =>
         Number((await db.query('SELECT current_stock FROM products WHERE id = $1', [productId])).rows[0].current_stock);
       const before = await stock();
@@ -209,7 +245,7 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     });
 
     it('two overlapping drains of the same number still leave one row', async () => {
-      const receipt = `6-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(2);
       const [a, b] = await Promise.all([
         call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt })) }),
         call('/orders', { method: 'POST', body: JSON.stringify(orderBody({ receipt_number: receipt })) }),
@@ -221,13 +257,13 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
 
       const { rows } = await db.query(
         'SELECT id FROM orders WHERE receipt_station = $1 AND receipt_sequence = $2',
-        [6, Number(receipt.split('-')[1])]
+        [Number(receipt.split('-')[0]), Number(receipt.split('-')[1])]
       );
       assert.equal(rows.length, 1);
     });
 
     it('a parked order carries the same protection — it is an orders row too', async () => {
-      const receipt = `5-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(3);
       const body = orderBody({ receipt_number: receipt, status: 'draft' });
       const first = await call('/orders', { method: 'POST', body: JSON.stringify(body) });
       const second = await call('/orders', { method: 'POST', body: JSON.stringify(body) });
@@ -258,7 +294,7 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       const saleTime = '2026-08-18T02:30:00.000Z'; // a Tuesday, days before this drain
       const res = await call('/orders', {
         method: 'POST',
-        body: JSON.stringify(orderBody({ receipt_number: `4-${String(Date.now() % 90000 + 1).padStart(5, '0')}`, created_at: saleTime })),
+        body: JSON.stringify(orderBody({ receipt_number: testReceipt(1), created_at: saleTime })),
       });
       const order = await res.json();
       assert.equal(new Date(order.created_at).toISOString(), saleTime);
@@ -271,18 +307,18 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     });
   });
 
-  // ── D14: attribution follows the record, not the drain ────────────────────
+  // ── D14: attribution follows the signing-in account ───────────────────────
 
-  describe('D14 — per-record profile attribution', () => {
-    it('credits the profile sent with the record, in the activity log and the stock movement', async () => {
-      const { rows: [luis] } = await db.query(`SELECT id FROM users WHERE profile_key = 'luis'`);
-      const receipt = `3-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+  describe('D14 — attribution follows the account that made the request', () => {
+    it('credits the signed-in account, in the activity log and the stock movement', async () => {
+      const luis = await accountToken('luis@leyblestore.com');
+      const receipt = testReceipt(3);
 
-      // The drain replays Luis's Tuesday receipt. The tablet is signed in on the shared
-      // account (JWT above) and could be sitting on any profile; the header is what
-      // decides, and the outbox takes it from the record.
+      // Luis's Tuesday receipt, drained under Luis's own account. Before ADR 0017 the
+      // tablet was signed in on a shared login and an `X-Active-Profile` header decided
+      // who got the credit; now the JWT is the only thing that says so.
       const res = await call('/orders', {
-        method: 'POST', profile: 'luis',
+        method: 'POST', as: luis.token,
         body: JSON.stringify(orderBody({ receipt_number: receipt })),
       });
       const order = await res.json();
@@ -296,9 +332,9 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.match(activity.summary, new RegExp(receipt), 'and names the order by its receipt number');
 
       // The stock movement is a separate, later act (ADR 0012 — deduct at dispatch), and it
-      // is credited to whoever dispatches, replayed the same way through the header.
+      // is credited to whoever dispatches, on the same account basis.
       await call(`/orders/${receipt}/status`, {
-        method: 'POST', profile: 'luis', body: JSON.stringify({ status: 'in_transit' }),
+        method: 'POST', as: luis.token, body: JSON.stringify({ status: 'in_transit' }),
       });
       const { rows: [movement] } = await db.query(
         `SELECT performed_by FROM inventory_audit_logs WHERE related_order_id = $1 ORDER BY id DESC LIMIT 1`,
@@ -308,18 +344,16 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
       assert.notEqual(movement.performed_by, adminUserId);
     });
 
-    it('two records drained back to back keep their own profiles', async () => {
-      const { rows: [josie] } = await db.query(`SELECT id FROM users WHERE profile_key = 'josie'`);
-      const { rows: [luis] } = await db.query(`SELECT id FROM users WHERE profile_key = 'luis'`);
-      const stamp = Date.now() % 80000;
-
+    it('two records drained back to back keep their own authors', async () => {
+      const josie = await accountToken('josie@leyblestore.com');
+      const luis = await accountToken('luis@leyblestore.com');
       const one = await (await call('/orders', {
-        method: 'POST', profile: 'josie',
-        body: JSON.stringify(orderBody({ receipt_number: `2-${String(stamp + 1).padStart(5, '0')}` })),
+        method: 'POST', as: josie.token,
+        body: JSON.stringify(orderBody({ receipt_number: testReceipt(2) })),
       })).json();
       const two = await (await call('/orders', {
-        method: 'POST', profile: 'luis',
-        body: JSON.stringify(orderBody({ receipt_number: `2-${String(stamp + 2).padStart(5, '0')}` })),
+        method: 'POST', as: luis.token,
+        body: JSON.stringify(orderBody({ receipt_number: testReceipt(2) })),
       })).json();
 
       const { rows } = await db.query(
@@ -337,7 +371,7 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
 
   describe('Piece 2 — atomic adjustment and resolveOrderId by receipt number', () => {
     it('POST /orders accepts adjustment and adjustment_reason atomically', async () => {
-      const receipt = `1-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(1);
       const res = await call('/orders', {
         method: 'POST',
         body: JSON.stringify(orderBody({
@@ -354,7 +388,7 @@ describe('V2.5 offline foundations — stations, receipt numbers, resend, attrib
     });
 
     it('GET, PATCH, receipt-printed, and status routes accept receipt number in :id parameter', async () => {
-      const receipt = `1-${String(Date.now() % 90000 + 1).padStart(5, '0')}`;
+      const receipt = testReceipt(1);
       const createdRes = await call('/orders', {
         method: 'POST',
         body: JSON.stringify(orderBody({ receipt_number: receipt })),

@@ -1,7 +1,7 @@
 import { issueReceiptNumber } from './station.js';
 import { putReceipt, getReceipt, removeReceipt } from './receiptHistory.js';
 import { enqueue, drainOutbox, listRecords, ref, queueOrderDeletion } from './outbox.js';
-import { outboxKey } from './keys.js';
+import { outboxKey, SESSION_KEY } from './keys.js';
 import { nativeStore } from './nativeStore.js';
 import { api } from '../api/client.js';
 import { orderTotals } from '../components/pos/posMath.js';
@@ -17,6 +17,20 @@ import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
 // 30-day receipt history (D9), and enqueues the record for the outbox to drain (D13/D14).
 // It does NOT wait for the server.
 
+// The signed-in account's display name, straight out of the session AuthContext wrote
+// (client/src/offline/keys.js SESSION_KEY: `{ id, email, full_name, role }`). Same
+// store, no React. Returns null rather than throwing — an unnamed receipt is a smaller
+// problem than a save that fails.
+async function storedSellerName() {
+  try {
+    const session = await nativeStore.getJson(SESSION_KEY);
+    const name = session?.full_name;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Saves an order locally on the device (D2).
  *
@@ -27,6 +41,7 @@ import { isDraftUnsynced, discardLocalDraft } from './parkedOrders.js';
  * @param {object} params.adjustment { value, reason }
  * @param {Array}  params.items
  * @param {string} [params.profileKey]
+ * @param {string} [params.soldByName] ADR 0017 #10 — overrides the stored session's name
  * @param {string} [params.createdAt]
  * @param {Function} [params.addToast]
  * @returns {Promise<object>} The local order object
@@ -39,16 +54,29 @@ export async function saveOrderLocalFirst({
   items = [],
   personnel = [],
   profileKey = null,
+  soldByName = null,
   createdAt = null,
   addToast = null,
   offlineCoreEnabled = V25_OFFLINE_CORE,
 }) {
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('saveOrderLocalFirst: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('saveOrderLocalFirst: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
-  const { receipt_number, station, sequence } = await issueReceiptNumber();
+  // ADR 0017 #10 — the seller's name in words, for the receipt's `Sold by:` line.
+  // The server stamps `orders.created_by` when the record drains, but the paper comes
+  // out HERE, seconds after Save and possibly days before the line is back, so the
+  // name has to be in the local snapshot too.
+  //
+  // Sourced from the stored session rather than from a React context on purpose: this
+  // module is the offline core and must not pull AuthContext (and React) into its
+  // import graph, and every screen that saves would otherwise have to remember to pass
+  // it. `soldByName` stays as an override for a caller that already holds the user,
+  // and for tests. Never fails a save over a missing name.
+  const seller = soldByName || (await storedSellerName());
+
+  const { receipt_number, station, device, sequence } = await issueReceiptNumber();
   const saleTime = createdAt || new Date().toISOString();
   const adjVal = Number(adjustment?.value) || 0;
   const adjReason = adjVal !== 0 && adjustment?.reason ? String(adjustment.reason).trim() : null;
@@ -71,7 +99,12 @@ export async function saveOrderLocalFirst({
   const localOrder = {
     receipt_number,
     receipt_station: station,
+    // ADR 0017 — the device letter, null on a device still carrying a pre-letter
+    // number. Kept decomposed here so a locally-held order and the server row it becomes
+    // have the same shape; only `receipt_number` itself ever goes on the wire.
+    receipt_device: device ?? null,
     receipt_sequence: sequence,
+    sold_by_name: seller,
     created_at: saleTime,
     status: 'pending',
     customer_id: localCustomerId,
@@ -205,7 +238,7 @@ export async function cleanupOrphanedDraft({ draftRef, profileKey = null } = {})
   if (draftRef === null || draftRef === undefined || draftRef === '') return;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('cleanupOrphanedDraft: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('cleanupOrphanedDraft: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   if (typeof draftRef === 'string' && (await isDraftUnsynced(draftRef))) {
@@ -232,7 +265,7 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
   if (!order) return null;
   const activeProfileKey = profileKey || (await api.getActiveProfile());
   if (!activeProfileKey) {
-    throw new Error('queueReceiptPrinted: profileKey is required — capture the profile at Save (D14)');
+    throw new Error('queueReceiptPrinted: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
   const printedAt = new Date().toISOString();
@@ -348,6 +381,87 @@ export async function updateLocalOrder({ order, items, notes, adjustment, person
   drainOutbox()
     .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
     .catch(() => {});
+  return updatedOrder;
+}
+
+// ADR 0015 §5 — the fulfillment lifecycle for an order that is still only ours.
+//
+// `pending → in_transit` (dispatch a delivery) and `→ completed` (deliver it, or hand
+// over a pickup) may happen offline for an order THIS tablet created and has not yet
+// synced. There is no multi-device conflict to have: no other tablet in the store has
+// ever heard of the order, so nothing can be racing us. During a multi-day outage
+// orders are taken, loaded onto the truck, dispatched and delivered on the same day,
+// and freezing them all at "Pending" on the counter screen makes the screen a lie.
+//
+// The moment an order has synced this stops: it is visible to every other tablet and
+// it moves central stock, and replaying conflicting transitions from disconnected
+// devices is what corrupts the inventory ledger (ADR 0005 / ADR 0012). Settlement
+// (`/close`, returned bottles) stays online-only for the same reason, unconditionally.
+export const OFFLINE_TRANSITIONS = {
+  pending:    ['in_transit', 'completed'],
+  in_transit: ['completed'],
+};
+
+export function canTransitionOffline(fromStatus, toStatus) {
+  return (OFFLINE_TRANSITIONS[fromStatus] || []).includes(toStatus);
+}
+
+/**
+ * Advances an unsynced local order's status on the device, and queues the same
+ * transition for the server behind the order's own creation record.
+ *
+ * The transition is a SEPARATE outbox record rather than a mutation of the queued
+ * `POST /orders` payload, because `POST /orders` cannot express it: the server creates
+ * every non-draft order as `pending` by design, and stock deducts on the dispatch
+ * transition, not at save (ADR 0012). Queuing `POST /orders/<receipt>/status` keeps
+ * both facts true — the order arrives as it was taken, then moves, and the stock
+ * movement lands with the transition exactly as it would have online.
+ *
+ * @returns {Promise<object>} the updated local order
+ */
+export async function transitionLocalOrder({ order, newStatus, profileKey = null }) {
+  if (!order?.receipt_number) throw new Error('transitionLocalOrder requires receipt_number');
+  if (!canTransitionOffline(order.status, newStatus)) {
+    throw new Error(`Offline transition ${order.status} → ${newStatus} is not allowed`);
+  }
+
+  const activeProfileKey = profileKey || (await api.getActiveProfile());
+  if (!activeProfileKey) {
+    throw new Error('transitionLocalOrder: profileKey is required — capture the signed-in account at Save (D14)');
+  }
+
+  const records = await listRecords();
+  const orderRecord = records.find(
+    (r) => r.entity_type === 'order' && r.receipt_number === order.receipt_number && r.status === 'queued'
+  );
+  if (!orderRecord) {
+    // Already drained while this screen was open — the order is shared state now, so
+    // its caller must fall back to the ordinary online transition.
+    throw new Error('Order is not queued in the outbox');
+  }
+
+  const at = new Date().toISOString();
+  const updatedOrder = {
+    ...order,
+    status: newStatus,
+    ...(newStatus === 'in_transit' ? { dispatched_at: at } : {}),
+    ...(newStatus === 'completed' ? { delivered_at: at } : {}),
+  };
+  await putReceipt(updatedOrder);
+
+  await enqueue({
+    entityType: 'order_status',
+    endpoint: `/orders/${order.receipt_number}/status`,
+    method: 'POST',
+    payload: { status: newStatus },
+    profileKey: activeProfileKey,
+    dependsOn: [orderRecord.id],
+  });
+
+  drainOutbox()
+    .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
+    .catch(() => {});
+
   return updatedOrder;
 }
 

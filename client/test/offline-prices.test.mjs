@@ -83,9 +83,9 @@ let priceRows; // '<customerId>:<order_type>' -> rows
 
 function installApi() {
   api.get = async (path) => {
-    if (path === '/customers') return customers;
-    if (path === '/products') return products;
-    if (path === '/personnel') return [];
+    if (path.startsWith('/customers?') || path === '/customers') return customers;
+    if (path.startsWith('/products')) return products;
+    if (path.startsWith('/personnel')) return [];
     const m = path.match(/^\/customers\/(\d+)\/prices\?order_type=(\w+)$/);
     if (m) {
       if (!pricesReachable) throw new Error('Failed to fetch');

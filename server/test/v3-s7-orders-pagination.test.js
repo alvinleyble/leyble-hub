@@ -111,7 +111,6 @@ describe('V3.0 Slice 7: Orders List Pagination & Date Boundary Fix', () => {
     const res = await fetch(`${baseUrl}${path}`, {
       headers: {
         'Authorization': `Bearer ${authToken}`,
-        'X-Active-Profile': 'admin',
       },
     });
     const body = await res.json();
