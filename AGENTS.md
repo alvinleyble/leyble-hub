@@ -103,6 +103,18 @@ than treating a passing run as "all correct".
   the Driver/Helper picker UI from order creation (no viewport shows it any more — a settled
   product decision, not a bug); `OrderCreateModal.jsx` still loads and round-trips an existing
   order's `assignedPersonnel` unedited on save so historical assignments survive an edit.
+- **Round trips are the budget on every order write, not query time.** The API sits ~200ms
+  from the Sydney database and the client's 5s write budget is deliberately hard and never
+  retried, so a per-item or per-product loop inside a transaction is a timeout, not a slow
+  save: `PATCH /orders/:id` cost 67 sequential queries for a 12-line dispatched edit before
+  the batch rewrite and costs 15 after. Line writes (`insertItemRows` /
+  `replaceItemsAndSettleOrder`), personnel (`syncPersonnel`) and stock movement
+  (`applyDeltaMap` in [server/src/lib/inventory.js](server/src/lib/inventory.js)) are all
+  set-based over `unnest(...)` arrays — **never add a loop of `await client.query` over
+  items or products to these paths.** `applyDeltaMap` still locks products in ascending id
+  order (`ORDER BY id … FOR UPDATE`, LockRows above Sort) and still computes the new stock
+  in JS, so the deadlock ordering and the audit rows are exactly what the loop wrote.
+  `server/test/orders-edit-batching.test.js` fails if the shape regresses.
 
 ### Pricing and stock — the two rules that are invisible on screen
 
