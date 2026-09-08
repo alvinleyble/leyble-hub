@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { V25_OFFLINE_CORE } from '../../config/features';
 import { countDuplicateCustomers } from '../../utils/duplicateCustomers';
 import AccountSwitchModal from '../accounts/AccountSwitchModal';
+import RefreshButton from './RefreshButton';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Dashboard' },
@@ -89,7 +90,12 @@ export default function Sidebar({ onClose, offlineMarker }) {
             </svg>
             <span className="sr-only">Switch account</span>
           </button>
-          {offlineMarker && <div className="mt-2">{offlineMarker}</div>}
+          {offlineMarker && (
+            <div className="mt-2 flex items-center gap-2">
+              <RefreshButton variant="v1" />
+              {offlineMarker}
+            </div>
+          )}
         </div>
         {/* Close button — only rendered in drawer (narrow-screen) mode */}
         {onClose && (

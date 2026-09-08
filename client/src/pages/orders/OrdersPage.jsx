@@ -237,6 +237,16 @@ export default function OrdersPage() {
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
   useEffect(() => { loadDraftsRef.current = loadDrafts; }, [loadDrafts]);
 
+  // Reload orders and drafts when header Refresh Button is clicked
+  useEffect(() => {
+    const onRefresh = () => {
+      loadRef.current?.();
+      loadDraftsRef.current?.();
+    };
+    window.addEventListener('leyble:refresh', onRefresh);
+    return () => window.removeEventListener('leyble:refresh', onRefresh);
+  }, []);
+
   // Reset page to 1 when filters or search criteria change
   useEffect(() => {
     setPage(1);

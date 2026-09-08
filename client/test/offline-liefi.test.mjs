@@ -74,7 +74,12 @@ test('a black-holed request aborts after the timeout threshold and marks offline
     assert.equal(checkIsOnline(true), true, 'must not flip offline before the deadline');
 
     // Crosses the threshold: the request must abort now, not 60-120s from now.
+    // Absorbs 1 silent retry (1000ms pause + 5000ms timeout) before rejecting.
     mock.timers.tick(2000);
+    await flush();
+    mock.timers.tick(1000);
+    await flush();
+    mock.timers.tick(5000);
 
     await assert.rejects(pending, (err) => {
       assert.equal(err.timedOut, true, 'the rejection must be attributable to our own timeout');
