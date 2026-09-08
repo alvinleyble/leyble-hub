@@ -268,7 +268,15 @@ async function request(path, options = {}) {
       if (!callerAborted) markOffline();
       err.friendlyMessage = formatConnectionError(err);
       if (timedOut || err.name === 'AbortError' || err.message?.includes('aborted') || err.message === 'signal is aborted without reason') {
-        err.message = err.friendlyMessage;
+        try {
+          Object.defineProperty(err, 'message', {
+            value: err.friendlyMessage,
+            configurable: true,
+            writable: true,
+          });
+        } catch {
+          // Fallback if property definition fails
+        }
       }
       throw err;
     } finally {
