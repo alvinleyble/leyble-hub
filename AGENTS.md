@@ -345,7 +345,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   watcher's cadence.
 - **The off switch is `V25_OFFLINE_CORE`** in `client/src/config/features.js` — build-time
   (`VITE_V25_OFFLINE_CORE=on`), off by default, reused by every piece. Off must be
-  indistinguishable from today. **Migrations are NOT behind it** (Render runs
+  indistinguishable from today. **Migrations are NOT behind it** (Northflank runs
   `server/db/migrate.js` on every deploy to the one production environment), so every
   V2.5 migration must be additive and correct standing alone. The server needs no flag:
   its new behaviour is reachable only when a request carries a `receipt_number` or a
@@ -881,10 +881,11 @@ WHERE op.order_id = $1
 
 There is no on-prem/Windows computer, and **no web client**. The product ships only as an
 **Android APK** (Capacitor wrap of the React app) talking to a **cloud-hosted** API + DB. The
-backend is **API-only** — it does not serve a website; opening the Render URL in a browser
+backend is **API-only** — it does not serve a website; opening the Northflank URL in a browser
 returns a 404 JSON. The Android APK is the only way in.
-- **API:** Express on **Render** (repo root, `node server/src/index.js`), API-only (no
-  `client/dist` served) — see [server/src/index.js](server/src/index.js).
+- **API:** Express on **Northflank** (production) / **Render** (staging, `leyble-hub-api`,
+  repo root, `node server/src/index.js`), API-only (no `client/dist` served) — see
+  [server/src/index.js](server/src/index.js).
 - **Database:** **Supabase** managed Postgres (pooled `DATABASE_URL`).
 - `npm run dev` (separate Vite + Express servers) is **dev-only** — local development still runs
   in a browser, which is why the cookie auth path is kept (see Security rules).
@@ -914,14 +915,13 @@ returns a 404 JSON. The Android APK is the only way in.
 
 ### Database environments & deployment
 
-- **Production:** Supabase PostgreSQL (Sydney), ref `prauvokvlhptvkadvfqq`. Render `leyble-hub-api` auto-deploys from `main` on push.
+- **Production:** Supabase PostgreSQL (Sydney), ref `prauvokvlhptvkadvfqq`. Northflank compute service auto-deploys from `main` on push.
 - **Development database:** Separate Supabase PostgreSQL (Tokyo), ref `yzopwoquzfnyqdmuookw`, full replica set up 2026-08-25. This is the same database the captain calls "staging" — there is no separate staging database. Local dev points exclusively to development (never production); see [docs/operations/development-database.md](docs/operations/development-database.md).
 - **Staging (compute):** the backend *service* — as opposed to the database above — runs on
-  **Northflank** (buildpack-based, no repo-tracked config), auto-deploying from the `staging`
-  branch against that same dev/test Supabase database. It auto-migrates on deploy via
-  `server/package.json`'s `prestart` script (mirrors `render.yaml`'s buildCommand migrate step,
-  since Northflank has no equivalent file here) — see
-  [docs/operations/development-database.md](docs/operations/development-database.md#5-staging-deployment-northflank).
+  **Render** (`leyble-hub-api`, repo-tracked config in [`render.yaml`](render.yaml)),
+  auto-deploying from the `staging` branch against that same dev/test Supabase database. It
+  auto-migrates during Render's build step via `node server/db/migrate.js` — see
+  [docs/operations/development-database.md](docs/operations/development-database.md#5-staging-deployment-render).
 - **Google Play Store (Internal Testing):** Android app builds and deploys automatically via GitHub Actions on push to `main` (modifying `client/**` or `.github/workflows/deploy-play.yml`). Tablet users receive background updates automatically through the Play Store.
 - **V3.0 release sequencing:** Migrations deploy early and alone to production; server code and Android APK land together on release day ([ADR 0014](docs/adr/0014-v3-release-sequencing.md)).
 
@@ -935,7 +935,7 @@ returns a 404 JSON. The Android APK is the only way in.
 > **CRITICAL — read before every commit/push.**
 
 - **`main` branch (Production) is strictly guarded:**
-  - **Never push or merge directly to `main` without Alvin's explicit go-ahead.** A push to `main` triggers immediate production deployments (Render API) and automated Google Play Store builds.
+  - **Never push or merge directly to `main` without Alvin's explicit go-ahead.** A push to `main` triggers immediate production deployments (Northflank API) and automated Google Play Store builds.
   - Always present completed work and ask *"ready to commit and push to main?"* — wait for a direct *"yes"* or *"okay, commit and push."*
 - **Working branches (`dev`, `staging`, feature/task branches, worktrees):**
   - **Autonomous commit & push permitted:** Agents and Firstmate orchestration are free to commit, create branches, and push to non-`main` branches as needed for PRs, CI, and slice development without halting for confirmation.

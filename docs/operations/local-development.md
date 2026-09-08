@@ -56,8 +56,8 @@ There is no profile picker — signing in lands straight on the Dashboard.
 Leyble Hub operates under a strict 3-tier architecture:
 
 1. **Tier 1 (Dev):** Local workstation running Vite dev (`:5173`) and Express (`:3000`), connected to the Supabase development database (`yzopwoquzfnyqdmuookw` in Tokyo).
-2. **Tier 2 (Staging):** Compute service on **Northflank**, auto-deploying from the `staging` branch to the same development database (`yzopwoquzfnyqdmuookw`). Used for staging APK testing.
-3. **Tier 3 (Production):** API service on **Render** (`leyble-hub-api`), auto-deploying from the `main` branch to the production Supabase database (`prauvokvlhptvkadvfqq` in Sydney).
+2. **Tier 2 (Staging):** API service on **Render** (`leyble-hub-api`), auto-deploying from the `staging` branch to the same development database (`yzopwoquzfnyqdmuookw`). Used for staging APK testing.
+3. **Tier 3 (Production):** Compute service on **Northflank**, auto-deploying from the `main` branch to the production Supabase database (`prauvokvlhptvkadvfqq` in Sydney).
 
 > ### ⚠️ STRICT WARNING: NEVER POLLUTE THE DEV / STAGING DATABASE
 >

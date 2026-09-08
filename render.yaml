@@ -7,15 +7,15 @@ projects:
   - name: leyble-hub
     environments:
       # ──────────────────────────────────────────────────────────────
-      # PRODUCTION: deploys from main branch
+      # STAGING: deploys from staging branch
       # ──────────────────────────────────────────────────────────────
-      - name: production
+      - name: staging
         services:
           - type: web
             name: leyble-hub-api
             env: node
             plan: free
-            branch: main
+            branch: staging
             # API-only service for the Android APK — the server no longer builds or
             # serves the web client, so only the server package is installed. The APK's
             # own web assets are built locally via `cap sync`, not here.
@@ -27,9 +27,10 @@ projects:
             envVars:
               - key: NODE_ENV
                 value: production
-              # Set in the Render dashboard to the prod Supabase POOLED connection string.
-              # The buildCommand above runs `node db/migrate.js` against this on every
-              # deploy, so the schema can never fall behind the deployed code.
+              # Set in the Render dashboard to the Tokyo Development Supabase POOLED
+              # connection string (ref yzopwoquzfnyqdmuookw). The buildCommand above
+              # runs `node db/migrate.js` against this on every deploy, so the schema
+              # can never fall behind the deployed code.
               - key: DATABASE_URL
                 sync: false
               - key: JWT_SECRET
