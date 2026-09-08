@@ -13,7 +13,7 @@ cloud Express + PostgreSQL API (no web client).
 | Backend | Node.js + Express, raw `pg` (no ORM) |
 | Auth | JWT — Bearer token (native app) / HTTP-only SameSite=Strict cookie (local browser dev only). Single session per account |
 | Database | PostgreSQL 15+ (Row Level Security enabled across all tables) |
-| Hosting | Express on Render (prod) & Northflank (staging), Postgres on Supabase |
+| Hosting | Express on Northflank (prod) & Render (staging), Postgres on Supabase |
 
 ## Quick start
 

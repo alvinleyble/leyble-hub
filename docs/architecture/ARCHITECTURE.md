@@ -12,7 +12,7 @@ APK, talking to an **API-only** Express/PostgreSQL backend. The backend serves n
 | Auth | JWT — `Authorization: Bearer` (native app) **or** HTTP-only `SameSite=Strict` cookie (local browser dev only). Single session per user account enforced via `sid` claim |
 | Database | PostgreSQL 15+ (`NUMERIC(10,2)` money, `TIMESTAMPTZ` timestamps). RLS enabled across all tables |
 | Mobile | Capacitor wrap of the same `client/` build |
-| Hosting | Express on **Render** (prod) & **Northflank** (staging), Postgres on **Supabase** |
+| Hosting | Express on **Northflank** (prod) & **Render** (staging), Postgres on **Supabase** |
 
 ## Topology & Environments (3-Tier Model)
 
@@ -27,7 +27,7 @@ Supabase Dev DB (Tokyo, `yzopwoquzfnyqdmuookw`)
 Android Staging APK (Capacitor)
        │ HTTPS
        ▼
-Northflank Compute Service (branch: `staging`, auto-deploy + auto-migrate via `prestart`)
+Render API Service (branch: `staging`, `leyble-hub-api`, auto-deploy + auto-migrate via `render.yaml`)
        │ DATABASE_URL
        ▼
 Supabase Dev DB (Tokyo, `yzopwoquzfnyqdmuookw`)
@@ -36,7 +36,7 @@ Supabase Dev DB (Tokyo, `yzopwoquzfnyqdmuookw`)
 Android Store APK (Capacitor)
        │ HTTPS
        ▼
-Render API Service (branch: `main`, `leyble-hub-api`, auto-deploy + auto-migrate via `render.yaml`)
+Northflank Compute Service (branch: `main`, auto-deploy + auto-migrate via `prestart`)
        │ DATABASE_URL
        ▼
 Supabase Prod DB (Sydney, `prauvokvlhptvkadvfqq`)
@@ -45,8 +45,8 @@ Supabase Prod DB (Sydney, `prauvokvlhptvkadvfqq`)
 ### The Three Environments
 
 1. **Development (`dev`):** Local development on developer workstations (`cd client && npm run dev` / `cd server && node src/index.js`). Connects via `server/.env` to the dedicated Supabase development database (`yzopwoquzfnyqdmuookw` in Tokyo).
-2. **Staging (`staging`):** Compute service hosted on **Northflank**, auto-deploying from the `staging` git branch. Connects to the same Supabase development database (`yzopwoquzfnyqdmuookw`). Used exclusively for staging APK device verification and integration smoke-testing. Runs migrations automatically on deployment via `npm start`'s `prestart` script in [`server/package.json`](../../server/package.json).
-3. **Production (`main`):** Web API service hosted on **Render** (`leyble-hub-api`), auto-deploying from the `main` git branch and defined in [`render.yaml`](../../render.yaml). Connects to the production Supabase database (`prauvokvlhptvkadvfqq` in Sydney). Serves live store tablets. Migrations run during build time via `node server/db/migrate.js`.
+2. **Staging (`staging`):** Web API service hosted on **Render** (`leyble-hub-api`), auto-deploying from the `staging` git branch and defined in [`render.yaml`](../../render.yaml). Connects to the same Supabase development database (`yzopwoquzfnyqdmuookw`). Used exclusively for staging APK device verification and integration smoke-testing. Migrations run during build time via `node server/db/migrate.js`.
+3. **Production (`main`):** Compute service hosted on **Northflank**, auto-deploying from the `main` git branch. Connects to the production Supabase database (`prauvokvlhptvkadvfqq` in Sydney). Serves live store tablets. Runs migrations automatically on deployment via `npm start`'s `prestart` script in [`server/package.json`](../../server/package.json).
 
 > **Environment Isolation:** Local development and staging share the Tokyo development database. Production (Sydney) is strictly isolated. The staging database must NEVER be dirtied or cluttered with ad-hoc test runs or automated test suites (see [development-database.md](../operations/development-database.md)).
 
