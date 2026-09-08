@@ -78,19 +78,39 @@ async function resolveOrderId(runner, param) {
   return Number.isInteger(num) ? num : null;
 }
 
+// The "goods-only while open, deposit folded in once closed" rule (see the totals note in
+// CLAUDE.md) expressed as ONE statement: the status test that used to cost a SELECT of its
+// own is a CASE over the row being updated, and the sum is a scalar subquery rather than a
+// separate round trip. `o.status` inside the SET reads the row's pre-update value, and no
+// caller of this ever changes status in the same statement, so the branch is unchanged.
 async function recomputeTotal(client, orderId) {
-  const { rows: [ord] } = await client.query('SELECT status FROM orders WHERE id = $1', [orderId]);
-  const { rows: [{ total }] } = await client.query(
-    ord.status === 'done'
-      ? 'SELECT COALESCE(SUM(line_total), 0) AS total FROM order_items WHERE order_id = $1'
-      : 'SELECT COALESCE(SUM(quantity * unit_price), 0) AS total FROM order_items WHERE order_id = $1',
+  const { rows: [row] } = await client.query(
+    `UPDATE orders o
+        SET total_amount = (
+              SELECT COALESCE(SUM(CASE WHEN o.status = 'done'
+                                       THEN oi.line_total
+                                       ELSE oi.quantity * oi.unit_price END), 0)
+                FROM order_items oi
+               WHERE oi.order_id = o.id),
+            updated_at = NOW()
+      WHERE o.id = $1
+      RETURNING total_amount AS total`,
     [orderId]
   );
-  await client.query(
-    'UPDATE orders SET total_amount = $1, updated_at = NOW() WHERE id = $2',
-    [total, orderId]
+  return row ? row.total : null;
+}
+
+// Category/name for the packer-order sort below. One query for the whole item list;
+// the caller may hand the map to sortItemsByCategory instead of re-fetching it.
+async function fetchItemSortInfo(client, items) {
+  const productIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
+  if (!productIds.length) return new Map();
+
+  const { rows: products } = await client.query(
+    'SELECT id, category, name FROM products WHERE id = ANY($1::int[])',
+    [productIds]
   );
-  return total;
+  return new Map(products.map((p) => [p.id, p]));
 }
 
 // Orders are typically entered in whatever order the customer texted them in.
@@ -98,15 +118,12 @@ async function recomputeTotal(client, orderId) {
 // (matching the ORDER BY category NULLS LAST, name convention used for the
 // product list) before they're written — every downstream view (detail page,
 // receipt, review queues) reads order_items back in insertion (id) order.
-async function sortItemsByCategory(client, items) {
-  const productIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
-  if (!productIds.length) return items;
-
-  const { rows: products } = await client.query(
-    'SELECT id, category, name FROM products WHERE id = ANY($1::int[])',
-    [productIds]
-  );
-  const infoById = new Map(products.map((p) => [p.id, p]));
+//
+// Pure: `infoById` comes from fetchItemSortInfo. Sorting stays in JS on purpose — an
+// ORDER BY in the INSERT would re-sort under the database's collation rather than
+// localeCompare's, quietly changing the order lines print in.
+function sortItemsByCategory(items, infoById) {
+  if (!infoById.size) return items;
 
   return [...items].sort((a, b) => {
     const pa = infoById.get(a.product_id);
@@ -122,15 +139,20 @@ async function sortItemsByCategory(client, items) {
   });
 }
 
-// Writes the order's lines and nothing else. It deliberately does NOT persist a saved
-// price: `is_price_overridden` records that this line's price was hand-typed on this
+// Validate and normalise the request's item list into the exact column values that get
+// written — no I/O, so the whole list costs nothing. It deliberately does NOT persist a
+// saved price: `is_price_overridden` records that this line's price was hand-typed on this
 // order, which is not the same as an agreed standing rate for the customer. Saving that
 // rate is the sole job of the explicit "Save Custom Price?" prompt (POST
 // /customers/:id/prices) — before this, order-save wrote a customer_product_prices row on
 // the flag alone, so a one-off price became permanent whatever the operator answered, and
 // there is no delete endpoint to take it back.
-async function insertItems(client, orderId, items, draft = false) {
-  items = await sortItemsByCategory(client, items);
+//
+// `returnsByProduct` (edit of a closed order) carries the bottle returns recorded at close
+// straight into the new rows, clamped per line exactly as the old follow-up UPDATE's
+// LEAST(returned, FLOOR(quantity * units_per_case)) did.
+function buildItemRows(items, draft = false, returnsByProduct = null) {
+  const rows = [];
   for (const item of items) {
     const {
       product_id, quantity, unit_price,
@@ -161,14 +183,110 @@ async function insertItems(client, orderId, items, draft = false) {
     const price   = draft ? Math.max(0, Number(unit_price) || 0) : unit_price;
     const deposit = draft ? Math.max(0, Number(unit_deposit_fee) || 0) : unit_deposit_fee;
 
-    await client.query(
-      `INSERT INTO order_items
+    let returned = 0;
+    if (returnsByProduct) {
+      const carried = Number(returnsByProduct[product_id] || 0);
+      if (carried > 0) {
+        const bottles = Math.floor(Number(qty) * (Number(units_per_case) || 1));
+        returned = Math.min(carried, bottles);
+      }
+    }
+
+    // Values go through to the array parameters exactly as the per-row INSERT passed
+    // them; pg does the same coercion either way.
+    rows.push({
+      product_id, qty, price, deposit, is_price_overridden, units_per_case, returned,
+    });
+  }
+  return rows;
+}
+
+// The seven parallel arrays the set-based INSERT unnests. Element order IS insertion
+// order, which downstream views read back as `ORDER BY oi.id`.
+function itemColumnArrays(rows) {
+  return [
+    rows.map((r) => r.product_id),
+    rows.map((r) => r.qty),
+    rows.map((r) => r.price),
+    rows.map((r) => r.deposit),
+    rows.map((r) => r.is_price_overridden),
+    rows.map((r) => r.units_per_case),
+    rows.map((r) => r.returned),
+  ];
+}
+
+// Write a whole item list in ONE statement instead of one INSERT per line.
+async function insertItemRows(client, orderId, rows) {
+  if (!rows.length) return;
+  const cols = itemColumnArrays(rows);
+  await client.query(
+    `INSERT INTO order_items
+       (order_id, product_id, quantity, unit_price, unit_deposit_fee,
+        is_price_overridden, units_per_case, bottles_returned)
+     SELECT $1, t.product_id, t.quantity, t.unit_price, t.unit_deposit_fee,
+            t.is_price_overridden, t.units_per_case, t.bottles_returned
+       FROM unnest($2::int[], $3::numeric[], $4::numeric[], $5::numeric[],
+                   $6::boolean[], $7::int[], $8::int[])
+            AS t(product_id, quantity, unit_price, unit_deposit_fee,
+                 is_price_overridden, units_per_case, bottles_returned)`,
+    [orderId, ...cols]
+  );
+}
+
+// Fetch-sort-write for callers that have no other reads to batch with (order creation).
+// Two round trips whatever the item count.
+async function insertItems(client, orderId, items, draft = false) {
+  const infoById = await fetchItemSortInfo(client, items);
+  const rows = buildItemRows(sortItemsByCategory(items, infoById), draft);
+  await insertItemRows(client, orderId, rows);
+}
+
+// Replace an order's lines AND settle everything about the order row that the edit
+// changes, in one statement:
+//
+//   • the old lines go (DELETE in a data-modifying CTE, which Postgres always runs to
+//     completion whether or not the primary query reads it),
+//   • the new lines land in the given order,
+//   • notes / customer / order type are written, and
+//   • total_amount is recomputed from the rows just inserted — read out of the `inserted`
+//     CTE rather than from order_items, because the outer UPDATE's snapshot cannot see
+//     them in the table yet.
+//
+// That is the three-plus-N round trips the edit path used to spend here, collapsed to one.
+// COALESCE keeps customer/order type unchanged when the caller passes null (only a parked
+// draft may change them at all).
+async function replaceItemsAndSettleOrder(
+  client, orderId, rows, { notes, customerId = null, orderType = null }
+) {
+  const cols = itemColumnArrays(rows);
+  await client.query(
+    `WITH cleared AS (
+       DELETE FROM order_items WHERE order_id = $1
+     ), inserted AS (
+       INSERT INTO order_items
          (order_id, product_id, quantity, unit_price, unit_deposit_fee,
           is_price_overridden, units_per_case, bottles_returned)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 0)`,
-      [orderId, product_id, qty, price, deposit, is_price_overridden, units_per_case]
-    );
-  }
+       SELECT $1, t.product_id, t.quantity, t.unit_price, t.unit_deposit_fee,
+              t.is_price_overridden, t.units_per_case, t.bottles_returned
+         FROM unnest($5::int[], $6::numeric[], $7::numeric[], $8::numeric[],
+                     $9::boolean[], $10::int[], $11::int[])
+              AS t(product_id, quantity, unit_price, unit_deposit_fee,
+                   is_price_overridden, units_per_case, bottles_returned)
+       RETURNING quantity, unit_price, line_total
+     )
+     UPDATE orders o
+        SET notes        = $2,
+            customer_id  = COALESCE($3::int, o.customer_id),
+            order_type   = COALESCE($4::text, o.order_type),
+            total_amount = (
+              SELECT COALESCE(SUM(CASE WHEN o.status = 'done'
+                                       THEN i.line_total
+                                       ELSE i.quantity * i.unit_price END), 0)
+                FROM inserted i),
+            updated_at   = NOW()
+      WHERE o.id = $1`,
+    [orderId, notes, customerId, orderType, ...cols]
+  );
 }
 
 async function syncPersonnel(client, orderId, personnelList) {
@@ -182,22 +300,37 @@ async function syncPersonnel(client, orderId, personnelList) {
   }
 
   await client.query('DELETE FROM order_personnel WHERE order_id = $1', [orderId]);
-  for (const p of personnelList) {
-    await client.query(
-      `INSERT INTO order_personnel (order_id, personnel_id, role)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (order_id, personnel_id) DO UPDATE SET role = EXCLUDED.role`,
-      [orderId, p.id, p.role || 'Driver']
-    );
-  }
+  if (!personnelList.length) return;
+
+  // One row per person, first appearance keeping its position and the LAST role that
+  // mentions them — what the sequential INSERT … ON CONFLICT DO UPDATE loop produced.
+  // A multi-row INSERT cannot hit the same key twice ("cannot affect row a second time"),
+  // so the de-dupe has to happen here rather than in the conflict clause.
+  const byPersonnelId = new Map();
+  for (const p of personnelList) byPersonnelId.set(p.id, p.role || 'Driver');
+
+  await client.query(
+    `INSERT INTO order_personnel (order_id, personnel_id, role)
+     SELECT $1, t.personnel_id, t.role
+       FROM unnest($2::int[], $3::text[]) AS t(personnel_id, role)
+     ON CONFLICT (order_id, personnel_id) DO UPDATE SET role = EXCLUDED.role`,
+    [orderId, [...byPersonnelId.keys()], [...byPersonnelId.values()]]
+  );
 }
 
+// The three reads behind every order response. They share nothing but the id, so they go
+// out together on three pool connections — one round trip of wall time instead of three,
+// which is ~0.4s of every edit at the production API's distance from the database. Each
+// query is byte-for-byte the one it replaced, so the response shape (and pg's own numeric
+// -as-string typing) is untouched. Three pool connections for the length of one read is
+// well inside the pool, and pg-pool queues rather than fails if it ever were not.
 async function getFullOrder(orderId) {
   const resolvedId = await resolveOrderId(db, orderId);
   if (!resolvedId) return null;
 
-  const { rows: [order] } = await db.query(
-    `SELECT o.*,
+  const [orderRes, itemsRes, personnelRes] = await Promise.all([
+    db.query(
+      `SELECT o.*,
             c.name  AS customer_name, c.customer_type,
             c.address AS customer_address, c.phone AS customer_phone,
             up.full_name AS pending_receipt_printed_by_name,
@@ -212,29 +345,30 @@ async function getFullOrder(orderId) {
      LEFT JOIN users ud ON ud.id = o.delivered_receipt_printed_by
      LEFT JOIN users uc ON uc.id = o.created_by
      WHERE o.id = $1`,
-    [resolvedId]
-  );
-  if (!order) return null;
-
-  const { rows: items } = await db.query(
-    `SELECT oi.*, p.name AS product_name, p.sku, p.unit, p.category, p.requires_bottle_return
+      [resolvedId]
+    ),
+    db.query(
+      `SELECT oi.*, p.name AS product_name, p.sku, p.unit, p.category, p.requires_bottle_return
      FROM order_items oi
      JOIN products p ON p.id = oi.product_id
      WHERE oi.order_id = $1
      ORDER BY oi.id`,
-    [resolvedId]
-  );
-
-  const { rows: personnel } = await db.query(
-    `SELECT op.id, op.personnel_id, op.role, p.full_name, p.phone
+      [resolvedId]
+    ),
+    db.query(
+      `SELECT op.id, op.personnel_id, op.role, p.full_name, p.phone
      FROM order_personnel op
      JOIN personnel p ON p.id = op.personnel_id
      WHERE op.order_id = $1
      ORDER BY op.id`,
-    [resolvedId]
-  );
+      [resolvedId]
+    ),
+  ]);
 
-  return { ...order, items, personnel };
+  const [order] = orderRes.rows;
+  if (!order) return null;
+
+  return { ...order, items: itemsRes.rows, personnel: personnelRes.rows };
 }
 
 // Deduct stock for a set of order items. Allows current_stock to go negative —
@@ -765,63 +899,76 @@ router.patch('/:id', async (req, res, next) => {
 
     if (notes !== undefined && notes !== order.notes) changeNotes.push('Notes updated');
 
-    await client.query(
-      `UPDATE orders SET notes = $1, updated_at = NOW() WHERE id = $2`,
-      [notes !== undefined ? notes : order.notes, order.id]
-    );
-
+    const nextNotes = notes !== undefined ? notes : order.notes;
     // A parked draft may still change its customer / order type (COALESCE keeps the
     // current value when a field is omitted). Live orders never change these here.
-    if (isDraft && (customer_id !== undefined || order_type !== undefined)) {
+    const nextCustomerId = isDraft ? (customer_id ?? null) : null;
+    const nextOrderType  = isDraft ? (order_type ?? null) : null;
+
+    if (items === undefined) {
       await client.query(
-        `UPDATE orders SET customer_id = COALESCE($1, customer_id),
-                           order_type  = COALESCE($2, order_type),
-                           updated_at  = NOW()
-         WHERE id = $3`,
-        [customer_id ?? null, order_type ?? null, order.id]
+        `UPDATE orders
+            SET notes       = $1,
+                customer_id = COALESCE($2::int, customer_id),
+                order_type  = COALESCE($3::text, order_type),
+                updated_at  = NOW()
+          WHERE id = $4`,
+        [nextNotes, nextCustomerId, nextOrderType, order.id]
       );
-    }
-
-    if (items !== undefined) {
-      // Snapshot old items before deletion: quantity for stock reconciliation,
-      // bottles_returned to preserve returns recorded when a done order was closed.
-      const { rows: oldItems } = await client.query(
-        'SELECT product_id, quantity, bottles_returned FROM order_items WHERE order_id = $1',
-        [order.id]
+    } else {
+      // ONE read for the three things replacing the lines needs: the items being
+      // replaced (quantity for stock reconciliation, bottles_returned to preserve
+      // returns recorded at close), whether this order's stock is currently out, and
+      // the category/name the packer-order sort runs on. They are all reads of state
+      // that nothing between here and the write touches, so batching them is the same
+      // answer in a third of the round trips.
+      const productIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
+      const { rows: [snapshot] } = await client.query(
+        `SELECT
+           (SELECT COALESCE(json_agg(json_build_object(
+                     'product_id',       oi.product_id,
+                     'quantity',         oi.quantity,
+                     'bottles_returned', oi.bottles_returned)), '[]'::json)
+              FROM order_items oi WHERE oi.order_id = $1)              AS old_items,
+           (SELECT COALESCE(SUM(ial.delta), 0)
+              FROM inventory_audit_logs ial WHERE ial.related_order_id = $1) AS stock_net,
+           (SELECT COALESCE(json_agg(json_build_object(
+                     'id', p.id, 'category', p.category, 'name', p.name)), '[]'::json)
+              FROM products p WHERE p.id = ANY($2::int[]))            AS products`,
+        [order.id, productIds]
       );
+      const oldItems = snapshot.old_items;
+      const infoById = new Map(snapshot.products.map((p) => [p.id, p]));
 
-      await client.query('DELETE FROM order_items WHERE order_id = $1', [order.id]);
-      await insertItems(client, order.id, items, isDraft);
-
-      // insertItems resets bottles_returned to 0. For a closed (done) order, carry
-      // the previously recorded returns back per product so editing a line (e.g.
-      // fixing a price) doesn't wipe returns and re-inflate the closed total. Must
-      // run before recomputeTotal, which for a done order folds the deposit on
-      // un-returned bottles into the total.
+      // For a closed (done) order, carry the previously recorded returns back per
+      // product so editing a line (e.g. fixing a price) doesn't wipe returns and
+      // re-inflate the closed total. The rows are written with the carried value
+      // already on them, which also puts it in place before line_total — a GENERATED
+      // column over bottles_returned — is computed for the total below.
+      let returnsByProduct = null;
       if (order.status === 'done') {
-        const returnsByProduct = {};
+        returnsByProduct = {};
         for (const it of oldItems) {
           returnsByProduct[it.product_id] =
             (returnsByProduct[it.product_id] || 0) + Number(it.bottles_returned);
         }
-        for (const [productId, returned] of Object.entries(returnsByProduct)) {
-          if (returned > 0) {
-            await client.query(
-              `UPDATE order_items
-                  SET bottles_returned = LEAST($1, FLOOR(quantity * units_per_case)),
-                      updated_at = NOW()
-                WHERE order_id = $2 AND product_id = $3`,
-              [returned, order.id, productId]
-            );
-          }
-        }
       }
 
-      await recomputeTotal(client, order.id);
+      const rows = buildItemRows(
+        sortItemsByCategory(items, infoById), isDraft, returnsByProduct
+      );
+      await replaceItemsAndSettleOrder(client, order.id, rows, {
+        notes:      nextNotes,
+        customerId: nextCustomerId,
+        orderType:  nextOrderType,
+      });
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
 
-      if (!isDraft && order.status !== 'cancelled' && await isStockOut(client, order.id)) {
+      // Same isStockOut question (net of this order's own append-only audit deltas is
+      // negative ⇒ the goods are out), answered off the batched read above. Nothing
+      // between that read and here writes inventory_audit_logs.
+      if (!isDraft && order.status !== 'cancelled' && Number(snapshot.stock_net) < 0) {
         await reconcileStock(client, oldItems, items, order, req.user.id);
       }
     }
