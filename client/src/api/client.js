@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { markOffline } from '../offline/status.js';
+import { formatConnectionError } from '../utils/errors.js';
 
 const BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1';
 
@@ -214,41 +215,66 @@ async function request(path, options = {}) {
   // is combined in rather than overridden, and its own abort must NOT be read as a
   // network failure below.
   const callerSignal = fetchOptions.signal;
-  let timedOut = false;
-  let callerAborted = false;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
-  let onCallerAbort;
-  if (callerSignal) {
-    if (callerSignal.aborted) {
-      callerAborted = true;
-      controller.abort();
-    } else {
-      onCallerAbort = () => { callerAborted = true; controller.abort(); };
-      callerSignal.addEventListener('abort', onCallerAbort);
-    }
-  }
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  const isSafeIdempotent = method === 'GET' || method === 'HEAD';
+  const allowRetry = fetchOptions.retry !== false && isSafeIdempotent;
 
   let res;
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      credentials: useCookie ? 'include' : 'omit',
-      ...fetchOptions,
-      headers,
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // A rejected fetch here is a network error, a DNS failure, or our own timeout abort
-    // — the request never reached the server at all. That is the Lie-Fi signal: flip to
-    // offline immediately rather than waiting for the caller to notice a hung screen or
-    // for the next periodic probe. A caller-initiated abort is not a network condition
-    // and must not flip the app offline.
-    if (timedOut) err.timedOut = true;
-    if (!callerAborted) markOffline();
-    throw err;
-  } finally {
-    clearTimeout(timeoutId);
-    if (onCallerAbort) callerSignal.removeEventListener('abort', onCallerAbort);
+  for (let attempt = 0; attempt <= (allowRetry ? 1 : 0); attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (callerSignal?.aborted) {
+        const abortErr = new Error('The user aborted a request');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+    }
+
+    let timedOut = false;
+    let callerAborted = false;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
+    let onCallerAbort;
+    if (callerSignal) {
+      if (callerSignal.aborted) {
+        callerAborted = true;
+        controller.abort();
+      } else {
+        onCallerAbort = () => { callerAborted = true; controller.abort(); };
+        callerSignal.addEventListener('abort', onCallerAbort);
+      }
+    }
+
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        credentials: useCookie ? 'include' : 'omit',
+        ...fetchOptions,
+        headers,
+        signal: controller.signal,
+      });
+      break;
+    } catch (err) {
+      // A rejected fetch here is a network error, a DNS failure, or our own timeout abort
+      // — the request never reached the server at all. That is the Lie-Fi signal: flip to
+      // offline immediately rather than waiting for the caller to notice a hung screen or
+      // for the next periodic probe. A caller-initiated abort is not a network condition
+      // and must not flip the app offline.
+      if (timedOut) err.timedOut = true;
+      if (callerAborted) throw err;
+      // Silent automatic retry on GET/idempotent timeout (absorbs transient Render wake-up delays)
+      if (timedOut && allowRetry && attempt === 0) {
+        continue;
+      }
+      if (!callerAborted) markOffline();
+      err.friendlyMessage = formatConnectionError(err);
+      if (timedOut || err.name === 'AbortError' || err.message?.includes('aborted') || err.message === 'signal is aborted without reason') {
+        err.message = err.friendlyMessage;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+      if (onCallerAbort) callerSignal.removeEventListener('abort', onCallerAbort);
+    }
   }
 
   if (res.status === 401) {
@@ -301,6 +327,7 @@ async function request(path, options = {}) {
     const err = new Error(data?.error || `Request failed (${res.status})`);
     err.status = res.status;
     err.data = data;
+    err.friendlyMessage = formatConnectionError(err);
     throw err;
   }
 

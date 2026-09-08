@@ -7,9 +7,9 @@ let _nextId = 1;
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
-  const addToast = useCallback((message, type = 'info') => {
+  const addToast = useCallback((message, type = 'info', action = null) => {
     const id = _nextId++;
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => [...prev, { id, message, type, action }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5000);
   }, []);
 
@@ -41,6 +41,18 @@ export function ToastProvider({ children }) {
                         ${STYLES[toast.type] ?? STYLES.info}`}
           >
             <p className="flex-1 text-sm font-medium leading-snug">{toast.message}</p>
+            {toast.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  toast.action.onClick?.();
+                  dismiss(toast.id);
+                }}
+                className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded border border-current opacity-90 hover:opacity-100 hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+              >
+                {toast.action.label}
+              </button>
+            )}
             <button
               onClick={() => dismiss(toast.id)}
               aria-label="Dismiss notification"

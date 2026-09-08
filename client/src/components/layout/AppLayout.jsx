@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
-import OfflineMarker from './OfflineMarker';
+import OfflineMarker, { RefreshButton } from './OfflineMarker';
 
 export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false);
@@ -53,7 +53,8 @@ export default function AppLayout() {
             </svg>
           </button>
           <p className="text-lg font-bold tracking-tight select-none">Leyble Hub</p>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <RefreshButton variant="v1" />
             <OfflineMarker variant="v1" />
           </div>
         </header>
