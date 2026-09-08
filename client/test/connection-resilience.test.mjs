@@ -113,16 +113,14 @@ test('api client: GET request absorbs transient timeout via 1-shot retry and ret
   }
 });
 
-test('api client: GET request attaches friendlyMessage and rewrites raw message on final timeout', async () => {
+test('api client: native DOMException abort rewrites its read-only message without throwing', async () => {
   const originalFetch = globalThis.fetch;
   let attempts = 0;
 
   globalThis.fetch = (_url, opts) => new Promise((_resolve, reject) => {
     attempts++;
     opts.signal.addEventListener('abort', () => {
-      const err = new Error('signal is aborted without reason');
-      err.name = 'AbortError';
-      reject(err);
+      reject(new DOMException('signal is aborted without reason', 'AbortError'));
     });
   });
 
@@ -143,6 +141,7 @@ test('api client: GET request attaches friendlyMessage and rewrites raw message 
     mock.timers.tick(5000);
 
     await assert.rejects(pending, (err) => {
+      assert.ok(err instanceof DOMException, 'must preserve the native AbortError rather than throw a TypeError');
       assert.equal(err.timedOut, true);
       assert.match(err.friendlyMessage, /Connection timed out \(5s\)/);
       assert.equal(err.message, err.friendlyMessage, 'must replace raw engine abort message with friendly message');
