@@ -83,3 +83,6 @@ export default function OfflineMarker({ variant = 'v2' }) {
     </>
   );
 }
+
+export { default as RefreshButton } from './RefreshButton.jsx';
+

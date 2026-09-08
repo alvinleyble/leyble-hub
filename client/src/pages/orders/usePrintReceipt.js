@@ -6,6 +6,7 @@ import { generateReceiptHtml, printPhaseForStatus } from './receiptTemplate';
 import { generateEscPos } from './escposReceipt';
 import { V25_OFFLINE_CORE } from '../../config/features.js';
 import { queueReceiptPrinted } from '../../offline/index.js';
+import { formatConnectionError } from '../../utils/errors.js';
 
 const Printer = registerPlugin('Printer');
 
@@ -45,21 +46,33 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
   // ── After a successful print: tag the order, or ask first ───────────────────
 
   const tagPrinted = useCallback(async (orderId, phase, targetOrder = null) => {
+    const active = targetOrder || (isOrderObject(orderId) ? orderId : order);
+    const id = isOrderObject(orderId) ? orderId.id : orderId;
     try {
       if (V25_OFFLINE_CORE) {
-        const active = targetOrder || (isOrderObject(orderId) ? orderId : order);
         // queueReceiptPrinted's own return carries the flipped
         // pending_receipt_printed_at / delivered_receipt_printed_at — `active` itself
         // is never mutated (review round 1, item 3), so pass the returned record on.
         const updated = await queueReceiptPrinted({ order: active || { id: orderId }, phase });
         onTagged?.(updated || active || { id: orderId });
       } else {
-        const id = isOrderObject(orderId) ? orderId.id : orderId;
-        const updated = await api.post(`/orders/${id}/receipt-printed`, { phase });
-        onTagged?.(updated);
+        try {
+          const updated = await api.post(`/orders/${id}/receipt-printed`, { phase });
+          onTagged?.(updated);
+        } catch (postErr) {
+          const isNetworkError = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+            postErr?.timedOut || postErr?.name === 'AbortError' || !postErr?.status ||
+            (typeof postErr?.message === 'string' && postErr.message.includes('Failed to fetch'));
+          if (isNetworkError) {
+            const updated = await queueReceiptPrinted({ order: active || { id: orderId }, phase }).catch(() => null);
+            onTagged?.(updated || active || { id: orderId });
+          } else {
+            throw postErr;
+          }
+        }
       }
     } catch (err) {
-      addToast(err.message || 'Failed to tag order as printed.', 'error');
+      addToast(formatConnectionError(err, err.message || 'Failed to tag order as printed.'), 'error');
     }
   }, [onTagged, addToast, order]);
 
@@ -79,7 +92,8 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
       addToast(copies > 1 ? 'Printed successfully (2 copies).' : 'Printed successfully.', 'success');
       finishPrint(phase, targetOrder);
     } catch (e) {
-      addToast(`Print failed: ${e.message || 'unknown error'}`, 'error');
+      e.isPrinterError = true;
+      addToast(formatConnectionError(e, `Print failed: ${e.message || 'unknown error'}`), 'error');
     } finally {
       setPrinting(false);
       setPendingPrint(null);
@@ -227,7 +241,8 @@ export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, o
       await Printer.printBytesTo({ type, address, port, data: btoa(bin) });
       addToast('Test slip sent.', 'success');
     } catch (e) {
-      addToast(`Test print failed: ${e.message || 'unknown error'}`, 'error');
+      e.isPrinterError = true;
+      addToast(formatConnectionError(e, `Test print failed: ${e.message || 'unknown error'}`), 'error');
     }
   }, [addToast]);
 

@@ -134,21 +134,29 @@ export default function OrderDetailPage() {
           }
         }
         if (err.status === 404) setNotFound(true);
-        else if (!silent) addToast('Failed to load order.', 'error');
+        else if (!silent) {
+          const msg = err?.friendlyMessage || 'Failed to load order.';
+          addToast(msg, 'error', { label: 'Retry', onClick: () => load() });
+        }
       })
       .finally(() => { if (!silent) setLoading(false); });
   }, [id, addToast]);
 
   useEffect(() => { load(); }, [load]);
 
-  // G27 — Silent Background Sync. drainNotifier.js dispatches this once a background
+  // G27 — Silent Background Sync + Refresh Button. drainNotifier.js dispatches this once a background
   // drain has actually sent something; re-read quietly so an order that just synced
   // swaps to its server row and drops the "Waiting to sync" banner without anyone
-  // asking and without a spinner.
+  // asking and without a spinner. leyble:refresh triggers an active reload.
   useEffect(() => {
     const onDrainComplete = () => load({ silent: true });
+    const onRefresh = () => load();
     window.addEventListener('leyble:drain-complete', onDrainComplete);
-    return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
+    window.addEventListener('leyble:refresh', onRefresh);
+    return () => {
+      window.removeEventListener('leyble:drain-complete', onDrainComplete);
+      window.removeEventListener('leyble:refresh', onRefresh);
+    };
   }, [load]);
 
   const items = Array.isArray(order?.items) ? order.items : [];
@@ -294,7 +302,29 @@ export default function OrderDetailPage() {
     );
   }
 
-  if (!order) return null;
+  if (!order) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto text-center" data-testid="order-recovery-card">
+        <div className="mt-16 p-8 bg-white border border-slate-200 rounded-xl shadow-sm">
+          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 text-2xl" aria-hidden="true">
+            ⚠️
+          </div>
+          <h2 className="text-lg font-semibold text-slate-900 mb-2">Unable to reach the server to load this order.</h2>
+          <p className="text-sm text-slate-500 mb-6">
+            Please check your network connection or try again.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Button variant="secondary" onClick={() => navigate('/orders')}>
+              ← Back to Orders
+            </Button>
+            <Button variant="primary" onClick={() => load()}>
+              🔄 Try Again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const st = STATUS[order.status] ?? { label: order.status, color: 'bg-slate-100 text-slate-500 border-slate-200' };
 
