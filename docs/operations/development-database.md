@@ -13,8 +13,8 @@ Leyble Hub operates across a strict 3-tier architecture separating local develop
 | Tier | Git Branch | Compute Hosting | Database Target | Supabase Project Ref | Region | Purpose |
 |---|---|---|---|---|---|---|
 | **1. Dev** | `dev` / feature branches | Local workstation (Vite :5173 + Express :3000) | Development Supabase DB | `yzopwoquzfnyqdmuookw` | Tokyo (`ap-northeast-1`) | Daily feature development, component testing, interactive debugging |
-| **2. Staging** | `staging` | **Northflank** compute service (auto-deploy) | Development Supabase DB | `yzopwoquzfnyqdmuookw` | Tokyo (`ap-northeast-1`) | Staging APK device testing, integration smoke tests, pre-release validation |
-| **3. Prod** | `main` | **Render** API service (`leyble-hub-api`) | Production Supabase DB | `prauvokvlhptvkadvfqq` | Sydney (`ap-southeast-2`) | Live store operations on store tablets |
+| **2. Staging** | `staging` | **Render** API service (`leyble-hub-api`, auto-deploy) | Development Supabase DB | `yzopwoquzfnyqdmuookw` | Tokyo (`ap-northeast-1`) | Staging APK device testing, integration smoke tests, pre-release validation |
+| **3. Prod** | `main` | **Northflank** compute service | Production Supabase DB | `prauvokvlhptvkadvfqq` | Sydney (`ap-southeast-2`) | Live store operations on store tablets |
 
 ---
 
@@ -22,7 +22,7 @@ Leyble Hub operates across a strict 3-tier architecture separating local develop
 
 > ### ⚠️ STRICT WARNING: NEVER DIRTY OR CLUTTER THE STAGING / DEV DATABASE
 >
-> The Supabase project `yzopwoquzfnyqdmuookw` is shared between **local development** and the **Northflank staging compute environment**.
+> The Supabase project `yzopwoquzfnyqdmuookw` is shared between **local development** and the **Render staging compute environment**.
 >
 > 1. **Automated Test Suites MUST Use Throwaway Databases:**  
 >    **NEVER run automated integration test suites (`npm test` in `server/`) against the development/staging Supabase database.** Automated tests insert synthetic orders, alter sequences, and generate test noise. Always create a throwaway local database as documented in [CLAUDE.md](../../CLAUDE.md):
@@ -31,7 +31,7 @@ Leyble Hub operates across a strict 3-tier architecture separating local develop
 >    cd server && DATABASE_URL=postgresql://localhost/leyble_hub_v2audit JWT_SECRET='test-jwt-secret-key-32-chars-minimum!!' npm test
 >    ```
 > 2. **No Ad-Hoc Junk or Scratch Experimentation:**  
->    The staging deployment on Northflank is used by the captain and developers to test staging APK builds on physical tablets and emulators. Cluttering the database with dummy customers, nonsensical products, or junk orders pollutes the UI, distorts stock counts, and obscures genuine bug verification.
+>    The staging deployment on Render is used by the captain and developers to test staging APK builds on physical tablets and emulators. Cluttering the database with dummy customers, nonsensical products, or junk orders pollutes the UI, distorts stock counts, and obscures genuine bug verification.
 > 3. **High-Fidelity Rehearsals:**  
 >    Treat the development/staging database with the care of a pre-production rehearsal environment. Manual test data should follow realistic business scenarios.
 
@@ -59,11 +59,11 @@ Leyble Hub operates across a strict 3-tier architecture separating local develop
 - The development database serves as the rehearsal stage for all database migrations (from `001` through `045`) before they are executed against the production database.
 - Developers must execute and verify new migrations against the development database via `node server/db/migrate.js` prior to scheduling production rollout.
 
-### 5. Staging Deployment (Northflank)
-- Staging compute runs on **Northflank**, auto-deploying the latest commit on every push to the `staging` git branch.
-- Staging auto-migrates on deploy via a `prestart` script in [`server/package.json`](../../server/package.json) (`"prestart": "node db/migrate.js"`), which `npm start` runs automatically before starting the server.
-- `server/db/migrate.js` is idempotent: it records applied migrations in `_migrations` and runs each pending migration transactionally. Re-running on Northflank container restarts is a safe no-op.
+### 5. Staging Deployment (Render)
+- Staging compute runs on **Render** (`leyble-hub-api`), auto-deploying from the `staging` git branch as specified in [`render.yaml`](../../render.yaml).
+- Staging auto-migrates during Render's build step via `node server/db/migrate.js`.
 
-### 6. Production Deployment (Render)
-- Production compute runs on **Render** (`leyble-hub-api`), auto-deploying from the `main` git branch as specified in [`render.yaml`](../../render.yaml).
-- Production auto-migrates during Render's build step via `node server/db/migrate.js`.
+### 6. Production Deployment (Northflank)
+- Production compute runs on **Northflank**, auto-deploying the latest commit on every push to the `main` git branch.
+- Production auto-migrates on deploy via a `prestart` script in [`server/package.json`](../../server/package.json) (`"prestart": "node db/migrate.js"`), which `npm start` runs automatically before starting the server.
+- `server/db/migrate.js` is idempotent: it records applied migrations in `_migrations` and runs each pending migration transactionally. Re-running on Northflank container restarts is a safe no-op.

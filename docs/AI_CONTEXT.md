@@ -12,7 +12,7 @@ Internal, **wholesale-only** admin app for a beverage distributor in Antipolo, P
 ("Leyble General Merchandise"). Not customer-facing, no payments. Owners are in their late 50s →
 accessibility matters (big targets, big fonts, text+color status). Currency is the Philippine
 Peso (₱). Ships **only** as an **Android APK** (Capacitor) hitting a cloud, API-only backend
-(**Express on Render/Northflank + Postgres on Supabase**) — there is no web client.
+(**Express on Northflank (prod) & Render (staging) + Postgres on Supabase**) — there is no web client.
 
 ## Mental model
 
@@ -30,8 +30,8 @@ Audit Log. Details in the [PRD](product/PRD.md).
 ## Topology & Environments
 
 - **Tier 1 (Local Dev):** Local machine (`client/` Vite dev on `:5173`, `server/` Express on `:3000`) connected to the dev Supabase DB (`yzopwoquzfnyqdmuookw` in Tokyo).
-- **Tier 2 (Staging):** Compute service on **Northflank**, auto-deploying from git `staging` branch to the dev Supabase DB (`yzopwoquzfnyqdmuookw` in Tokyo). Used for staging APK validation.
-- **Tier 3 (Production):** Compute service on **Render** (`leyble-hub-api`), auto-deploying from git `main` branch to the production Supabase DB (`prauvokvlhptvkadvfqq` in Sydney).
+- **Tier 2 (Staging):** Compute service on **Render** (`leyble-hub-api`), auto-deploying from git `staging` branch to the dev Supabase DB (`yzopwoquzfnyqdmuookw` in Tokyo). Used for staging APK validation.
+- **Tier 3 (Production):** Compute service on **Northflank**, auto-deploying from git `main` branch to the production Supabase DB (`prauvokvlhptvkadvfqq` in Sydney).
 
 ## Repo map
 

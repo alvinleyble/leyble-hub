@@ -12,11 +12,11 @@ version is for local development only.
 ## How it fits together
 
 ```
-Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, API-only)  ──►  Postgres (Supabase)
+Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Northflank prod / Render staging, API-only)  ──►  Postgres (Supabase)
 ```
 
 - The DB and backend are **cloud-hosted** (no on-prem computer). See "Cloud setup" below.
-- The Render service is **API-only** — it serves `/api/v1/*` and returns a 404 JSON for anything
+- The backend service is **API-only** — it serves `/api/v1/*` and returns a 404 JSON for anything
   else. It does **not** serve a web client, so there is no website to open in a browser; the APK
   is the only way in.
 - **Default Landing & Routing:** In V3.0, the app launches and opens directly on **Outgoing Orders (`/orders`)**, where order creation takes place. The V1/V2 long-press bridge and remembered `preferred_ui` preference were removed (G17); V1 is the sole application.
@@ -57,7 +57,10 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
    ```
    Note: free Supabase projects pause after ~7 days of no activity (un-pause in the dashboard).
 
-### Backend — Render (API-only service)
+### Backend — Render (API-only service, staging)
+This is the **staging** service — production runs on Northflank (see
+[`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md)); Render's free tier
+spin-down is acceptable for internal staging validation, which is why it was reassigned here.
 1. Create a **Web Service** at https://render.com from this GitHub repo. **Root Directory:
    leave blank** (repo root).
    - Build command: `npm --prefix server install && node server/db/migrate.js`
@@ -68,12 +71,13 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Render, 
 2. Set env vars (never commit these): `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`,
    `SEED_ADMIN_PASSWORD`, `NODE_ENV=production`. (`ACCOUNT_PASSWORD` is only read by the
    one-off `db/setup-accounts.js` script, so Render does not need it.)
-3. Note the public URL, e.g. `https://leyble-hub.onrender.com`. This is the **API** the APK
-   talks to (set as `VITE_API_URL` in `client/.env.production`). It is API-only — opening it in
-   a browser returns a 404 JSON, not the app.
-   - Free tier sleeps after ~15 min idle (first request ~30–60s). Upgrade to Starter (~$7/mo)
-     for always-on. **Do not use Render's free Postgres** — it is deleted ~30 days after
-     creation; the DB lives on Supabase.
+3. Note the public URL, e.g. `https://leyble-hub.onrender.com`. This is the **staging API** the
+   staging APK talks to (set as `VITE_API_URL` in `client/.env.staging.example` /
+   `.github/workflows/deploy-play-staging.yml`). It is API-only — opening it in a browser
+   returns a 404 JSON, not the app.
+   - Free tier sleeps after ~15 min idle (first request ~30–60s) — fine for staging; production's
+     always-on requirement is what runs on Northflank instead. **Do not use Render's free
+     Postgres** — it is deleted ~30 days after creation; the DB lives on Supabase.
    - **Local Android Emulator Testing:** When testing on an Android emulator against a local backend instead of Render/cloud, point the build to `http://10.0.2.2:3000` via `VITE_API_URL=http://10.0.2.2:3000 npm run android:sync`. See [e2e/appium/README.md](../../e2e/appium/README.md).
 
 ---
@@ -88,7 +92,7 @@ Deployments are fully automated via GitHub Actions for both Production and Stagi
 
 #### Production Pipeline ([.github/workflows/deploy-play.yml](../../.github/workflows/deploy-play.yml))
 - **Trigger**: Any push to `main` modifying `client/**` or `.github/workflows/deploy-play.yml` (and on-demand via `workflow_dispatch`).
-- **Target Backend**: Production Render API (`https://leyble-hub.onrender.com`).
+- **Target Backend**: Northflank Production API (`https://site--leyble-hub--tkm4pp6r2kky.code.run`).
 - **Application ID**: `com.leyble.hub`
 - **App Name**: `Leyble Hub`
 - **Steps**:
@@ -101,12 +105,12 @@ Deployments are fully automated via GitHub Actions for both Production and Stagi
 
 #### Staging Pipeline ([.github/workflows/deploy-play-staging.yml](../../.github/workflows/deploy-play-staging.yml))
 - **Trigger**: Any push to `staging` modifying `client/**` or `.github/workflows/deploy-play-staging.yml` (and on-demand via `workflow_dispatch`).
-- **Target Backend**: Northflank Staging API (`https://site--leyble-hub--tkm4pp6r2kky.code.run`).
+- **Target Backend**: Render Staging API (`https://leyble-hub.onrender.com`).
 - **Application ID**: `com.leyble.hub.staging` (can be installed alongside production on the same device).
 - **App Name**: `Leyble Hub (Staging)`
 - **Steps**:
   1. Sets up Node 22 and Java 21.
-  2. Builds web client with `VITE_API_URL=https://site--leyble-hub--tkm4pp6r2kky.code.run`.
+  2. Builds web client with `VITE_API_URL=https://leyble-hub.onrender.com`.
   3. Runs `npx cap sync android`.
   4. Decodes keystore (supports `PLAY_STAGING_KEYSTORE_BASE64` with fallback to `PLAY_KEYSTORE_BASE64`).
   5. Executes `./gradlew bundleRelease` with `ANDROID_APPLICATION_ID=com.leyble.hub.staging` and `ANDROID_APP_NAME="Leyble Hub (Staging)"`.
