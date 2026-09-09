@@ -43,6 +43,7 @@ import { putOrderSnapshot } from './receiptHistory.js';
 
 const RECONNECT_THROTTLE_MS = 90_000;
 const ORDER_PAGE_SIZE = 100;
+const RECENT_UPDATE_MS = 4_000;
 // The order-history backfill is a background job on a device the operator is already
 // using. Pages are pulled with a breath between them so a first setup on a big store's
 // history never monopolises the connection the outbox drain also needs.
@@ -108,6 +109,8 @@ let snapshot = {
   error: null,
   ordersBackfilling: false,
   ordersSynced: 0,
+  orderCheck: 'idle',         // 'idle' | 'checking'
+  recentlyUpdated: false,     // true briefly, and only when order data actually changed
 };
 
 const listeners = new Set();
@@ -188,16 +191,18 @@ async function storeOrders(orders) {
 async function syncOrderDelta(state) {
   let cursor = state.orders_delta_cursor;
   let synced = 0;
+  const changedOrders = [];
 
   // A device with no cursor at all has never pulled history; the backfill below owns
   // that case, and running a "delta from the beginning" here would be the full pull
   // this design exists to avoid repeating.
-  if (!cursor) return { cursor, synced };
+  if (!cursor) return { cursor, synced, orders: changedOrders };
 
   for (;;) {
     const { orders, hasMore, nextCursor } = await fetchOrderPage({ direction: 'forward', cursor });
     if (orders.length === 0) break;
     await storeOrders(orders);
+    changedOrders.push(...orders);
     synced += orders.length;
     // A page that comes back without a usable cursor would otherwise re-request
     // itself forever; stop instead and let the next sync try again from here.
@@ -208,7 +213,29 @@ async function syncOrderDelta(state) {
     if (!hasMore) break;
   }
 
-  return { cursor, synced };
+  return { cursor, synced, orders: changedOrders };
+}
+
+let recentUpdateTimer = null;
+
+function notifyOrdersChanged(orders) {
+  if (!orders.length) return;
+  const byId = new Map(orders.map((order) => [String(order.id), order]));
+  const changed = [...byId.values()];
+  publish({ recentlyUpdated: true });
+  if (recentUpdateTimer) clearTimeout(recentUpdateTimer);
+  recentUpdateTimer = setTimeout(() => publish({ recentlyUpdated: false }), RECENT_UPDATE_MS);
+  recentUpdateTimer.unref?.();
+
+  if (typeof window !== 'undefined' && typeof window.CustomEvent === 'function') {
+    window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
+      detail: {
+        ids: changed.map((order) => order.id),
+        receiptNumbers: changed.map((order) => order.receipt_number).filter(Boolean),
+        orders: changed,
+      },
+    }));
+  }
 }
 
 /**
@@ -273,6 +300,39 @@ async function backfillOrderHistory() {
 let inFlight = null;
 
 /**
+ * ADR 0019's narrow foreground check: orders only, one bounded cursor stream, and no
+ * reference-data work. It shares `inFlight` with login/reconnect sync so two cursor
+ * owners never race. Failures reject for the app-wide scheduler to back off; every
+ * successfully stored page remains durable and the next run resumes from its cursor.
+ */
+export async function pollOrderDelta() {
+  if (inFlight) return { skipped: true, reason: 'in-flight' };
+
+  const state = await getSyncState();
+  if (isFirstSetupPending(state) || !state.orders_delta_cursor) {
+    return { skipped: true, reason: 'setup-pending' };
+  }
+
+  inFlight = (async () => {
+    publish({ orderCheck: 'checking' });
+    try {
+      const result = await syncOrderDelta(await getSyncState());
+      await patchSyncState({ last_sync_completed_at: Date.now() });
+      notifyOrdersChanged(result.orders);
+      return { ran: true, ordersSynced: result.synced, orders: result.orders };
+    } finally {
+      publish({ orderCheck: 'idle' });
+    }
+  })();
+
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+  }
+}
+
+/**
  * @param {object}  [opts]
  * @param {string}  [opts.trigger]  'login' (deliberate, never throttled) | 'reconnect'
  * @param {boolean} [opts.waitForOrders] await the order-history backfill instead of
@@ -333,8 +393,9 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
       // 2. Order history. The forward delta first (cheap, and the part that matters
       //    for orders other tablets just created), then whatever backfill is still owed.
       try {
-        const { synced } = await syncOrderDelta(await getSyncState());
+        const { synced, orders } = await syncOrderDelta(await getSyncState());
         result.ordersSynced += synced;
+        notifyOrdersChanged(orders);
       } catch (err) {
         result.error = result.error || err;
       }
@@ -405,14 +466,27 @@ export function useSyncGate() {
   };
 }
 
+// The header's one calm inbound/outbound status (ADR 0019). A routine successful empty
+// check returns to idle; "Updated just now" is reserved for a delta that stored rows.
+export function useSyncActivity() {
+  const [state, setState] = useState(() => getSyncSnapshot());
+  useEffect(() => subscribeSync(setState), []);
+  return {
+    checking: state.orderCheck === 'checking',
+    recentlyUpdated: state.recentlyUpdated,
+  };
+}
+
 // Test seams.
 export const __SYNC_INTERNALS = { RECONNECT_THROTTLE_MS, ORDER_PAGE_SIZE };
 
 export async function __resetSyncState() {
   inFlight = null;
+  if (recentUpdateTimer) { clearTimeout(recentUpdateTimer); recentUpdateTimer = null; }
   snapshot = {
     phase: 'idle', firstSetupPending: false, essentialsReady: true,
     error: null, ordersBackfilling: false, ordersSynced: 0,
+    orderCheck: 'idle', recentlyUpdated: false,
   };
   await nativeStore.remove(SYNC_STATE_KEY);
 }

@@ -1,6 +1,6 @@
 # Database Reference
 
-PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–047` have
+PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–048` have
 been applied — reconstructed from `server/db/migrations/` (not from the archived spec, which is
 stale). When in doubt, the migration files are the source of truth.
 
@@ -85,7 +85,7 @@ Field workers (drivers/helpers). `full_name`, `remarks` (TEXT — renamed from `
 `phone`, `license_number`, `id_image_base64` + `id_image_mime_type` (ID photo stored inline as
 Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 035).
 
-### 6. `orders` (006, altered by 016, 018, 019, 027, 028, 033, 035, 039, 040, 042)
+### 6. `orders` (006, altered by 016, 018, 019, 027, 028, 033, 035, 039, 040, 042, 048)
 | Column | Notes |
 |---|---|
 | `customer_id` | FK |
@@ -103,6 +103,7 @@ Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 
 | `created_by` | INT REFERENCES `users(id)` (042) — who made the sale ([ADR 0017](../adr/0017-receipt-numbers-keyed-to-user-accounts.md) #10). Joined as `sold_by_name` on-screen and printed on the receipt as `Sold by: <name>`. Nullable, no backfill |
 | `created_at` | the **sale time**. Supplied by the device on a local-first save (same pattern as `supplier_deliveries.received_at`); defaults to `NOW()` otherwise |
 | `updated_at` | Watermark index `idx_orders_updated_at_id` on `(updated_at, id)` (035) for keyset delta sync |
+| `revision` | BIGINT default 1 (048), advanced by `trg_bump_order_revision` on every order update. Exact optimistic-concurrency token required by updated clients for every non-draft mutation except additive receipt-print records ([ADR 0019](../adr/0019-order-revision-and-delta-sync.md)) |
 | `idx_orders_receipt_sequence` | Partial index on `(receipt_sequence) WHERE receipt_sequence IS NOT NULL` (042) for bare-digit order sequence lookups (ADR 0017 #11) |
 
 > `driver_id` / `helper_id` FK columns were **dropped** (016) — personnel are now in the

@@ -7,6 +7,7 @@ import Spinner from '../../components/ui/Spinner';
 import Combobox from '../../components/ui/Combobox';
 import Modal from '../../components/ui/Modal';
 import { orderRef } from '../../utils/orderRef';
+import { handleStaleOrderWrite } from './orderConcurrency.js';
 import { customerTypeBadge, customerTypeLabel, hasCustomPricing } from '../../utils/customerTypes';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import CaseStepper from '../../components/pos/CaseStepper';
@@ -134,7 +135,9 @@ function CustomerAndOrderTypeFields({
   );
 }
 
-export default function OrderCreateModal({ onClose, onSaved, editOrder = null, offlineUnsynced = false }) {
+export default function OrderCreateModal({
+  onClose, onSaved, onStale, editOrder = null, offlineUnsynced = false, staleWarning = false,
+}) {
   const { addToast } = useToast();
   const isEdit = Boolean(editOrder);
 
@@ -209,6 +212,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
   const draftLocalRef      = useRef(Boolean(isDraftResume && editOrder?._local));
   const draftPromiseRef    = useRef(null); // in-flight draft creation promise
   const autoSaveTimerRef   = useRef(null); // handle for the debounced PATCH timer
+  // Captured exactly once when the form opens. A background delta may warn the
+  // operator, but must never silently replace the precondition under their typing.
+  const editRevisionRef    = useRef(editOrder?.revision ?? null);
 
   // ── Save-custom-price prompt ───────────────────────────────────────────────
   const [priceSavePrompt, setPriceSavePrompt] = useState(null);
@@ -725,9 +731,10 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
               is_price_overridden: false,
             })),
             personnel: assignedPersonnel,
+            revision: editRevisionRef.current,
           };
           const targetId = editOrder.id ?? editOrder.receipt_number;
-          await api.patch(`/orders/${targetId}`, payload);
+          const updatedOrder = await api.patch(`/orders/${targetId}`, payload);
           orderId = targetId;
 
           const existingAdjNum    = Number(editOrder.adjustment) || 0;
@@ -736,6 +743,9 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
             await api.patch(`/orders/${orderId}/adjustment`, {
               adjustment: adjNum,
               adjustment_reason: adjReasonTrimmed,
+              // The item/notes/personnel PATCH just advanced the revision. Always use
+              // the server's returned token, never guess that it incremented once.
+              revision: updatedOrder.revision,
             });
           }
         }
@@ -785,7 +795,11 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
         onSaved(orderId);
       }
     } catch (err) {
-      addToast(err.message || 'Failed to save order.', 'error');
+      const stale = await handleStaleOrderWrite(err, {
+        addToast,
+        onCurrent: (current) => onStale?.(current),
+      });
+      if (!stale) addToast(err.message || 'Failed to save order.', 'error');
     } finally {
       setSaving(false);
     }
@@ -922,6 +936,12 @@ export default function OrderCreateModal({ onClose, onSaved, editOrder = null, o
               ✕
             </button>
           </div>
+
+          {staleWarning && isRealEdit && (
+            <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-6 py-3 text-sm font-semibold text-amber-900" role="status">
+              ⚠️ This order changed on another device. Your form is unchanged; saving it may be refused. Review the current order and re-enter any still-valid change.
+            </div>
+          )}
 
           {loading ? (
             <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>

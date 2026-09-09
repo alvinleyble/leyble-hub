@@ -5,6 +5,7 @@ import { handleDrainCompletion } from './drainNotifier.js';
 import { nativeStore } from './nativeStore.js';
 import { runSync } from './sync.js';
 import { screenProductMutations } from './productMutations.js';
+import { startForegroundOrderSync, stopForegroundOrderSync } from './foregroundOrderSync.js';
 
 // The V2.5 offline core's entry point. startOfflineCore() itself runs unconditionally
 // (G30); individual UI surfaces (the marker, orderRef's receipt-number display) still
@@ -21,6 +22,7 @@ export * from './advisory.js';
 export * from './status.js';
 export * from './drainNotifier.js';
 export * from './sync.js';
+export * from './foregroundOrderSync.js';
 export * from './queuedCustomers.js';
 export * from './queuedPersonnel.js';
 export * from './backOfficeCache.js';
@@ -39,6 +41,7 @@ const RECONFIRM_INTERVAL_MS = 10 * 60_000;
 
 let timer = null;
 let lastConfirmedAt = 0;
+let lifecycleGeneration = 0;
 
 /**
  * Called once the user is signed in and a profile is chosen.
@@ -57,6 +60,7 @@ let lastConfirmedAt = 0;
  * left gates UI surfaces (the marker, orderRef's display fallback), not the engine.
  */
 export async function startOfflineCore({ label } = {}) {
+  const generation = ++lifecycleGeneration;
   // G30 — Android Production Guard. A dev-only label (e.g. "dev — <hostname>") must
   // never reach a real station registration on a native Capacitor tablet — its WebView
   // origin is https://localhost, so an unguarded label would mislabel or clobber a
@@ -69,6 +73,9 @@ export async function startOfflineCore({ label } = {}) {
   } catch {
     // Offline, or the server refused. Retried on the next start and by the drain loop.
   }
+  // React StrictMode and logout can stop this async start while registration is in
+  // flight. Never let an obsolete continuation resurrect app-wide timers afterwards.
+  if (generation !== lifecycleGeneration) return { enabled: false, waiting: 0 };
 
   // ADR 0015 §4 replaced V2.5 D9's rolling 30-day window with "no age limit", so
   // pruneReceipts() is deliberately NOT called here any more — this is the line that
@@ -78,6 +85,9 @@ export async function startOfflineCore({ label } = {}) {
   // setup gates only its own reference pull, via useSyncGate in App.jsx), and a device
   // with no line yet simply syncs nothing and tries again on the next reconnect.
   runSync({ trigger: 'login' }).catch(() => {});
+  // ADR 0019 — app-wide, orders-only foreground delta. This starts at the signed-in
+  // shell, so Inventory/Customers/etc. stay just as aware as the Orders screen.
+  startForegroundOrderSync();
 
   async function runDrainPass() {
     try {
@@ -141,6 +151,8 @@ export async function startOfflineCore({ label } = {}) {
 }
 
 export function stopOfflineCore() {
+  lifecycleGeneration += 1;
   if (timer) { clearInterval(timer); timer = null; }
+  stopForegroundOrderSync();
   lastConfirmedAt = 0;
 }

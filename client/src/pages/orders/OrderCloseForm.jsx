@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Stepper from '../../components/ui/Stepper';
+import { handleStaleOrderWrite } from './orderConcurrency.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -42,7 +43,9 @@ export function breakdownForItem(item, returnCounts) {
 // Renders only when the order has returnable-bottle items — caller is responsible for that check.
 // `returnCounts`/`onChangeReturnCounts` are lifted to the caller so the order summary above
 // this form can show the same live deposit breakdown as the user types.
-export default function OrderCloseForm({ order, returnCounts, onChangeReturnCounts, onClosed, onBeforeClose, hideCloseButton }) {
+export default function OrderCloseForm({
+  order, returnCounts, onChangeReturnCounts, onClosed, onBeforeClose, onStale, hideCloseButton,
+}) {
   const { addToast } = useToast();
   const bottleItems = order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0);
 
@@ -56,11 +59,12 @@ export default function OrderCloseForm({ order, returnCounts, onChangeReturnCoun
         id: Number(itemId),
         bottles_returned: Number(returned) || 0,
       }));
-      const updated = await api.post(`/orders/${order.id}/close`, { items });
+      const updated = await api.post(`/orders/${order.id}/close`, { items, revision: order.revision });
       addToast('Order closed.', 'success');
       onClosed(updated);
     } catch (err) {
-      addToast(err.message || 'Failed to close order.', 'error');
+      const stale = await handleStaleOrderWrite(err, { addToast, onCurrent: onStale });
+      if (!stale) addToast(err.message || 'Failed to close order.', 'error');
     } finally {
       setClosing(false);
     }

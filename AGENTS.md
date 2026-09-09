@@ -785,12 +785,14 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   PR #117 on `dev`. Mechanism is documented under "Full-app offline sync (Slice 3.2, ADR
   0015)" above (`useSyncGate().blocking`/`isFirstSetupPending` in `client/src/offline/
   sync.js`, `FirstSetupGateScreen.jsx`) rather than repeated here.
-- **Designed but not built:** the rest of the ADR — the server-authoritative order-revision
-  stale-write guard (`409` on a stale revision, uniform across item/note/personnel edits) and
-  the 5-second foreground delta sync that keeps connected tablets current, including bulk
-  actions committing per-order with a named outcome and the connection-check backoff. No code
-  for this half exists yet; it is backlog task `leyble-hub-order-concurrency-guard`, held
-  pending captain authorization. Read the ADR's Decisions section before starting it.
+- **Built:** the server-authoritative order revision guard (migration 048 and
+  `server/src/routes/orders.js`) rejects a stale non-draft mutation with `409 stale_write`
+  plus the current full order. The client always adopts that order and never retries or
+  merges the rejected intent; draft autosaves and receipt-print records remain unguarded.
+  `client/src/offline/foregroundOrderSync.js` runs the orders-only cursor delta every five
+  seconds across the signed-in app, pauses in the background, backs off while unreachable
+  and wakes immediately on confirmed recovery. `leyble:orders-changed` drives spinner-free
+  detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
 - App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
   explicitly under first-setup — not part of this ADR's own scope.
 
