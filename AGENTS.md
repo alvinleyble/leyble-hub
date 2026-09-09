@@ -593,9 +593,24 @@ viewed online but never created here had no local copy at all and still failed o
 settled rules. What a future session most needs to know:
 
 - **Two shapes, and only two.** A tablet holding nothing does ONE full pull, ever
-  (`setup_complete` in `v25.sync.state` is the only thing that decides). Every later login
-  and reconnect is a delta from the device's own server-issued watermarks. Never add a
-  code path that re-pulls everything on an already-set-up device.
+  (`setup_complete` in `v25.sync.state` is the only thing that decides whether the
+  REFERENCE pull is full or delta). Every later login and reconnect is a delta from the
+  device's own server-issued watermarks. Never add a code path that re-pulls everything
+  on an already-set-up device.
+- **The app-wide first-setup gate is a separate, broader question from `setup_complete`**
+  ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md), `isFirstSetup()` /
+  `useSyncGate().blocking` in `sync.js`). Slice 3.2 originally unlocked the app the
+  moment `setup_complete` went true and let the order-history backfill stream in behind
+  an already-open app; ADR 0019 reversed that after field review — a tablet that can
+  take an order against a history it does not yet hold is exactly the "required data
+  missing" state ADR 0015 §5 exists to prevent everywhere else. The gate
+  (`isFirstSetupPending` in `sync.js`) now stays up until `orders_backfill_complete` is
+  ALSO true, reopens on a later login/resume only if that backfill never finished, and
+  otherwise never re-engages once a device has finished its one first setup. It shows
+  one screen, `FirstSetupGateScreen.jsx`, with two truthful sub-states driven by
+  `phase`: actively downloading, and — `phase` back to `'idle'` while still blocking —
+  waiting for connection, with a Retry action that fires a plain `trigger: 'login'` sync
+  (never throttled).
 - **`GET /orders/sync`** (registered above `GET /:id` — Express would read "sync" as an id)
   serves COMPLETE snapshots, keyset-paginated on `(updated_at, id)`: `direction=back`
   backfills newest-first and resumably, `direction=forward` is the delta. `/products`,

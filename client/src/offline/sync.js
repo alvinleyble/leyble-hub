@@ -5,7 +5,8 @@ import { SYNC_STATE_KEY } from './keys.js';
 import { refreshEntity, applyCatalogueDelta } from './catalogue.js';
 import { putOrderSnapshot } from './receiptHistory.js';
 
-// ADR 0015 §4 / Slice 3.2 — EAGER SYNC AT SETUP, INCREMENTAL SYNC AFTER THAT.
+// ADR 0015 §4 / Slice 3.2, revised by ADR 0019 — EAGER SYNC AT SETUP, INCREMENTAL SYNC
+// AFTER THAT.
 //
 // This replaces the "cache what you visit" model the earlier slices assumed. Field
 // testing on Slice 3.1 showed why: an order that had been *viewed* online but never
@@ -16,11 +17,14 @@ import { putOrderSnapshot } from './receiptHistory.js';
 //
 // So the tablet pulls ahead of time, in two clearly different shapes:
 //
-//   FIRST-EVER SETUP (this device holds nothing yet) — one full pull, once, ever.
-//   Products, customers and personnel first: small, fast, and the only things order
-//   taking actually needs, so the app UNLOCKS the moment they land. The complete order
-//   history then streams in behind the scenes, newest first, while the operator is
-//   already working. Nobody waits on a loading screen for thousands of old invoices.
+//   FIRST-EVER SETUP (this device holds nothing yet, or a previous first setup never
+//   finished) — one full pull, once, ever. Products, customers and personnel land
+//   first — small and fast — but ADR 0019 settled that the app stays gated behind one
+//   truthful setup screen until the COMPLETE order history has also landed. Unlocking
+//   the moment reference data arrives (the original Slice 3.2 design) shipped a device
+//   that could take an order against a history it did not actually hold yet; the gate
+//   now only lifts once `orders_backfill_complete` is true, and reopens on a later
+//   login/resume ONLY if that backfill never finished — never for an ordinary delta.
 //
 //   EVERY LOGIN AND RECONNECT AFTER THAT — a delta and nothing else. Whatever changed
 //   since our last successful sync, in products, customers, personnel and orders,
@@ -75,20 +79,32 @@ async function patchSyncState(patch) {
 }
 
 /**
- * True on a tablet that has never completed its one-time full pull. This is the ONLY
- * thing that decides between the two shapes above — not "is the cache empty", which a
- * transient read failure could fake.
+ * True while this device's one-time first setup — reference data AND the complete
+ * order history — has never fully finished (ADR 0019's "Complete first setup"). This
+ * is what the app gate blocks on. It is NOT "is the cache empty", which a transient
+ * read failure could fake, and it is deliberately broader than "have the essentials
+ * landed" — a device that has products/customers/personnel but never finished its
+ * order-history backfill is still mid-first-setup.
  */
+function isFirstSetupPending(state) {
+  return !state.setup_complete || !state.orders_backfill_complete;
+}
+
 export async function isFirstSetup() {
-  return !(await getSyncState()).setup_complete;
+  return isFirstSetupPending(await getSyncState());
 }
 
 // ── Observers ───────────────────────────────────────────────────────────────
 
 let snapshot = {
-  phase: 'idle',          // 'idle' | 'setup' | 'syncing'
-  firstSetup: false,
-  essentialsReady: true,  // false only while a first setup's reference pull is running
+  phase: 'idle',              // 'idle' | 'setup' | 'syncing'
+  // Durable — ADR 0019: true until this device's first setup (essentials AND the
+  // complete order history) has finished at least once. Unlike `phase`, this does NOT
+  // go false just because the run that was chasing it idled out or failed; it only
+  // clears once the persisted state actually shows both pulls complete. This is what
+  // the app gate (useSyncGate().blocking) reads.
+  firstSetupPending: false,
+  essentialsReady: true,      // false only while a first setup's reference pull is running
   error: null,
   ordersBackfilling: false,
   ordersSynced: 0,
@@ -197,9 +213,10 @@ async function syncOrderDelta(state) {
 
 /**
  * Backward backfill: the rest of history, newest page first, resuming from wherever a
- * previous attempt stopped. This is the part that streams in behind an unlocked app on
- * a first setup — and the part that quietly finishes itself on later logins if a first
- * setup was interrupted before it got through everything.
+ * previous attempt stopped. On a first setup (or a resumed partial one) `runSync()`
+ * awaits this directly, since ADR 0019 keeps the gate up until it finishes; on an
+ * already-initialized tablet there should be nothing left to backfill, but if there
+ * ever is, it streams in behind the already-unlocked app instead.
  */
 let backfilling = false;
 
@@ -273,16 +290,23 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
     }
   }
 
-  const firstSetup = !state.setup_complete;
+  // "Needs a full pull" (essentials only) and "the app gate is still pending" (ADR
+  // 0019: essentials AND the complete order history) are different questions. A
+  // resumed partial first setup already holds products/customers/personnel — it must
+  // fetch those as a DELTA, not a second full pull — but the gate stays engaged until
+  // its order-history backfill actually finishes.
+  const needsEssentialsPull = !state.setup_complete;
+  const gatePending = isFirstSetupPending(state);
+
   inFlight = (async () => {
     publish({
-      phase: firstSetup ? 'setup' : 'syncing',
-      firstSetup,
-      essentialsReady: !firstSetup,
+      phase: gatePending ? 'setup' : 'syncing',
+      firstSetupPending: gatePending,
+      essentialsReady: !needsEssentialsPull,
       error: null,
     });
 
-    const result = { ran: true, firstSetup, entitiesSynced: [], ordersSynced: 0, error: null };
+    const result = { ran: true, firstSetup: needsEssentialsPull, entitiesSynced: [], ordersSynced: 0, error: null };
 
     try {
       // 1. Reference data. Per entity, so one failing endpoint cannot roll back the
@@ -290,7 +314,7 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
       const watermarks = { ...(state.reference_watermarks || {}) };
       for (const entity of REFERENCE_ENTITIES) {
         try {
-          watermarks[entity] = await syncReferenceEntity(entity, firstSetup ? null : watermarks[entity]);
+          watermarks[entity] = await syncReferenceEntity(entity, needsEssentialsPull ? null : watermarks[entity]);
           result.entitiesSynced.push(entity);
         } catch (err) {
           result.error = err;
@@ -298,12 +322,13 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
       }
       await patchSyncState({ reference_watermarks: watermarks });
 
-      // A first setup is only "complete" once the three things order taking needs are
-      // actually held. Anything short of that must stay a first setup, or the next
-      // login would run a delta against a tablet holding nothing.
-      const essentialsReady = REFERENCE_ENTITIES.every((e) => result.entitiesSynced.includes(e));
-      if (firstSetup && essentialsReady) await patchSyncState({ setup_complete: true });
-      publish({ essentialsReady: essentialsReady || !firstSetup });
+      // Essentials landing marks that a full reference pull never has to run again —
+      // it does NOT clear the app gate by itself (ADR 0019). Anything short of every
+      // entity landing must stay flagged as needing a full pull, or the next login
+      // would run a delta against a tablet holding nothing.
+      const essentialsLanded = REFERENCE_ENTITIES.every((e) => result.entitiesSynced.includes(e));
+      if (needsEssentialsPull && essentialsLanded) await patchSyncState({ setup_complete: true });
+      publish({ essentialsReady: essentialsLanded || !needsEssentialsPull });
 
       // 2. Order history. The forward delta first (cheap, and the part that matters
       //    for orders other tablets just created), then whatever backfill is still owed.
@@ -316,19 +341,36 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
 
       const afterDelta = await getSyncState();
       if (!afterDelta.orders_backfill_complete) {
-        const backfill = backfillOrderHistory();
-        if (waitForOrders) await backfill;
+        if (gatePending) {
+          // ADR 0019: "keep the app unavailable until the complete historical order
+          // cache is downloaded." A first setup (or a resumed partial one) must not
+          // let this stream in behind an unlocked app — that is exactly the shortcut
+          // this gate exists to close — so the run genuinely waits on it here.
+          await backfillOrderHistory();
+        } else {
+          // An already-initialized tablet: never re-gated, so any owed backfill (there
+          // shouldn't normally be one) is free to stream in the background as before.
+          const backfill = backfillOrderHistory();
+          if (waitForOrders) await backfill;
+        }
       }
 
       await patchSyncState({ last_sync_completed_at: Date.now() });
+
+      // Re-read rather than assume: backfillOrderHistory() swallows its own errors, so
+      // an interrupted first setup falls through to here with the gate still owed. The
+      // published value is always the persisted truth, never an optimistic guess.
+      const finalState = await getSyncState();
+      publish({ firstSetupPending: isFirstSetupPending(finalState) });
       return result;
     } catch (err) {
       result.error = err;
       return result;
     } finally {
-      // The gate always releases: a first setup that could not reach the server leaves
-      // the app usable (and still flagged first-setup, so the next login retries the
-      // full pull) rather than stranding the operator on a spinner.
+      // A first setup that could not finish leaves the gate exactly as the last
+      // publish above left it (still pending) and simply goes idle — ADR 0019's
+      // "waiting for connection" state — rather than either spinning forever or
+      // falsely opening the app. The next login/reconnect/Retry resumes from here.
       publish({ phase: 'idle', error: result.error || null });
     }
   })();
@@ -341,16 +383,22 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
 }
 
 /**
- * React view of the first-setup gate: `blocking` is true only while a tablet that has
- * never been set up is still pulling the three things order taking needs. Order history
- * is deliberately absent from it — that streams in behind an unlocked app.
+ * React view of the first-setup gate (ADR 0019): `blocking` is true for as long as this
+ * device's first setup — reference data AND the complete order history — has never
+ * fully finished, including a resume of one that was interrupted partway. `phase` lets
+ * a screen tell "actively downloading" (`'setup'`) apart from "gated, but nothing is
+ * running right now" (`'idle'` while still `blocking`) — a dropped connection or an
+ * interrupted setup, which is the truthful "waiting for connection" state a Retry
+ * action resumes from. Later login, reconnect and foreground syncs never reach
+ * `blocking: true` once a device has finished its one first setup.
  */
 export function useSyncGate() {
   const [state, setState] = useState(() => getSyncSnapshot());
   useEffect(() => subscribeSync(setState), []);
   return {
-    blocking: state.phase === 'setup' && !state.essentialsReady,
-    firstSetup: state.firstSetup,
+    blocking: state.firstSetupPending,
+    phase: state.phase,
+    essentialsReady: state.essentialsReady,
     ordersBackfilling: state.ordersBackfilling,
     ordersSynced: state.ordersSynced,
     error: state.error,
@@ -363,7 +411,7 @@ export const __SYNC_INTERNALS = { RECONNECT_THROTTLE_MS, ORDER_PAGE_SIZE };
 export async function __resetSyncState() {
   inFlight = null;
   snapshot = {
-    phase: 'idle', firstSetup: false, essentialsReady: true,
+    phase: 'idle', firstSetupPending: false, essentialsReady: true,
     error: null, ordersBackfilling: false, ordersSynced: 0,
   };
   await nativeStore.remove(SYNC_STATE_KEY);
