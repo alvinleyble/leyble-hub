@@ -17,6 +17,7 @@ import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
 import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 import VersionGate from './components/version/VersionGate';
+import FirstSetupGateScreen from './components/setup/FirstSetupGateScreen';
 
 // Layout route: guards all children behind auth check.
 function ProtectedLayout() {
@@ -47,28 +48,14 @@ function AuthedShell() {
     return stopOfflineCore;
   }, []);
 
-  // Slice 3.2 — the ONE time a tablet is held up by a sync: its very first, when it
-  // holds no catalogue at all and there is genuinely nothing to sell from. Only the
-  // three small reference pulls gate it (products, customers, personnel); the order
-  // history streams in behind an already-unlocked app, so nobody waits on years of
-  // invoices. Every later login and reconnect is a delta and never reaches this.
+  // ADR 0019 — the ONE time a tablet is held up by a sync: its very first (or the
+  // resume of one that was interrupted), when it does not yet hold the complete order
+  // history required to work offline. Every later login and reconnect is a delta and
+  // never reaches this gate — see useSyncGate's own doc in offline/sync.js.
   const sync = useSyncGate();
-  if (sync.blocking) return <FirstSetupScreen />;
+  if (sync.blocking) return <FirstSetupGateScreen />;
 
   return <Outlet />;
-}
-
-function FirstSetupScreen() {
-  return (
-    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center">
-      <Spinner size="lg" />
-      <p className="text-lg font-semibold text-slate-800">Setting up this tablet</p>
-      <p className="max-w-sm text-base text-slate-600">
-        Copying the product list, customers and staff onto this device so it keeps working
-        without internet. This happens once.
-      </p>
-    </div>
-  );
 }
 
 function AppRoutes() {
