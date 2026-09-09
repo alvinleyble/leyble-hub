@@ -3,9 +3,9 @@
 REST API under **`/api/v1`**. JSON in, JSON out. Source: `server/src/routes/`.
 
 - **Auth:** every endpoint requires a valid session (cookie or `Bearer` token — see
-  [Architecture](ARCHITECTURE.md#authentication-flow)) **except `POST /auth/login` and `POST /auth/logout`**.
+  [Architecture](ARCHITECTURE.md#authentication-flow)) **except `POST /auth/login`, `POST /auth/logout`, and `GET /version`**.
 - **Errors:** `{ "error": "message" }` with an appropriate status (`400` validation,
-  `401` unauth, `404` not found). Superseded sessions return `401` with `code: 'session_superseded'`. Central handler: `server/src/middleware/errorHandler.js`.
+  `401` unauth, `404` not found, `426` update required). Superseded sessions return `401` with `code: 'session_superseded'`. Minimum version rejections return `426` with `code: 'update_required'`, `min_version: '...'`. Central handler: `server/src/middleware/errorHandler.js`.
 - Money is `NUMERIC` and serialized by `pg` as **strings** — coerce with `Number()` on the client.
 
 ---
@@ -132,6 +132,18 @@ Device registration and receipt identity allocation under [ADR 0017](../adr/0017
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/dashboard` | Aggregated summary for the home page. Orders include `sold_by_name` |
+
+---
+
+## Version & Updates — `version.js`
+
+Minimum version enforcement for Android tablets (migration 047). The client sends `X-App-Version` (versionName) and `X-App-Build` (versionCode) headers on all HTTP requests.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/version` | — | Public endpoint polled on app launch and foreground resume. Returns `{ min_version: string \| null }`. Returns null when enforcement is dormant |
+
+> **Minimum-Version Rejections:** Protected endpoints (`requireAuth`) and `POST /auth/login` verify that incoming client requests meet or exceed `app_settings.min_version`. Requests from an outdated version are rejected with `426 Upgrade Required` (`code: 'update_required'`). The client immediately blocks normal app use with a required-update screen directing the operator to the Google Play Store listing. If the device is offline, existing offline operation is preserved until reconnect.
 
 ---
 

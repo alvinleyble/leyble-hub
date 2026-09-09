@@ -14,6 +14,7 @@ const incomingRoutes = require('./routes/incoming');
 const ticketRoutes = require('./routes/tickets');
 const auditRoutes = require('./routes/audit');
 const dashboardRoutes = require('./routes/dashboard');
+const versionRoutes = require('./routes/version');
 
 const app = express();
 
@@ -69,6 +70,7 @@ app.use('/api/v1/incoming', incomingRoutes);
 app.use('/api/v1/tickets', ticketRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
+app.use('/api/v1/version', versionRoutes);
 
 // API-only service — the product ships as an Android APK. No web client is served.
 app.use((req, res) => res.status(404).json({ error: 'Not found — Leyble Hub is an Android app.' }));

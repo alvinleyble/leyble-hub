@@ -16,6 +16,7 @@ import IncomingPage from './pages/incoming/IncomingPage';
 import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
 import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
+import VersionGate from './components/version/VersionGate';
 
 // Layout route: guards all children behind auth check.
 function ProtectedLayout() {
@@ -101,7 +102,9 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
         <PrinterProvider>
-          <AppRoutes />
+          <VersionGate>
+            <AppRoutes />
+          </VersionGate>
         </PrinterProvider>
       </ToastProvider>
     </AuthProvider>

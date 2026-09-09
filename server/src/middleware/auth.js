@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { requireMinVersion } = require('./version');
 
 // ADR 0017 #8 — one session per account. A token carries the session it was minted for
 // (`sid`), login mints a fresh one, and a token whose `sid` is no longer the one on the
@@ -21,6 +22,9 @@ const db = require('../db');
 const SESSION_SUPERSEDED = 'session_superseded';
 
 async function requireAuth(req, res, next) {
+  await requireMinVersion(req, res, () => {});
+  if (res.headersSent) return;
+
   // Web (dev) sends the JWT in an HTTP-only cookie; the native Android app
   // (Capacitor WebView) can't use SameSite=strict cookies cross-origin, so it
   // sends the same token in an Authorization: Bearer header instead.
