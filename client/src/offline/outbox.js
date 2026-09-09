@@ -396,6 +396,13 @@ async function runDrainPass() {
           break;
         }
 
+        // An update-required rejection (426) means this client build is obsolete.
+        // Leave records queued and untouched so they can safely drain after updating.
+        if (err.status === 426 || err.data?.code === 'update_required') {
+          blocked.add(record.id);
+          break;
+        }
+
         record.attempts = (record.attempts || 0) + 1;
         record.last_error = err.message || String(err);
 

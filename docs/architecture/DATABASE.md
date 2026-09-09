@@ -1,6 +1,6 @@
 # Database Reference
 
-PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–045` have
+PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–047` have
 been applied — reconstructed from `server/db/migrations/` (not from the archived spec, which is
 stale). When in doubt, the migration files are the source of truth.
 
@@ -15,7 +15,7 @@ stale). When in doubt, the migration files are the source of truth.
 - Stock is mutated in exactly one place: `applyStockDelta` / `applyDeltaMap` in
   [`server/src/lib/inventory.js`](../../server/src/lib/inventory.js), always inside a transaction,
   and every change writes an `inventory_audit_logs` row.
-- **Row Level Security (RLS)** is enabled across all 16 tables (migration 045, [ADR 0018](../adr/0018-supabase-rls-lockdown.md)). The Express backend connects as user `postgres` (`BYPASSRLS = true`), so all application queries and migrations bypass RLS, while direct external PostgREST / GraphQL queries fail closed.
+- **Row Level Security (RLS)** is enabled across all 17 tables (migration 045 and 047, [ADR 0018](../adr/0018-supabase-rls-lockdown.md)). The Express backend connects as user `postgres` (`BYPASSRLS = true`), so all application queries and migrations bypass RLS, while direct external PostgREST / GraphQL queries fail closed.
 
 ---
 
@@ -204,11 +204,21 @@ Tracks schema migrations applied by `server/db/migrate.js`.
 | `name` | VARCHAR(255) UNIQUE | Migration filename, e.g. `'045_enable_rls.sql'` |
 | `applied_at` | TIMESTAMPTZ | Timestamp of successful application |
 
+### 17. `app_settings` (047)
+System configuration key-value store. Primary use: minimum Android app version enforcement.
+| Column | Type | Notes |
+|---|---|---|
+| `key` | TEXT PRIMARY KEY | Setting identifier, e.g. `'min_version'` |
+| `value` | TEXT | Setting value (nullable). Null/empty leaves enforcement dormant |
+| `updated_at` | TIMESTAMPTZ | Timestamp of last modification |
+
+Seeded dormant with `('min_version', NULL)`. The captain can raise or adjust the required version directly in the Supabase SQL Editor (`UPDATE app_settings SET value = '1.3.0' WHERE key = 'min_version';` or `UPDATE app_settings SET value = '14' WHERE key = 'min_version';`) without publishing another build. RLS is enabled with zero public policies.
+
 ---
 
 ## Row Level Security (RLS) Posture
 
-Per migration `045_enable_rls.sql` and [ADR 0018](../adr/0018-supabase-rls-lockdown.md), Row Level Security (RLS) is enabled across all 16 tables in the schema with **zero public policies**.
+Per migrations `045_enable_rls.sql` and `047_app_settings_min_version.sql` and [ADR 0018](../adr/0018-supabase-rls-lockdown.md), Row Level Security (RLS) is enabled across all 17 tables in the schema with **zero public policies**.
 
 - **Express backend:** Connects via `DATABASE_URL` as user `postgres`. In PostgreSQL and Supabase, `postgres` has `BYPASSRLS = true`. All backend application queries, sync jobs, and migrations bypass RLS unconditionally and execute with native performance.
 - **External / direct PostgREST / GraphQL:** Supabase's HTTP endpoints operate as non-superusers (`anon`, `authenticated`). With RLS enabled and no policies granted, any direct external attempt to read, enumerate, or mutate data fails closed (returns empty sets or 401/403).

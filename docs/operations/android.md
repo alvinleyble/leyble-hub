@@ -138,6 +138,34 @@ Google Play requires every release to have a strictly higher `versionCode`:
 2. Have owners open the one-time opt-in link and install **Leyble Hub** (or **Leyble Hub (Staging)**) from Google Play Store.
 3. Subsequent releases pushed to `main` (or `staging`) will automatically update on the tablets via Google Play background updates.
 
+### Minimum-Version Enforcement & Rollout Order
+
+Under migration 047, Android releases support a remote minimum-version kill switch managed directly via the `app_settings` table in Supabase.
+
+#### Version Semantics
+The comparator supports two types of values in `app_settings.min_version`:
+1. **Semantic Versioning (`versionName`, e.g. `'1.3.0'`):** Evaluated against the client's `versionName` (e.g. `1.2.1`). Strips optional `v` prefix, splits by `.`, and compares `[major, minor, patch]` numbers from left to right.
+2. **Numeric Build Codes (`versionCode`, e.g. `'14'`):** If `min_version` is purely digits, it evaluates against the client's integer Android `versionCode` (sent via `X-App-Build` header).
+3. **Dormant State:** If `min_version` is `NULL`, empty, or `'0'`, enforcement is inactive and all app versions are permitted.
+
+#### Client & Server Enforcement Behavior
+- **Client App:** On launch and whenever returned to the foreground, the app calls `GET /api/v1/version` when online. If the installed build is strictly below `min_version`, normal app use is immediately blocked with a `<RequiredUpdateScreen>` containing an **Update** button that directs the user to the app's Google Play listing (`market://details?id=<package>` / `https://play.google.com/store/apps/details?id=<package>`).
+- **Offline Resilience:** If the device is offline or the version check fails due to a network error, existing offline operation (local-first order taking, cached catalogue) is fully preserved until connectivity returns.
+- **Server API:** Protected endpoints (`requireAuth`) and `POST /api/v1/auth/login` inspect `X-App-Version` and `X-App-Build` headers and reject sub-minimum clients with HTTP `426 Upgrade Required` (`code: 'update_required'`). The outbox drain halts cleanly without marking records as failed or corrupted.
+
+#### Safe Rollout Procedure
+To ensure store operations are never locked out accidentally:
+1. **Deploy with Enforcement Inactive:** Build and publish the update-capable release to the Google Play Store (Internal Testing track). Ensure `app_settings.min_version` is `NULL` (the default from migration 047).
+2. **Verify Fleet Adoption:** Allow the release to propagate to all physical store tablets (Alvin, Josie, Luis) via Google Play background updates or manual updates.
+3. **Raise Minimum Version in Supabase:** Only after all devices are running the update-capable build, the captain raises `min_version` in the Supabase SQL Editor:
+   ```sql
+   UPDATE app_settings SET value = '1.3.0', updated_at = NOW() WHERE key = 'min_version';
+   ```
+   To deactivate enforcement at any time:
+   ```sql
+   UPDATE app_settings SET value = NULL, updated_at = NOW() WHERE key = 'min_version';
+   ```
+
 ---
 
 ## Native features status

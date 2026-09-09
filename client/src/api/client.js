@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { markOffline } from '../offline/status.js';
 import { formatConnectionError } from '../utils/errors.js';
+import { getAppVersion, getAppBuild } from '../version/appVersion.js';
 
 const BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1';
 
@@ -189,8 +190,14 @@ async function request(path, options = {}) {
   // who is not even using the device, not a reason to sign the current person out.
   const { profileKey: _localAuthor, accountKey, ...fetchOptions } = options;
   const asAccount = Boolean(accountKey);
-
-  const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
+  const appVer = getAppVersion();
+  const appBld = getAppBuild();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(appVer ? { 'X-App-Version': appVer } : {}),
+    ...(appBld ? { 'X-App-Build': String(appBld) } : {}),
+    ...fetchOptions.headers,
+  };
   const token = asAccount ? await getAccountToken(accountKey) : await getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -332,6 +339,11 @@ async function request(path, options = {}) {
   const data = contentType.includes('application/json') ? await res.json() : null;
 
   if (!res.ok) {
+    if (res.status === 426 || data?.code === 'update_required') {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('leyble:update-required', { detail: data }));
+      }
+    }
     const err = new Error(data?.error || `Request failed (${res.status})`);
     err.status = res.status;
     err.data = data;

@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { requireMinVersion } = require('../middleware/version');
 
 const router = express.Router();
 
@@ -25,7 +26,7 @@ function publicIdentity({ id, email, full_name, role }) {
 }
 
 // POST /api/v1/auth/login  { email, password, device_key? }
-router.post('/login', async (req, res, next) => {
+router.post('/login', requireMinVersion, async (req, res, next) => {
   try {
     const { email, password, device_key } = req.body;
     if (!email || !password) {
