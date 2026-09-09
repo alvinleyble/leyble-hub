@@ -12,6 +12,7 @@ import { parseBareSequence } from '../../offline/receiptNumbers';
 import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
 import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
 import { formatCardDateTime } from '../../utils/dateFormat';
+import { handleStaleOrderWrite, orderStatusLabel } from './orderConcurrency.js';
 import {
   listRecords, subscribeOutbox, getReceipt, listReceipts, putOrderSnapshot,
   loadParkedOrders, discardLocalDraft,
@@ -88,8 +89,13 @@ export default function OrdersPage() {
 
   // Bulk selection + actions (uniform across draft, pending, in_transit, completed tabs)
   const [selectedIds, setSelectedIds]     = useState(() => new Set());
+  // The snapshot/revision selected is the precondition reviewed by the operator. A
+  // later delta never rewrites it under the selection; it marks that row stale.
+  const [selectedSnapshots, setSelectedSnapshots] = useState(() => new Map());
+  const [staleSelections, setStaleSelections] = useState(() => new Map());
   const [bulkConfirm, setBulkConfirm]     = useState(null);
   const [bulkRunning, setBulkRunning]     = useState(false);
+  const [bulkOutcome, setBulkOutcome]     = useState(null);
   const [reviewPrompt, setReviewPrompt]   = useState(null);
   // { ids: number[], mode: 'pending' | 'in_transit' | 'delivered' } | null
   const [reviewQueue, setReviewQueue]     = useState(null);
@@ -144,8 +150,8 @@ export default function OrdersPage() {
     });
   }, [loadLocalUnsyncedOrders]);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
 
     // Criteria 5.1/5.6 — the Drafts tab is not a slice of the orders list, it is the
     // parked-drafts list, and it has to load blind. `GET /orders/sync` deliberately
@@ -167,7 +173,7 @@ export default function OrdersPage() {
           setTotalOrders(matched.length);
           setTotalPages(Math.max(1, Math.ceil(matched.length / pageSize)));
         })
-        .finally(() => setLoading(false));
+        .finally(() => { if (!silent) setLoading(false); });
       return;
     }
 
@@ -218,7 +224,7 @@ export default function OrdersPage() {
           addToast('Failed to load orders', 'error');
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [statusTab, fromDate, toDate, debouncedSearch, page, pageSize, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -247,15 +253,51 @@ export default function OrdersPage() {
     return () => window.removeEventListener('leyble:refresh', onRefresh);
   }, []);
 
+  // ADR 0019 — the app-wide poll stores complete snapshots before emitting this event.
+  // Refresh this filtered page without a spinner, explain rows that moved away, and
+  // freeze any selected revision that changed until the operator removes it.
+  useEffect(() => {
+    const onOrdersChanged = (event) => {
+      const changed = event.detail?.orders || [];
+      for (const current of changed) {
+        const selected = selectedSnapshots.get(current.id);
+        if (selected && selected.status !== 'draft'
+            && String(selected.revision) !== String(current.revision)) {
+          setStaleSelections((prev) => new Map(prev).set(current.id, current));
+          setBulkConfirm(null);
+        }
+
+        const visibleBefore = orders.find((row) => String(row.id) === String(current.id));
+        if (visibleBefore && statusTab !== 'all' && statusTab !== 'draft'
+            && current.status !== statusTab) {
+          addToast(
+            `${orderRef(current)} moved to ${orderStatusLabel(current.status)} and was removed from this view.`,
+            'info'
+          );
+        }
+      }
+      loadRef.current?.({ silent: true });
+      loadDraftsRef.current?.();
+    };
+    window.addEventListener('leyble:orders-changed', onOrdersChanged);
+    return () => window.removeEventListener('leyble:orders-changed', onOrdersChanged);
+  }, [orders, statusTab, selectedSnapshots, addToast]);
+
   // Reset page to 1 when filters or search criteria change
   useEffect(() => {
     setPage(1);
   }, [statusTab, fromDate, toDate, searchQuery, doubleOnly, printFilter]);
 
-  useEffect(() => {
+  const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
+    setSelectedSnapshots(new Map());
+    setStaleSelections(new Map());
     setBulkConfirm(null);
-  }, [statusTab, page]);
+  }, []);
+
+  useEffect(() => {
+    clearSelection();
+  }, [statusTab, page, clearSelection]);
 
   // D6 / G21 — Possible duplicate detection across loaded orders
   const possibleDoubleIds = useMemo(
@@ -388,9 +430,21 @@ export default function OrdersPage() {
   };
 
   const toggleSelected = (id) => {
+    const row = filteredOrders.find((order) => order.id === id);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    setSelectedSnapshots((prev) => {
+      const next = new Map(prev);
+      if (next.has(id)) next.delete(id); else if (row) next.set(id, row);
+      return next;
+    });
+    setStaleSelections((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
       return next;
     });
   };
@@ -402,37 +456,59 @@ export default function OrdersPage() {
   const allSelected = selectableOrders.length > 0 && selectableOrders.every((o) => selectedIds.has(o.id));
 
   const toggleSelectAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(selectableOrders.map((o) => o.id)));
+    if (allSelected) {
+      clearSelection();
+      return;
+    }
+    setSelectedIds(new Set(selectableOrders.map((o) => o.id)));
+    setSelectedSnapshots(new Map(selectableOrders.map((o) => [o.id, o])));
+    setStaleSelections(new Map());
   };
 
   const runBulkTransition = async (targetStatus, pastTenseLabel) => {
+    if (staleSelections.size > 0) return [];
     setBulkRunning(true);
     const ids = Array.from(selectedIds);
     const succeeded = [];
     const failed = [];
     for (const orderId of ids) {
+      const selected = selectedSnapshots.get(orderId);
       try {
-        await api.post(`/orders/${orderId}/status`, { status: targetStatus });
-        succeeded.push(orderId);
+        const updated = await api.post(`/orders/${orderId}/status`, {
+          status: targetStatus,
+          expected_status: selected?.status,
+          revision: selected?.revision,
+        });
+        succeeded.push(updated);
       } catch (err) {
-        failed.push({ id: orderId, reason: err.message || 'failed' });
+        let current = null;
+        const stale = await handleStaleOrderWrite(err, {
+          onCurrent: (order) => { current = order; },
+        });
+        failed.push({
+          id: orderId,
+          order: current || selected,
+          stale,
+          reason: stale ? 'changed on another device' : (err.message || 'failed'),
+        });
       }
     }
     setBulkRunning(false);
-    setBulkConfirm(null);
-    setSelectedIds(new Set());
-    load();
+    clearSelection();
+    load({ silent: true });
 
     if (failed.length === 0) {
+      setBulkOutcome(null);
       addToast(`${succeeded.length} order${succeeded.length === 1 ? '' : 's'} ${pastTenseLabel}.`, 'success');
     } else {
-      const failMsg = failed.map((f) => `#${f.id} — ${f.reason}`).join(' · ');
+      setBulkOutcome({ succeeded: succeeded.length, total: ids.length, pastTenseLabel, failed });
+      const failMsg = failed.map((f) => `${orderRef(f.order || { id: f.id })} — ${f.reason}`).join(' · ');
       addToast(
-        `${succeeded.length} of ${ids.length} ${pastTenseLabel}. Failed: ${failMsg}`,
+        `${succeeded.length} of ${ids.length} ${pastTenseLabel}; ${failed.length} skipped: ${failMsg}.`,
         'error'
       );
     }
-    return succeeded;
+    return succeeded.map((order) => order.id);
   };
 
   const confirmBulkDiscardDrafts = () => setBulkConfirm({
@@ -452,8 +528,7 @@ export default function OrdersPage() {
         }
       }
       setBulkRunning(false);
-      setBulkConfirm(null);
-      setSelectedIds(new Set());
+      clearSelection();
       load();
       loadDrafts();
 
@@ -490,7 +565,7 @@ export default function OrdersPage() {
     },
   });
 
-  const selectedOrders        = filteredOrders.filter((o) => selectedIds.has(o.id));
+  const selectedOrders        = Array.from(selectedSnapshots.values());
   const selectionHasDeliveries = selectedOrders.some((o) => o.order_type !== 'pickup');
   const selectionHasPickups    = selectedOrders.some((o) => o.order_type === 'pickup');
   const selectionIsMixed       = selectionHasDeliveries && selectionHasPickups;
@@ -626,9 +701,31 @@ export default function OrdersPage() {
 
       {/* Bulk action bar */}
       {showCheckboxes && selectedIds.size > 0 && (
-        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-4
-                        flex items-center justify-between flex-wrap gap-3">
-          {bulkConfirm ? (
+        <div className={`sticky top-0 z-10 rounded-xl px-5 py-3 mb-4 flex items-center justify-between flex-wrap gap-3 border ${
+          staleSelections.size > 0 ? 'bg-amber-50 border-amber-300' : 'bg-blue-50 border-blue-200'
+        }`}>
+          {staleSelections.size > 0 ? (
+            <>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-amber-900">
+                  Review changed {staleSelections.size === 1 ? 'order' : 'orders'} before continuing
+                </p>
+                <p className="mt-1 text-sm text-amber-800">
+                  {Array.from(staleSelections.values()).map((current) =>
+                    `${orderRef(current)} is now ${orderStatusLabel(current.status)}`
+                  ).join(' · ')}. {selectedIds.size - staleSelections.size} unchanged {selectedIds.size - staleSelections.size === 1 ? 'order remains' : 'orders remain'} selected.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Array.from(staleSelections.values()).map((current) => (
+                    <Button key={current.id} variant="secondary" size="sm" onClick={() => toggleSelected(current.id)}>
+                      Remove {orderRef(current)} from batch
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={clearSelection}>Clear all</Button>
+            </>
+          ) : bulkConfirm ? (
             <>
               <div>
                 <p className="text-sm font-semibold text-blue-900">Confirm: {bulkConfirm.label}</p>
@@ -654,7 +751,7 @@ export default function OrdersPage() {
                 {selectedIds.size} order{selectedIds.size === 1 ? '' : 's'} selected
               </p>
               <div className="flex gap-2 shrink-0">
-                <Button variant="secondary" size="sm" onClick={() => setSelectedIds(new Set())}>
+                <Button variant="secondary" size="sm" onClick={clearSelection}>
                   Clear
                 </Button>
                 {statusTab === 'draft' && (
@@ -703,6 +800,39 @@ export default function OrdersPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {bulkOutcome && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 text-amber-900" role="status">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold">
+                {bulkOutcome.succeeded} of {bulkOutcome.total} {bulkOutcome.pastTenseLabel}; {bulkOutcome.failed.length} skipped
+              </p>
+              <p className="mt-1 text-sm">Open each skipped order to review the current server version.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {bulkOutcome.failed.map((failure) => (
+                  <Button
+                    key={failure.id}
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => navigate(`/orders/${failure.order?.receipt_number || failure.id}`)}
+                  >
+                    Open {orderRef(failure.order || { id: failure.id })} — {failure.reason}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBulkOutcome(null)}
+              aria-label="Dismiss bulk result"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-2xl text-amber-700 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
 

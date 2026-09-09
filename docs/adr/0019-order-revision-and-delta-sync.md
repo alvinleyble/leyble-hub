@@ -13,8 +13,9 @@ Connected foreground tablets keep their local order copies current with a bounde
   "Full-app offline sync (Slice 3.2, ADR 0015)" section for the mechanism.
 - **Server-authoritative order-revision stale-write guard + the 5-second foreground
   delta sync** (including bulk-action independent commit/outcome reporting and the
-  connection-check backoff/app-wide scope) — **Not started.** Tracked as backlog task
-  `leyble-hub-order-concurrency-guard`, held pending captain authorization.
+  connection-check backoff/app-wide scope) — **Done.** Migration 048 adds the revision;
+  `server/src/routes/orders.js` enforces it; `client/src/offline/foregroundOrderSync.js`
+  owns the app-wide foreground cadence and backoff.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).
