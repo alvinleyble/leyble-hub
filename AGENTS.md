@@ -775,6 +775,25 @@ Every V1 screen now works blind. What a future session most needs to know:
   `mutationsBlocked` gated the whole form instead — see ADR 0015 §9's amendment note and
   `docs/offline-accessibility-acceptance-criteria.md` items 9.2/9.3 and Known Gaps G3.
 
+### Order concurrency & delta sync ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md))
+
+Update this section's status line in place as each slice below lands — never delete it, and
+never let it drift from the ADR's own "Implementation status" section (keep the two in step).
+
+- **Built:** the first-setup full-history gate — a brand-new tablet stays blocked until the
+  complete order-history backfill finishes, not just once reference data lands. Merged via
+  PR #117 on `dev`. Mechanism is documented under "Full-app offline sync (Slice 3.2, ADR
+  0015)" above (`useSyncGate().blocking`/`isFirstSetupPending` in `client/src/offline/
+  sync.js`, `FirstSetupGateScreen.jsx`) rather than repeated here.
+- **Designed but not built:** the rest of the ADR — the server-authoritative order-revision
+  stale-write guard (`409` on a stale revision, uniform across item/note/personnel edits) and
+  the 5-second foreground delta sync that keeps connected tablets current, including bulk
+  actions committing per-order with a named outcome and the connection-check backoff. No code
+  for this half exists yet; it is backlog task `leyble-hub-order-concurrency-guard`, held
+  pending captain authorization. Read the ADR's Decisions section before starting it.
+- App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
+  explicitly under first-setup — not part of this ADR's own scope.
+
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 
 Piece 1 (order creation: orientation unlock, bottom-sheet cart, horizontal category

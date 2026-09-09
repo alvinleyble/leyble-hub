@@ -4,6 +4,21 @@ PostgreSQL is the authority for every non-draft order change. Each command carri
 
 Connected foreground tablets keep their local order copies current with a bounded cursor-based delta pull every 5 seconds, with catch-up after reconnect. This rollout starts with orders only; inventory and all other app areas remain later slices. Supabase Realtime is not used: the existing authenticated Express delta endpoint provides complete, ordered recovery without a second client credential or authorization path. Awareness never decides whether a write is valid; the database does.
 
+## Implementation status (as of 2026-09-09)
+
+- **First-setup full-history gate** — **Done.** Merged via PR #117 on `dev`
+  (`useSyncGate().blocking` / `isFirstSetupPending` in `client/src/offline/sync.js`,
+  `FirstSetupGateScreen.jsx`). A brand-new tablet now stays blocked until
+  `orders_backfill_complete` is true, not just `setup_complete`. See `AGENTS.md`'s
+  "Full-app offline sync (Slice 3.2, ADR 0015)" section for the mechanism.
+- **Server-authoritative order-revision stale-write guard + the 5-second foreground
+  delta sync** (including bulk-action independent commit/outcome reporting and the
+  connection-check backoff/app-wide scope) — **Not started.** Tracked as backlog task
+  `leyble-hub-order-concurrency-guard`, held pending captain authorization.
+- App-wide skeletal loaders are a related but **separate** slice, not part of this
+  ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
+  line under Decisions below).
+
 ## Decisions
 
 - Reads are local-first: render a saved local copy immediately, then check in the background. A screen with no saved copy while offline shows an explicit unavailable-offline state, never a spinner, blank page, or invented data.
