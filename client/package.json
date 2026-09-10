@@ -8,7 +8,7 @@
     "test": "node --import ./test/jsx-register.mjs --test test/*.test.mjs",
     "build": "vite build",
     "android:sync": "vite build && cap sync android",
-    "android:sync:staging": "VITE_API_URL=https://leyble-hub-staging.onrender.com npm run android:sync",
+    "android:sync:staging": "VITE_API_URL=https://leyble-hub.onrender.com npm run android:sync",
     "android:open": "vite build && cap sync android && cap open android"
   },
   "dependencies": {

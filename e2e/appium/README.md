@@ -190,7 +190,7 @@ cd android && ./gradlew assembleDebug
 # Install app/build/outputs/apk/debug/app-debug.apk on each target device/emulator.
 ```
 
-The baked API URL is **`https://leyble-hub-staging.onrender.com`**. It is HTTPS, so the
+The baked API URL is **`https://leyble-hub.onrender.com`**. It is HTTPS, so the
 cleartext-networking workaround is not needed for this build. The checked-in `debug/`
 cleartext configuration is additive and does not hurt. This remains the **debug** APK variant
 (`assembleDebug`): keep the `androidScheme` flip in
