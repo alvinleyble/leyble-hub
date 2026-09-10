@@ -1191,6 +1191,7 @@ export default function OrderCreateModal({
                   <div className="pt-2 border-t border-slate-200">
                     <FormField label="Notes" hint="Optional">
                       <input
+                        data-testid="order-edit-notes-input"
                         type="text"
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
@@ -1266,6 +1267,7 @@ export default function OrderCreateModal({
                       </Button>
 
                       <Button
+                        data-testid="order-edit-save"
                         onClick={handleSubmit}
                         loading={saving}
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"

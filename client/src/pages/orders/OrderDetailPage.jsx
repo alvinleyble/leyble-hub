@@ -800,6 +800,7 @@ export default function OrderDetailPage() {
                 tablets is what corrupts the stock and deposit ledgers. */}
             <Button
               variant="secondary"
+              data-testid="order-edit-button"
               onClick={() => setEditing(true)}
               disabled={offlineViewingSynced}
               title={offlineViewingSynced ? 'Needs a connection' : undefined}

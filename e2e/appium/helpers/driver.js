@@ -16,7 +16,7 @@ export function assert(cond, msg) {
 // APK (appium:noReset) rather than reinstalling/wiping it, so a human poking at the same
 // device isn't disrupted. See README "Clean state matters" for why `pm clear` before a
 // run is still required.
-export async function createDriver() {
+export async function createDriver({ udid } = {}) {
   return remote({
     hostname: APPIUM_HOSTNAME,
     port: APPIUM_PORT,
@@ -31,6 +31,7 @@ export async function createDriver() {
       'appium:autoGrantPermissions': true,
       'appium:chromedriverAutodownload': true,
       'appium:newCommandTimeout': 180,
+      ...(udid === undefined ? {} : { 'appium:udid': udid }),
     },
   });
 }
@@ -54,8 +55,8 @@ export async function switchToWebview(driver) {
 
 // Runs `fn(driver)` inside a connected, webview-switched session and always tears the
 // session down afterwards — the shape every test in this suite follows.
-export async function withSession(fn) {
-  const driver = await createDriver();
+export async function withSession(fn, options = {}) {
+  const driver = await createDriver(options);
   try {
     await switchToWebview(driver);
     await fn(driver);
