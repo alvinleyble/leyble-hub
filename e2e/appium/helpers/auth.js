@@ -16,21 +16,46 @@ const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD || 'leyble123';
 // the first-run "Setting up this tablet" sync gate needs a generous timeout).
 export async function loginAs(driver, { email = LOGIN_EMAIL, password = LOGIN_PASSWORD } = {}) {
   const emailInput = await driver.$('input[type="email"]');
-  await emailInput.waitForExist({ timeout: 20000 });
-  await emailInput.setValue(email);
+  if (await emailInput.isExisting()) {
+    await emailInput.setValue(email);
 
-  const passwordInput = await driver.$('input[type="password"]');
-  await passwordInput.setValue(password);
+    const passwordInput = await driver.$('input[type="password"]');
+    await passwordInput.setValue(password);
 
-  const signInButton = await driver.$("//button[contains(., 'Sign in')]");
-  assert(await signInButton.isExisting(), 'found a "Sign in" button on the login screen');
-  await signInButton.click();
+    const signInButton = await driver.$("//button[contains(., 'Sign in')]");
+    assert(await signInButton.isExisting(), 'found a "Sign in" button on the login screen');
+    await signInButton.click();
+  } else {
+    // Already authenticated (e.g. a prior test in the same session left the app on
+    // another screen) — nudge back to Dashboard instead of failing to find a login form.
+    const isDashboard = await (await driver.$("//h1[contains(., 'Dashboard')]")).isDisplayed().catch(() => false);
+    if (!isDashboard) {
+      const navBtn = await driver.$('[data-testid="nav-menu-button"]');
+      if (await navBtn.isExisting()) {
+        await navigateTo(driver, 'dashboard');
+      }
+    }
+  }
 
   // The Dashboard is now the first thing after a successful sign-in — nothing sits
   // between the login POST and the app shell. The generous timeout is the first-run
-  // "Setting up this tablet" sync gate, which can still hold the app briefly.
-  const dashboardHeading = await driver.$("//h1[contains(., 'Dashboard')]");
-  await dashboardHeading.waitForDisplayed({ timeout: 45000 });
+  // "Setting up this tablet" sync gate, which can still hold the app briefly. The
+  // 2s poll interval (vs. webdriverio's 500ms default) matters on a loaded host: a
+  // tight poll here was observed to crash the on-device UiAutomator2 instrumentation
+  // (MjpegScreenshotServer) under a two-emulator + remote-DB-latency run, taking the
+  // whole session down mid-login — not an app bug, just too many automation calls per
+  // second against an already resource-starved instrumentation process.
+  await driver.waitUntil(
+    async () => {
+      try {
+        const dashboardHeading = await driver.$("//h1[contains(., 'Dashboard')]");
+        return await dashboardHeading.isDisplayed();
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 60000, interval: 2000, timeoutMsg: `Dashboard heading still not displayed after signing in as ${email}` }
+  );
   assert(true, `Dashboard heading visible after signing in as ${email} — login flow verified end to end`);
 }
 

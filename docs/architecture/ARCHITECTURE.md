@@ -152,6 +152,7 @@ Per migrations `045_enable_rls.sql` and `047_app_settings_min_version.sql` and [
 CORS (`server/src/index.js`) allows only:
 - `http://localhost:5173` (Vite dev server)
 - `https://localhost` and `capacitor://localhost` (Capacitor Android WebView origins)
-- Optional developer origins defined in `DEV_CORS_EXTRA_ORIGINS` (e.g. for Android emulator loopback `10.0.2.2`).
+- Optional developer origins defined in `DEV_CORS_EXTRA_ORIGINS` (non-production only — gated on `NODE_ENV !== 'production'`).
+- Optional origins defined in `STAGING_CORS_EXTRA_ORIGINS` — unconditional (not `NODE_ENV`-gated), so it works on Render's staging service despite `NODE_ENV=production` there; set only on staging, never on production, to reach it from a debug Android build's `http://localhost` origin (e.g. for `e2e/appium`'s on-device tests against staging).
 
 See also: [Database Reference](DATABASE.md) · [API Reference](API.md) · [Order Lifecycle](order-lifecycle.md) · [ADR 0018](../adr/0018-supabase-rls-lockdown.md).

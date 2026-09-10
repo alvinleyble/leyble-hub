@@ -37,3 +37,10 @@ projects:
                 generateValue: true
               # Intentionally no JWT_EXPIRES_IN — sessions never expire (single shared
               # login on a couple of Android devices; see server/src/routes/auth.js).
+              # Set in the Render dashboard to `http://localhost` — lets a debug Android
+              # build (androidScheme: "http", e2e/appium's on-device/Appium tests) reach
+              # this staging API. NODE_ENV=production above means DEV_CORS_EXTRA_ORIGINS
+              # never applies here, so this is a separate, staging-only extension point
+              # (server/src/index.js) — never set this on the production service.
+              - key: STAGING_CORS_EXTRA_ORIGINS
+                sync: false

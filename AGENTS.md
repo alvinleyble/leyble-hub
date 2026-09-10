@@ -986,6 +986,16 @@ returns a 404 JSON. The Android APK is the only way in.
   auto-deploying from the `staging` branch against that same dev/test Supabase database. It
   auto-migrates during Render's build step via `node server/db/migrate.js` — see
   [docs/operations/development-database.md](docs/operations/development-database.md#5-staging-deployment-render).
+  **That auto-migrate only runs ON a Render deploy** — if `staging` hasn't redeployed since a
+  migration merged (e.g. no `client/**`/`server/**` push since), the shared dev/test DB can be
+  behind the repo's own `server/db/migrations/`. Before trusting behavior that depends on a
+  recent migration (e.g. [ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md)'s
+  `orders.revision`), check `SELECT filename FROM _migrations ORDER BY filename DESC LIMIT 5`
+  against it and, if it's behind, bring it forward directly with `node server/db/migrate.js`
+  (already-merged migrations only, per the migration rules above — this is exactly "a migration
+  that has already merged," the one thing licensed to move the shared DB).
+  A debug Android build's CORS story against this same Render staging service is a separate
+  gotcha — see [e2e/appium/README.md](e2e/appium/README.md#multi-device--staging-build).
 - **Google Play Store (Internal Testing):** Android app builds and deploys automatically via GitHub Actions on push to `main` (modifying `client/**` or `.github/workflows/deploy-play.yml`). Tablet users receive background updates automatically through the Play Store.
 - **V3.0 release sequencing:** Migrations deploy early and alone to production; server code and Android APK land together on release day ([ADR 0014](docs/adr/0014-v3-release-sequencing.md)).
 
