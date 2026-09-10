@@ -15,6 +15,7 @@ import {
   getReceipt, putOrderSnapshot, updateLocalOrder, transitionLocalOrder,
   canTransitionOffline, isOrderUnsynced,
 } from '../../offline/index.js';
+import { handleStaleOrderWrite, orderChangedInEvent } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -68,6 +69,10 @@ export default function OrderDetailPage() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [editing, setEditing]       = useState(false);
   const [closing, setClosing]       = useState(false);
+  // A delta that lands while the operator is forming an edit is held beside the form,
+  // never merged into or substituted for it. Closing the edit adopts this snapshot;
+  // saving against the old revision is still authoritatively rejected by the server.
+  const [pendingRemoteOrder, setPendingRemoteOrder] = useState(null);
 
   // Adjustment form state
   const [adjExpanded, setAdjExpanded] = useState(false);
@@ -78,6 +83,7 @@ export default function OrderDetailPage() {
   // Live, in-progress bottle-return entries — lifted up from OrderCloseForm so its
   // breakdown math can read them. Keyed by order_items.id.
   const [returnCounts, setReturnCounts] = useState({});
+  const [returnsDirty, setReturnsDirty] = useState(false);
 
   const {
     handlePrint, printing,
@@ -87,6 +93,17 @@ export default function OrderDetailPage() {
     printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, setOrder);
 
+  const adoptAuthoritativeOrder = useCallback((current) => {
+    setOrder(current);
+    setUnsynced(false);
+    setFromLocalSnapshot(false);
+    setAdjValue(Number(current.adjustment) ? String(current.adjustment) : '');
+    setAdjReason(current.adjustment_reason || '');
+    setAdjExpanded(Number(current.adjustment) !== 0);
+    setReturnsDirty(false);
+    putOrderSnapshot(current).catch(() => {});
+  }, []);
+
   // G27 — silent background sync, zero spinner flashes. `silent` is used for the
   // re-read triggered by leyble:drain-complete: it must never touch `loading`, or
   // every background sync would flash the full-page spinner over a screen the
@@ -95,17 +112,11 @@ export default function OrderDetailPage() {
     if (!silent) setLoading(true);
     api.get(`/orders/${id}`)
       .then((o) => {
-        setOrder(o);
-        setUnsynced(false);
-        setFromLocalSnapshot(false);
         // ADR 0015 §4 — every order this device has ever SEEN is held in full, not just
         // the ones it created. The background sync is what makes the whole history
         // available, but writing the snapshot here too means the order the operator is
         // looking at right now is guaranteed current the moment the line drops.
-        putOrderSnapshot(o).catch(() => {});
-        setAdjValue(Number(o.adjustment) ? String(o.adjustment) : '');
-        setAdjReason(o.adjustment_reason || '');
-        setAdjExpanded(Number(o.adjustment) !== 0);
+        adoptAuthoritativeOrder(o);
       })
       .catch(async (err) => {
         // A 404 here can mean "never synced yet" (a receipt-numbered order the
@@ -140,7 +151,7 @@ export default function OrderDetailPage() {
         }
       })
       .finally(() => { if (!silent) setLoading(false); });
-  }, [id, addToast]);
+  }, [id, addToast, adoptAuthoritativeOrder]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -151,13 +162,30 @@ export default function OrderDetailPage() {
   useEffect(() => {
     const onDrainComplete = () => load({ silent: true });
     const onRefresh = () => load();
+    const onOrdersChanged = (event) => {
+      const current = orderChangedInEvent(order, event.detail);
+      if (!current) return;
+      if (editing || adjExpanded || returnsDirty || closing || confirmAction) {
+        setPendingRemoteOrder(current);
+        return;
+      }
+      adoptAuthoritativeOrder(current);
+    };
     window.addEventListener('leyble:drain-complete', onDrainComplete);
     window.addEventListener('leyble:refresh', onRefresh);
+    window.addEventListener('leyble:orders-changed', onOrdersChanged);
     return () => {
       window.removeEventListener('leyble:drain-complete', onDrainComplete);
       window.removeEventListener('leyble:refresh', onRefresh);
+      window.removeEventListener('leyble:orders-changed', onOrdersChanged);
     };
-  }, [load]);
+  }, [load, order, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+
+  useEffect(() => {
+    if (!pendingRemoteOrder || editing || adjExpanded || returnsDirty || closing || confirmAction) return;
+    adoptAuthoritativeOrder(pendingRemoteOrder);
+    setPendingRemoteOrder(null);
+  }, [pendingRemoteOrder, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
 
   const items = Array.isArray(order?.items) ? order.items : [];
   const bottleItems = items.filter((i) => i?.requires_bottle_return && num(i.unit_deposit_fee) > 0);
@@ -175,6 +203,7 @@ export default function OrderDetailPage() {
       counts[i.id] = String(stored > 0 ? stored : total);
     });
     setReturnCounts(counts);
+    setReturnsDirty(false);
   }, [bottleItemIds, order?.status]);
 
   const transition = async () => {
@@ -200,12 +229,23 @@ export default function OrderDetailPage() {
         }
       }
 
-      const updated = await api.post(`/orders/${id}/status`, { status: confirmAction.newStatus });
-      setOrder(updated);
+      const updated = await api.post(`/orders/${id}/status`, {
+        status: confirmAction.newStatus,
+        expected_status: order.status,
+        revision: order.revision,
+      });
+      adoptAuthoritativeOrder(updated);
       setConfirmAction(null);
       addToast(`Order ${confirmAction.label.toLowerCase()}.`, 'success');
     } catch (err) {
-      addToast(err.message || 'Transition failed.', 'error');
+      const stale = await handleStaleOrderWrite(err, {
+        addToast,
+        onCurrent: (current) => {
+          setPendingRemoteOrder(null);
+          adoptAuthoritativeOrder(current);
+        },
+      });
+      if (!stale) addToast(err.message || 'Transition failed.', 'error');
       setConfirmAction(null);
     } finally {
       setTransitioning(false);
@@ -247,13 +287,21 @@ export default function OrderDetailPage() {
       const updated = await api.patch(`/orders/${id}/adjustment`, {
         adjustment: adj,
         adjustment_reason: adjReason.trim(),
+        revision: order.revision,
       });
-      setOrder(updated);
+      adoptAuthoritativeOrder(updated);
       setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
       addToast('Adjustment saved.', 'success');
     } catch (err) {
-      addToast(err.message || 'Failed to save adjustment.', 'error');
+      const stale = await handleStaleOrderWrite(err, {
+        addToast,
+        onCurrent: (current) => {
+          setPendingRemoteOrder(null);
+          adoptAuthoritativeOrder(current);
+        },
+      });
+      if (!stale) addToast(err.message || 'Failed to save adjustment.', 'error');
     } finally {
       setSavingAdj(false);
     }
@@ -268,16 +316,25 @@ export default function OrderDetailPage() {
           id: Number(itemId),
           bottles_returned: Number(returned) || 0,
         }));
-        updated = await api.post(`/orders/${id}/close`, { items });
+        updated = await api.post(`/orders/${id}/close`, { items, revision: order.revision });
       } else {
-        updated = await api.post(`/orders/${id}/status`, { status: 'done' });
+        updated = await api.post(`/orders/${id}/status`, {
+          status: 'done', expected_status: order.status, revision: order.revision,
+        });
       }
-      setOrder(updated);
+      adoptAuthoritativeOrder(updated);
       setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
       addToast('Order closed.', 'success');
     } catch (err) {
-      addToast(err.message || 'Failed to close order.', 'error');
+      const stale = await handleStaleOrderWrite(err, {
+        addToast,
+        onCurrent: (current) => {
+          setPendingRemoteOrder(null);
+          adoptAuthoritativeOrder(current);
+        },
+      });
+      if (!stale) addToast(err.message || 'Failed to close order.', 'error');
     } finally {
       setClosing(false);
     }
@@ -409,6 +466,13 @@ export default function OrderDetailPage() {
         <div className="mb-4 -mt-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
           <span aria-hidden="true">⏳</span>
           <span>Offline — showing this device's saved copy of this order. Status changes need a connection.</span>
+        </div>
+      )}
+
+      {pendingRemoteOrder && !editing && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
+          <span aria-hidden="true">⚠️</span>
+          <span>This order changed on another device. Finish or cancel the open action, then review the updated order.</span>
         </div>
       )}
 
@@ -608,7 +672,7 @@ export default function OrderDetailPage() {
         <OrderCloseForm
           order={order}
           returnCounts={returnCounts}
-          onChangeReturnCounts={setReturnCounts}
+          onChangeReturnCounts={(counts) => { setReturnsDirty(true); setReturnCounts(counts); }}
           hideCloseButton
         />
       )}
@@ -736,6 +800,7 @@ export default function OrderDetailPage() {
                 tablets is what corrupts the stock and deposit ledgers. */}
             <Button
               variant="secondary"
+              data-testid="order-edit-button"
               onClick={() => setEditing(true)}
               disabled={offlineViewingSynced}
               title={offlineViewingSynced ? 'Needs a connection' : undefined}
@@ -879,8 +944,14 @@ export default function OrderDetailPage() {
         <OrderCreateModal
           editOrder={order}
           offlineUnsynced={unsynced}
+          staleWarning={Boolean(pendingRemoteOrder)}
+          onStale={(current) => {
+            setPendingRemoteOrder(null);
+            adoptAuthoritativeOrder(current);
+            setEditing(false);
+          }}
           onClose={() => setEditing(false)}
-          onSaved={() => { setEditing(false); load(); }}
+          onSaved={() => { setPendingRemoteOrder(null); setEditing(false); load(); }}
         />
       )}
 

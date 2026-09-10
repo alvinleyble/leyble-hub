@@ -593,9 +593,24 @@ viewed online but never created here had no local copy at all and still failed o
 settled rules. What a future session most needs to know:
 
 - **Two shapes, and only two.** A tablet holding nothing does ONE full pull, ever
-  (`setup_complete` in `v25.sync.state` is the only thing that decides). Every later login
-  and reconnect is a delta from the device's own server-issued watermarks. Never add a
-  code path that re-pulls everything on an already-set-up device.
+  (`setup_complete` in `v25.sync.state` is the only thing that decides whether the
+  REFERENCE pull is full or delta). Every later login and reconnect is a delta from the
+  device's own server-issued watermarks. Never add a code path that re-pulls everything
+  on an already-set-up device.
+- **The app-wide first-setup gate is a separate, broader question from `setup_complete`**
+  ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md), `isFirstSetup()` /
+  `useSyncGate().blocking` in `sync.js`). Slice 3.2 originally unlocked the app the
+  moment `setup_complete` went true and let the order-history backfill stream in behind
+  an already-open app; ADR 0019 reversed that after field review — a tablet that can
+  take an order against a history it does not yet hold is exactly the "required data
+  missing" state ADR 0015 §5 exists to prevent everywhere else. The gate
+  (`isFirstSetupPending` in `sync.js`) now stays up until `orders_backfill_complete` is
+  ALSO true, reopens on a later login/resume only if that backfill never finished, and
+  otherwise never re-engages once a device has finished its one first setup. It shows
+  one screen, `FirstSetupGateScreen.jsx`, with two truthful sub-states driven by
+  `phase`: actively downloading, and — `phase` back to `'idle'` while still blocking —
+  waiting for connection, with a Retry action that fires a plain `trigger: 'login'` sync
+  (never throttled).
 - **`GET /orders/sync`** (registered above `GET /:id` — Express would read "sync" as an id)
   serves COMPLETE snapshots, keyset-paginated on `(updated_at, id)`: `direction=back`
   backfills newest-first and resumably, `direction=forward` is the delta. `/products`,
@@ -759,6 +774,27 @@ Every V1 screen now works blind. What a future session most needs to know:
   `client/src/offline/queuedPersonnel.js`). Before 2026-08-29 → 2026-09-02, one shared
   `mutationsBlocked` gated the whole form instead — see ADR 0015 §9's amendment note and
   `docs/offline-accessibility-acceptance-criteria.md` items 9.2/9.3 and Known Gaps G3.
+
+### Order concurrency & delta sync ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md))
+
+Update this section's status line in place as each slice below lands — never delete it, and
+never let it drift from the ADR's own "Implementation status" section (keep the two in step).
+
+- **Built:** the first-setup full-history gate — a brand-new tablet stays blocked until the
+  complete order-history backfill finishes, not just once reference data lands. Merged via
+  PR #117 on `dev`. Mechanism is documented under "Full-app offline sync (Slice 3.2, ADR
+  0015)" above (`useSyncGate().blocking`/`isFirstSetupPending` in `client/src/offline/
+  sync.js`, `FirstSetupGateScreen.jsx`) rather than repeated here.
+- **Built:** the server-authoritative order revision guard (migration 048 and
+  `server/src/routes/orders.js`) rejects a stale non-draft mutation with `409 stale_write`
+  plus the current full order. The client always adopts that order and never retries or
+  merges the rejected intent; draft autosaves and receipt-print records remain unguarded.
+  `client/src/offline/foregroundOrderSync.js` runs the orders-only cursor delta every five
+  seconds across the signed-in app, pauses in the background, backs off while unreachable
+  and wakes immediately on confirmed recovery. `leyble:orders-changed` drives spinner-free
+  detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
+- App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
+  explicitly under first-setup — not part of this ADR's own scope.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { V25_OFFLINE_CORE } from '../../config/features.js';
 import { useOfflineStatus } from '../../offline/status.js';
+import { useSyncActivity } from '../../offline/sync.js';
 import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
 
 // D7 — Standing connection marker (revised 2026-08-24).
@@ -27,6 +28,7 @@ import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
 export default function OfflineMarker({ variant = 'v2' }) {
   const [attentionModalOpen, setAttentionModalOpen] = useState(false);
   const { isOnline, waitingCount, needsAttentionCount } = useOfflineStatus();
+  const { checking, recentlyUpdated } = useSyncActivity();
   const ringClass = variant === 'v1' ? 'focus-visible:ring-blue-400' : 'focus-visible:ring-v2-accent';
 
   if (!V25_OFFLINE_CORE) return null;
@@ -45,6 +47,14 @@ export default function OfflineMarker({ variant = 'v2' }) {
     label = waitingCount > 0 ? `Offline · ${waitingCount} waiting` : 'Offline';
     dotClass = 'bg-amber-400';
     containerClass = 'border-amber-500/40 bg-amber-500/15 text-amber-300 cursor-default';
+  } else if (checking) {
+    label = waitingCount > 0 ? `Updating · ${waitingCount} waiting` : 'Checking for updates…';
+    dotClass = 'bg-sky-400';
+    containerClass = 'border-sky-500/40 bg-sky-500/15 text-sky-300 cursor-default';
+  } else if (recentlyUpdated) {
+    label = waitingCount > 0 ? `Updated just now · ${waitingCount} waiting` : 'Updated just now';
+    dotClass = 'bg-emerald-400';
+    containerClass = 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 cursor-default';
   } else if (waitingCount > 0) {
     label = `${waitingCount} waiting`;
     dotClass = 'bg-sky-400';

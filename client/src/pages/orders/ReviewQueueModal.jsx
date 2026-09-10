@@ -10,6 +10,7 @@ import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
+import { handleStaleOrderWrite } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -72,10 +73,12 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   // Adjustment fields for the active order — reset on order change, saved before close.
   const [adjValue, setAdjValue] = useState('');
   const [adjReason, setAdjReason] = useState('');
+  const [reviewDirty, setReviewDirty] = useState(false);
   // Edit / cancel for the active order, without leaving the review flow.
   const [editing, setEditing] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [pendingRemoteOrder, setPendingRemoteOrder] = useState(null);
 
   const loadAll = useCallback(() => {
     setLoading(true);
@@ -92,6 +95,28 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const order = orders[activeId];
+
+  useEffect(() => {
+    const onOrdersChanged = (event) => {
+      for (const current of event.detail?.orders || []) {
+        if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        if (String(current.id) === String(activeId)
+            && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
+          setPendingRemoteOrder(current);
+        } else {
+          setOrders((prev) => ({ ...prev, [current.id]: current }));
+        }
+      }
+    };
+    window.addEventListener('leyble:orders-changed', onOrdersChanged);
+    return () => window.removeEventListener('leyble:orders-changed', onOrdersChanged);
+  }, [orderIds, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+
+  useEffect(() => {
+    if (!pendingRemoteOrder || editing || reviewDirty || closing || confirmingCancel || cancelling) return;
+    setOrders((prev) => ({ ...prev, [pendingRemoteOrder.id]: pendingRemoteOrder }));
+    setPendingRemoteOrder(null);
+  }, [pendingRemoteOrder, editing, reviewDirty, closing, confirmingCancel, cancelling]);
   const bottleItems = order
     ? order.items.filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
     : [];
@@ -132,6 +157,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     setReturnCounts(counts);
     setAdjValue(Number(order.adjustment) ? String(order.adjustment) : '');
     setAdjReason(order.adjustment_reason || '');
+    setReviewDirty(false);
   }, [activeId, order?.id, itemsSig]);
 
   const advanceToNextUnprocessed = (processedId) => {
@@ -143,39 +169,59 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   };
 
   const handleClosed = (updated) => {
+    setPendingRemoteOrder(null);
+    setReviewDirty(false);
     setOrders((prev) => ({ ...prev, [updated.id]: updated }));
     advanceToNextUnprocessed(updated.id);
   };
 
-  const saveAdjustmentIfChanged = async (orderId) => {
+  const saveAdjustmentIfChanged = async (current) => {
     const adj = Number(adjValue) || 0;
-    const existing = Number(order.adjustment) || 0;
-    if (adj === existing && adjReason.trim() === (order.adjustment_reason || '')) return;
+    const existing = Number(current.adjustment) || 0;
+    if (adj === existing && adjReason.trim() === (current.adjustment_reason || '')) return current;
     if (adj !== 0 && !adjReason.trim()) throw new Error('Adjustment reason is required when amount is non-zero.');
-    await api.patch(`/orders/${orderId}/adjustment`, {
+    return api.patch(`/orders/${current.id}/adjustment`, {
       adjustment: adj,
       adjustment_reason: adjReason.trim(),
+      revision: current.revision,
     });
+  };
+
+  const handleMutationError = async (err, fallback) => {
+    const stale = await handleStaleOrderWrite(err, {
+      addToast,
+      onCurrent: (current) => {
+        setPendingRemoteOrder(null);
+        setReviewDirty(false);
+        setOrders((prev) => ({ ...prev, [current.id]: current }));
+        setEditing(false);
+        setConfirmingCancel(false);
+      },
+    });
+    if (!stale) addToast(err.message || fallback, 'error');
   };
 
   const handleCloseOrder = async () => {
     setClosing(true);
     try {
-      await saveAdjustmentIfChanged(order.id);
+      const current = await saveAdjustmentIfChanged(order);
+      if (current !== order) setOrders((prev) => ({ ...prev, [current.id]: current }));
       let updated;
       if (bottleItems.length > 0) {
         const items = Object.entries(returnCounts).map(([itemId, returned]) => ({
           id: Number(itemId),
           bottles_returned: Number(returned) || 0,
         }));
-        updated = await api.post(`/orders/${order.id}/close`, { items });
+        updated = await api.post(`/orders/${order.id}/close`, { items, revision: current.revision });
       } else {
-        updated = await api.post(`/orders/${order.id}/status`, { status: 'done' });
+        updated = await api.post(`/orders/${order.id}/status`, {
+          status: 'done', expected_status: current.status, revision: current.revision,
+        });
       }
       addToast('Order closed.', 'success');
       handleClosed(updated);
     } catch (err) {
-      addToast(err.message || 'Failed to close order.', 'error');
+      await handleMutationError(err, 'Failed to close order.');
     } finally {
       setClosing(false);
     }
@@ -186,13 +232,16 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   const handleAdvanceAction = async () => {
     setClosing(true);
     try {
-      if (cfg.showAdjustment) await saveAdjustmentIfChanged(order.id);
-      const { status } = cfg.actionFor(order);
-      const updated = await api.post(`/orders/${order.id}/status`, { status });
+      const current = cfg.showAdjustment ? await saveAdjustmentIfChanged(order) : order;
+      if (current !== order) setOrders((prev) => ({ ...prev, [current.id]: current }));
+      const { status } = cfg.actionFor(current);
+      const updated = await api.post(`/orders/${current.id}/status`, {
+        status, expected_status: current.status, revision: current.revision,
+      });
       addToast('Order updated.', 'success');
       handleClosed(updated);
     } catch (err) {
-      addToast(err.message || 'Failed to update order.', 'error');
+      await handleMutationError(err, 'Failed to update order.');
     } finally {
       setClosing(false);
     }
@@ -213,12 +262,14 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   const handleCancelOrder = async () => {
     setCancelling(true);
     try {
-      const updated = await api.post(`/orders/${order.id}/status`, { status: 'cancelled' });
+      const updated = await api.post(`/orders/${order.id}/status`, {
+        status: 'cancelled', expected_status: order.status, revision: order.revision,
+      });
       addToast(`Order ${orderRef(order)} cancelled.`, 'success');
       setConfirmingCancel(false);
       handleClosed(updated);
     } catch (err) {
-      addToast(err.message || 'Failed to cancel order.', 'error');
+      await handleMutationError(err, 'Failed to cancel order.');
     } finally {
       setCancelling(false);
     }
@@ -279,6 +330,11 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
               <p className="text-slate-400 text-center py-20">Order not found.</p>
             ) : (
               <div className="max-w-2xl mx-auto">
+                {pendingRemoteOrder && (
+                  <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
+                    ⚠️ This order changed on another device. Your entries are unchanged; submitting them may be refused.
+                  </div>
+                )}
                 <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
@@ -413,7 +469,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                   <OrderCloseForm
                     order={order}
                     returnCounts={returnCounts}
-                    onChangeReturnCounts={setReturnCounts}
+                    onChangeReturnCounts={(counts) => { setReviewDirty(true); setReturnCounts(counts); }}
                     onClosed={handleClosed}
                     hideCloseButton
                   />
@@ -431,7 +487,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                           type="number"
                           step="0.01"
                           value={adjValue}
-                          onChange={(e) => setAdjValue(e.target.value)}
+                          onChange={(e) => { setReviewDirty(true); setAdjValue(e.target.value); }}
                           className="w-full h-12 px-4 border border-slate-300 rounded-lg text-base
                                      focus:outline-none focus:ring-2 focus:ring-blue-600"
                           placeholder="0"
@@ -443,7 +499,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                         </label>
                         <textarea
                           value={adjReason}
-                          onChange={(e) => setAdjReason(e.target.value)}
+                          onChange={(e) => { setReviewDirty(true); setAdjReason(e.target.value); }}
                           rows={2}
                           className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
                                      focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
@@ -532,6 +588,13 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
       {editing && order && (
         <OrderCreateModal
           editOrder={order}
+          staleWarning={Boolean(pendingRemoteOrder)}
+          onStale={(current) => {
+            setPendingRemoteOrder(null);
+            setReviewDirty(false);
+            setOrders((prev) => ({ ...prev, [current.id]: current }));
+            setEditing(false);
+          }}
           onClose={() => setEditing(false)}
           onSaved={handleEditSaved}
         />

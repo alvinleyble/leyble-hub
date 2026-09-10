@@ -49,6 +49,40 @@ function orderLabel(order) {
   return order?.receipt_number ? order.receipt_number : `#${order?.id}`;
 }
 
+// ADR 0019 — revisions are optional on the wire during the mixed-APK rollout, but
+// whenever a non-draft mutation carries one it is an exact compare-and-swap token.
+// Keep it as a decimal string: pg returns BIGINT as text and converting it to Number
+// would eventually lose precision for no benefit.
+function expectedRevision(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const revision = String(value);
+  if (!/^\d+$/.test(revision) || revision === '0') {
+    const err = new Error('revision must be a positive integer');
+    err.status = 400;
+    throw err;
+  }
+  return revision;
+}
+
+function revisionMatches(order, revision) {
+  return revision === null || String(order.revision) === revision;
+}
+
+async function sendStaleWrite(client, res, orderId, revision) {
+  // Read the order, items and personnel while this transaction still holds the row
+  // lock. The 409 therefore carries one authoritative snapshot, not three pool reads
+  // that another mutation could slip between. Only then release the loser.
+  const current = await getFullOrder(orderId, client);
+  await client.query('ROLLBACK');
+  return res.status(409).json({
+    code: 'stale_write',
+    error: 'This order changed on another device. Review the current order before editing again.',
+    expected_revision: revision,
+    current_revision: current?.revision ?? null,
+    order: current,
+  });
+}
+
 // Resolves an order identifier to the order row id. It has to answer for all three
 // shapes that coexist permanently (ADR 0017 #12), because a receipt number is how an
 // order is addressed across the sync boundary (ADR 0010) and old-format acceptance is
@@ -256,10 +290,10 @@ async function insertItems(client, orderId, items, draft = false) {
 // COALESCE keeps customer/order type unchanged when the caller passes null (only a parked
 // draft may change them at all).
 async function replaceItemsAndSettleOrder(
-  client, orderId, rows, { notes, customerId = null, orderType = null }
+  client, orderId, rows, { notes, customerId = null, orderType = null, revision = null }
 ) {
   const cols = itemColumnArrays(rows);
-  await client.query(
+  return client.query(
     `WITH cleared AS (
        DELETE FROM order_items WHERE order_id = $1
      ), inserted AS (
@@ -284,8 +318,9 @@ async function replaceItemsAndSettleOrder(
                                        ELSE i.quantity * i.unit_price END), 0)
                 FROM inserted i),
             updated_at   = NOW()
-      WHERE o.id = $1`,
-    [orderId, notes, customerId, orderType, ...cols]
+      WHERE o.id = $1
+        AND ($12::bigint IS NULL OR o.revision = $12::bigint)`,
+    [orderId, notes, customerId, orderType, ...cols, revision]
   );
 }
 
@@ -324,12 +359,12 @@ async function syncPersonnel(client, orderId, personnelList) {
 // query is byte-for-byte the one it replaced, so the response shape (and pg's own numeric
 // -as-string typing) is untouched. Three pool connections for the length of one read is
 // well inside the pool, and pg-pool queues rather than fails if it ever were not.
-async function getFullOrder(orderId) {
-  const resolvedId = await resolveOrderId(db, orderId);
+async function getFullOrder(orderId, runner = db) {
+  const resolvedId = await resolveOrderId(runner, orderId);
   if (!resolvedId) return null;
 
-  const [orderRes, itemsRes, personnelRes] = await Promise.all([
-    db.query(
+  const reads = [
+    () => runner.query(
       `SELECT o.*,
             c.name  AS customer_name, c.customer_type,
             c.address AS customer_address, c.phone AS customer_phone,
@@ -347,7 +382,7 @@ async function getFullOrder(orderId) {
      WHERE o.id = $1`,
       [resolvedId]
     ),
-    db.query(
+    () => runner.query(
       `SELECT oi.*, p.name AS product_name, p.sku, p.unit, p.category, p.requires_bottle_return
      FROM order_items oi
      JOIN products p ON p.id = oi.product_id
@@ -355,7 +390,7 @@ async function getFullOrder(orderId) {
      ORDER BY oi.id`,
       [resolvedId]
     ),
-    db.query(
+    () => runner.query(
       `SELECT op.id, op.personnel_id, op.role, p.full_name, p.phone
      FROM order_personnel op
      JOIN personnel p ON p.id = op.personnel_id
@@ -363,7 +398,13 @@ async function getFullOrder(orderId) {
      ORDER BY op.id`,
       [resolvedId]
     ),
-  ]);
+  ];
+  // Pool reads stay parallel on the hot success path. A transaction client must run
+  // sequentially (pg queues concurrent client.query calls today and removes that
+  // deprecated behaviour in pg 9), while still sharing one locked transaction.
+  const [orderRes, itemsRes, personnelRes] = runner === db
+    ? await Promise.all(reads.map((read) => read()))
+    : [await reads[0](), await reads[1](), await reads[2]()];
 
   const [order] = orderRes.rows;
   if (!order) return null;
@@ -894,6 +935,19 @@ router.patch('/:id', async (req, res, next) => {
 
     const { notes, items, personnel, customer_id, order_type } = req.body;
     const isDraft = order.status === 'draft';
+    let revision = null;
+    try {
+      // Draft autosaves are the deliberate exclusion. A finalized order always uses
+      // the revision the operator last saw; an absent token remains accepted only for
+      // mixed-fleet compatibility with older APKs.
+      revision = isDraft ? null : expectedRevision(req.body.revision);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (!revisionMatches(order, revision)) {
+      return sendStaleWrite(client, res, order.id, revision);
+    }
 
     const changeNotes = [];
 
@@ -905,15 +959,17 @@ router.patch('/:id', async (req, res, next) => {
     const nextCustomerId = isDraft ? (customer_id ?? null) : null;
     const nextOrderType  = isDraft ? (order_type ?? null) : null;
 
+    let orderUpdate;
     if (items === undefined) {
-      await client.query(
+      orderUpdate = await client.query(
         `UPDATE orders
             SET notes       = $1,
                 customer_id = COALESCE($2::int, customer_id),
                 order_type  = COALESCE($3::text, order_type),
                 updated_at  = NOW()
-          WHERE id = $4`,
-        [nextNotes, nextCustomerId, nextOrderType, order.id]
+          WHERE id = $4
+            AND ($5::bigint IS NULL OR revision = $5::bigint)`,
+        [nextNotes, nextCustomerId, nextOrderType, order.id, revision]
       );
     } else {
       // ONE read for the three things replacing the lines needs: the items being
@@ -957,10 +1013,11 @@ router.patch('/:id', async (req, res, next) => {
       const rows = buildItemRows(
         sortItemsByCategory(items, infoById), isDraft, returnsByProduct
       );
-      await replaceItemsAndSettleOrder(client, order.id, rows, {
+      orderUpdate = await replaceItemsAndSettleOrder(client, order.id, rows, {
         notes:      nextNotes,
         customerId: nextCustomerId,
         orderType:  nextOrderType,
+        revision,
       });
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
@@ -971,6 +1028,13 @@ router.patch('/:id', async (req, res, next) => {
       if (!isDraft && order.status !== 'cancelled' && Number(snapshot.stock_net) < 0) {
         await reconcileStock(client, oldItems, items, order, req.user.id);
       }
+    }
+
+    // The condition is part of the UPDATE itself, so authority remains in Postgres
+    // even if this route is later refactored and the lock above moves. Every earlier
+    // item/stock write is in this same transaction and is rolled back with a loser.
+    if (orderUpdate.rowCount === 0) {
+      return sendStaleWrite(client, res, order.id, revision);
     }
 
     if (personnel !== undefined) {
@@ -1104,31 +1168,55 @@ router.delete('/:id', async (req, res, next) => {
 
 // PATCH /api/v1/orders/:id/adjustment — set billing adjustment and reason
 router.patch('/:id/adjustment', async (req, res, next) => {
+  const { adjustment, adjustment_reason } = req.body;
+  const adjNum = Number(adjustment);
+
+  if (isNaN(adjNum)) {
+    return res.status(400).json({ error: 'adjustment must be a number' });
+  }
+  if (adjNum !== 0 && !adjustment_reason?.trim()) {
+    return res.status(400).json({ error: 'adjustment_reason is required when adjustment is non-zero' });
+  }
+
+  let revision;
   try {
-    const { adjustment, adjustment_reason } = req.body;
-    const adjNum = Number(adjustment);
+    revision = expectedRevision(req.body.revision);
+  } catch (err) {
+    return res.status(err.status).json({ error: err.message });
+  }
 
-    if (isNaN(adjNum)) {
-      return res.status(400).json({ error: 'adjustment must be a number' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
     }
-    if (adjNum !== 0 && !adjustment_reason?.trim()) {
-      return res.status(400).json({ error: 'adjustment_reason is required when adjustment is non-zero' });
+
+    const { rows: [order] } = await client.query(
+      'SELECT id, receipt_number, revision FROM orders WHERE id = $1 FOR UPDATE', [orderId]
+    );
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    if (!revisionMatches(order, revision)) {
+      return sendStaleWrite(client, res, order.id, revision);
     }
 
-    const orderId = await resolveOrderId(db, req.params.id);
-    if (!orderId) return res.status(404).json({ error: 'Order not found' });
-
-    const { rows: [order] } = await db.query(
-      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
+    const updated = await client.query(
+      `UPDATE orders
+          SET adjustment = $1, adjustment_reason = $2, updated_at = NOW()
+        WHERE id = $3
+          AND ($4::bigint IS NULL OR revision = $4::bigint)`,
+      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, orderId, revision]
     );
-    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (updated.rowCount === 0) {
+      return sendStaleWrite(client, res, order.id, revision);
+    }
 
-    await db.query(
-      `UPDATE orders SET adjustment = $1, adjustment_reason = $2, updated_at = NOW() WHERE id = $3`,
-      [adjNum, adjNum !== 0 ? adjustment_reason.trim() : null, orderId]
-    );
-
-    await logActivity(db, {
+    await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
       action:     'adjusted',
@@ -1138,9 +1226,13 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       performedBy: req.user.id,
     });
 
+    await client.query('COMMIT');
     res.json(await getFullOrder(order.id));
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 });
 
@@ -1202,7 +1294,19 @@ router.post('/:id/status', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const { status: newStatus } = req.body;
+    const { status: newStatus, expected_status: expectedStatus } = req.body;
+    let revision;
+    try {
+      revision = expectedRevision(req.body.revision);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (!revisionMatches(order, revision)
+        || (expectedStatus !== undefined && expectedStatus !== order.status)) {
+      return sendStaleWrite(client, res, order.id, revision);
+    }
+
     const allowed = getAllowedTransitions(order.status, order.order_type);
 
     if (!allowed.includes(newStatus)) {
@@ -1269,10 +1373,15 @@ router.post('/:id/status', async (req, res, next) => {
       if (order.status === 'done')       setClauses.push('closed_at = NULL');
     }
 
-    await client.query(
-      `UPDATE orders SET ${setClauses.join(', ')} WHERE id = $2`,
-      [newStatus, order.id]
+    const updated = await client.query(
+      `UPDATE orders SET ${setClauses.join(', ')}
+        WHERE id = $2
+          AND ($3::bigint IS NULL OR revision = $3::bigint)`,
+      [newStatus, order.id, revision]
     );
+    if (updated.rowCount === 0) {
+      return sendStaleWrite(client, res, order.id, revision);
+    }
 
     await logActivity(client, {
       entityType: 'order',
@@ -1312,9 +1421,33 @@ router.post('/:id/close', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
+    let revision;
+    try {
+      revision = expectedRevision(req.body.revision);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      return res.status(err.status).json({ error: err.message });
+    }
+    if (!revisionMatches(order, revision)) {
+      return sendStaleWrite(client, res, order.id, revision);
+    }
     if (order.status !== 'completed') {
       await client.query('ROLLBACK');
       return res.status(422).json({ error: 'Only completed orders can be closed' });
+    }
+
+    // Claim this exact revision before touching the return rows. The trigger bumps the
+    // token here; recomputeTotal may bump it again later, which is harmless because
+    // revisions are opaque and the response always carries the final value.
+    const updated = await client.query(
+      `UPDATE orders
+          SET status = 'done', closed_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+          AND ($2::bigint IS NULL OR revision = $2::bigint)`,
+      [order.id, revision]
+    );
+    if (updated.rowCount === 0) {
+      return sendStaleWrite(client, res, order.id, revision);
     }
 
     const { items = [] } = req.body;
@@ -1326,11 +1459,6 @@ router.post('/:id/close', async (req, res, next) => {
         [Number(bottles_returned) || 0, id, order.id]
       );
     }
-
-    await client.query(
-      `UPDATE orders SET status = 'done', closed_at = NOW(), updated_at = NOW() WHERE id = $1`,
-      [order.id]
-    );
 
     await recomputeTotal(client, order.id);
 

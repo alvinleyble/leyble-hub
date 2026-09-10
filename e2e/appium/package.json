@@ -12,7 +12,8 @@
     "test:customers": "node tests/customers.test.mjs",
     "test:personnel": "node tests/personnel.test.mjs",
     "test:tickets": "node tests/tickets.test.mjs",
-    "test:audit": "node tests/audit.test.mjs"
+    "test:audit": "node tests/audit.test.mjs",
+    "test:concurrency": "node tests/concurrency.test.mjs"
   },
   "dependencies": {
     "appium": "^3.7.0",

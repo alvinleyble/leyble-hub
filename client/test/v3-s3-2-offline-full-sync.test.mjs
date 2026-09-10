@@ -22,7 +22,7 @@ import {
   putReceipt, putOrderSnapshot, getReceipt, listReceipts, __clearReceipts,
 } from '../src/offline/receiptHistory.js';
 import {
-  runSync, getSyncState, isFirstSetup, subscribeSync, __resetSyncState,
+  runSync, getSyncState, isFirstSetup, subscribeSync, getSyncSnapshot, __resetSyncState,
 } from '../src/offline/sync.js';
 import { getCachedProducts, getCachedCustomers, getCachedPersonnel } from '../src/offline/catalogue.js';
 import { saveOrderLocalFirst, transitionLocalOrder, canTransitionOffline } from '../src/offline/posSave.js';
@@ -189,9 +189,10 @@ test('first setup: a tablet holding nothing pulls the full catalogue, customers,
   assert.equal(await isFirstSetup(), false);
 });
 
-test('first setup unlocks the app as soon as products/customers/personnel land, with order history still streaming', async () => {
-  // The order history endpoint hangs: if the gate waited on it, this test would never
-  // see essentialsReady go true, which is exactly the loading screen we refuse to show.
+test('ADR 0019: first setup stays gated after products/customers/personnel land — it only unlocks once the order history finishes too', async () => {
+  // The order history endpoint hangs: this used to be how the old design proved the
+  // gate unlocked early. ADR 0019 reverses that — the gate must stay up through the
+  // delay, essentials or no essentials, and only release once this resolves.
   const orders = [serverOrder(1)];
   await stubServer({ orders });
   const realGet = api.get;
@@ -206,16 +207,21 @@ test('first setup unlocks the app as soon as products/customers/personnel land, 
   const seen = [];
   const unsubscribe = subscribeSync((snap) => seen.push({ ...snap }));
 
-  const pending = runSync({ trigger: 'login', waitForOrders: true });
+  const pending = runSync({ trigger: 'login' });
   await new Promise((r) => setTimeout(r, 60));
 
-  const unlocked = seen.find((s) => s.firstSetup && s.essentialsReady);
-  assert.ok(unlocked, 'essentials must be reported ready well before the history finishes');
+  const essentialsLandedMidway = seen.find((s) => s.essentialsReady);
+  assert.ok(essentialsLandedMidway, 'essentials must land well before the history finishes');
+  assert.equal(essentialsLandedMidway.firstSetupPending, true,
+    'landing the essentials alone must not clear the gate — the app must not unlock after only products, customers and personnel arrive');
   assert.equal((await listReceipts()).length, 0, 'and at that moment the history has not landed yet');
+  assert.equal(await isFirstSetup(), true);
 
   await pending;
   unsubscribe();
-  assert.equal((await listReceipts()).length, 1, 'the history then arrives behind the unlocked app');
+  assert.equal((await listReceipts()).length, 1, 'the history lands before the run resolves, not behind an already-unlocked app');
+  assert.equal(getSyncSnapshot().firstSetupPending, false, 'only now does the gate release');
+  assert.equal(await isFirstSetup(), false);
 });
 
 // ── 2. Incremental sync ───────────────────────────────────────────────────────

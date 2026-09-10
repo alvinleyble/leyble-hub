@@ -21,6 +21,9 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
   the screen's closest equivalent — see each file's header comment for screens where none
   applies or a substitution was made), and opening an item shows its detail view. Use any of
   these as the template for a new test.
+- `tests/concurrency.test.mjs` — two-device ADR 0019 coverage: one device saves an order
+  edit while the other still holds its revision, then verifies the second device sees the
+  stale-write message instead of silently overwriting the first change.
 - `helpers/driver.js` — connects to Appium, switches into the Capacitor WebView context, and
   `withSession(fn)` wraps both plus session teardown around a test body.
 - `helpers/auth.js` — `loginAs(driver)` (the login flow every test starts from; defaults to
@@ -95,8 +98,9 @@ npx appium --base-path /wd/hub --allow-insecure uiautomator2:chromedriver_autodo
 # 5. In another terminal: clear the app's persisted login (see "Clean state" below), then run
 #    a test — any of the `test:*` scripts in package.json (test:login, test:dashboard,
 #    test:orders, test:inventory, test:customers, test:personnel, test:tickets,
-#    test:audit). Every non-login test logs in for itself first (helpers/auth.js), so
-#    `pm clear` before each of them matters the same way it does for test:login.
+#    test:audit, test:concurrency). Every non-login test logs in for itself first
+#    (helpers/auth.js), so `pm clear` before each of them matters the same way it does for
+#    test:login.
 adb shell am force-stop com.leyble.hub
 adb shell pm clear com.leyble.hub
 cd e2e/appium
@@ -173,6 +177,40 @@ completely untouched by any of this.
 Physical device testing (rather than the emulator's `10.0.2.2` alias) would need `adb reverse`
 plus adding that alias/IP to the debug network security config — not set up here since the
 scout/ship work only covered the emulator.
+
+## Multi-device / staging build
+
+Use this path for the two-device ADR 0019 concurrency test. Both devices need one shared,
+reachable backend, so build the debug APK against the staging API instead of an emulator's
+local-host alias:
+
+```bash
+cd client && npm run android:sync:staging
+cd android && ./gradlew assembleDebug
+# Install app/build/outputs/apk/debug/app-debug.apk on each target device/emulator.
+```
+
+The baked API URL is **`https://leyble-hub.onrender.com`**. It is HTTPS, so the
+cleartext-networking workaround is not needed for this build. The checked-in `debug/`
+cleartext configuration is additive and does not hurt. This remains the **debug** APK variant
+(`assembleDebug`): keep the `androidScheme` flip in
+`android/app/src/debug/assets/capacitor.config.json`; it is still required for every debug APK.
+
+The staging backend uses the development Supabase database
+**`yzopwoquzfnyqdmuookw`**. Concurrency tests write there — **never production**.
+
+Set both device serials before running the concurrency test (the defaults are the two standard
+local emulators, but setting them explicitly makes physical-device runs unambiguous):
+
+```bash
+export DEVICE_A_UDID=emulator-5554
+export DEVICE_B_UDID=emulator-5556
+cd e2e/appium && npm run test:concurrency
+```
+
+`DEVICE_A_UDID` and `DEVICE_B_UDID` are required for a real two-device run. The test signs its
+two devices into Josie and Luis by default because each account has one active session; optional
+`DEVICE_A_EMAIL` and `DEVICE_B_EMAIL` overrides must name different staging accounts.
 
 ## Adding a new test
 

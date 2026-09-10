@@ -37,6 +37,7 @@ export function ToastProvider({ children }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
+            data-testid={toast.type === 'error' ? 'toast-error' : undefined}
             className={`flex items-start gap-3 min-w-72 max-w-sm px-4 py-3 rounded-lg shadow-lg border pointer-events-auto
                         ${STYLES[toast.type] ?? STYLES.info}`}
           >
