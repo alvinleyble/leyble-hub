@@ -47,7 +47,8 @@ export async function switchToWebview(driver) {
     { timeout: 30000, timeoutMsg: 'no WEBVIEW context appeared within 30s' }
   );
   const contexts = await driver.getContexts();
-  const webviewContext = contexts.find((c) => String(c).toUpperCase().includes('WEBVIEW'));
+  const webviewContext = contexts.find((c) => String(c).includes('com.leyble.hub'))
+    || contexts.find((c) => String(c).toUpperCase().includes('WEBVIEW'));
   console.log('Found webview context:', webviewContext);
   await driver.switchContext(webviewContext);
   return webviewContext;

@@ -19,5 +19,10 @@
     "appium": "^3.7.0",
     "appium-uiautomator2-driver": "^8.5.2",
     "webdriverio": "^9.31.5"
+  },
+  "allowScripts": {
+    "appium@3.7.0": true,
+    "edgedriver@6.3.0": true,
+    "geckodriver@6.1.1": true
   }
 }

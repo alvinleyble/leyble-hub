@@ -29,7 +29,7 @@ async function openFirstNonDraftOrder(driver) {
     const rows = await allTestId(driver, 'orders-row');
     if (rows.length === 0) continue;
 
-    await rows[0].click();
+    await driver.execute((el) => el.click(), rows[0]);
     await waitForTestId(driver, 'order-detail');
     const heading = await driver.$(`${testId('order-detail')} h1`);
     await heading.waitForDisplayed({ timeout: 20000 });
@@ -39,11 +39,51 @@ async function openFirstNonDraftOrder(driver) {
   throw new Error('No non-draft order is available in the staging/dev database. Create one before retrying.');
 }
 
-async function waitForEditToClose(driver) {
-  await driver.waitUntil(
-    async () => !(await driver.$(testId('order-edit-save'))).isExisting(),
-    { timeout: 20000, timeoutMsg: 'the order edit modal did not close after saving' }
-  );
+// A plain WebDriver `.isExisting()` read against this app was seen to report a false
+// "gone" during the React unmount transition at least once during earlier debugging, so
+// this requires the absence to hold for two consecutive polls (not just one instant) via
+// a direct document.querySelector rather than a cached WebDriver element handle. On
+// timeout it logs the modal's current outerHTML so a real hang is distinguishable from a
+// detection bug without re-running under a debugger.
+async function waitForEditToClose(driver, { label = '' } = {}) {
+  let consecutiveAbsent = 0;
+  try {
+    await driver.waitUntil(
+      async () => {
+        const exists = await driver.execute(
+          (sel) => Boolean(document.querySelector(sel)),
+          testId('order-edit-save')
+        );
+        consecutiveAbsent = exists ? 0 : consecutiveAbsent + 1;
+        return consecutiveAbsent >= 2;
+      },
+      { timeout: 30000, interval: 500, timeoutMsg: 'the order edit modal did not close after saving' }
+    );
+  } catch (err) {
+    const html = await driver.execute((sel) => {
+      const node = document.querySelector(sel);
+      return node ? node.outerHTML.slice(0, 500) : '(element not found, but wait still failed)';
+    }, testId('order-edit-save')).catch(() => '(could not read DOM)');
+    console.error(`waitForEditToClose(${label}) timed out. order-edit-save DOM snapshot:`, html);
+    throw err;
+  }
+}
+
+// The order-edit notes input sits inside the mobile bottom cart sheet (same
+// `OrderCreateModal.jsx` component as order creation — see its "View cart"/"Hide cart"
+// toggle), collapsed by default at phone/tablet width. Expand it before waiting for
+// `order-edit-notes-input`, or the wait times out against an input that's off-screen.
+async function ensureCartSheetOpen(driver) {
+  try {
+    const notesInput = await driver.$(testId('order-edit-notes-input'));
+    if (await notesInput.isDisplayed()) return;
+  } catch {}
+
+  try {
+    const viewCartBtn = await driver.$("//button[contains(., 'View cart')]");
+    await viewCartBtn.waitForDisplayed({ timeout: 10000 });
+    await driver.execute((el) => el.click(), viewCartBtn);
+  } catch {}
 }
 
 async function run() {
@@ -76,6 +116,10 @@ async function run() {
       clickTestId(driverB, 'order-edit-button'),
     ]);
     await Promise.all([
+      ensureCartSheetOpen(driverA),
+      ensureCartSheetOpen(driverB),
+    ]);
+    await Promise.all([
       waitForTestId(driverA, 'order-edit-notes-input'),
       waitForTestId(driverB, 'order-edit-notes-input'),
     ]);
@@ -84,7 +128,7 @@ async function run() {
     // stock, fulfillment status, quantities, or the bottle-return ledger.
     await setInputValue(driverA, 'order-edit-notes-input', `ADR 0019 Appium A ${Date.now()}`);
     await clickTestId(driverA, 'order-edit-save');
-    await waitForEditToClose(driverA);
+    await waitForEditToClose(driverA, { label: 'driverA' });
     assert(true, 'session A saved its note change and advanced the order revision');
 
     await setInputValue(driverB, 'order-edit-notes-input', `ADR 0019 Appium B ${Date.now()}`);
