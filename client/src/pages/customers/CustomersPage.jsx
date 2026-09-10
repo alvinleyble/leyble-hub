@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
-import Spinner from '../../components/ui/Spinner';
+import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import CustomerFormModal from './CustomerFormModal';
 import CustomerDetailPanel from './CustomerDetailPanel';
 import PrinterPicker from '../orders/PrinterPicker';
@@ -14,6 +14,53 @@ import { subscribeOutbox, queuedCustomersFromOutbox, pendingCustomerEditIds } fr
 import { getCachedCustomers, getCachedEntity } from '../../offline/catalogue.js';
 import { customerMatches } from '../../utils/customerSearch';
 
+
+// Matches the customer table's columns (Name, Type, Phone, Address, Status) and its
+// phone-card twin below it.
+function CustomersTableSkeleton() {
+  const rows = [0, 1, 2, 3, 4, 5];
+  return (
+    <SkeletonGroup label="Loading customers" className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="lg:hidden divide-y divide-slate-200">
+        {rows.map((i) => (
+          <div key={i} className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1.5">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="h-5 w-16 rounded-full shrink-0" />
+            </div>
+            <Skeleton className="h-5 w-14 rounded-full mt-3" />
+          </div>
+        ))}
+      </div>
+
+      <table className="hidden lg:table w-full text-base">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-400">
+            <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
+            <th className="px-5 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-10" /></th>
+            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-16" /></th>
+            <th className="px-5 py-3"><Skeleton className="h-3 w-12" /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((i) => (
+            <tr key={i} className="border-t border-slate-300">
+              <td className="px-5 py-4"><Skeleton className="h-4 w-36" /></td>
+              <td className="px-5 py-4 hidden sm:table-cell"><Skeleton className="h-5 w-16 rounded-full" /></td>
+              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-24" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-40" /></td>
+              <td className="px-5 py-4"><Skeleton className="h-5 w-16 rounded-full" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </SkeletonGroup>
+  );
+}
 
 export default function CustomersPage() {
   const { addToast } = useToast();
@@ -192,7 +239,7 @@ export default function CustomersPage() {
 
       {/* Table */}
       {loading ? (
-        <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
+        <CustomersTableSkeleton />
       ) : displayCustomers.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {search ? 'No customers match your search.' : 'No customers yet. Add one to get started.'}

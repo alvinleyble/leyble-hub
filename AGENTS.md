@@ -163,6 +163,22 @@ stock decision is gated on `isStockOut()` (net audit-log delta), not on the stat
 - `fixed inset-0 z-50 flex items-start justify-center`
 - Reference: `client/src/pages/personnel/PersonnelFormModal.jsx`
 
+**Skeleton loaders** (cold-load placeholders, not spinners, on Dashboard/Orders/Order
+Detail/Inventory/Customers): `Skeleton`/`SkeletonGroup` from
+`client/src/components/ui/Skeleton.jsx` — a bare `animate-pulse` block plus a
+`role="status"` wrapper. Each page composes its own `XSkeleton()` function from these,
+sized to that page's real section classes/padding so nothing shifts when data lands.
+Shown only while `loading` is true on first mount — never during a `{ silent: true }`
+background/reconnect refresh, which every one of these pages already gates
+`setLoading(true)` behind to avoid exactly this flash; keep that pattern when adding a
+new page-level load. `Spinner` still exists for modals/inline buttons. Dashboard
+additionally peeks its held `backOfficeCache.js` copy before the live fetch and paints
+it immediately with no skeleton if present (true local-first); the other four pages
+stay network-first with a cache/local-history fallback on failure (a deliberate,
+pre-existing design — see `backOfficeCache.js`'s own comment block, and ADR 0015 §9's
+"live first" reasoning), so their skeleton only shows on a genuinely cold, nothing-held
+first load.
+
 **PHP formatter** (defined locally in each file — do not centralize):
 ```js
 const PHP = (n) =>

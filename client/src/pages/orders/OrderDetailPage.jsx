@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
-import Spinner from '../../components/ui/Spinner';
+import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import Modal from '../../components/ui/Modal';
 import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
@@ -49,6 +49,85 @@ const ROLE_COLOR = {
 
 const INPUT = `w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
+
+// Matches the loaded page's own section heights: back/print bar, the order header
+// card (status badges, customer block, timestamps grid), the line-items table, and
+// the totals footer — so the page doesn't jump once the real order lands.
+function OrderDetailSkeleton() {
+  return (
+    <SkeletonGroup label="Loading order" className="p-6 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <Skeleton className="h-4 w-16" />
+        <Skeleton className="h-8 w-28 rounded-lg" />
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-14" />
+            <Skeleton className="h-7 w-36" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-6 w-20 rounded-full" />
+            <Skeleton className="h-6 w-20 rounded-full" />
+          </div>
+        </div>
+
+        <div className="mt-5 pt-5 border-t border-slate-300 space-y-2">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-4 w-44" />
+          <Skeleton className="h-3 w-32" />
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-slate-300 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="space-y-1.5">
+              <Skeleton className="h-3 w-14" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-400">
+              <th className="px-5 py-3"><Skeleton className="h-3 w-14" /></th>
+              <th className="px-5 py-3"><Skeleton className="h-3 w-8 ml-auto" /></th>
+              <th className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-14 ml-auto" /></th>
+              <th className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
+              <th className="px-5 py-3"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            </tr>
+          </thead>
+          <tbody>
+            {[0, 1, 2].map((i) => (
+              <tr key={i} className="border-t border-slate-300">
+                <td className="px-5 py-3"><Skeleton className="h-4 w-28" /></td>
+                <td className="px-5 py-3"><Skeleton className="h-4 w-10 ml-auto" /></td>
+                <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-4 w-14 ml-auto" /></td>
+                <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-4 w-14 ml-auto" /></td>
+                <td className="px-5 py-3"><Skeleton className="h-4 w-16 ml-auto" /></td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-slate-400 bg-slate-50">
+              <td colSpan={4} className="px-5 py-4 text-right"><Skeleton className="h-4 w-24 ml-auto" /></td>
+              <td className="px-5 py-4"><Skeleton className="h-6 w-24 ml-auto" /></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <Skeleton className="h-3 w-24 mb-2" />
+        <Skeleton className="h-4 w-16" />
+      </div>
+    </SkeletonGroup>
+  );
+}
 
 export default function OrderDetailPage() {
   const { id } = useParams();
@@ -341,11 +420,7 @@ export default function OrderDetailPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <OrderDetailSkeleton />;
   }
 
   if (notFound) {
