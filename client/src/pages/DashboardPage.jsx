@@ -118,7 +118,7 @@ export default function DashboardPage() {
       } else {
         load();
       }
-    });
+    }).catch(() => { if (!cancelled) load(); });
     return () => { cancelled = true; };
   }, [load]);
 
