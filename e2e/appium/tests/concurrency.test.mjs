@@ -86,6 +86,25 @@ async function ensureCartSheetOpen(driver) {
   } catch {}
 }
 
+// Login, navigate to Orders, open the shared order and its edit form — everything up
+// to (but not including) the actual write. Run this per device SEQUENTIALLY rather than
+// via Promise.all: none of it needs to happen at the same instant as the other device's
+// equivalent steps (only the write ordering at the end matters for ADR 0019 — B's edit
+// form must be open, with its revision captured, before A's save lands). Running it
+// concurrently was observed to crash the on-device UiAutomator2 instrumentation
+// (MjpegScreenshotServer) on a loaded host running two emulators against the real
+// (higher-latency) shared dev/test DB — pure resource contention, not an app or test
+// logic issue, and this sidesteps it by halving the simultaneous automation load.
+async function setUpDeviceToEditForm(driver, email) {
+  await loginAs(driver, { email });
+  await navigateTo(driver, 'orders');
+  const orderHeading = await openFirstNonDraftOrder(driver);
+  await clickTestId(driver, 'order-edit-button');
+  await ensureCartSheetOpen(driver);
+  await waitForTestId(driver, 'order-edit-notes-input');
+  return orderHeading;
+}
+
 async function run() {
   const sessions = await Promise.allSettled([
     createDriver({ udid: DEVICE_A_UDID }),
@@ -99,30 +118,10 @@ async function run() {
 
     const [driverA, driverB] = drivers;
     await Promise.all([switchToWebview(driverA), switchToWebview(driverB)]);
-    await Promise.all([
-      loginAs(driverA, { email: DEVICE_A_EMAIL }),
-      loginAs(driverB, { email: DEVICE_B_EMAIL }),
-    ]);
-    await Promise.all([navigateTo(driverA, 'orders'), navigateTo(driverB, 'orders')]);
 
-    const [orderA, orderB] = await Promise.all([
-      openFirstNonDraftOrder(driverA),
-      openFirstNonDraftOrder(driverB),
-    ]);
+    const orderA = await setUpDeviceToEditForm(driverA, DEVICE_A_EMAIL);
+    const orderB = await setUpDeviceToEditForm(driverB, DEVICE_B_EMAIL);
     assert(orderA === orderB, `both devices opened the same non-draft order (${orderA})`);
-
-    await Promise.all([
-      clickTestId(driverA, 'order-edit-button'),
-      clickTestId(driverB, 'order-edit-button'),
-    ]);
-    await Promise.all([
-      ensureCartSheetOpen(driverA),
-      ensureCartSheetOpen(driverB),
-    ]);
-    await Promise.all([
-      waitForTestId(driverA, 'order-edit-notes-input'),
-      waitForTestId(driverB, 'order-edit-notes-input'),
-    ]);
 
     // Notes are the least disruptive write: this advances the revision without changing
     // stock, fulfillment status, quantities, or the bottle-return ledger.

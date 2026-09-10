@@ -39,7 +39,12 @@ export async function loginAs(driver, { email = LOGIN_EMAIL, password = LOGIN_PA
 
   // The Dashboard is now the first thing after a successful sign-in — nothing sits
   // between the login POST and the app shell. The generous timeout is the first-run
-  // "Setting up this tablet" sync gate, which can still hold the app briefly.
+  // "Setting up this tablet" sync gate, which can still hold the app briefly. The
+  // 2s poll interval (vs. webdriverio's 500ms default) matters on a loaded host: a
+  // tight poll here was observed to crash the on-device UiAutomator2 instrumentation
+  // (MjpegScreenshotServer) under a two-emulator + remote-DB-latency run, taking the
+  // whole session down mid-login — not an app bug, just too many automation calls per
+  // second against an already resource-starved instrumentation process.
   await driver.waitUntil(
     async () => {
       try {
@@ -49,7 +54,7 @@ export async function loginAs(driver, { email = LOGIN_EMAIL, password = LOGIN_PA
         return false;
       }
     },
-    { timeout: 45000, timeoutMsg: `Dashboard heading still not displayed after signing in as ${email}` }
+    { timeout: 60000, interval: 2000, timeoutMsg: `Dashboard heading still not displayed after signing in as ${email}` }
   );
   assert(true, `Dashboard heading visible after signing in as ${email} — login flow verified end to end`);
 }

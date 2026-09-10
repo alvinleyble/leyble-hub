@@ -28,6 +28,18 @@ const devExtraOrigins = process.env.NODE_ENV !== 'production' && process.env.DEV
   ? process.env.DEV_CORS_EXTRA_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
   : [];
 
+// Render's staging environment sets NODE_ENV=production (it deploys the same way
+// production does), so DEV_CORS_EXTRA_ORIGINS above never applies there. A debug
+// Android build (androidScheme: "http", used for on-device/Appium testing — see
+// e2e/appium/README.md) sends Origin: http://localhost, which isn't in the
+// production-shaped allow-list either. STAGING_CORS_EXTRA_ORIGINS is a separate,
+// unconditional (not NODE_ENV-gated) extension point for exactly that origin —
+// set ONLY on the staging Render service, never on production, so production's
+// CORS surface is untouched regardless of NODE_ENV.
+const stagingExtraOrigins = process.env.STAGING_CORS_EXTRA_ORIGINS
+  ? process.env.STAGING_CORS_EXTRA_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+  : [];
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
@@ -35,6 +47,7 @@ const allowedOrigins = [
   'capacitor://localhost',
   'http://100.96.45.91:5173',
   ...devExtraOrigins,
+  ...stagingExtraOrigins,
 ];
 app.use(
   cors({

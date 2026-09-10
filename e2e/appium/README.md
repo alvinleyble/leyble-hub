@@ -191,10 +191,22 @@ cd android && ./gradlew assembleDebug
 ```
 
 The baked API URL is **`https://leyble-hub.onrender.com`**. It is HTTPS, so the
-cleartext-networking workaround is not needed for this build. The checked-in `debug/`
-cleartext configuration is additive and does not hurt. This remains the **debug** APK variant
-(`assembleDebug`): keep the `androidScheme` flip in
+cleartext-networking workaround is not needed for this build's *requests* to the API. The
+checked-in `debug/` cleartext configuration is additive and does not hurt. This remains the
+**debug** APK variant (`assembleDebug`): keep the `androidScheme` flip in
 `android/app/src/debug/assets/capacitor.config.json`; it is still required for every debug APK.
+
+That same `androidScheme` flip is a separate concern from the point above, though, and it DOES
+matter here: it sets the WebView's own *origin* (what pages inside the app are served from) to
+`http://localhost`, regardless of the API's own scheme. The staging Render service's CORS
+allow-list (`server/src/index.js`) doesn't recognize that origin by default — `DEV_CORS_EXTRA_ORIGINS`
+would normally cover it, but that's gated to `NODE_ENV !== 'production'` and Render sets
+`NODE_ENV=production` on staging. **Before running this against staging**, set
+`STAGING_CORS_EXTRA_ORIGINS=http://localhost` in the Render dashboard for the `leyble-hub-api`
+staging service (see `render.yaml`) — it's a separate, unconditional extension point, deliberately
+never set on production. Without it every request (including the initial `GET /auth/me` on app
+launch) fails as a CORS error that the client can't distinguish from being offline, and both
+devices sit on the login screen's "You're offline" message.
 
 The staging backend uses the development Supabase database
 **`yzopwoquzfnyqdmuookw`**. Concurrency tests write there — **never production**.
