@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
-import Spinner from '../../components/ui/Spinner';
+import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
 import { orderRef } from '../../utils/orderRef';
@@ -48,6 +48,60 @@ const STATUS_LABEL = {
   done:       'Closed',
   cancelled:  'Cancelled',
 };
+
+// Matches the table's own column widths/padding (px-5 py-4 cells, w-28/w-36/w-64
+// column widths) and the phone-card rows below it, so the real content lands in the
+// same footprint once it arrives.
+function OrdersTableSkeleton() {
+  const rows = [0, 1, 2, 3, 4, 5];
+  return (
+    <SkeletonGroup label="Loading orders" className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="lg:hidden divide-y divide-slate-200">
+        {rows.map((i) => (
+          <div key={i} className="p-4">
+            <div className="flex items-start justify-between gap-2">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-4 w-16" />
+            </div>
+            <div className="flex justify-between items-baseline gap-2 mt-2">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+            <div className="flex justify-between items-center gap-2 mt-3">
+              <Skeleton className="h-5 w-20 rounded-full" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <table className="hidden lg:table w-full text-base">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-400">
+            <th className="px-5 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
+            <th className="px-5 py-3 w-36"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-5 py-3 w-36"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-5 py-3 w-36 hidden md:table-cell"><Skeleton className="h-3 w-12" /></th>
+            <th className="px-5 py-3 w-64"><Skeleton className="h-3 w-14" /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((i) => (
+            <tr key={i} className="border-t border-slate-300">
+              <td className="px-5 py-4 w-28"><Skeleton className="h-4 w-16" /></td>
+              <td className="px-5 py-4"><Skeleton className="h-4 w-40" /></td>
+              <td className="px-5 py-4 w-36"><Skeleton className="h-4 w-24" /></td>
+              <td className="px-5 py-4 w-36"><Skeleton className="h-4 w-20 ml-auto" /></td>
+              <td className="px-5 py-4 w-36 hidden md:table-cell"><Skeleton className="h-4 w-20" /></td>
+              <td className="px-5 py-4 w-64"><Skeleton className="h-5 w-24 rounded-full" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </SkeletonGroup>
+  );
+}
 
 export default function OrdersPage() {
   const navigate = useNavigate();
@@ -838,7 +892,7 @@ export default function OrdersPage() {
 
       {/* Table */}
       {loading ? (
-        <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
+        <OrdersTableSkeleton />
       ) : filteredOrders.length === 0 && visibleLocalUnsyncedOrders.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {orders.length === 0

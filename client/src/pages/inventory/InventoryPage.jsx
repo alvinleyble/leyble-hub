@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
-import Spinner from '../../components/ui/Spinner';
+import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import ProductFormModal from './ProductFormModal';
 import ProductDetailPanel from './ProductDetailPanel';
 import BatchPriceEditModal from './BatchPriceEditModal';
@@ -21,6 +21,73 @@ import { checkIsOnline } from '../../offline/status.js';
 
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Reserves the same vertical space the category-chip row and the stock-filter
+// segmented control occupy once categories are known, so their appearance after load
+// doesn't push the table down a beat later.
+function InventoryFiltersSkeleton() {
+  return (
+    <SkeletonGroup label="Loading filters" className="mb-3">
+      <div className="flex gap-1.5 mb-3">
+        <Skeleton className="h-8 w-24 rounded-full" />
+        <Skeleton className="h-8 w-20 rounded-full" />
+        <Skeleton className="h-8 w-28 rounded-full" />
+      </div>
+      <Skeleton className="h-9 w-64 rounded-lg" />
+    </SkeletonGroup>
+  );
+}
+
+// Matches the grouped-category table's row padding/columns (Product, SKU, Price,
+// Deposit, Btl/Case, Stock, Status) and its phone-card twin below it.
+function InventoryTableSkeleton() {
+  const rows = [0, 1, 2, 3, 4, 5];
+  return (
+    <SkeletonGroup label="Loading inventory" className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="lg:hidden divide-y divide-slate-200">
+        {rows.map((i) => (
+          <div key={i} className="p-4 flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1.5">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+            <div className="text-right space-y-1.5 shrink-0">
+              <Skeleton className="h-4 w-16 ml-auto" />
+              <Skeleton className="h-4 w-10 ml-auto" />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <table className="hidden lg:table w-full text-base">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-400">
+            <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
+            <th className="px-5 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-10" /></th>
+            <th className="px-5 py-3"><Skeleton className="h-3 w-16 ml-auto" /></th>
+            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-16 ml-auto" /></th>
+            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-5 py-3"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-12" /></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((i) => (
+            <tr key={i} className="border-t border-slate-300">
+              <td className="px-5 py-4"><Skeleton className="h-4 w-36" /></td>
+              <td className="px-5 py-4 hidden sm:table-cell"><Skeleton className="h-4 w-14" /></td>
+              <td className="px-5 py-4"><Skeleton className="h-4 w-16 ml-auto" /></td>
+              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-12 ml-auto" /></td>
+              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
+              <td className="px-5 py-4"><Skeleton className="h-4 w-10 ml-auto" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-5 w-16 rounded-full" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </SkeletonGroup>
+  );
+}
 
 export default function InventoryPage() {
   const { addToast } = useToast();
@@ -313,53 +380,57 @@ export default function InventoryPage() {
         </label>
       </div>
 
-      {/* ── Category chips ───────────────────────────────────────── */}
-      {/* D4-style: below `lg` this scrolls as a single row instead of wrapping — every
-          category stays one tap. Wraps unchanged at `lg`+ (tablet). */}
-      {!loading && allCategories.length > 1 && (
-        <div className="flex flex-nowrap gap-1.5 overflow-x-auto -mx-0.5 px-0.5 pb-0.5 mb-3
-                        lg:flex-wrap lg:overflow-visible lg:mx-0 lg:px-0 lg:pb-0">
-          {['all', ...allCategories].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setCategoryFilter(cat)}
-              className={`shrink-0 lg:shrink px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
-                ${categoryFilter === cat
-                  ? 'bg-blue-700 text-white border-blue-700'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-            >
-              {cat === 'all' ? 'All Categories' : cat}
-            </button>
-          ))}
-        </div>
-      )}
+      {loading ? (
+        <InventoryFiltersSkeleton />
+      ) : (
+        <>
+          {/* ── Category chips ───────────────────────────────────────── */}
+          {/* D4-style: below `lg` this scrolls as a single row instead of wrapping —
+              every category stays one tap. Wraps unchanged at `lg`+ (tablet). */}
+          {allCategories.length > 1 && (
+            <div className="flex flex-nowrap gap-1.5 overflow-x-auto -mx-0.5 px-0.5 pb-0.5 mb-3
+                            lg:flex-wrap lg:overflow-visible lg:mx-0 lg:px-0 lg:pb-0">
+              {['all', ...allCategories].map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setCategoryFilter(cat)}
+                  className={`shrink-0 lg:shrink px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
+                    ${categoryFilter === cat
+                      ? 'bg-blue-700 text-white border-blue-700'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                >
+                  {cat === 'all' ? 'All Categories' : cat}
+                </button>
+              ))}
+            </div>
+          )}
 
-      {/* ── Stock status filter ───────────────────────────────────── */}
-      {/* Segmented control (distinct from the category pill row above) — same style at
-          phone and tablet width. */}
-      {!loading && (
-        <div className="inline-flex mb-5 rounded-lg border border-slate-300 bg-white p-0.5">
-          {[
-            { value: 'all', label: 'All Stock' },
-            { value: 'low', label: 'Low Stock' },
-            { value: 'out', label: 'Out of Stock' },
-          ].map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setStockFilter(opt.value)}
-              className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
-                ${stockFilter === opt.value
-                  ? opt.value === 'out' ? 'bg-red-600 text-white'
-                    : opt.value === 'low' ? 'bg-amber-500 text-white'
-                    : 'bg-slate-700 text-white'
-                  : 'text-slate-600 hover:bg-slate-50'}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+          {/* ── Stock status filter ───────────────────────────────────── */}
+          {/* Segmented control (distinct from the category pill row above) — same
+              style at phone and tablet width. */}
+          <div className="inline-flex mb-5 rounded-lg border border-slate-300 bg-white p-0.5">
+            {[
+              { value: 'all', label: 'All Stock' },
+              { value: 'low', label: 'Low Stock' },
+              { value: 'out', label: 'Out of Stock' },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setStockFilter(opt.value)}
+                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors
+                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
+                  ${stockFilter === opt.value
+                    ? opt.value === 'out' ? 'bg-red-600 text-white'
+                      : opt.value === 'low' ? 'bg-amber-500 text-white'
+                      : 'bg-slate-700 text-white'
+                    : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* ── Bulk action bar ─────────────────────────────────────── */}
@@ -382,9 +453,7 @@ export default function InventoryPage() {
 
       {/* ── Table ────────────────────────────────────────────────── */}
       {loading ? (
-        <div className="flex items-center justify-center h-64">
-          <Spinner size="lg" />
-        </div>
+        <InventoryTableSkeleton />
       ) : filtered.length === 0 ? (
         <p className="text-center text-slate-400 text-base py-20">
           {search ? 'No products match your search.' : 'No products yet. Add one to get started.'}

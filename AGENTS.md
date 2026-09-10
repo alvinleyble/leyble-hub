@@ -163,6 +163,19 @@ stock decision is gated on `isStockOut()` (net audit-log delta), not on the stat
 - `fixed inset-0 z-50 flex items-start justify-center`
 - Reference: `client/src/pages/personnel/PersonnelFormModal.jsx`
 
+**Skeleton loaders** (cold-load placeholders, not spinners): `Skeleton`/`SkeletonGroup`
+from `client/src/components/ui/Skeleton.jsx` — a bare `animate-pulse` block plus a
+`role="status"` wrapper. Each page composes its own skeleton (e.g. `DashboardSkeleton`
+in `DashboardPage.jsx`, `OrdersTableSkeleton` in `OrdersPage.jsx`) matching the real
+section's own classes/padding so nothing shifts when data lands. Swap it in only for
+that page's own cold-start `loading` branch — never during a `{ silent: true }`
+background refresh, which every list/detail page already uses to avoid exactly this
+kind of flash. Dashboard additionally peeks its own `readBackOfficeCache` synchronously
+before the live fetch so a device already holding a cached dashboard never shows the
+skeleton at all; the other four pages (Orders, Order Detail, Inventory, Customers)
+keep their existing network-first-with-cache-fallback fetch order (see ADR 0015 §9's
+"live first" reasoning in `backOfficeCache.js`) and only get the skeleton swap.
+
 **PHP formatter** (defined locally in each file — do not centralize):
 ```js
 const PHP = (n) =>
@@ -172,6 +185,21 @@ const PHP = (n) =>
 **API calls**: `api.get/post/patch/del` from `client/src/api/client.js`, always with `credentials: 'include'` (already set in the client).
 
 **Toasts**: `const { addToast } = useToast()` → `addToast(msg, 'success' | 'error')`.
+
+**Cold-load skeletons** (Dashboard, Orders, Order Detail, Inventory, Customers): a bare
+`<Skeleton className="h-4 w-24" />` (`client/src/components/ui/Skeleton.jsx`) per real
+element, sized to that element's own classes, composed into a page-local
+`XSkeleton()` function shown only while `loading` is true on first mount — never a
+generic centered spinner. `Spinner` still exists for modals/inline buttons; page-level
+cold loads should use a skeleton instead. Every one of these pages already gates its
+`setLoading(true)` behind a `{ silent: true }` flag on background/reconnect refreshes,
+so swapping the spinner for a skeleton doesn't reintroduce a flash — keep that pattern
+when adding a new page-level load. DashboardPage additionally peeks its held
+`backOfficeCache.js` copy before the live fetch and paints it immediately with no
+skeleton if present (true local-first); the other four pages stay network-first with a
+cache/local-history fallback on failure (a deliberate, pre-existing design — see
+`backOfficeCache.js`'s own comment block), so their skeleton only shows on a genuinely
+cold, nothing-held first load.
 
 **Responsive layout**: the permanent sidebar only renders on the custom `desktop:` screen
 (`min-width: 1024px` **and** `pointer: fine`, see `client/tailwind.config.js`); phones/tablets

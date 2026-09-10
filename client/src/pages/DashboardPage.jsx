@@ -2,11 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/ui/Badge';
-import Spinner from '../components/ui/Spinner';
+import { Skeleton, SkeletonGroup } from '../components/ui/Skeleton';
 import OfflineBanner from '../components/ui/OfflineBanner';
 import { orderRef } from '../utils/orderRef';
 import { formatCardDateTime } from '../utils/dateFormat';
-import { loadWithCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
+import { loadWithCache, readBackOfficeCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
 
 const PHP = (amount) =>
   `₱${Number(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -17,6 +17,63 @@ function SummaryCard({ label, value, colorClass = 'text-slate-900', bgClass = 'b
       <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">{label}</p>
       <p className={`text-4xl font-bold mt-2 tabular-nums ${colorClass}`}>{value}</p>
     </div>
+  );
+}
+
+// Mirrors the loaded layout's exact card/section heights (grid-cols-2 md:grid-cols-4
+// summary cards, the Active Orders table, the Low Stock panel) so nothing shifts once
+// real data replaces it.
+function DashboardSkeleton() {
+  return (
+    <SkeletonGroup label="Loading dashboard" className="p-6 max-w-7xl mx-auto">
+      <div className="h-8 w-40 mb-6">
+        <Skeleton className="h-8 w-40" />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="rounded-xl border p-5 bg-white border-slate-200">
+            <Skeleton className="h-3 w-20 mb-3" />
+            <Skeleton className="h-9 w-16" />
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <section className="xl:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-400">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-14" />
+          </div>
+          <div className="divide-y divide-slate-300">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="px-5 py-4 flex items-center justify-between gap-4">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-28" />
+                  <Skeleton className="h-3 w-44" />
+                </div>
+                <Skeleton className="h-5 w-20 shrink-0" />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-400">
+            <Skeleton className="h-5 w-24 mb-2" />
+            <Skeleton className="h-3 w-40" />
+          </div>
+          <div className="divide-y divide-slate-300">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="flex items-center justify-between gap-4 px-5 py-4 min-h-[48px]">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-12" />
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </SkeletonGroup>
   );
 }
 
@@ -32,27 +89,41 @@ export default function DashboardPage() {
   // down. It used to render the raw fetch failure ("Failed to fetch") as the whole
   // screen, which is both alarming and useless: the owner opening it during a blackout
   // wants last night's figures and a way through to the counter, not an error string.
-  const load = useCallback(() => {
-    setLoading(true);
-    setError('');
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) { setLoading(true); setError(''); }
     loadWithCache(DASHBOARD_CACHE, () => api.get('/dashboard'))
       .then(({ data: payload, fromCache: cached, cachedAt: at }) => {
         setData(payload);
         setFromCache(cached);
         setCachedAt(at);
       })
-      .catch(() => setError('offline-no-cache'))
+      .catch(() => { if (!silent) setError('offline-no-cache'); })
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Local-first paint: a device holding a previously cached dashboard shows it
+  // immediately (no skeleton) while the live fetch below quietly confirms or
+  // refreshes it in the background. Only a device with nothing held yet falls
+  // through to the cold-load skeleton.
+  useEffect(() => {
+    let cancelled = false;
+    readBackOfficeCache(DASHBOARD_CACHE).then((held) => {
+      if (cancelled) return;
+      if (held) {
+        setData(held.value);
+        setFromCache(true);
+        setCachedAt(held.cachedAt);
+        setLoading(false);
+        load({ silent: true });
+      } else {
+        load();
+      }
+    });
+    return () => { cancelled = true; };
+  }, [load]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   // Nothing live and nothing held: a clean placeholder pointing at the one screen that
