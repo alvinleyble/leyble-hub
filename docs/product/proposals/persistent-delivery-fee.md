@@ -1,6 +1,9 @@
 # Proposal: Persistent per-customer delivery fee
 
-**Status:** grilled, decisions locked — not built yet.
+**Status:** Shipped — migration 049, `CustomerDetailPanel.jsx`, `OrderCreateModal.jsx`,
+`OrderDetailPage.jsx`, `receiptTemplate.js`/`escposReceipt.js`. See
+[AGENTS.md's "Persistent delivery fee"](../../../AGENTS.md#persistent-delivery-fee-see-proposal)
+for the as-built summary.
 **Origin:** captain grilling session, 2026-09-11.
 **See also:** [ADR 0009 — custom pricing derived from saved prices](../../adr/0009-custom-pricing-derived-from-saved-prices.md)
 (same "snapshot a standing value onto the order" shape as custom pricing).

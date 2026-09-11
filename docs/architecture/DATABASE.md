@@ -1,6 +1,6 @@
 # Database Reference
 
-PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–048` have
+PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–049` have
 been applied — reconstructed from `server/db/migrations/` (not from the archived spec, which is
 stale). When in doubt, the migration files are the source of truth.
 
@@ -62,11 +62,15 @@ its historical `activity_logs.performed_by` references always still resolve. The
 | `is_active` | BOOLEAN | soft-delete flag |
 | `updated_at` | TIMESTAMPTZ | Watermark index `idx_products_updated_at` (035) for keyset delta sync |
 
-### 3. `customers` (003, altered by 015, 025, 031, 032, 034, 035)
+### 3. `customers` (003, altered by 015, 025, 031, 032, 034, 035, 049)
 `customer_type` ∈ **`('regular','wholesaler','discounted','markup')`** default `'regular'`.
 History: started as `retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032) → `unassigned` collapsed into `regular` (034).
 In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`.
 Fields: `name`, `address`, `phone`, `notes`, `is_active`, `updated_at` (watermark index `idx_customers_updated_at`, 035).
+`delivery_fee` NUMERIC(10,2), nullable, `CHECK (delivery_fee IS NULL OR delivery_fee >= 0)` (049)
+— the standing per-customer delivery charge, configured only on `CustomerDetailPanel.jsx`;
+`NULL` means "not configured." Snapshotted onto `orders.delivery_fee_charged` at order creation —
+see [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal).
 
 ### 4. `customer_product_prices` (004, altered by 020, 026) — **append-only**
 Custom price history. Every save inserts a new row. The **most recent row** per
@@ -85,7 +89,7 @@ Field workers (drivers/helpers). `full_name`, `remarks` (TEXT — renamed from `
 `phone`, `license_number`, `id_image_base64` + `id_image_mime_type` (ID photo stored inline as
 Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 035).
 
-### 6. `orders` (006, altered by 016, 018, 019, 027, 028, 033, 035, 039, 040, 042, 048)
+### 6. `orders` (006, altered by 016, 018, 019, 027, 028, 033, 035, 039, 040, 042, 048, 049)
 | Column | Notes |
 |---|---|
 | `customer_id` | FK |
@@ -93,6 +97,7 @@ Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 
 | `order_type` | `('delivery','pickup')` default `'delivery'` (018) |
 | `total_amount` | NUMERIC — **goods-only while open**; deposit folded in only when `done` (see [order-lifecycle](order-lifecycle.md)) |
 | `adjustment`, `adjustment_reason` | manual ± price adjustment (019) |
+| `delivery_fee_charged` | NUMERIC(10,2), nullable, `CHECK (>= 0)` (049) — snapshotted from `customers.delivery_fee` at creation, editable per order, always forced `NULL` when `order_type !== 'delivery'`. Client-side total only (like `adjustment`); `total_amount` excludes it. See [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal) |
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
