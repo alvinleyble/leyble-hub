@@ -34,6 +34,7 @@ export async function parkOrderLocalFirst({
   orderType = 'delivery',
   notes = '',
   adjustment = { value: 0, reason: '' },
+  deliveryFeeCharged = null,
   items = [],
   display = null,
   profileKey = null,
@@ -48,6 +49,10 @@ export async function parkOrderLocalFirst({
   const saleTime = createdAt || new Date().toISOString();
   const adjVal = Number(adjustment?.value) || 0;
   const adjReason = adjVal !== 0 && adjustment?.reason ? String(adjustment.reason).trim() : null;
+  // Decision 7 — delivery orders only.
+  const deliveryFee = orderType === 'delivery'
+    && deliveryFeeCharged !== null && deliveryFeeCharged !== undefined
+    ? Number(deliveryFeeCharged) : null;
 
   // Same dependency ordering as a real sale (D5): a locally quick-created customer
   // must sync before any draft referencing her.
@@ -62,6 +67,7 @@ export async function parkOrderLocalFirst({
     status: 'draft',
     adjustment: adjVal,
     adjustment_reason: adjReason,
+    delivery_fee_charged: deliveryFee,
     items: items.map((i) => ({
       product_id: Number(i.product_id),
       quantity: Number(i.quantity) || 0,
@@ -156,6 +162,7 @@ function recordToDraft(record) {
     notes: p.notes || null,
     adjustment: p.adjustment || 0,
     adjustment_reason: p.adjustment_reason || null,
+    delivery_fee_charged: p.delivery_fee_charged ?? null,
     items: mergeItems(p.items, shown.items),
     personnel: [],
     status: 'draft',
@@ -213,7 +220,10 @@ export async function isDraftUnsynced(receiptNumber) {
  * Updates a still-local draft in place (D3/D6). Does not touch receipt history —
  * a draft is not a receipt (D9) until it is actually finalized into a real order.
  */
-export async function updateLocalDraft({ receiptNumber, orderType, notes, items, adjustment, display = null, profileKey = null }) {
+export async function updateLocalDraft({
+  receiptNumber, orderType, notes, items, adjustment, deliveryFeeCharged = null,
+  display = null, profileKey = null,
+}) {
   if (!receiptNumber) throw new Error('updateLocalDraft requires a receipt number');
   const records = await listRecords();
   const record = findQueuedDraftRecord(records, receiptNumber);
@@ -221,13 +231,19 @@ export async function updateLocalDraft({ receiptNumber, orderType, notes, items,
 
   const adjVal = Number(adjustment?.value) || 0;
   const adjReason = adjVal !== 0 && adjustment?.reason ? String(adjustment.reason).trim() : null;
+  const effectiveOrderType = orderType || record.payload.order_type;
+  // Decision 7 — delivery orders only.
+  const deliveryFee = effectiveOrderType === 'delivery'
+    && deliveryFeeCharged !== null && deliveryFeeCharged !== undefined
+    ? Number(deliveryFeeCharged) : null;
 
   record.payload = {
     ...record.payload,
-    order_type: orderType || record.payload.order_type,
+    order_type: effectiveOrderType,
     notes: notes ? notes.trim() : null,
     adjustment: adjVal,
     adjustment_reason: adjReason,
+    delivery_fee_charged: deliveryFee,
     items: (items || []).map((i) => ({
       product_id: Number(i.product_id),
       quantity: Number(i.quantity) || 0,

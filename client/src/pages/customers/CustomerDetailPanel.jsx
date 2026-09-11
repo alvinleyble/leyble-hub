@@ -84,6 +84,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             address:       data.address ?? '',
             notes:         data.notes ?? '',
             is_active:     data.is_active,
+            delivery_fee:  data.delivery_fee !== null && data.delivery_fee !== undefined ? String(data.delivery_fee) : '',
           };
           setForm(seeded);
           setSnapshot(seeded);
@@ -110,6 +111,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
             address:       held.address ?? '',
             notes:         held.notes ?? '',
             is_active:     held.is_active,
+            delivery_fee:  held.delivery_fee !== null && held.delivery_fee !== undefined ? String(held.delivery_fee) : '',
           };
           setForm(seeded);
           setSnapshot(seeded);
@@ -137,6 +139,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
     e.preventDefault();
     const errs = {};
     if (!form.name.trim()) errs.name = 'Required.';
+    // Decision 14: charge-only — no such thing as a negative delivery fee.
+    if (form.delivery_fee !== '' && (Number.isNaN(Number(form.delivery_fee)) || Number(form.delivery_fee) < 0)) {
+      errs.delivery_fee = 'Enter a non-negative amount, or leave blank for none.';
+    }
     if (Object.keys(errs).length) { setFormErrors(errs); return; }
 
     setSaving(true);
@@ -149,6 +155,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         address:       form.address.trim() || null,
         notes:         form.notes.trim() || null,
         is_active:     form.is_active,
+        delivery_fee:  form.delivery_fee === '' ? null : Number(form.delivery_fee),
       };
       // Diff against the snapshot this form was seeded with, not the field's current
       // server value — only what the operator actually changed belongs on the wire.
@@ -164,9 +171,10 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         address:       snapshot.address || null,
         notes:         snapshot.notes || null,
         is_active:     snapshot.is_active,
+        delivery_fee:  snapshot.delivery_fee === '' ? null : Number(snapshot.delivery_fee),
       };
       const patch = {};
-      for (const field of ['name', 'customer_type', 'phone', 'address', 'notes']) {
+      for (const field of ['name', 'customer_type', 'phone', 'address', 'notes', 'delivery_fee']) {
         if (finalValues[field] !== baseline[field]) patch[field] = finalValues[field];
       }
       // 8.5 — the toggle is disabled offline (below), so this would only ever restate
@@ -313,12 +321,24 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                     <input type="text" value={form.name} onChange={set('name')} className={INPUT} />
                   </FormField>
 
-                  <FormField label="Customer Type" required className="sm:col-span-2">
+                  <FormField label="Customer Type" required>
                     <select value={form.customer_type} onChange={set('customer_type')} className={INPUT}>
                       {CUSTOMER_TYPE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
+                  </FormField>
+
+                  <FormField
+                    label="Delivery Fee (₱)"
+                    hint="Optional — auto-fills on this customer's delivery orders"
+                    error={formErrors.delivery_fee}
+                  >
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={form.delivery_fee} onChange={set('delivery_fee')}
+                      className={INPUT} placeholder="Not set"
+                    />
                   </FormField>
 
                   <FormField label="Phone" hint="Optional">

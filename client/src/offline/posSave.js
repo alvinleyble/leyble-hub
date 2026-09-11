@@ -39,6 +39,7 @@ async function storedSellerName() {
  * @param {string} params.orderType
  * @param {string} params.notes
  * @param {object} params.adjustment { value, reason }
+ * @param {number|null} [params.deliveryFeeCharged] persistent-delivery-fee.md decision 6
  * @param {Array}  params.items
  * @param {string} [params.profileKey]
  * @param {string} [params.soldByName] ADR 0017 #10 — overrides the stored session's name
@@ -51,6 +52,7 @@ export async function saveOrderLocalFirst({
   orderType = 'delivery',
   notes = '',
   adjustment = { value: 0, reason: '' },
+  deliveryFeeCharged = null,
   items = [],
   personnel = [],
   profileKey = null,
@@ -80,6 +82,10 @@ export async function saveOrderLocalFirst({
   const saleTime = createdAt || new Date().toISOString();
   const adjVal = Number(adjustment?.value) || 0;
   const adjReason = adjVal !== 0 && adjustment?.reason ? String(adjustment.reason).trim() : null;
+  // Decision 7 — delivery orders only, defensively re-derived here too rather than
+  // trusting the caller never to pass a pickup-order value through.
+  const deliveryFee = orderType === 'delivery' && deliveryFeeCharged !== null && deliveryFeeCharged !== undefined
+    ? Number(deliveryFeeCharged) : null;
 
   const totals = orderTotals(items, adjVal);
 
@@ -116,6 +122,7 @@ export async function saveOrderLocalFirst({
     notes: notes ? notes.trim() : null,
     adjustment: adjVal,
     adjustment_reason: adjReason,
+    delivery_fee_charged: deliveryFee,
     items: items.map((i, idx) => ({
       id: i.id || idx + 1,
       product_id: Number(i.product_id),
@@ -153,6 +160,7 @@ export async function saveOrderLocalFirst({
       notes: notes ? notes.trim() : null,
       adjustment: adjVal,
       adjustment_reason: adjReason,
+      delivery_fee_charged: deliveryFee,
       items: items.map((i) => ({
         product_id: Number(i.product_id),
         quantity: Number(i.quantity),
@@ -312,7 +320,9 @@ export async function isOrderUnsynced(receiptNumber) {
  * Updates an unsynced order on the device (D3):
  * Updates its outbox record payload and its receipt in local history.
  */
-export async function updateLocalOrder({ order, items, notes, adjustment, personnel = null, profileKey = null }) {
+export async function updateLocalOrder({
+  order, items, notes, adjustment, deliveryFeeCharged, personnel = null, profileKey = null,
+}) {
   if (!order?.receipt_number) throw new Error('updateLocalOrder requires receipt_number');
   const records = await listRecords();
   const record = records.find(
@@ -325,12 +335,18 @@ export async function updateLocalOrder({ order, items, notes, adjustment, person
   const adjVal = Number(adjustment?.value) || 0;
   const adjReason = adjVal !== 0 && adjustment?.reason ? String(adjustment.reason).trim() : null;
   const totals = orderTotals(items, adjVal);
+  // Decision 7 — order_type is fixed once created (unsynced edits never change it),
+  // so it alone decides whether an edited fee is kept.
+  const deliveryFee = order.order_type === 'delivery'
+    && deliveryFeeCharged !== null && deliveryFeeCharged !== undefined
+    ? Number(deliveryFeeCharged) : null;
 
   const updatedOrder = {
     ...order,
     notes: notes ? notes.trim() : null,
     adjustment: adjVal,
     adjustment_reason: adjReason,
+    delivery_fee_charged: deliveryFee,
     items: items.map((i, idx) => ({
       id: i.id || idx + 1,
       product_id: Number(i.product_id),
@@ -361,6 +377,7 @@ export async function updateLocalOrder({ order, items, notes, adjustment, person
     notes: notes ? notes.trim() : null,
     adjustment: adjVal,
     adjustment_reason: adjReason,
+    delivery_fee_charged: deliveryFee,
     items: items.map((i) => ({
       product_id: Number(i.product_id),
       quantity: Number(i.quantity),

@@ -62,8 +62,13 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   const printAdjReason = overrides.adjustment_reason !== undefined ? overrides.adjustment_reason : order.adjustment_reason;
   const itemsTotal     = order.items.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
   const depTotal       = order.items.reduce((s, i) => s + itemDepositForPrint(i, returnCounts, showDeposit), 0);
-  const printTotal     = itemsTotal + depTotal + printAdj;
-  const hasSubtotals   = (showDeposit && depTotal > 0) || printAdj !== 0;
+  // persistent-delivery-fee.md decision 4: unset means the line doesn't exist, not
+  // ₱0.00 — a deliberately-configured ₱0.00 still prints its own line.
+  const hasDeliveryFee = order.delivery_fee_charged !== null && order.delivery_fee_charged !== undefined;
+  const deliveryFee    = hasDeliveryFee ? Number(order.delivery_fee_charged) : 0;
+  // Decision 12: delivery fee joins the total ahead of the adjustment term.
+  const printTotal     = itemsTotal + depTotal + deliveryFee + printAdj;
+  const hasSubtotals   = (showDeposit && depTotal > 0) || hasDeliveryFee || printAdj !== 0;
   const totalCases     = order.items.reduce((s, i) => s + Number(i.quantity), 0);
 
   const buf = [];
@@ -150,6 +155,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   if (hasSubtotals) {
     ln(padLR('Items', fmtMoney(itemsTotal)));
     if (showDeposit && depTotal > 0) ln(padLR('Deposit fee', `+${fmtMoney(depTotal)}`));
+    if (hasDeliveryFee) ln(padLR('Delivery Fee', fmtMoney(deliveryFee)));
     if (printAdj !== 0) {
       const adjRaw = printAdjReason ? `Adj (${printAdjReason})` : 'Adjustment';
       const adjLabel = adjRaw.length > 28 ? adjRaw.substring(0, 25) + '...' : adjRaw;

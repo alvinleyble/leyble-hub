@@ -351,6 +351,10 @@ export default function OrderDetailPage() {
             items: items,
             notes: order.notes,
             adjustment: { value: adj, reason: adjReason.trim() },
+            // This widget only touches the adjustment — carry the order's own
+            // delivery fee through unchanged rather than letting updateLocalOrder's
+            // default (null) silently waive it.
+            deliveryFeeCharged: order.delivery_fee_charged,
             personnel: null,
           });
           setOrder(updated);
@@ -495,8 +499,14 @@ export default function OrderDetailPage() {
 
   const depositTotal = items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
 
+  // Decision 4: unset means the line doesn't exist; configured (including a
+  // deliberate ₱0.00) always prints its own line. Decision 12: joins the grand
+  // total ahead of the adjustment term.
+  const hasDeliveryFee    = order.delivery_fee_charged !== null && order.delivery_fee_charged !== undefined;
+  const deliveryFeeCharged = hasDeliveryFee ? num(order.delivery_fee_charged) : 0;
+
   const liveTotal   = items.length > 0
-    ? itemsSubtotal + depositTotal + num(order.adjustment)
+    ? itemsSubtotal + depositTotal + deliveryFeeCharged + num(order.adjustment)
     : num(order.total_amount);
   const hasDeposits = items.some((i) => num(i?.unit_deposit_fee) > 0);
 
@@ -715,6 +725,14 @@ export default function OrderDetailPage() {
                   </td>
                 </tr>
               </>
+            )}
+            {hasDeliveryFee && (
+              <tr className="border-t border-slate-300 bg-slate-50">
+                <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Delivery Fee</td>
+                <td className="px-5 py-3 text-right tabular-nums font-medium text-slate-700">
+                  {PHP(deliveryFeeCharged)}
+                </td>
+              </tr>
             )}
             {hasAdj && (
               <tr className="border-t border-slate-300 bg-slate-50">

@@ -290,7 +290,11 @@ async function insertItems(client, orderId, items, draft = false) {
 // COALESCE keeps customer/order type unchanged when the caller passes null (only a parked
 // draft may change them at all).
 async function replaceItemsAndSettleOrder(
-  client, orderId, rows, { notes, customerId = null, orderType = null, revision = null }
+  client, orderId, rows,
+  {
+    notes, customerId = null, orderType = null, revision = null,
+    deliveryFeeTouched = false, deliveryFeeValue = null,
+  }
 ) {
   const cols = itemColumnArrays(rows);
   return client.query(
@@ -312,6 +316,9 @@ async function replaceItemsAndSettleOrder(
         SET notes        = $2,
             customer_id  = COALESCE($3::int, o.customer_id),
             order_type   = COALESCE($4::text, o.order_type),
+            delivery_fee_charged = CASE WHEN $13::boolean
+                                        THEN $14::numeric
+                                        ELSE o.delivery_fee_charged END,
             total_amount = (
               SELECT COALESCE(SUM(CASE WHEN o.status = 'done'
                                        THEN i.line_total
@@ -320,7 +327,7 @@ async function replaceItemsAndSettleOrder(
             updated_at   = NOW()
       WHERE o.id = $1
         AND ($12::bigint IS NULL OR o.revision = $12::bigint)`,
-    [orderId, notes, customerId, orderType, ...cols, revision]
+    [orderId, notes, customerId, orderType, ...cols, revision, deliveryFeeTouched, deliveryFeeValue]
   );
 }
 
@@ -752,6 +759,7 @@ router.post('/', async (req, res, next) => {
   const {
     customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
     receipt_number, request_key, created_at, adjustment = 0, adjustment_reason,
+    delivery_fee_charged,
   } = req.body;
   const isDraft = status === 'draft';
 
@@ -760,6 +768,23 @@ router.post('/', async (req, res, next) => {
   if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
   // A finalized order needs at least one item; a draft may be parked while still empty.
   if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
+
+  // Persistent delivery fee (proposal decision 14: charge-only). `undefined` means the
+  // client sent no override, so the snapshot below falls back to the customer's
+  // current standing fee (decision 6); explicit null/'' waives it for this order alone
+  // (decision 8) without touching that standing fee.
+  let deliveryFeeOverride;
+  if (delivery_fee_charged !== undefined) {
+    if (delivery_fee_charged === null || delivery_fee_charged === '') {
+      deliveryFeeOverride = null;
+    } else {
+      const n = Number(delivery_fee_charged);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: 'delivery_fee_charged must be a non-negative number' });
+      }
+      deliveryFeeOverride = n;
+    }
+  }
 
   let requestKey = null;
   try {
@@ -812,7 +837,7 @@ router.post('/', async (req, res, next) => {
     await client.query('BEGIN');
 
     const { rows: [customer] } = await client.query(
-      'SELECT id, name FROM customers WHERE id = $1 AND is_active = TRUE',
+      'SELECT id, name, delivery_fee FROM customers WHERE id = $1 AND is_active = TRUE',
       [customer_id]
     );
     if (!customer) {
@@ -823,15 +848,27 @@ router.post('/', async (req, res, next) => {
     const adjNum = Number(adjustment) || 0;
     const adjReason = adjNum !== 0 && adjustment_reason ? adjustment_reason.trim() : null;
 
+    // Decisions 6/7: snapshotted from the customer's current standing fee at creation,
+    // delivery orders only — never looked up live again after this. An explicit
+    // override (deliveryFeeOverride !== undefined) wins over the customer's fee, and a
+    // non-delivery order never carries one regardless of what was sent.
+    const deliveryFeeCharged = order_type === 'delivery'
+      ? (deliveryFeeOverride !== undefined
+          ? deliveryFeeOverride
+          : (customer.delivery_fee !== null && customer.delivery_fee !== undefined
+              ? Number(customer.delivery_fee) : null))
+      : null;
+
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
                            receipt_station, receipt_device, receipt_sequence, request_key,
-                           created_at, adjustment, adjustment_reason, created_by)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11, $12)
+                           created_at, adjustment, adjustment_reason, delivery_fee_charged,
+                           created_by)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11, $12, $13)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
        receipt?.station ?? null, receipt?.device ?? null, receipt?.sequence ?? null,
-       requestKey, created_at || null, adjNum, adjReason,
+       requestKey, created_at || null, adjNum, adjReason, deliveryFeeCharged,
        // ADR 0017 #10 — who sold it, for the receipt's `Sold by:` line. The JWT is the
        // whole identity since ADR 0017 §5, so this is whoever is signed in on the
        // device that sent it — including a drain hours later, which replays under the
@@ -933,7 +970,7 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const { notes, items, personnel, customer_id, order_type } = req.body;
+    const { notes, items, personnel, customer_id, order_type, delivery_fee_charged } = req.body;
     const isDraft = order.status === 'draft';
     let revision = null;
     try {
@@ -959,6 +996,32 @@ router.patch('/:id', async (req, res, next) => {
     const nextCustomerId = isDraft ? (customer_id ?? null) : null;
     const nextOrderType  = isDraft ? (order_type ?? null) : null;
 
+    // Decision 8: overridable per order, same spirit as `adjustment` — `undefined`
+    // means this edit didn't touch it, so the stored value is left alone; explicit
+    // null/'' waives it. `deliveryFeeTouched` is what distinguishes "leave unchanged"
+    // from "set to NULL" once this reaches the CASE expression below (COALESCE alone
+    // cannot express an explicit clear). Decision 7 wins regardless of what was sent:
+    // an order that is not `delivery` after this edit never carries a charged fee.
+    let deliveryFeeTouched = delivery_fee_charged !== undefined;
+    let deliveryFeeValue = null;
+    if (deliveryFeeTouched) {
+      if (delivery_fee_charged === null || delivery_fee_charged === '') {
+        deliveryFeeValue = null;
+      } else {
+        const n = Number(delivery_fee_charged);
+        if (!Number.isFinite(n) || n < 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'delivery_fee_charged must be a non-negative number' });
+        }
+        deliveryFeeValue = n;
+      }
+    }
+    const effectiveOrderType = nextOrderType || order.order_type;
+    if (effectiveOrderType !== 'delivery') {
+      deliveryFeeTouched = true;
+      deliveryFeeValue = null;
+    }
+
     let orderUpdate;
     if (items === undefined) {
       orderUpdate = await client.query(
@@ -966,10 +1029,14 @@ router.patch('/:id', async (req, res, next) => {
             SET notes       = $1,
                 customer_id = COALESCE($2::int, customer_id),
                 order_type  = COALESCE($3::text, order_type),
+                delivery_fee_charged = CASE WHEN $6::boolean
+                                            THEN $7::numeric
+                                            ELSE delivery_fee_charged END,
                 updated_at  = NOW()
           WHERE id = $4
             AND ($5::bigint IS NULL OR revision = $5::bigint)`,
-        [nextNotes, nextCustomerId, nextOrderType, order.id, revision]
+        [nextNotes, nextCustomerId, nextOrderType, order.id, revision,
+         deliveryFeeTouched, deliveryFeeValue]
       );
     } else {
       // ONE read for the three things replacing the lines needs: the items being
@@ -1018,6 +1085,8 @@ router.patch('/:id', async (req, res, next) => {
         customerId: nextCustomerId,
         orderType:  nextOrderType,
         revision,
+        deliveryFeeTouched,
+        deliveryFeeValue,
       });
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
