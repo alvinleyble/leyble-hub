@@ -97,6 +97,21 @@ async function removeRecord(id) {
   await nativeStore.remove(outboxKey(id));
 }
 
+// A drain pass's per-record bookkeeping (attempts/last_error/status) must land on
+// whatever is CURRENTLY stored for this record, not the snapshot `listRecords()` took
+// at the start of the pass — an edit made to the same record while this record's own
+// send was in flight (updateLocalOrder rewriting it mid-drain, for instance) would
+// otherwise be silently reverted the moment the pass gets around to recording that
+// send's outcome. Skips the write entirely if the record is gone by then (already
+// discarded concurrently) rather than resurrecting it.
+async function saveDrainOutcome(record, patch) {
+  const current = await nativeStore.getJson(outboxKey(record.id));
+  if (!current) return null;
+  const merged = { ...current, ...patch };
+  await nativeStore.setJson(outboxKey(record.id), merged);
+  return merged;
+}
+
 // ── Reading ─────────────────────────────────────────────────────────────────
 
 // Every record still on the device, oldest first. Keys carry a zero-padded id, so the
@@ -346,9 +361,10 @@ async function runDrainPass() {
           // forever with zero attempts and no operator-visible signal.
           const dependencyStillInOutbox = records.some((r) => r.id === err.refId);
           if (!dependencyStillInOutbox) {
-            record.status = NEEDS_ATTENTION;
-            record.last_error = `Depends on outbox record ${err.refId}, which no longer exists and left no resolvable reference.`;
-            await saveRecord(record);
+            await saveDrainOutcome(record, {
+              status: NEEDS_ATTENTION,
+              last_error: `Depends on outbox record ${err.refId}, which no longer exists and left no resolvable reference.`,
+            });
             blocked.add(record.id);
             failed++;
             continue;
@@ -403,11 +419,11 @@ async function runDrainPass() {
           break;
         }
 
-        record.attempts = (record.attempts || 0) + 1;
-        record.last_error = err.message || String(err);
+        const attempts = (record.attempts || 0) + 1;
+        const last_error = err.message || String(err);
 
         if (isNetworkFailure(err) || err.status >= 500) {
-          await saveRecord(record);
+          await saveDrainOutcome(record, { attempts, last_error });
           blocked.add(record.id);
           markOffline();
           break; // the line is down or the server is unwell; stop the pass
@@ -424,8 +440,7 @@ async function runDrainPass() {
           continue;
         }
 
-        record.status = NEEDS_ATTENTION;
-        await saveRecord(record);
+        await saveDrainOutcome(record, { status: NEEDS_ATTENTION, attempts, last_error });
         blocked.add(record.id);
         failed++;
       }

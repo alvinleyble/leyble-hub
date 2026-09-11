@@ -146,6 +146,22 @@ and draining an order move nothing, which is what keeps inventory out of the off
 stock decision is gated on `isStockOut()` (net audit-log delta), not on the status name — see
 [docs/architecture/order-lifecycle.md](docs/architecture/order-lifecycle.md#stock-movement).
 
+### Persistent delivery fee (see [proposal](docs/product/proposals/persistent-delivery-fee.md))
+
+Same "snapshot a standing value onto the order" shape as custom pricing (ADR 0009), for a
+different field: `customers.delivery_fee` (nullable, `>= 0`) is a plain mutable scalar — not a
+history table — configured only on the Customer edit form (`CustomerDetailPanel.jsx`).
+`orders.delivery_fee_charged` (nullable, `>= 0`) is copied from it **client-side** at order
+creation (`OrderCreateModal.jsx` auto-fills from the customer's cached `delivery_fee`, the same
+offline-safe pattern `customer_product_prices` already uses) and is editable per order before
+save — the server (`POST/PATCH /orders`) accepts an explicit override or snapshots the
+customer's current fee itself when the client sends none, and always forces it back to `NULL`
+when `order_type !== 'delivery'`, regardless of what was sent. `NULL` means "not configured, no
+row shown anywhere"; a deliberate `₱0.00` still prints its own line. It joins the client-computed
+grand total (`itemsSubtotal + depositTotal + delivery_fee_charged + adjustment`) ahead of
+`adjustment`, in `OrderCreateModal.jsx`, `OrderDetailPage.jsx`, `receiptTemplate.js` and
+`escposReceipt.js` — `total_amount` itself stays goods+deposit only, same as `adjustment` today.
+
 ### Frontend patterns (follow these exactly — consistency matters)
 
 **Searchable combobox** (product pickers everywhere):
@@ -302,6 +318,20 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `handleDrainCompletion` exactly like every other drain path — this is what the
   chrome-wide `OfflineMarker` showing "N waiting" for minutes after an unrelated
   order's own banner had already cleared turned out to be.
+- **A failed send's retry bookkeeping writes onto the CURRENT stored record, never the
+  pass-start snapshot** (`saveDrainOutcome` in `outbox.js`). `runDrainPass` reads
+  `records` once via `listRecords()` at the top of the pass; a record's own send can
+  take an await (network, `resolvePayload`) long enough for something else — most
+  concretely `updateLocalOrder`'s own unconditional background `drainOutbox()` call
+  racing a slightly earlier one from `saveOrderLocalFirst` — to rewrite that same
+  record in native storage before this pass gets around to recording `attempts`/
+  `last_error`/`status` on its failure. Writing the stale in-memory `record` back
+  (the old `saveRecord(record)` calls) silently reverted that concurrent edit;
+  `saveDrainOutcome` re-reads the record immediately before writing and merges only
+  the bookkeeping fields onto whatever is there now (or skips the write entirely if
+  the record is gone — already discarded — rather than resurrecting it). Found via
+  `client/test/v3-s3-offline-rehost.test.mjs`'s G27 `cleanupOrphanedDraftDirect` test
+  going flaky the moment `posSave.js` grew one more field on the enqueued payload.
 - **G28's real-time offline editing also covers the adjustment** (Round 3 Fix 4) —
   `OrderDetailPage.jsx`'s `saveAdjustment` writes through `updateLocalOrder()` while
   `unsynced`, same as the rest of an offline edit, and falls back to the ordinary
