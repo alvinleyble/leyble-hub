@@ -253,6 +253,34 @@ describe('Persistent delivery fee — orders.delivery_fee_charged', () => {
     assert.equal(Number(reloaded.delivery_fee_charged), 120);
   });
 
+  it('15. PATCH override/waive of the delivery fee is recorded in activity_logs', async () => {
+    const order = await createOrder({
+      customer_id: customerWithFeeId, order_type: 'delivery', items: items(),
+    });
+
+    await api(`/${order.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ items: items(), delivery_fee_charged: 80 }),
+    });
+    let { rows } = await db.query(
+      `SELECT summary FROM activity_logs WHERE entity_type = 'order' AND entity_id = $1
+         ORDER BY id DESC LIMIT 1`,
+      [order.id]
+    );
+    assert.match(rows[0].summary, /Delivery fee set to ₱80\.00/);
+
+    await api(`/${order.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ items: items(), delivery_fee_charged: null }),
+    });
+    ({ rows } = await db.query(
+      `SELECT summary FROM activity_logs WHERE entity_type = 'order' AND entity_id = $1
+         ORDER BY id DESC LIMIT 1`,
+      [order.id]
+    ));
+    assert.match(rows[0].summary, /Delivery fee waived/);
+  });
+
   it('14. A draft switched from delivery to pickup via PATCH drops its charged fee (decision 7/11)', async () => {
     const draft = await createOrder({
       customer_id: customerWithFeeId, order_type: 'delivery', status: 'draft', items: [],

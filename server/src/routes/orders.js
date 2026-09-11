@@ -1022,6 +1022,17 @@ router.patch('/:id', async (req, res, next) => {
       deliveryFeeValue = null;
     }
 
+    if (deliveryFeeTouched) {
+      const prevFee = order.delivery_fee_charged === null ? null : Number(order.delivery_fee_charged);
+      if (prevFee !== deliveryFeeValue) {
+        changeNotes.push(
+          deliveryFeeValue === null
+            ? 'Delivery fee waived'
+            : `Delivery fee set to ₱${deliveryFeeValue.toFixed(2)}`
+        );
+      }
+    }
+
     let orderUpdate;
     if (items === undefined) {
       orderUpdate = await client.query(
