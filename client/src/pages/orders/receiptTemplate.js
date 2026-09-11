@@ -43,14 +43,19 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   const printItemsTotal   = order.items.reduce(
     (s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
   const printDepositTotal = order.items.reduce((s, i) => s + itemDepForPrint(i), 0);
+  // persistent-delivery-fee.md decision 4: unset means the line doesn't exist, not
+  // ₱0.00 — a deliberately-configured ₱0.00 still prints its own line.
+  const hasDeliveryFee    = order.delivery_fee_charged !== null && order.delivery_fee_charged !== undefined;
+  const printDeliveryFee  = hasDeliveryFee ? Number(order.delivery_fee_charged) : 0;
   const printAdj          = Number(
     overrides.adjustment !== undefined ? overrides.adjustment : (order.adjustment || 0)
   ) || 0;
   const printAdjReason    = overrides.adjustment_reason !== undefined
     ? overrides.adjustment_reason
     : order.adjustment_reason;
-  const printTotal        = printItemsTotal + printDepositTotal + printAdj;
-  const printHasSubtotals = (showDeposit && printDepositTotal > 0) || printAdj !== 0;
+  // Decision 12: delivery fee joins the total ahead of the adjustment term.
+  const printTotal        = printItemsTotal + printDepositTotal + printDeliveryFee + printAdj;
+  const printHasSubtotals = (showDeposit && printDepositTotal > 0) || hasDeliveryFee || printAdj !== 0;
   const printTotalCases   = order.items.reduce((s, i) => s + Number(i.quantity), 0);
 
   const itemRows = order.items.map((item) => {
@@ -114,6 +119,9 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
     </div>${showDeposit && printDepositTotal > 0 ? `
     <div class="row-between">
       <span>Deposit fee</span><span>+${PHP(printDepositTotal)}</span>
+    </div>` : ''}${hasDeliveryFee ? `
+    <div class="row-between">
+      <span>Delivery Fee</span><span>${PHP(printDeliveryFee)}</span>
     </div>` : ''}${printAdj !== 0 ? `
     <div class="row-between">
       <span>Adjustment${printAdjReason ? ` (${printAdjReason})` : ''}</span>

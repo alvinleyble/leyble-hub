@@ -197,6 +197,15 @@ export default function OrderCreateModal({
   const [adjValue, setAdjValue]       = useState(isRealEdit && Number(editOrder?.adjustment) ? String(editOrder.adjustment) : '');
   const [adjReason, setAdjReason]     = useState(isRealEdit ? (editOrder?.adjustment_reason ?? '') : '');
 
+  // ── Delivery Fee (persistent-delivery-fee.md) ──────────────────────────────
+  // A resumed edit/draft that already carries a charged fee starts "edited" — same
+  // convention as items always starting `_priceEdited: true` on resume (below): a
+  // value the order already snapshotted is treated as decided, not re-derived.
+  const initialDeliveryFee = isEdit && editOrder?.delivery_fee_charged !== null && editOrder?.delivery_fee_charged !== undefined
+    ? String(editOrder.delivery_fee_charged) : '';
+  const [deliveryFeeValue, setDeliveryFeeValue]   = useState(initialDeliveryFee);
+  const [deliveryFeeEdited, setDeliveryFeeEdited] = useState(initialDeliveryFee !== '');
+
   // ── Draft auto-save state ──────────────────────────────────────────────────
   // A draft's reference is either a server row id (the ordinary online early POST) or a
   // device-issued receipt number (a draft parked locally because the line was down).
@@ -406,6 +415,23 @@ export default function OrderCreateModal({
     }));
   }, [customPrices, orderType, products]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Decisions 3/6/11 — auto-fill from the selected customer's standing fee, following
+  // both the customer and the order-type toggle, exactly like item pricing above
+  // (same `isRealEdit` skip: order type/customer are effectively fixed there). Never
+  // runs once the operator has hand-edited the amount on this order (`deliveryFeeEdited`),
+  // so a deliberate edit is never silently clobbered by a toggle flip or reselect.
+  useEffect(() => {
+    if (isRealEdit || deliveryFeeEdited) return;
+    if (orderType !== 'delivery') { setDeliveryFeeValue(''); return; }
+    const fee = selectedCustomer?.delivery_fee;
+    setDeliveryFeeValue(fee !== null && fee !== undefined ? String(fee) : '');
+  }, [orderType, selectedCustomer, isRealEdit, deliveryFeeEdited]);
+
+  const handleDeliveryFeeChange = (e) => {
+    setDeliveryFeeValue(e.target.value);
+    setDeliveryFeeEdited(true);
+  };
+
   // Map of quantities in order per product id
   const orderQty = useMemo(() => {
     const map = {};
@@ -462,6 +488,12 @@ export default function OrderCreateModal({
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
+  // Decision 7: delivery orders only — null on every other order type regardless of
+  // whatever the field last held (the server enforces this too, defensively).
+  const deliveryFeeCharged = () => (
+    orderType === 'delivery' && deliveryFeeValue !== '' ? Number(deliveryFeeValue) : null
+  );
+
   // ── Draft auto-save ────────────────────────────────────────────────────────
   const draftBody = () => {
     const body = {
@@ -478,6 +510,7 @@ export default function OrderCreateModal({
           is_price_overridden: false,
         })),
       personnel: assignedPersonnel,
+      delivery_fee_charged: deliveryFeeCharged(),
     };
     if (customerId) body.customer_id = Number(customerId);
     return body;
@@ -516,6 +549,7 @@ export default function OrderCreateModal({
       orderType,
       notes,
       adjustment: draftAdjustment(),
+      deliveryFeeCharged: deliveryFeeCharged(),
       items: items.filter((i) => i.product_id),
       display: draftDisplay(),
     });
@@ -583,6 +617,7 @@ export default function OrderCreateModal({
               notes,
               items: items.filter((i) => i.product_id),
               adjustment: draftAdjustment(),
+              deliveryFeeCharged: deliveryFeeCharged(),
               display: draftDisplay(),
             });
           } catch {
@@ -603,7 +638,7 @@ export default function OrderCreateModal({
     }, 800);
     autoSaveTimerRef.current = t;
     return () => { clearTimeout(t); if (autoSaveTimerRef.current === t) autoSaveTimerRef.current = null; };
-  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel, adjValue, adjReason]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel, adjValue, adjReason, deliveryFeeValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reset Button Handler (decisions.md G10) ────────────────────────────────
   // Clears order lines, adjustment, and notes. Keeps customer, orderType, and draft alive.
@@ -637,6 +672,11 @@ export default function OrderCreateModal({
     if (items.some((i) => i.unit_price === '' || Number.isNaN(Number(i.unit_price)))) e.items = 'All items must have a price.';
     if (items.some((i) => Number(i.unit_price) < 0)) e.items = 'Item prices cannot be negative.';
     if (Number(adjValue) !== 0 && !adjReason.trim()) e.adjustment = 'Adjustment reason is required.';
+    // Decision 14: charge-only.
+    if (orderType === 'delivery' && deliveryFeeValue !== ''
+        && (Number.isNaN(Number(deliveryFeeValue)) || Number(deliveryFeeValue) < 0)) {
+      e.deliveryFee = 'Delivery fee cannot be negative.';
+    }
     return e;
   };
 
@@ -708,6 +748,7 @@ export default function OrderCreateModal({
               items,
               notes,
               adjustment: { value: adjNum, reason: adjReasonTrimmed },
+              deliveryFeeCharged: deliveryFeeCharged(),
               personnel: personnelWithNames,
             });
             orderId = editOrder.receipt_number;
@@ -731,6 +772,7 @@ export default function OrderCreateModal({
               is_price_overridden: false,
             })),
             personnel: assignedPersonnel,
+            delivery_fee_charged: deliveryFeeCharged(),
             revision: editRevisionRef.current,
           };
           const targetId = editOrder.id ?? editOrder.receipt_number;
@@ -759,6 +801,7 @@ export default function OrderCreateModal({
           orderType,
           notes,
           adjustment: { value: adjNum, reason: adjReasonTrimmed },
+          deliveryFeeCharged: deliveryFeeCharged(),
           items,
           personnel: personnelWithNames,
         });
@@ -900,6 +943,10 @@ export default function OrderCreateModal({
   };
 
   const totals = orderTotals(items, Number(adjValue) || 0);
+  // Decision 12: delivery fee joins the grand total ahead of the adjustment term,
+  // without touching posMath's shared (V2-POS-facing) goods+adjustment total.
+  const deliveryFeeNum = deliveryFeeCharged() ?? 0;
+  const grandTotal = totals.goods + deliveryFeeNum + totals.adjustment;
 
   return (
     <>
@@ -1026,7 +1073,7 @@ export default function OrderCreateModal({
                   <span aria-hidden="true" className="h-1 w-10 rounded-full bg-slate-300" />
                   <span className="flex w-full items-center justify-between gap-2 text-sm">
                     <span className="font-bold text-slate-900 tabular-nums truncate">
-                      {totalCases(items)} cs · {PHP(totals.total)}
+                      {totalCases(items)} cs · {PHP(grandTotal)}
                     </span>
                     <span className="flex items-center gap-1 font-semibold text-blue-700 shrink-0">
                       {sheetExpanded ? 'Hide cart' : 'View cart'}
@@ -1140,6 +1187,29 @@ export default function OrderCreateModal({
                     )}
                   </div>
 
+                  {/* Delivery Fee Section (persistent-delivery-fee.md decision 5: sits
+                      above Adjustment wherever both appear; decision 7: delivery
+                      orders only) */}
+                  {orderType === 'delivery' && (
+                    <div className="pt-2 border-t border-slate-200" data-testid="order-delivery-fee-section">
+                      <FormField
+                        label="Delivery Fee (₱)"
+                        hint={deliveryFeeValue === '' ? 'Not set for this customer' : undefined}
+                      >
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={deliveryFeeValue}
+                          onChange={handleDeliveryFeeChange}
+                          className={INPUT}
+                          placeholder="0.00"
+                        />
+                      </FormField>
+                      {errors.deliveryFee && <p className="text-xs text-red-600">{errors.deliveryFee}</p>}
+                    </div>
+                  )}
+
                   {/* Adjustment Section */}
                   <div className="pt-2 border-t border-slate-200">
                     <div className="flex items-center justify-between">
@@ -1209,6 +1279,14 @@ export default function OrderCreateModal({
                       <span>Items ({totalCases(items)} cs)</span>
                       <span className="tabular-nums font-medium text-slate-900">{PHP(totals.goods)}</span>
                     </div>
+                    {deliveryFeeCharged() !== null && (
+                      <div className="flex justify-between text-slate-600 text-xs">
+                        <span>Delivery Fee</span>
+                        <span className="tabular-nums font-semibold text-slate-900">
+                          {PHP(deliveryFeeNum)}
+                        </span>
+                      </div>
+                    )}
                     {totals.adjustment !== 0 && (
                       <div className="flex justify-between text-slate-600 text-xs">
                         <span>Adjustment{adjReason ? ` (${adjReason})` : ''}</span>
@@ -1219,7 +1297,7 @@ export default function OrderCreateModal({
                     )}
                     <div className="flex items-baseline justify-between pt-1 border-t border-slate-200">
                       <span className="text-base font-bold uppercase tracking-wider text-slate-900">Total Due</span>
-                      <span className="text-2xl font-black tabular-nums text-slate-900">{PHP(totals.total)}</span>
+                      <span className="text-2xl font-black tabular-nums text-slate-900">{PHP(grandTotal)}</span>
                     </div>
                   </div>
 
