@@ -128,11 +128,27 @@ in a new screen — the old per-screen type lists are exactly how agreed prices 
 live accounts. Saving a price never re-tags the customer.
 
 **Only the explicit prompt writes a saved price.** `POST /customers/:id/prices`, from the
-"Save Custom Price?" dialog, is the sole writer; `insertItems` deliberately writes none.
-`order_items.is_price_overridden` means "hand-typed on this order", not "this is their standing
-rate" — order-save used to write a `customer_product_prices` row on that flag alone, before the
-operator was asked, so answering **No** changed nothing and a one-off price became permanent with
-no way back (the table is append-only and has no delete endpoint).
+combined "Save as Customer Defaults?" dialog (see below), is the sole writer; `insertItems`
+deliberately writes none. `order_items.is_price_overridden` means "hand-typed on this order", not
+"this is their standing rate" — order-save used to write a `customer_product_prices` row on that
+flag alone, before the operator was asked, so answering **No** changed nothing and a one-off
+price became permanent with no way back (the table is append-only and has no delete endpoint).
+
+**The custom-price prompt and the delivery-fee-default prompt are ONE combined surface, not
+two** (see [proposal](docs/product/proposals/combined-customer-defaults-prompt.md)). If an order
+save has a dirty custom price and/or a delivery fee that disagrees with the customer's saved
+`delivery_fee`, `OrderCreateModal.jsx`'s `defaultsPrompt` lists whichever kinds are eligible in
+one "Save as Customer Defaults?" modal, each with its own checkbox (selected by default,
+independently deselectable) — never sequential prompts. Only a selected kind's write
+(`persistDefaultsSave`) is enqueued; declining or deselecting a kind never touches the order,
+which already saved before this prompt appears. The price half keeps its existing
+`checkIsOnline()` gate (no unique constraint on `customer_product_prices`); the delivery-fee half
+has no such hazard and is eligible offline too, via the same `customer_update` outbox entity
+`CustomerDetailPanel.jsx` already uses. **`enqueue()`'s own id counter (`nextRecordId` in
+outbox.js) is now serialised through an in-flight promise chain** — firing two enqueue() calls
+without an await between them (exactly what this combined save does for a price + a fee write)
+used to let both read the same counter value before either write landed, mint the same id, and
+silently overwrite one record with the other at that outbox key.
 
 One nudge sits on top of that rule, not against it: picking a **`regular` customer who holds
 saved prices** in the New Order modal prompts to retag them (Markup / Discounted / Wholesale /
@@ -150,7 +166,9 @@ stock decision is gated on `isStockOut()` (net audit-log delta), not on the stat
 
 Same "snapshot a standing value onto the order" shape as custom pricing (ADR 0009), for a
 different field: `customers.delivery_fee` (nullable, `>= 0`) is a plain mutable scalar — not a
-history table — configured only on the Customer edit form (`CustomerDetailPanel.jsx`).
+history table — configured on the Customer edit form (`CustomerDetailPanel.jsx`) or, since the
+combined customer-defaults prompt above, from the order form itself when a typed fee disagrees
+with the saved default.
 `orders.delivery_fee_charged` (nullable, `>= 0`) is copied from it **client-side** at order
 creation (`OrderCreateModal.jsx` auto-fills from the customer's cached `delivery_fee`, the same
 offline-safe pattern `customer_product_prices` already uses) and is editable per order before
@@ -757,8 +775,8 @@ Every V1 screen now works blind. What a future session most needs to know:
   (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +
   `mergeDeliveries`, deduped by delivery ref). A merged row is excluded from anything
   needing a server id — batch price selection, opening a detail panel.
-- **Saving a custom price is offline-capable in ONE of its two entry points.** The
-  *"Save Custom Price?"* prompt at the end of a sale (`persistPriceSave` in
+- **Saving a custom price is offline-capable in ONE of its two entry points.** The combined
+  "Save as Customer Defaults?" prompt at the end of a sale (`persistDefaultsSave` in
   `OrderCreateModal.jsx`) enqueues; the Customers module's standalone *Add Custom Price*
   (`handleSetPrice` in `CustomerDetailPanel.jsx`) is a bare `api.post` and fails blind, as
   do that panel's price list and its product picker. Do not read ADR 0015 §7 as covering
