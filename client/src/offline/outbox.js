@@ -20,11 +20,22 @@ export const NEEDS_ATTENTION = 'needs_attention';
 
 // ── Writing ─────────────────────────────────────────────────────────────────
 
+// Serialised through one in-flight chain — same shape as station.js's
+// ensureStationRegistered — because two enqueue() calls fired without an await between
+// them (e.g. Promise.all over several outbox writes from one save, such as the combined
+// customer-defaults prompt's price + delivery-fee writes) would otherwise both read the
+// same counter value before either's write lands, mint the same id, and the second
+// record silently overwrites the first at that outbox key.
+let nextIdChain = Promise.resolve();
 async function nextRecordId() {
-  const raw = await nativeStore.getString(NEXT_ID_KEY);
-  const next = (Number(raw) || 0) + 1;
-  await nativeStore.setString(NEXT_ID_KEY, next);
-  return next;
+  const result = nextIdChain.then(async () => {
+    const raw = await nativeStore.getString(NEXT_ID_KEY);
+    const next = (Number(raw) || 0) + 1;
+    await nativeStore.setString(NEXT_ID_KEY, next);
+    return next;
+  });
+  nextIdChain = result.catch(() => {});
+  return result;
 }
 
 /**
