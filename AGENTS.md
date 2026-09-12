@@ -1061,6 +1061,14 @@ returns a 404 JSON. The Android APK is the only way in.
   - Always present completed work and ask *"ready to commit and push to main?"* — wait for a direct *"yes"* or *"okay, commit and push."*
 - **Working branches (`dev`, `staging`, feature/task branches, worktrees):**
   - **Autonomous commit & push permitted:** Agents and Firstmate orchestration are free to commit, create branches, and push to non-`main` branches as needed for PRs, CI, and slice development without halting for confirmation.
+- **A `dev → staging` promotion PR must merge with a merge commit, never squash.** A squash merge
+  (PR #125, 2026-09-12) rewrites `dev`'s commits into one new commit on `staging`, so the two
+  branches no longer share that history even though their trees briefly matched — GitHub then
+  refuses a later `dev → staging` PR a clean merge commit (PR #127) because it has to
+  three-way-merge against a stale common ancestor instead of fast-forwarding. The fix each time
+  this recurs is the same: branch from `dev`, merge `staging` into it with an ordinary merge
+  commit, resolve conflicts by preferring `dev`'s content (it is normally the side that has moved
+  forward), and open that branch as the replacement promotion PR — never squash a promotion PR.
 
 ## Security rules
 - **Native Android (production):** the Capacitor app stores the JWT in `@capacitor/preferences`
