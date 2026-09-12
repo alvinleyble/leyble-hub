@@ -17,6 +17,7 @@ import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
 import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 import VersionGate from './components/version/VersionGate';
+import AppInfoGate from './components/version/AppInfoGate';
 import FirstSetupGateScreen from './components/setup/FirstSetupGateScreen';
 
 // Layout route: guards all children behind auth check.
@@ -86,14 +87,16 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <PrinterProvider>
-          <VersionGate>
-            <AppRoutes />
-          </VersionGate>
-        </PrinterProvider>
-      </ToastProvider>
-    </AuthProvider>
+    <AppInfoGate>
+      <AuthProvider>
+        <ToastProvider>
+          <PrinterProvider>
+            <VersionGate>
+              <AppRoutes />
+            </VersionGate>
+          </PrinterProvider>
+        </ToastProvider>
+      </AuthProvider>
+    </AppInfoGate>
   );
 }
