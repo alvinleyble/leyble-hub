@@ -6,7 +6,9 @@
 for the as-built summary.
 **Origin:** captain grilling session, 2026-09-11.
 **See also:** [ADR 0009 — custom pricing derived from saved prices](../../adr/0009-custom-pricing-derived-from-saved-prices.md)
-(same "snapshot a standing value onto the order" shape as custom pricing).
+(same "snapshot a standing value onto the order" shape as custom pricing);
+[combined-customer-defaults-prompt.md](./combined-customer-defaults-prompt.md) (2026-09-12 —
+decision 9 below no longer means the *only* place, see that proposal).
 
 ## The idea
 
@@ -81,7 +83,10 @@ it does not touch a "V2" anything.
 9. **Configured on the Customer edit form, not a separate screen.** The standing fee is a new
    field on `CustomerDetailPanel.jsx`, next to `customer_type` — there's no dedicated
    delivery-fee management page, matching how custom pricing already lives inside the customer
-   record rather than its own module.
+   record rather than its own module. *(2026-09-12: also configurable from the order form, via
+   the combined customer-defaults prompt — see
+   [combined-customer-defaults-prompt.md](./combined-customer-defaults-prompt.md). Still no
+   dedicated delivery-fee screen; this doesn't change that.)*
 
 10. **Cached for offline use from day one.** `delivery_fee` joins the customer catalogue cache
     (`client/src/offline/catalogue.js`), so the order form can auto-fill it identically whether

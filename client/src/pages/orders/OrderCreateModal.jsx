@@ -225,15 +225,22 @@ export default function OrderCreateModal({
   // operator, but must never silently replace the precondition under their typing.
   const editRevisionRef    = useRef(editOrder?.revision ?? null);
 
-  // ── Save-custom-price prompt ───────────────────────────────────────────────
-  const [priceSavePrompt, setPriceSavePrompt] = useState(null);
+  // ── Save-customer-defaults prompt (combined custom price + delivery fee) ───
+  // One combined confirmation surface, shown at most once per save, for whichever of
+  // "a typed price differs from what would otherwise apply" and "the delivery fee
+  // differs from the customer's saved default" are true this time — never sequential
+  // prompts for the two. Each kind lists independently and starts selected; the
+  // operator can deselect either kind without affecting the other, and only the
+  // selected kind(s) actually queue a write. See docs/product/proposals/
+  // combined-customer-defaults-prompt.md for the settled design.
+  const [defaultsPrompt, setDefaultsPrompt] = useState(null);
 
   // ── Mis-tagged-customer nudge ──────────────────────────────────────────────
   // A `regular` customer holding saved prices is a contradiction the owners want to see and
   // resolve: under ADR 0009 those prices are live either way, so the tag is simply lying about
   // the account. This prompt fires on selection, before the order is built — distinct from the
-  // "Save Custom Price?" prompt above, which fires at save time about a price typed in THIS
-  // order. Both can appear in one order session; they are independent.
+  // combined "Save as Customer Defaults?" prompt above, which fires at save time about values
+  // typed in THIS order. Both can appear in one order session; they are independent.
   //
   // Deliberately has no dismissal memory (captain's explicit instruction): Skip drops it for
   // this selection only, and picking the same customer again asks again. It stops when the tag
@@ -824,15 +831,35 @@ export default function OrderCreateModal({
       // customer/product would both land with no signal to either operator. The line-item
       // override this order actually charges is unaffected — only remembering it as the
       // customer's new standing price waits for a connection. Skips silently; no toast.
+      // The delivery fee has no such hazard (a plain mutable column, last-write-wins,
+      // already offline-capable via updateCustomerLocalFirst elsewhere) so it is eligible
+      // regardless of connectivity — the two kinds are gated independently, then merged
+      // into one combined prompt below.
       //
       // A customer created moments ago in this same order (isLocalCustomer(customerId))
-      // is not excluded: she deserves the prompt exactly as much as an existing customer
-      // does, and persistPriceSave below queues her price behind a $ref on her own
-      // outbox record rather than needing her real id already.
-      if (dirtyItems.length && selectedCustomer && checkIsOnline()) {
-        setPriceSavePrompt({
-          step: 'first', orderId, customer: selectedCustomer, orderType,
-          dirty: dirtyItems, busy: false,
+      // is not excluded from either kind: she deserves the prompt exactly as much as an
+      // existing customer does, and persistDefaultsSave below queues her writes behind a
+      // $ref on her own outbox record rather than needing her real id already.
+      const priceDirty = checkIsOnline() ? dirtyItems : [];
+
+      const currentDeliveryFee = selectedCustomer?.delivery_fee !== null
+        && selectedCustomer?.delivery_fee !== undefined
+        ? Number(selectedCustomer.delivery_fee) : null;
+      const nextDeliveryFee = deliveryFeeCharged();
+      // Eligible only when the operator actually touched the field this session
+      // (deliveryFeeEdited) and the final value disagrees with the customer's current
+      // saved default — an untouched, auto-filled value is by definition unchanged.
+      const deliveryFeeDirty = deliveryFeeEdited && nextDeliveryFee !== currentDeliveryFee
+        ? { previous: currentDeliveryFee, next: nextDeliveryFee }
+        : null;
+
+      if (selectedCustomer && (priceDirty.length || deliveryFeeDirty)) {
+        setDefaultsPrompt({
+          orderId, customer: selectedCustomer, orderType,
+          priceDirty, deliveryFeeDirty,
+          savePrices: priceDirty.length > 0,
+          saveDeliveryFee: Boolean(deliveryFeeDirty),
+          busy: false,
         });
       } else {
         onSaved(orderId);
@@ -848,52 +875,87 @@ export default function OrderCreateModal({
     }
   };
 
-  // ── Save custom price prompt handlers ──────────────────────────────────────
-  const declinePriceSave = () => {
-    setPriceSavePrompt(null);
-    onSaved(priceSavePrompt?.orderId);
+  // ── Save-customer-defaults prompt handlers ─────────────────────────────────
+  const declineDefaultsSave = () => {
+    setDefaultsPrompt(null);
+    onSaved(defaultsPrompt?.orderId);
+  };
+
+  // Independent per-kind toggle — deselecting one kind never touches the other's
+  // selection, which is the whole point of the combined surface over two sequential
+  // prompts (the operator could always "No" one and "Yes" the other, just not in one
+  // screen).
+  const toggleDefaultsKind = (kind) => {
+    setDefaultsPrompt((p) => (p ? { ...p, [kind]: !p[kind] } : p));
   };
 
   // ADR 0009: saving a price is a pricing action, not a re-tagging action. It writes to
   // customer_product_prices and touches nothing else — the second "pick a customer type"
   // step V1 forced on the operator is gone with the coupling that needed it.
   //
-  // Routed through the outbox (matching handleCreateCustomer above) rather than a bare
-  // api.post — this prompt fires from inside saveOrderLocalFirst's otherwise fully
-  // offline-safe save flow, so a price agreed during an outage used to vanish silently
-  // instead of queuing like the rest of the order. priceSavePrompt.customer may still be
-  // local (isLocalCustomer) when she was quick-created earlier in this same order — her
-  // real id doesn't exist yet, so the record's endpoint carries a `:customerId`
-  // placeholder resolved from her own outbox record (see `endpointParams` on enqueue)
-  // once her POST /customers drains, same pass or a later one.
-  const persistPriceSave = async () => {
-    setPriceSavePrompt((p) => ({ ...p, busy: true }));
+  // Both writes are routed through the outbox (matching handleCreateCustomer above)
+  // rather than a bare api.post/api.patch — this prompt fires from inside
+  // saveOrderLocalFirst's otherwise fully offline-safe save flow, so a value agreed
+  // during an outage used to vanish silently instead of queuing like the rest of the
+  // order (true today for the delivery fee half, which has no prompt at all yet).
+  // defaultsPrompt.customer may still be local (isLocalCustomer) when she was
+  // quick-created earlier in this same order — her real id doesn't exist yet, so each
+  // record's endpoint carries a `:customerId` placeholder resolved from her own outbox
+  // record (see `endpointParams` on enqueue) once her POST /customers drains, same pass
+  // or a later one.
+  const persistDefaultsSave = async () => {
+    setDefaultsPrompt((p) => ({ ...p, busy: true }));
+    const { customer, orderType: promptOrderType, priceDirty, deliveryFeeDirty,
+            savePrices, saveDeliveryFee } = defaultsPrompt;
     try {
       const profileKey = await api.getActiveProfile();
-      const customer = priceSavePrompt.customer;
       const local = isLocalCustomer(customer.id);
-      await Promise.all(priceSavePrompt.dirty.map((d) =>
-        enqueue({
+      const endpointParams = local ? { customerId: ref(customer._outboxId, 'id') } : null;
+      const dependsOn = local ? [customer._outboxId] : [];
+
+      const writes = [];
+      if (savePrices && priceDirty.length) {
+        writes.push(...priceDirty.map((d) => enqueue({
           entityType: 'customer_price',
           endpoint:   local ? '/customers/:customerId/prices' : `/customers/${customer.id}/prices`,
-          endpointParams: local ? { customerId: ref(customer._outboxId, 'id') } : null,
+          endpointParams,
           method:     'POST',
           payload: {
             product_id:        d.product_id,
             custom_unit_price: d.unit_price,
-            order_type:        priceSavePrompt.orderType,
+            order_type:        promptOrderType,
           },
           profileKey,
-          dependsOn: local ? [customer._outboxId] : [],
-        })
-      ));
-      addToast('Custom price saved.', 'success');
-      drainOutbox().catch(() => {});
+          dependsOn,
+        })));
+      }
+      if (saveDeliveryFee && deliveryFeeDirty) {
+        writes.push(enqueue({
+          entityType: 'customer_update',
+          endpoint:   local ? '/customers/:customerId' : `/customers/${customer.id}`,
+          endpointParams,
+          method:     'PATCH',
+          payload:    { delivery_fee: deliveryFeeDirty.next },
+          profileKey,
+          dependsOn,
+        }));
+      }
+      await Promise.all(writes);
+
+      const savedKinds = [
+        savePrices && priceDirty.length ? `custom price${priceDirty.length > 1 ? 's' : ''}` : null,
+        saveDeliveryFee && deliveryFeeDirty ? 'delivery fee' : null,
+      ].filter(Boolean);
+      if (savedKinds.length) {
+        const msg = `${savedKinds.join(' and ')} saved.`;
+        addToast(msg.charAt(0).toUpperCase() + msg.slice(1), 'success');
+        drainOutbox().catch(() => {});
+      }
     } catch (err) {
-      addToast(err.message || 'Failed to save custom price.', 'error');
+      addToast(err.message || 'Failed to save customer defaults.', 'error');
     } finally {
-      setPriceSavePrompt(null);
-      onSaved(priceSavePrompt?.orderId);
+      setDefaultsPrompt(null);
+      onSaved(defaultsPrompt?.orderId);
     }
   };
 
@@ -1379,29 +1441,66 @@ export default function OrderCreateModal({
         </Modal>
       )}
 
-      {/* ── Save custom price? (step 1) ────────────────────────────────── */}
-      {priceSavePrompt?.step === 'first' && (
+      {/* ── Save as Customer Defaults? (combined custom price + delivery fee) ── */}
+      {defaultsPrompt && (
         <Modal
-          title="Save Custom Price?"
-          onClose={declinePriceSave}
-          onConfirm={persistPriceSave}
+          title="Save as Customer Defaults?"
+          onClose={declineDefaultsSave}
+          onConfirm={persistDefaultsSave}
           confirmLabel="Yes, Save"
           cancelLabel="No"
-          loading={priceSavePrompt.busy}
+          loading={defaultsPrompt.busy}
         >
           <p className="text-slate-700">
-            Save the custom price{priceSavePrompt.dirty.length > 1 ? 's' : ''} for{' '}
-            <strong>{priceSavePrompt.customer.name}</strong> on future{' '}
-            <strong>{priceSavePrompt.orderType}</strong> orders?
+            Save these for <strong>{defaultsPrompt.customer.name}</strong> as standing defaults?
+            Anything left unchecked stays specific to this order only.
           </p>
-          <ul className="mt-3 space-y-1.5 text-sm">
-            {priceSavePrompt.dirty.map((d) => (
-              <li key={d.product_id} className="flex items-center justify-between border-b border-slate-200 pb-1.5">
-                <span className="text-slate-700">{d.sku || d.product_name}</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
-              </li>
-            ))}
-          </ul>
+
+          {defaultsPrompt.priceDirty.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-slate-200">
+              <label className="flex items-start gap-3 min-h-[48px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={defaultsPrompt.savePrices}
+                  onChange={() => toggleDefaultsKind('savePrices')}
+                  className="mt-0.5 w-6 h-6 shrink-0 accent-blue-700"
+                />
+                <span className="text-sm font-semibold text-slate-800">
+                  Custom price{defaultsPrompt.priceDirty.length > 1 ? 's' : ''} on future{' '}
+                  <strong>{defaultsPrompt.orderType}</strong> orders
+                </span>
+              </label>
+              <ul className={`mt-2 ml-9 space-y-1.5 text-sm ${defaultsPrompt.savePrices ? '' : 'opacity-40'}`}>
+                {defaultsPrompt.priceDirty.map((d) => (
+                  <li key={d.product_id} className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                    <span className="text-slate-700">{d.sku || d.product_name}</span>
+                    <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {defaultsPrompt.deliveryFeeDirty && (
+            <div className="mt-4 pt-3 border-t border-slate-200">
+              <label className="flex items-start gap-3 min-h-[48px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={defaultsPrompt.saveDeliveryFee}
+                  onChange={() => toggleDefaultsKind('saveDeliveryFee')}
+                  className="mt-0.5 w-6 h-6 shrink-0 accent-blue-700"
+                />
+                <span className="text-sm font-semibold text-slate-800">Delivery fee</span>
+              </label>
+              <div className={`mt-2 ml-9 text-sm text-slate-700 ${defaultsPrompt.saveDeliveryFee ? '' : 'opacity-40'}`}>
+                {defaultsPrompt.deliveryFeeDirty.previous === null ? 'Not set' : PHP(defaultsPrompt.deliveryFeeDirty.previous)}
+                {' → '}
+                <span className="font-semibold text-slate-900">
+                  {defaultsPrompt.deliveryFeeDirty.next === null ? 'Not set' : PHP(defaultsPrompt.deliveryFeeDirty.next)}
+                </span>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 
