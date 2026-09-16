@@ -248,6 +248,11 @@ test('a stale edit sends the revision captured at open, adopts the 409 order, an
 // one)" — it has no self-origination filter. Every write path here already adopts the
 // server's response, so that echo normally arrives at the revision the screen is
 // already showing. Only a strictly NEWER revision is somebody else's change.
+//
+// The gate that turns a match into the banner (and that defers the post-drain silent
+// re-read) reads UNSAVED edits — `adjDirty` — never `adjExpanded`, which is open for
+// any order carrying an adjustment. So every echo case below is asserted with the
+// screen genuinely dirty; otherwise it would pass with the predicate reverted.
 
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
 
@@ -276,6 +281,10 @@ test('a saved adjustment echoed back by the delta is this device and raises no w
   assert.equal(patches[0].body.adjustment, -50);
   assert.match(r.text(), /Adjustment saved/);
 
+  // Begin a second edit before the poll catches up: the screen is now dirty, which is
+  // the only state in which a matched delta is announced rather than quietly adopted.
+  typeAdjustment(r, '-60');
+
   // The next foreground poll returns the order this device just wrote, at the very
   // revision the save already adopted.
   act(() => window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
@@ -284,6 +293,8 @@ test('a saved adjustment echoed back by the delta is this device and raises no w
   await settle();
 
   assert.doesNotMatch(r.text(), /changed on another device/);
+  assert.equal(r.container.querySelector('input[type="number"]').value, '-60',
+    'this device\'s own echo never disturbs the entry in progress');
   r.unmount();
 });
 
@@ -300,6 +311,9 @@ test('editing an existing adjustment takes the same path and is likewise silent'
   r.click(r.button('Save Adjustment'));
   await settle();
 
+  // Dirty again before the echo lands, for the same reason as the case above.
+  typeAdjustment(r, '-80');
+
   act(() => window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
     detail: { ids: [42], orders: [saved] },
   })));
@@ -311,23 +325,24 @@ test('editing an existing adjustment takes the same path and is likewise silent'
 
 test('a strictly newer revision from another device still raises the warning', async () => {
   stubReads(adjustable({ revision: '6', adjustment: -50, adjustment_reason: 'Negotiated' }));
-  api.patch = async () => adjustable({ revision: '7', adjustment: -75, adjustment_reason: 'More' });
 
   const r = renderDetail();
   await settle();
+  // The real case the warning exists for: an entry in progress, NOT yet saved, when
+  // another tablet moves the same order underneath it.
   typeAdjustment(r, '-75', 'More');
-  r.click(r.button('Save Adjustment'));
-  await settle();
 
-  // Another tablet dispatched it: 8 is newer than the 7 this device holds.
+  // Another tablet dispatched it: 8 is newer than the 6 this device holds.
   act(() => window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
     detail: { ids: [42], orders: [adjustable({
-      revision: '8', status: 'in_transit', adjustment: -75, adjustment_reason: 'More',
+      revision: '8', status: 'in_transit', adjustment: -50, adjustment_reason: 'Negotiated',
     })] },
   })));
   await settle();
 
   assert.match(r.text(), /This order changed on another device/);
+  assert.equal(r.container.querySelector('input[type="number"]').value, '-75',
+    'the unsaved entry is held beside the delta, never replaced by it');
   r.unmount();
 });
 
@@ -341,6 +356,10 @@ test('a delta page carrying an OLDER revision is ignored, never adopted backward
   r.click(r.button('Save Adjustment'));
   await settle();
 
+  // Dirty again, so the stale page is weighed by the predicate rather than waved
+  // through by an idle screen.
+  typeAdjustment(r, '-80');
+
   // A page fetched before the save landed. Warning on it would be false, and adopting
   // it would roll the screen back to the pre-save value.
   act(() => window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
@@ -352,7 +371,7 @@ test('a delta page carrying an OLDER revision is ignored, never adopted backward
 
   assert.doesNotMatch(r.text(), /changed on another device/);
   assert.match(r.text(), /75\.00/, 'the newer saved value survives the stale page');
-  assert.doesNotMatch(r.text(), /Negotiated$/);
+  assert.doesNotMatch(r.text(), /\(Negotiated\)/, 'the pre-save reason is never adopted backwards');
   r.unmount();
 });
 
@@ -402,10 +421,34 @@ test('a background drain never discards the adjustment the operator is still typ
   assert.ok(input, 'the adjustment panel is still open');
   assert.equal(input.value, '-50', 'and still holds what the operator typed');
 
-  // Closing the panel is the screen going idle: the deferred re-read runs then.
+  // Cancelling the entry is the screen going idle: the deferred re-read runs then, so
+  // G27's sync is postponed rather than dropped.
   r.click(r.button('Cancel'));
   await settle();
   assert.equal(reads, 2, 'the drain re-read is not dropped, only postponed');
+  r.unmount();
+});
+
+test('a drain re-read is not deferred merely because the order carries an adjustment', async () => {
+  // The panel auto-expands for any non-zero adjustment, with nobody having touched it.
+  // Gating the deferral on that display state stranded the silent sync forever on every
+  // such order — including the one thing it exists for, clearing "Waiting to sync".
+  stubReads(adjustable({ revision: '6', adjustment: -50, adjustment_reason: 'Negotiated' }));
+  let reads = 0;
+  const get = api.get;
+  api.get = async (path) => { if (path === '/orders/42') reads += 1; return get(path); };
+
+  const r = renderDetail();
+  await settle();
+  assert.ok(r.container.querySelector('input[type="number"]'), 'the panel auto-expanded');
+  assert.equal(reads, 1);
+
+  act(() => window.dispatchEvent(new window.CustomEvent('leyble:drain-complete', {
+    detail: { sent: 1, waiting: 0 },
+  })));
+  await settle();
+
+  assert.equal(reads, 2, 'an untouched form is idle; the re-read runs immediately');
   r.unmount();
 });
 

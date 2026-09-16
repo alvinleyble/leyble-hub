@@ -161,6 +161,10 @@ export default function OrderDetailPage() {
   const [adjValue, setAdjValue]       = useState('');
   const [adjReason, setAdjReason]     = useState('');
   const [savingAdj, setSavingAdj]     = useState(false);
+  // True only once the operator has typed into the adjustment form and not yet saved
+  // it. `adjExpanded` is display state — adoptAuthoritativeOrder opens the panel for
+  // any non-zero adjustment — so it can never stand in for this.
+  const [adjDirty, setAdjDirty]       = useState(false);
 
   // Live, in-progress bottle-return entries — lifted up from OrderCloseForm so its
   // breakdown math can read them. Keyed by order_items.id.
@@ -182,6 +186,7 @@ export default function OrderDetailPage() {
     setAdjValue(Number(current.adjustment) ? String(current.adjustment) : '');
     setAdjReason(current.adjustment_reason || '');
     setAdjExpanded(Number(current.adjustment) !== 0);
+    setAdjDirty(false);
     setReturnsDirty(false);
     putOrderSnapshot(current).catch(() => {});
   }, []);
@@ -223,6 +228,7 @@ export default function OrderDetailPage() {
             setAdjValue(Number(local.adjustment) ? String(local.adjustment) : '');
             setAdjReason(local.adjustment_reason || '');
             setAdjExpanded(Number(local.adjustment) !== 0);
+            setAdjDirty(false);
             return;
           }
         }
@@ -247,9 +253,11 @@ export default function OrderDetailPage() {
     // is mid-entry discards what they just typed and collapses the panel under them.
     // A drain is triggered by anything in the outbox (a queued receipt-print, an
     // unrelated order), so this fires on screens that are doing nothing of the sort.
-    // Gate it exactly like onOrdersChanged below, and flush it once the screen is idle.
+    // Gate it exactly like onOrdersChanged below on UNSAVED edits — never on
+    // `adjExpanded`, which is true for any order carrying an adjustment and would
+    // strand the deferred re-read forever — and flush it once the screen is idle.
     const onDrainComplete = () => {
-      if (editing || adjExpanded || returnsDirty || closing || confirmAction) {
+      if (editing || adjDirty || returnsDirty || closing || confirmAction) {
         setPendingSilentReload(true);
         return;
       }
@@ -259,7 +267,7 @@ export default function OrderDetailPage() {
     const onOrdersChanged = (event) => {
       const current = orderChangedInEvent(order, event.detail);
       if (!current) return;
-      if (editing || adjExpanded || returnsDirty || closing || confirmAction) {
+      if (editing || adjDirty || returnsDirty || closing || confirmAction) {
         setPendingRemoteOrder(current);
         return;
       }
@@ -273,19 +281,19 @@ export default function OrderDetailPage() {
       window.removeEventListener('leyble:refresh', onRefresh);
       window.removeEventListener('leyble:orders-changed', onOrdersChanged);
     };
-  }, [load, order, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+  }, [load, order, editing, adjDirty, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
 
   useEffect(() => {
-    if (!pendingRemoteOrder || editing || adjExpanded || returnsDirty || closing || confirmAction) return;
+    if (!pendingRemoteOrder || editing || adjDirty || returnsDirty || closing || confirmAction) return;
     adoptAuthoritativeOrder(pendingRemoteOrder);
     setPendingRemoteOrder(null);
-  }, [pendingRemoteOrder, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+  }, [pendingRemoteOrder, editing, adjDirty, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
 
   useEffect(() => {
-    if (!pendingSilentReload || editing || adjExpanded || returnsDirty || closing || confirmAction) return;
+    if (!pendingSilentReload || editing || adjDirty || returnsDirty || closing || confirmAction) return;
     setPendingSilentReload(false);
     load({ silent: true });
-  }, [pendingSilentReload, editing, adjExpanded, returnsDirty, closing, confirmAction, load]);
+  }, [pendingSilentReload, editing, adjDirty, returnsDirty, closing, confirmAction, load]);
 
   const items = Array.isArray(order?.items) ? order.items : [];
   const bottleItems = items.filter((i) => i?.requires_bottle_return && num(i.unit_deposit_fee) > 0);
@@ -381,6 +389,7 @@ export default function OrderDetailPage() {
           setOrder(updated);
           setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
           setAdjReason(updated.adjustment_reason || '');
+          setAdjDirty(false);
           addToast('Adjustment saved.', 'success');
           return;
         } catch {
@@ -396,6 +405,7 @@ export default function OrderDetailPage() {
       adoptAuthoritativeOrder(updated);
       setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
+      setAdjDirty(false);
       addToast('Adjustment saved.', 'success');
     } catch (err) {
       const stale = await handleStaleOrderWrite(err, {
@@ -813,7 +823,7 @@ export default function OrderDetailPage() {
           {order.status !== 'draft' && (
             <button
               type="button"
-              onClick={() => setAdjExpanded((v) => !v)}
+              onClick={() => { setAdjExpanded((v) => !v); setAdjDirty(false); }}
               disabled={offlineViewingSynced}
               title={offlineViewingSynced ? 'Needs a connection' : undefined}
               className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
@@ -834,7 +844,7 @@ export default function OrderDetailPage() {
                 type="number"
                 step="0.01"
                 value={adjValue}
-                onChange={(e) => setAdjValue(e.target.value)}
+                onChange={(e) => { setAdjValue(e.target.value); setAdjDirty(true); }}
                 className={INPUT}
                 placeholder="e.g. -50 for discount, 200 for surcharge"
               />
@@ -845,7 +855,7 @@ export default function OrderDetailPage() {
               </label>
               <textarea
                 value={adjReason}
-                onChange={(e) => setAdjReason(e.target.value)}
+                onChange={(e) => { setAdjReason(e.target.value); setAdjDirty(true); }}
                 rows={2}
                 className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
                            focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"

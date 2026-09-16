@@ -871,12 +871,18 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   page fetched before a save that has since landed, which must be ignored rather than adopted
   backwards over the newer value. Compare as `BigInt` — `revision` is a `BIGINT` returned as
   a string and must never become a `Number`.
-- **A silent background re-read must be gated on the same dirty flags as a delta.**
+- **A silent background re-read must be gated on the same dirty flags as a delta, and
+  the adjustment's dirty flag is `adjDirty`, never `adjExpanded`.**
   `leyble:drain-complete` fires whenever *anything* in the outbox drains, and
   `OrderDetailPage`'s handler ends in `adoptAuthoritativeOrder`, which rewrites
   `adjValue`/`adjReason`/`adjExpanded` from the server row. Ungated, an unrelated drain
   silently wiped the adjustment an operator was still typing and collapsed the panel. It is
-  deferred while an action is open and flushed once the screen is idle — never dropped.
+  deferred while the operator has UNSAVED edits and flushed once the screen is idle — never
+  dropped. `adjExpanded` is display state (`adoptAuthoritativeOrder` opens the panel for any
+  non-zero adjustment, with nobody having touched it), so gating on it strands the deferred
+  re-read — and the held `pendingRemoteOrder` — forever on every order carrying an
+  adjustment. All four gates (the two handlers and the two deferred-flush effects) read the
+  same expression and must stay in step.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 
