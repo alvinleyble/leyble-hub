@@ -859,6 +859,24 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
 - App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
   explicitly under first-setup — not part of this ADR's own scope.
+- **The delta re-delivers this device's OWN writes, so a `leyble:orders-changed` match is
+  not by itself another device.** `syncOrderDelta` is "everything changed anywhere (this
+  tablet or another one)" and has no self-origination filter, while every write path here
+  adopts the server's response — so the echo of a save normally arrives at the revision the
+  screen is already showing. **A delta is somebody else's change only when its revision is
+  strictly NEWER than the one that screen holds**: `isNewerRevision()` in
+  `client/src/pages/orders/orderConcurrency.js` is the shared predicate, applied inside
+  `orderChangedInEvent()` and by `ReviewQueueModal`'s own loop. Equal means this device (the
+  false "changed on another device" warning after saving an adjustment); older means a delta
+  page fetched before a save that has since landed, which must be ignored rather than adopted
+  backwards over the newer value. Compare as `BigInt` — `revision` is a `BIGINT` returned as
+  a string and must never become a `Number`.
+- **A silent background re-read must be gated on the same dirty flags as a delta.**
+  `leyble:drain-complete` fires whenever *anything* in the outbox drains, and
+  `OrderDetailPage`'s handler ends in `adoptAuthoritativeOrder`, which rewrites
+  `adjValue`/`adjReason`/`adjExpanded` from the server row. Ungated, an unrelated drain
+  silently wiped the adjustment an operator was still typing and collapsed the panel. It is
+  deferred while an action is open and flushed once the screen is idle — never dropped.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 

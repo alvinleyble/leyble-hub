@@ -152,6 +152,9 @@ export default function OrderDetailPage() {
   // never merged into or substituted for it. Closing the edit adopts this snapshot;
   // saving against the old revision is still authoritatively rejected by the server.
   const [pendingRemoteOrder, setPendingRemoteOrder] = useState(null);
+  // Same idea for the silent post-drain re-read: deferred while an action is open,
+  // then run once the screen is idle again. See the effect below.
+  const [pendingSilentReload, setPendingSilentReload] = useState(false);
 
   // Adjustment form state
   const [adjExpanded, setAdjExpanded] = useState(false);
@@ -239,7 +242,19 @@ export default function OrderDetailPage() {
   // swaps to its server row and drops the "Waiting to sync" banner without anyone
   // asking and without a spinner. leyble:refresh triggers an active reload.
   useEffect(() => {
-    const onDrainComplete = () => load({ silent: true });
+    // The silent re-read ends in adoptAuthoritativeOrder, which resets adjValue /
+    // adjReason / adjExpanded from the server row — so firing it while the operator
+    // is mid-entry discards what they just typed and collapses the panel under them.
+    // A drain is triggered by anything in the outbox (a queued receipt-print, an
+    // unrelated order), so this fires on screens that are doing nothing of the sort.
+    // Gate it exactly like onOrdersChanged below, and flush it once the screen is idle.
+    const onDrainComplete = () => {
+      if (editing || adjExpanded || returnsDirty || closing || confirmAction) {
+        setPendingSilentReload(true);
+        return;
+      }
+      load({ silent: true });
+    };
     const onRefresh = () => load();
     const onOrdersChanged = (event) => {
       const current = orderChangedInEvent(order, event.detail);
@@ -265,6 +280,12 @@ export default function OrderDetailPage() {
     adoptAuthoritativeOrder(pendingRemoteOrder);
     setPendingRemoteOrder(null);
   }, [pendingRemoteOrder, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+
+  useEffect(() => {
+    if (!pendingSilentReload || editing || adjExpanded || returnsDirty || closing || confirmAction) return;
+    setPendingSilentReload(false);
+    load({ silent: true });
+  }, [pendingSilentReload, editing, adjExpanded, returnsDirty, closing, confirmAction, load]);
 
   const items = Array.isArray(order?.items) ? order.items : [];
   const bottleItems = items.filter((i) => i?.requires_bottle_return && num(i.unit_deposit_fee) > 0);

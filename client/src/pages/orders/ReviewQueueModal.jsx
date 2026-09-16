@@ -10,7 +10,7 @@ import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
-import { handleStaleOrderWrite } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -100,6 +100,9 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     const onOrdersChanged = (event) => {
       for (const current of event.detail?.orders || []) {
         if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        // The forward delta re-delivers this device's own writes; only a strictly
+        // newer revision is somebody else's change.
+        if (!isNewerRevision(current, orders[current.id])) continue;
         if (String(current.id) === String(activeId)
             && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
           setPendingRemoteOrder(current);
@@ -110,7 +113,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     };
     window.addEventListener('leyble:orders-changed', onOrdersChanged);
     return () => window.removeEventListener('leyble:orders-changed', onOrdersChanged);
-  }, [orderIds, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+  }, [orders, orderIds, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
 
   useEffect(() => {
     if (!pendingRemoteOrder || editing || reviewDirty || closing || confirmingCancel || cancelling) return;
