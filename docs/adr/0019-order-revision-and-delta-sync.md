@@ -16,6 +16,15 @@ Connected foreground tablets keep their local order copies current with a bounde
   connection-check backoff/app-wide scope) — **Done.** Migration 048 adds the revision;
   `server/src/routes/orders.js` enforces it; `client/src/offline/foregroundOrderSync.js`
   owns the app-wide foreground cadence and backoff.
+- **A drained write is adopted, never left to the poll** — **Done.** A receipt print is
+  the only order write whose POST happens inside the outbox drain (`queueReceiptPrinted`
+  under `V25_OFFLINE_CORE`), so the revision bump it causes used to reach the screen as an
+  unexplained delta and warn about the operator's own print. The drain now writes the
+  route's answer to local history and publishes it on `leyble:drain-complete` as
+  `detail.orders` — only records this device sent — and `ReviewQueueModal` adopts it. A
+  genuine remote change is still unseen, still arrives via `leyble:orders-changed`, and
+  still warns. `isNewerRevision()` in `client/src/pages/orders/orderConcurrency.js` is the
+  shared comparison; an echo of a held revision is not a change.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).

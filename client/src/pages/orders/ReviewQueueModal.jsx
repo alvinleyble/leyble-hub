@@ -10,7 +10,7 @@ import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
-import { handleStaleOrderWrite } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -100,6 +100,10 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     const onOrdersChanged = (event) => {
       for (const current of event.detail?.orders || []) {
         if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        // A delta carrying a revision this modal already holds is an echo, not news —
+        // typically this device's own receipt print, adopted by the drain listener
+        // below before the poll caught up with it.
+        if (!isNewerRevision(orders[current.id], current)) continue;
         if (String(current.id) === String(activeId)
             && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
           setPendingRemoteOrder(current);
@@ -110,7 +114,36 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     };
     window.addEventListener('leyble:orders-changed', onOrdersChanged);
     return () => window.removeEventListener('leyble:orders-changed', onOrdersChanged);
-  }, [orderIds, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+  }, [orderIds, orders, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+
+  // Printing a receipt is an order write this screen never sees the answer to: under
+  // V25_OFFLINE_CORE `usePrintReceipt` tags the print through the outbox, so the POST
+  // that bumps ADR 0019's `revision` happens inside a later drain. Adopt what that
+  // drain got back — otherwise the very next foreground delta looks like another
+  // device's edit and raises the amber banner over the operator's own print, right
+  // while their unsaved adjustment entry is holding it on screen.
+  //
+  // Only orders this device actually sent ride this event, so a genuine remote change
+  // still comes in unseen through `leyble:orders-changed` above and still warns. The
+  // adoption is revision-guarded in both directions: it never walks an order backwards,
+  // and it clears a warning only once the print it is adopting has caught up with it.
+  useEffect(() => {
+    const onDrainComplete = (event) => {
+      for (const current of event.detail?.orders || []) {
+        if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        setOrders((prev) => (
+          isNewerRevision(prev[current.id], current) ? { ...prev, [current.id]: current } : prev
+        ));
+        setPendingRemoteOrder((pending) => (
+          pending && String(pending.id) === String(current.id) && !isNewerRevision(current, pending)
+            ? null
+            : pending
+        ));
+      }
+    };
+    window.addEventListener('leyble:drain-complete', onDrainComplete);
+    return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
+  }, [orderIds]);
 
   useEffect(() => {
     if (!pendingRemoteOrder || editing || reviewDirty || closing || confirmingCancel || cancelling) return;

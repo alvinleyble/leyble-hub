@@ -41,6 +41,24 @@ export function orderChangedInEvent(order, detail) {
   ) || null;
 }
 
+/**
+ * ADR 0019 — a revision only ever counts forward (migration 048's BEFORE UPDATE
+ * trigger), so "newer" means strictly greater. An echo carrying a revision a screen
+ * already holds is not a change it has yet to see — most often it is this device's
+ * own write coming back round, which must never be dressed up as another device's.
+ *
+ * Either side missing a usable revision (a pre-048 server, a local snapshot that
+ * predates the column) is unorderable, and the safe answer there is "newer": warning
+ * about a change that turns out to be our own is recoverable, silently swallowing a
+ * real one is not.
+ */
+export function isNewerRevision(held, incoming) {
+  const heldRevision = Number(held?.revision);
+  const incomingRevision = Number(incoming?.revision);
+  if (!Number.isFinite(heldRevision) || !Number.isFinite(incomingRevision)) return true;
+  return incomingRevision > heldRevision;
+}
+
 export function orderStatusLabel(status) {
   return STATUS_LABEL[status] || status;
 }

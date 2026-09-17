@@ -857,6 +857,18 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   seconds across the signed-in app, pauses in the background, backs off while unreachable
   and wakes immediately on confirmed recovery. `leyble:orders-changed` drives spinner-free
   detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
+- **Built:** a write whose POST happens inside a drain is adopted through
+  `leyble:drain-complete`, not left for the poll to deliver as somebody else's edit. A
+  receipt print is the only such order write (`usePrintReceipt` → `queueReceiptPrinted`
+  under `V25_OFFLINE_CORE`, so the screen never sees the route's answer while the server
+  bumps `revision`), and the drain now writes the response to local history and carries it
+  on the event as `detail.orders` — **only records this device actually sent**, so a genuine
+  remote change still arrives unseen via `leyble:orders-changed` and still warns. Add an
+  entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in `client/src/offline/outbox.js` only if its
+  route answers with the full order row. `isNewerRevision()` in
+  `client/src/pages/orders/orderConcurrency.js` is the one comparison every screen uses;
+  an echo of a revision already held is not news. Regression coverage:
+  `client/test/review-queue-receipt-print-sync.test.mjs`.
 - App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
   explicitly under first-setup — not part of this ADR's own scope.
 
