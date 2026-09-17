@@ -881,8 +881,10 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   dropped. `adjExpanded` is display state (`adoptAuthoritativeOrder` opens the panel for any
   non-zero adjustment, with nobody having touched it), so gating on it strands the deferred
   re-read — and the held `pendingRemoteOrder` — forever on every order carrying an
-  adjustment. All four gates (the two handlers and the two deferred-flush effects) read the
-  same expression and must stay in step.
+  adjustment. All four gates (the two handlers and the two deferred-flush effects) read one
+  derived `hasUnsavedEdits` value computed at render, and that single value is also each
+  effect's dependency — so the invariant holds structurally rather than by four hand-aligned
+  copies, and a new confirm payload no longer re-subscribes the window listeners.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 

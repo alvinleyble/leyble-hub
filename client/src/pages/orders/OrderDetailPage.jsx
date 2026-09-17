@@ -171,6 +171,10 @@ export default function OrderDetailPage() {
   const [returnCounts, setReturnCounts] = useState({});
   const [returnsDirty, setReturnsDirty] = useState(false);
 
+  // The one dirty gate. Every deferral below — the two event handlers and the two
+  // deferred-flush effects — reads this single value, so they cannot drift apart.
+  const hasUnsavedEdits = Boolean(editing || adjDirty || returnsDirty || closing || confirmAction);
+
   const {
     handlePrint, printing,
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
@@ -257,7 +261,7 @@ export default function OrderDetailPage() {
     // `adjExpanded`, which is true for any order carrying an adjustment and would
     // strand the deferred re-read forever — and flush it once the screen is idle.
     const onDrainComplete = () => {
-      if (editing || adjDirty || returnsDirty || closing || confirmAction) {
+      if (hasUnsavedEdits) {
         setPendingSilentReload(true);
         return;
       }
@@ -267,7 +271,7 @@ export default function OrderDetailPage() {
     const onOrdersChanged = (event) => {
       const current = orderChangedInEvent(order, event.detail);
       if (!current) return;
-      if (editing || adjDirty || returnsDirty || closing || confirmAction) {
+      if (hasUnsavedEdits) {
         setPendingRemoteOrder(current);
         return;
       }
@@ -281,19 +285,19 @@ export default function OrderDetailPage() {
       window.removeEventListener('leyble:refresh', onRefresh);
       window.removeEventListener('leyble:orders-changed', onOrdersChanged);
     };
-  }, [load, order, editing, adjDirty, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+  }, [load, order, hasUnsavedEdits, adoptAuthoritativeOrder]);
 
   useEffect(() => {
-    if (!pendingRemoteOrder || editing || adjDirty || returnsDirty || closing || confirmAction) return;
+    if (!pendingRemoteOrder || hasUnsavedEdits) return;
     adoptAuthoritativeOrder(pendingRemoteOrder);
     setPendingRemoteOrder(null);
-  }, [pendingRemoteOrder, editing, adjDirty, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+  }, [pendingRemoteOrder, hasUnsavedEdits, adoptAuthoritativeOrder]);
 
   useEffect(() => {
-    if (!pendingSilentReload || editing || adjDirty || returnsDirty || closing || confirmAction) return;
+    if (!pendingSilentReload || hasUnsavedEdits) return;
     setPendingSilentReload(false);
     load({ silent: true });
-  }, [pendingSilentReload, editing, adjDirty, returnsDirty, closing, confirmAction, load]);
+  }, [pendingSilentReload, hasUnsavedEdits, load]);
 
   const items = Array.isArray(order?.items) ? order.items : [];
   const bottleItems = items.filter((i) => i?.requires_bottle_return && num(i.unit_deposit_fee) > 0);
