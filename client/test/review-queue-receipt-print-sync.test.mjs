@@ -15,8 +15,9 @@
 //      (written to local history, carried on leyble:drain-complete), and
 //   2. ReviewQueueModal adopts it, and treats a delta it already holds as an echo.
 //
-// The case the fix must not break is the last test: a genuine change from another
-// device is still unseen, and still warns.
+// The case the fix must not break: a genuine change from another device is still
+// unseen and still warns — including when it rides in on the print's own response,
+// which is `getFullOrder()`'s current server state and not a print-only delta.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { React, act } from './render.mjs';
@@ -26,7 +27,7 @@ import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import { __clearReceipts, getReceipt, putOrderSnapshot } from '../src/offline/receiptHistory.js';
 import { __clearOutbox } from '../src/offline/outbox.js';
 import { queueReceiptPrinted } from '../src/offline/posSave.js';
-import { isNewerRevision } from '../src/pages/orders/orderConcurrency.js';
+import { isNewerRevision, isOneRevisionAhead } from '../src/pages/orders/orderConcurrency.js';
 
 const ReviewQueueModal = (await import('../src/pages/orders/ReviewQueueModal.jsx')).default;
 const { createRoot } = await import('react-dom/client');
@@ -224,6 +225,43 @@ test('a genuine change from another device still warns, and the print does not c
   r.unmount();
 });
 
+test('a remote edit riding in on the print response keeps the banner and the operator entry', async () => {
+  const r = renderQueue();
+  await settle();
+  act(() => changeInput(r.adjustment(), '-50'));
+  await settle();
+
+  // Another tablet edits the order (revision 6) and the five-second poll delivers it
+  // while the operator is mid-entry, so it is held back behind the amber banner.
+  const remoteEdit = order({
+    revision: '6',
+    items: [{
+      id: 77, product_id: 9, product_name: 'Coke', sku: 'C-8', category: 'Softdrinks',
+      unit: 'cs', quantity: 4, unit_price: 300, unit_deposit_fee: 0,
+      units_per_case: 24, bottles_returned: 0, requires_bottle_return: false,
+    }],
+    total_amount: 1200,
+  });
+  dispatch('leyble:orders-changed', { ids: [42], orders: [remoteEdit] });
+  await settle();
+  assert.match(r.text(), BANNER);
+
+  // The print then drains, and POST /orders/:id/receipt-printed answers with the CURRENT
+  // server row — revision 7, i.e. the print on top of that remote edit. Two revisions
+  // past what this modal holds, so it is not the print alone and must not be adopted
+  // silently: the operator's half-typed adjustment would go with it.
+  dispatch('leyble:drain-complete', {
+    sent: 1,
+    waiting: 0,
+    orders: [printedOrder({ ...remoteEdit, revision: '7' })],
+  });
+  await settle();
+
+  assert.match(r.text(), BANNER, 'the drain cannot explain a change it did not make alone');
+  assert.equal(r.adjustment().value, '-50', 'and the operator entry survives it');
+  r.unmount();
+});
+
 test('isNewerRevision only counts forward, and treats an unorderable pair as news', () => {
   assert.equal(isNewerRevision({ revision: '5' }, { revision: '6' }), true);
   assert.equal(isNewerRevision({ revision: '6' }, { revision: '6' }), false);
@@ -231,4 +269,15 @@ test('isNewerRevision only counts forward, and treats an unorderable pair as new
   // Pre-048 rows and pre-048 snapshots are unorderable; never swallow a real change.
   assert.equal(isNewerRevision(undefined, { revision: '6' }), true);
   assert.equal(isNewerRevision({ revision: '5' }, {}), true);
+});
+
+test('isOneRevisionAhead is true only for a single intervening write', () => {
+  assert.equal(isOneRevisionAhead({ revision: '5' }, { revision: '6' }), true);
+  assert.equal(isOneRevisionAhead({ revision: '5' }, { revision: '7' }), false);
+  assert.equal(isOneRevisionAhead({ revision: '5' }, { revision: '5' }), false);
+  assert.equal(isOneRevisionAhead({ revision: '6' }, { revision: '5' }), false);
+  // Unorderable cuts the other way from isNewerRevision: unable to prove this is only
+  // our own write, so it keeps the warning instead of silently adopting.
+  assert.equal(isOneRevisionAhead(undefined, { revision: '6' }), false);
+  assert.equal(isOneRevisionAhead({ revision: '5' }, {}), false);
 });

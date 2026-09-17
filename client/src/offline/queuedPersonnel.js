@@ -1,5 +1,4 @@
 import { listRecords, enqueue, drainOutbox } from './outbox.js';
-import { handleDrainCompletion } from './drainNotifier.js';
 import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 
 // G3 (docs/offline-accessibility-acceptance-criteria.md), captain decision 2026-09-02
@@ -62,8 +61,7 @@ export async function updatePersonnelLocalFirst(personnelId, patch, { profileKey
     // Convenience only — never fail the save over the cached copy.
   }
 
-  const res = await drainOutbox().catch(() => null);
-  if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {});
+  await drainOutbox().catch(() => null);
   const synced = !(await listRecords().catch(() => [])).some((r) => r.id === record.id);
   return { record, synced };
 }

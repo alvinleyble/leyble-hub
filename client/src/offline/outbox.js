@@ -366,6 +366,7 @@ async function runDrainPass() {
   queuedRerun = false;
   let sent = 0;
   let failed = 0;
+  let result = null;
   const syncedOrders = [];
   try {
     const records = await listRecords();
@@ -503,20 +504,27 @@ async function runDrainPass() {
     await pruneRefs(remaining);
     const waiting = remaining.filter((r) => r.status === QUEUED).length;
     notifyOutboxListeners({ type: 'drain', sent, failed, waiting });
-    return { sent, failed, waiting, orders: syncedOrders };
+    result = { sent, failed, waiting, orders: syncedOrders };
+    return result;
   } finally {
     draining = false;
+    // Every pass that sent something notifies from here, the one place a pass can
+    // finish. It used to be each caller's job, and the callers that only wanted the
+    // send — status.js's reachability recovery, RefreshButton, OrderCreateModal,
+    // parkedOrders — called the bare drainOutbox() and silently dropped the signal, so
+    // whichever of them happened to win the `draining` mutex decided whether any screen
+    // heard about the drain at all. Fired after `draining` is cleared so a listener is
+    // free to drain again, and not awaited so a slow duplicate-detection GET inside the
+    // notifier cannot hold the mutex open.
+    if (result && result.sent > 0) handleDrainCompletion(result).catch(() => {});
     if (queuedRerun) {
       queuedRerun = false;
       // Fire-and-forget: the caller that got skipped already has its own
-      // {skipped:true} result and isn't waiting on this. Route a successful rerun
-      // through the same notifier every other drain path uses, so a record that
-      // only missed this pass by a race still tells OrderDetailPage / the marker
-      // the moment it actually syncs, instead of waiting on the next unrelated
-      // trigger.
-      runDrainPass()
-        .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
-        .catch(() => {});
+      // {skipped:true} result and isn't waiting on this. The rerun notifies from its
+      // own finally block, so a record that only missed this pass by a race still
+      // tells OrderDetailPage / the marker the moment it actually syncs, instead of
+      // waiting on the next unrelated trigger.
+      runDrainPass().catch(() => {});
     }
   }
 }

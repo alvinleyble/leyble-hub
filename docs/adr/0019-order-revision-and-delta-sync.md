@@ -17,14 +17,22 @@ Connected foreground tablets keep their local order copies current with a bounde
   `server/src/routes/orders.js` enforces it; `client/src/offline/foregroundOrderSync.js`
   owns the app-wide foreground cadence and backoff.
 - **A drained write is adopted, never left to the poll** — **Done.** A receipt print is
-  the only order write whose POST happens inside the outbox drain (`queueReceiptPrinted`
-  under `V25_OFFLINE_CORE`), so the revision bump it causes used to reach the screen as an
-  unexplained delta and warn about the operator's own print. The drain now writes the
+  the only such write for an order a screen is already holding from the server
+  (`queueReceiptPrinted` under `V25_OFFLINE_CORE`), so the revision bump it causes used to
+  reach the screen as an unexplained delta and warn about the operator's own print.
+  (`transitionLocalOrder`'s `order_status` record also POSTs inside the drain and also
+  answers with the full order, but only ever for an order this device created and has not
+  synced, so it is deliberately left out of the allowlist.) The drain now writes the
   route's answer to local history and publishes it on `leyble:drain-complete` as
   `detail.orders` — only records this device sent — and `ReviewQueueModal` adopts it. A
   genuine remote change is still unseen, still arrives via `leyble:orders-changed`, and
   still warns. `isNewerRevision()` in `client/src/pages/orders/orderConcurrency.js` is the
-  shared comparison; an echo of a held revision is not a change.
+  shared newer/not-newer comparison; an echo of a held revision is not a change. The drain
+  path adds `isOneRevisionAhead()`: migration 048 advances the revision by exactly one per
+  UPDATE and the print is one UPDATE, so only a row exactly one ahead of what the screen
+  holds is the print and nothing else. A row further ahead carries another device's write
+  in the same window and takes the ordinary stale-warning path instead of being adopted
+  silently — it never clears a warning it cannot explain.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).
