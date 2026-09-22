@@ -10,7 +10,7 @@ import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
-import { handleStaleOrderWrite } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision, isOneRevisionAhead } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -100,6 +100,10 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     const onOrdersChanged = (event) => {
       for (const current of event.detail?.orders || []) {
         if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        // A delta carrying a revision this modal already holds is an echo, not news —
+        // typically this device's own receipt print, adopted by the drain listener
+        // below before the poll caught up with it.
+        if (!isNewerRevision(orders[current.id], current)) continue;
         if (String(current.id) === String(activeId)
             && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
           setPendingRemoteOrder(current);
@@ -110,7 +114,49 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     };
     window.addEventListener('leyble:orders-changed', onOrdersChanged);
     return () => window.removeEventListener('leyble:orders-changed', onOrdersChanged);
-  }, [orderIds, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+  }, [orderIds, orders, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+
+  // Printing a receipt is an order write this screen never sees the answer to: under
+  // V25_OFFLINE_CORE `usePrintReceipt` tags the print through the outbox, so the POST
+  // that bumps ADR 0019's `revision` happens inside a later drain. Adopt what that
+  // drain got back — otherwise the very next foreground delta looks like another
+  // device's edit and raises the amber banner over the operator's own print, right
+  // while their unsaved adjustment entry is holding it on screen.
+  //
+  // Only the RECORDS on this event are this device's own; the ROW each one carries is
+  // whatever `getFullOrder()` saw at the moment the POST ran, so it can also contain
+  // another device's edit that landed just before the print. `isOneRevisionAhead` is
+  // what separates the two: the print is a single UPDATE, so a row exactly one revision
+  // past what this modal holds is the print and nothing else, and only that is adopted
+  // silently. A row further ahead carries somebody else's write too and goes down the
+  // same path as a `leyble:orders-changed` delta — held back behind the amber banner
+  // while the operator is mid-entry — and never clears a warning it cannot explain.
+  useEffect(() => {
+    const onDrainComplete = (event) => {
+      for (const current of event.detail?.orders || []) {
+        if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        const held = orders[current.id];
+        if (isOneRevisionAhead(held, current)) {
+          setOrders((prev) => ({ ...prev, [current.id]: current }));
+          setPendingRemoteOrder((pending) => (
+            pending && String(pending.id) === String(current.id) && !isNewerRevision(current, pending)
+              ? null
+              : pending
+          ));
+          continue;
+        }
+        if (!isNewerRevision(held, current)) continue;
+        if (String(current.id) === String(activeId)
+            && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
+          setPendingRemoteOrder(current);
+        } else {
+          setOrders((prev) => ({ ...prev, [current.id]: current }));
+        }
+      }
+    };
+    window.addEventListener('leyble:drain-complete', onDrainComplete);
+    return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
+  }, [orderIds, orders, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
 
   useEffect(() => {
     if (!pendingRemoteOrder || editing || reviewDirty || closing || confirmingCancel || cancelling) return;

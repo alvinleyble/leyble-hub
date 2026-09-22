@@ -68,7 +68,8 @@ History: started as `retail/wholesale/suki` → `wholesale/suki` (015) → `regu
 In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`.
 Fields: `name`, `address`, `phone`, `notes`, `is_active`, `updated_at` (watermark index `idx_customers_updated_at`, 035).
 `delivery_fee` NUMERIC(10,2), nullable, `CHECK (delivery_fee IS NULL OR delivery_fee >= 0)` (049)
-— the standing per-customer delivery charge, configured only on `CustomerDetailPanel.jsx`;
+— the standing per-customer delivery charge, set from `CustomerDetailPanel.jsx` or from the
+order form's combined "Save as Customer Defaults?" prompt;
 `NULL` means "not configured." Snapshotted onto `orders.delivery_fee_charged` at order creation —
 see [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal).
 

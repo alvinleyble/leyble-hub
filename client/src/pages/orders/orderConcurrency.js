@@ -41,6 +41,43 @@ export function orderChangedInEvent(order, detail) {
   ) || null;
 }
 
+/**
+ * ADR 0019 — a revision only ever counts forward (migration 048's BEFORE UPDATE
+ * trigger), so "newer" means strictly greater. An echo carrying a revision a screen
+ * already holds is not a change it has yet to see — most often it is this device's
+ * own write coming back round, which must never be dressed up as another device's.
+ *
+ * Either side missing a usable revision (a pre-048 server, a local snapshot that
+ * predates the column) is unorderable, and the safe answer there is "newer": warning
+ * about a change that turns out to be our own is recoverable, silently swallowing a
+ * real one is not.
+ */
+export function isNewerRevision(held, incoming) {
+  const heldRevision = Number(held?.revision);
+  const incomingRevision = Number(incoming?.revision);
+  if (!Number.isFinite(heldRevision) || !Number.isFinite(incomingRevision)) return true;
+  return incomingRevision > heldRevision;
+}
+
+/**
+ * The narrower question a drained write can ask: is this row the single write I made,
+ * and nothing else? Migration 048's trigger advances the revision by exactly one per
+ * UPDATE, and POST /orders/:id/receipt-printed is one UPDATE, so a drained print that
+ * lands on `held.revision + 1` is the only change between the two — safe to adopt
+ * silently. Anything further ahead means somebody else's write landed in the same
+ * window, and that row belongs on the ordinary "changed on another device" path.
+ *
+ * An unorderable pair answers false: "I cannot prove this is only my own write" is the
+ * side that keeps the warning, matching `isNewerRevision`'s bias in the opposite
+ * direction.
+ */
+export function isOneRevisionAhead(held, incoming) {
+  const heldRevision = Number(held?.revision);
+  const incomingRevision = Number(incoming?.revision);
+  if (!Number.isFinite(heldRevision) || !Number.isFinite(incomingRevision)) return false;
+  return incomingRevision === heldRevision + 1;
+}
+
 export function orderStatusLabel(status) {
   return STATUS_LABEL[status] || status;
 }
