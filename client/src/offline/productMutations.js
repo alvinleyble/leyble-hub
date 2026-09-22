@@ -1,6 +1,5 @@
 import { api } from '../api/client.js';
 import { enqueue, drainOutbox, listRecords, QUEUED } from './outbox.js';
-import { handleDrainCompletion } from './drainNotifier.js';
 import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 import {
   recordConflict, hasOpenConflict, removeConflict, listConflicts,
@@ -163,10 +162,7 @@ async function attachGuard(recordId, guard) {
 // caller uses that to word its toast ("updated" vs "saved on this device").
 async function drainNow(recordId) {
   await screenProductMutations().catch(() => {});
-  const res = await drainOutbox().catch(() => null);
-  // Every drain that can fire outside the 30s periodic loop routes its own result
-  // through the notifier, or no screen ever hears about it (Round 2 Fix 1).
-  if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {});
+  await drainOutbox().catch(() => null);
   const stillQueued = (await listRecords().catch(() => []))
     .some((r) => r.id === recordId);
   return !stillQueued;
