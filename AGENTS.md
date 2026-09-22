@@ -312,9 +312,11 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   PR #41's exact bug (a throwaway delete stuck ahead of/behind real order POSTs,
   wedging "Offline · N waiting" for minutes).
 - **Silent background sync** — `drainNotifier.js` dispatches a
-  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting } })`
+  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting, orders } })`
   whenever a drain sends something, independent of both the `V25_OFFLINE_CORE` flag
   (this is a sync signal, not a display concern) and the once-per-outage toast latch.
+  `detail.orders` carries the order rows the drain itself just got back — see the
+  drained-write adoption bullet under "Order concurrency & delta sync" below.
   `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
   touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
   the synced server row spinner-free. **`runDrainPass` in `outbox.js` is the single

@@ -896,8 +896,8 @@ export default function OrderCreateModal({
   // Both writes are routed through the outbox (matching handleCreateCustomer above)
   // rather than a bare api.post/api.patch — this prompt fires from inside
   // saveOrderLocalFirst's otherwise fully offline-safe save flow, so a value agreed
-  // during an outage used to vanish silently instead of queuing like the rest of the
-  // order (true today for the delivery fee half, which has no prompt at all yet).
+  // during an outage would otherwise vanish silently instead of queuing like the rest
+  // of the order — which is exactly how the delivery fee half stays eligible offline.
   // defaultsPrompt.customer may still be local (isLocalCustomer) when she was
   // quick-created earlier in this same order — her real id doesn't exist yet, so each
   // record's endpoint carries a `:customerId` placeholder resolved from her own outbox

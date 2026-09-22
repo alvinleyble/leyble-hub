@@ -77,7 +77,7 @@ See [Order Lifecycle](order-lifecycle.md) for status rules and stock/deposit beh
 | POST | `/orders/:id/finalize` | Draft → `pending` (writes the "created" activity log). |
 | DELETE | `/orders/:id` | Discard draft (only allowed for drafts). |
 | PATCH | `/orders/:id/adjustment` | Set `adjustment` + `adjustment_reason`. |
-| POST | `/orders/:id/receipt-printed` | Record a confirmed receipt print (pending vs delivered phase). |
+| POST | `/orders/:id/receipt-printed` | Record a confirmed receipt print (pending vs delivered phase). Additive — exempt from ADR 0019's revision guard, but it still bumps `updated_at`/`revision`. Answers with the **full order row**, which is what lets the outbox drain adopt it (`ORDER_SNAPSHOT_ENTITY_TYPES`, [ADR 0019](../adr/0019-order-revision-and-delta-sync.md)); don't narrow the response to a partial |
 | POST | `/orders/:id/status` | Transition status; validated by `getAllowedTransitions`. Deducts/restores stock at dispatch boundary (`in_transit` delivery / `completed` pickup) |
 | POST | `/orders/:id/close` | Record `bottles_returned` per item and move to `done`; folds deposit into total |
 

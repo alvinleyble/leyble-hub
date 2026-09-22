@@ -45,7 +45,7 @@ server/src/
   lib/idempotency.js    request_key & receipt_number deduplication
   routes/*.js           auth, products, customers, personnel, orders, incoming, stations, tickets, audit, dashboard
 server/db/
-  migrations/NNN_*.sql  schema (001–045 tracked in _migrations); migrate.js runs them; seed.js makes admin
+  migrations/NNN_*.sql  schema (every file here is tracked in _migrations); migrate.js runs them; seed.js makes admin
 client/src/
   api/client.js         api.get/post/patch/del wrapper (Bearer on native, 401→/login)
   pages/<module>/       UI, one folder per module
@@ -96,10 +96,10 @@ docs/                   ← you are here
 | Understand what the app is / why | [product/PRD.md](product/PRD.md) |
 | Look up a domain term | [product/glossary.md](product/glossary.md) |
 | Understand the stack / auth / layout / 3 tiers | [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) |
-| Know the current schema (001–045) | [architecture/DATABASE.md](architecture/DATABASE.md) |
+| Know the current schema | [architecture/DATABASE.md](architecture/DATABASE.md) |
 | Call/extend an endpoint | [architecture/API.md](architecture/API.md) |
 | Touch order status/stock/deposit logic | [architecture/order-lifecycle.md](architecture/order-lifecycle.md) |
-| Review architectural decisions | [adr/](adr/) (ADR 0001–0018) |
+| Review architectural decisions | [adr/](adr/) |
 | Run it locally | [operations/local-development.md](operations/local-development.md) |
 | Understand DB environments & staging warnings | [operations/development-database.md](operations/development-database.md) |
 | Build the APK / deploy | [operations/android.md](operations/android.md) |
