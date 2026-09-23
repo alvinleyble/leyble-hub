@@ -41,13 +41,21 @@ export function hasDrainToastFired() {
  * fallback it must not be flag-gated) and the once-per-outage toast latch below —
  * a screen showing "Waiting to sync" needs to know about every drain that might
  * concern it, not just the first one after an outage.
+ *
+ * `orders` carries the authoritative order rows the drain itself just received back
+ * (see `orderSnapshotFrom` in outbox.js), so a screen holding one of them can adopt
+ * ADR 0019's bumped `revision` rather than meeting it later as an unexplained
+ * foreground delta. It is only ever this device's own writes: a genuine remote change
+ * still arrives, unseen and correctly warned about, via `leyble:orders-changed`.
  */
-function dispatchDrainCompleteEvent(sent, waiting) {
+function dispatchDrainCompleteEvent(sent, waiting, orders = []) {
   if (typeof window !== 'undefined' && typeof window.CustomEvent === 'function' && sent > 0) {
     // Use window's own CustomEvent constructor, not the bare global — under jsdom
     // (this app's test harness) `window` is a separate realm from Node's global
     // CustomEvent, and jsdom's dispatchEvent rejects an event built with the wrong one.
-    window.dispatchEvent(new window.CustomEvent('leyble:drain-complete', { detail: { sent, waiting } }));
+    window.dispatchEvent(new window.CustomEvent('leyble:drain-complete', {
+      detail: { sent, waiting, orders },
+    }));
   }
 }
 
@@ -62,11 +70,13 @@ export function notifyDrainComplete(opts = {}) {
  * Core implementation with explicit enabled flag (for testing both sides of D18).
  */
 export function notifyDrainCompleteWith(
-  { sent = 0, waiting = 0, customers = [], orders = [], addToast = globalToastHandler } = {},
+  { sent = 0, waiting = 0, customers = [], orders = [], syncedOrders = [], addToast = globalToastHandler } = {},
   enabled = V25_OFFLINE_CORE,
   { skipDispatch = false } = {}
 ) {
-  if (!skipDispatch) dispatchDrainCompleteEvent(sent, waiting);
+  // `orders` here is the pending-order list the duplicate check reads; `syncedOrders`
+  // is what the drain actually sent and got back. Two different questions, kept apart.
+  if (!skipDispatch) dispatchDrainCompleteEvent(sent, waiting, syncedOrders);
 
   if (!enabled) return false;
   if (sent <= 0) return false;
@@ -101,7 +111,7 @@ export async function handleDrainCompletion(opts = {}) {
 }
 
 export async function handleDrainCompletionWith(
-  { sent = 0, waiting = 0, addToast = globalToastHandler } = {},
+  { sent = 0, waiting = 0, orders: syncedOrders = [], addToast = globalToastHandler } = {},
   enabled = V25_OFFLINE_CORE
 ) {
   if (sent <= 0) return false;
@@ -110,7 +120,7 @@ export async function handleDrainCompletionWith(
   // (see offline/index.js). Dispatch before the enabled/latch gates below —
   // those gates are for the duplicate-detection toast only, and must not also
   // suppress the sync signal screens rely on to leave "Waiting to sync".
-  dispatchDrainCompleteEvent(sent, waiting);
+  dispatchDrainCompleteEvent(sent, waiting, syncedOrders);
 
   if (!enabled) return false;
   if (drainToastFired) return false;
@@ -131,7 +141,9 @@ export async function handleDrainCompletionWith(
     // Network or parse issue; evaluate with empty order list
   }
 
-  return notifyDrainCompleteWith({ sent, waiting, customers, orders, addToast }, enabled, { skipDispatch: true });
+  return notifyDrainCompleteWith(
+    { sent, waiting, customers, orders, syncedOrders, addToast }, enabled, { skipDispatch: true }
+  );
 }
 
 export function __resetDrainNotifierState() {

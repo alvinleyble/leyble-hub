@@ -312,19 +312,24 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   PR #41's exact bug (a throwaway delete stuck ahead of/behind real order POSTs,
   wedging "Offline · N waiting" for minutes).
 - **Silent background sync** — `drainNotifier.js` dispatches a
-  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting } })`
+  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting, orders } })`
   whenever a drain sends something, independent of both the `V25_OFFLINE_CORE` flag
   (this is a sync signal, not a display concern) and the once-per-outage toast latch.
+  `detail.orders` carries the order rows the drain itself just got back — see the
+  drained-write adoption bullet under "Order concurrency & delta sync" below.
   `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
   touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
-  the synced server row spinner-free. **Every caller of `drainOutbox()` that can fire
-  outside the 30s periodic loop must route its result through `handleDrainCompletion`
-  itself** (Round 2 Fix 1) — `posSave.js`'s three background drains (the immediate
-  post-save drain in `saveOrderLocalFirst`, `queueReceiptPrinted`, and
-  `updateLocalOrder`) are what actually land an order on the server in practice, ~1s
-  after Save, not the periodic loop; calling the bare `drainOutbox()` from
-  `outbox.js` without also calling `handleDrainCompletion(res)` on a successful send
-  is silently correct in every way except that no screen ever hears about it.
+  the synced server row spinner-free. **`runDrainPass` in `outbox.js` is the single
+  place that notifies, and callers must not notify again** — it routes any pass that
+  sent something through `handleDrainCompletion` from its own `finally`, after the
+  `draining` mutex clears and without awaiting it. This used to be each caller's
+  duty (Round 2 Fix 1), which only held for the callers that remembered: the ones
+  that wanted the send and nothing else — `status.js`'s reachability recovery,
+  `RefreshButton`, `OrderCreateModal`, `parkedOrders` — called the bare
+  `drainOutbox()` and dropped the signal, so whichever caller happened to win the
+  mutex decided whether any screen heard about the drain at all. A bare
+  `drainOutbox().catch(() => {})` is now the correct shape everywhere; adding a
+  `handleDrainCompletion(res)` on top of it double-fires the event.
 - **`drainOutbox()` self-reruns instead of stranding a skipped call** (Round 3 Fix 5).
   A `drainOutbox()` call while another pass is already in flight returns
   `{skipped:true}` immediately (`draining` mutex) — but the record it just enqueued
@@ -332,8 +337,8 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   START of that pass), so without a follow-up it would sit `QUEUED` until whatever
   unrelated thing next calls `drainOutbox()` (the 30s periodic loop, an `online`
   event, another save). `outbox.js` now schedules an immediate follow-up pass itself
-  the moment the in-flight one finishes, and routes a successful rerun through
-  `handleDrainCompletion` exactly like every other drain path — this is what the
+  the moment the in-flight one finishes, and that rerun notifies from its own
+  `finally` exactly like every other pass — this is what the
   chrome-wide `OfflineMarker` showing "N waiting" for minutes after an unrelated
   order's own banner had already cleared turned out to be.
 - **A failed send's retry bookkeeping writes onto the CURRENT stored record, never the
@@ -857,6 +862,26 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   seconds across the signed-in app, pauses in the background, backs off while unreachable
   and wakes immediately on confirmed recovery. `leyble:orders-changed` drives spinner-free
   detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
+- **Built:** a write whose POST happens inside a drain is adopted through
+  `leyble:drain-complete`, not left for the poll to deliver as somebody else's edit. A
+  receipt print is the only such write for an order a screen is already holding from the
+  server (`usePrintReceipt` → `queueReceiptPrinted` under `V25_OFFLINE_CORE`, so the screen
+  never sees the route's answer while the server bumps `revision`); `transitionLocalOrder`'s
+  `order_status` record also POSTs inside the drain and also answers with the full order,
+  but only ever for an order this device created and has not synced, which is why it is
+  deliberately NOT in the allowlist. The drain writes the response to local history and
+  carries it on the event as `detail.orders` — **only records this device actually sent**,
+  so a genuine remote change still arrives unseen via `leyble:orders-changed` and still
+  warns. Add an entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in
+  `client/src/offline/outbox.js` only if its route answers with the full order row.
+  `isNewerRevision()` in `client/src/pages/orders/orderConcurrency.js` is the one
+  newer/not-newer comparison every screen uses; an echo of a revision already held is not
+  news. The drain path asks a narrower question on top of it — `isOneRevisionAhead()`,
+  since migration 048 advances the revision by exactly one per UPDATE and the print is one
+  UPDATE. Only a row exactly one ahead of what the screen holds is the print **and nothing
+  else** and can be adopted silently; a row further ahead carries somebody else's write too
+  and goes down the ordinary "changed on another device" path, banner and all. Regression
+  coverage: `client/test/review-queue-receipt-print-sync.test.mjs`.
 - App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
   explicitly under first-setup — not part of this ADR's own scope.
 - **The delta re-delivers this device's OWN writes, so a `leyble:orders-changed` match is

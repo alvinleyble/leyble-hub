@@ -19,7 +19,7 @@ Antipolo, Philippines. This folder is the single home for project documentation.
 
 ### Architecture & technical
 - [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) — stack, topology, 3-tier environments, auth, layout.
-- [architecture/DATABASE.md](architecture/DATABASE.md) — current schema (reconciled to migrations 001–045).
+- [architecture/DATABASE.md](architecture/DATABASE.md) — current schema, reconciled to whatever is in `server/db/migrations/` (that directory, not this line, is the count).
 - [architecture/API.md](architecture/API.md) — REST endpoint reference.
 - [architecture/order-lifecycle.md](architecture/order-lifecycle.md) — order status, stock, deposit/bottle-return math.
 
@@ -46,6 +46,8 @@ Antipolo, Philippines. This folder is the single home for project documentation.
     [0017](adr/0017-receipt-numbers-keyed-to-user-accounts.md) receipt numbers keyed to user accounts *(supersedes 0016, revises 0006)*.
   - Database security:
     [0018](adr/0018-supabase-rls-lockdown.md) Supabase Row Level Security (RLS) lockdown across all tables.
+  - Order concurrency:
+    [0019](adr/0019-order-revision-and-delta-sync.md) server-authoritative order revision & delta sync.
 
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally (3-tier model).
