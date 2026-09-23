@@ -4,7 +4,7 @@ PostgreSQL is the authority for every non-draft order change. Each command carri
 
 Connected foreground tablets keep their local order copies current with a bounded cursor-based delta pull every 5 seconds, with catch-up after reconnect. This rollout starts with orders only; inventory and all other app areas remain later slices. Supabase Realtime is not used: the existing authenticated Express delta endpoint provides complete, ordered recovery without a second client credential or authorization path. Awareness never decides whether a write is valid; the database does.
 
-## Implementation status (as of 2026-09-17)
+## Implementation status (as of 2026-09-23)
 
 - **First-setup full-history gate** — **Done.** Merged via PR #117 on `dev`
   (`useSyncGate().blocking` / `isFirstSetupPending` in `client/src/offline/sync.js`,

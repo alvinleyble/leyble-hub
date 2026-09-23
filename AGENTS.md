@@ -319,7 +319,9 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   drained-write adoption bullet under "Order concurrency & delta sync" below.
   `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
   touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
-  the synced server row spinner-free. **`runDrainPass` in `outbox.js` is the single
+  the synced server row spinner-free; that re-read is deferred while the operator has
+  unsaved edits, per the silent-re-read bullet in that same section.
+  **`runDrainPass` in `outbox.js` is the single
   place that notifies, and callers must not notify again** — it routes any pass that
   sent something through `handleDrainCompletion` from its own `finally`, after the
   `draining` mutex clears and without awaiting it. This used to be each caller's
@@ -874,16 +876,13 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   so a genuine remote change still arrives unseen via `leyble:orders-changed` and still
   warns. Add an entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in
   `client/src/offline/outbox.js` only if its route answers with the full order row.
-  `isNewerRevision()` in `client/src/pages/orders/orderConcurrency.js` is the one
-  newer/not-newer comparison every screen uses; an echo of a revision already held is not
-  news. The drain path asks a narrower question on top of it — `isOneRevisionAhead()`,
-  since migration 048 advances the revision by exactly one per UPDATE and the print is one
-  UPDATE. Only a row exactly one ahead of what the screen holds is the print **and nothing
+  On top of the shared `isNewerRevision()` rule (see the next bullet) the drain path asks
+  a narrower question — `isOneRevisionAhead()`, since migration 048 advances the revision
+  by exactly one per UPDATE and the print is one UPDATE.
+  Only a row exactly one ahead of what the screen holds is the print **and nothing
   else** and can be adopted silently; a row further ahead carries somebody else's write too
   and goes down the ordinary "changed on another device" path, banner and all. Regression
   coverage: `client/test/review-queue-receipt-print-sync.test.mjs`.
-- App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
-  explicitly under first-setup — not part of this ADR's own scope.
 - **The delta re-delivers this device's OWN writes, so a `leyble:orders-changed` match is
   not by itself another device.** `syncOrderDelta` is "everything changed anywhere (this
   tablet or another one)" and has no self-origination filter, while every write path here
@@ -926,6 +925,8 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   Cancel re-derives both from `order` the way `adoptAuthoritativeOrder` does. Clearing the
   flag alone left the typed amount in the field, where it read back as the saved rate on the
   next open and Save Adjustment would commit the figure the operator had discarded.
+- App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
+  explicitly under first-setup — not part of this ADR's own scope.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 
