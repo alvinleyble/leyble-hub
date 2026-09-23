@@ -15,7 +15,7 @@ import {
   getReceipt, putOrderSnapshot, updateLocalOrder, transitionLocalOrder,
   canTransitionOffline, isOrderUnsynced,
 } from '../../offline/index.js';
-import { handleStaleOrderWrite, orderChangedInEvent } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision, orderChangedInEvent } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -152,17 +152,28 @@ export default function OrderDetailPage() {
   // never merged into or substituted for it. Closing the edit adopts this snapshot;
   // saving against the old revision is still authoritatively rejected by the server.
   const [pendingRemoteOrder, setPendingRemoteOrder] = useState(null);
+  // Same idea for the silent post-drain re-read: deferred while an action is open,
+  // then run once the screen is idle again. See the effect below.
+  const [pendingSilentReload, setPendingSilentReload] = useState(false);
 
   // Adjustment form state
   const [adjExpanded, setAdjExpanded] = useState(false);
   const [adjValue, setAdjValue]       = useState('');
   const [adjReason, setAdjReason]     = useState('');
   const [savingAdj, setSavingAdj]     = useState(false);
+  // True only once the operator has typed into the adjustment form and not yet saved
+  // it. `adjExpanded` is display state — adoptAuthoritativeOrder opens the panel for
+  // any non-zero adjustment — so it can never stand in for this.
+  const [adjDirty, setAdjDirty]       = useState(false);
 
   // Live, in-progress bottle-return entries — lifted up from OrderCloseForm so its
   // breakdown math can read them. Keyed by order_items.id.
   const [returnCounts, setReturnCounts] = useState({});
   const [returnsDirty, setReturnsDirty] = useState(false);
+
+  // The one dirty gate. Every deferral below — the two event handlers and the two
+  // deferred-flush effects — reads this single value, so they cannot drift apart.
+  const hasUnsavedEdits = Boolean(editing || adjDirty || returnsDirty || closing || confirmAction);
 
   const {
     handlePrint, printing,
@@ -179,6 +190,7 @@ export default function OrderDetailPage() {
     setAdjValue(Number(current.adjustment) ? String(current.adjustment) : '');
     setAdjReason(current.adjustment_reason || '');
     setAdjExpanded(Number(current.adjustment) !== 0);
+    setAdjDirty(false);
     setReturnsDirty(false);
     putOrderSnapshot(current).catch(() => {});
   }, []);
@@ -220,6 +232,7 @@ export default function OrderDetailPage() {
             setAdjValue(Number(local.adjustment) ? String(local.adjustment) : '');
             setAdjReason(local.adjustment_reason || '');
             setAdjExpanded(Number(local.adjustment) !== 0);
+            setAdjDirty(false);
             return;
           }
         }
@@ -239,12 +252,26 @@ export default function OrderDetailPage() {
   // swaps to its server row and drops the "Waiting to sync" banner without anyone
   // asking and without a spinner. leyble:refresh triggers an active reload.
   useEffect(() => {
-    const onDrainComplete = () => load({ silent: true });
+    // The silent re-read ends in adoptAuthoritativeOrder, which resets adjValue /
+    // adjReason / adjExpanded from the server row — so firing it while the operator
+    // is mid-entry discards what they just typed and collapses the panel under them.
+    // A drain is triggered by anything in the outbox (a queued receipt-print, an
+    // unrelated order), so this fires on screens that are doing nothing of the sort.
+    // Gate it exactly like onOrdersChanged below on UNSAVED edits — never on
+    // `adjExpanded`, which is true for any order carrying an adjustment and would
+    // strand the deferred re-read forever — and flush it once the screen is idle.
+    const onDrainComplete = () => {
+      if (hasUnsavedEdits) {
+        setPendingSilentReload(true);
+        return;
+      }
+      load({ silent: true });
+    };
     const onRefresh = () => load();
     const onOrdersChanged = (event) => {
       const current = orderChangedInEvent(order, event.detail);
       if (!current) return;
-      if (editing || adjExpanded || returnsDirty || closing || confirmAction) {
+      if (hasUnsavedEdits) {
         setPendingRemoteOrder(current);
         return;
       }
@@ -258,13 +285,27 @@ export default function OrderDetailPage() {
       window.removeEventListener('leyble:refresh', onRefresh);
       window.removeEventListener('leyble:orders-changed', onOrdersChanged);
     };
-  }, [load, order, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+  }, [load, order, hasUnsavedEdits, adoptAuthoritativeOrder]);
+
+  // The strictly-newer rule has to hold where a parked delta is APPLIED, not only
+  // where it arrived. Not every write is gated by the amber banner: the header's Print
+  // Receipt button stays live behind it, and `POST /orders/:id/receipt-printed` carries
+  // no revision precondition while migration 048's trigger still bumps one, so the row
+  // on screen can move PAST what is parked while it waits. Adopting the parked copy
+  // then would roll both the screen and putOrderSnapshot's cached row backwards over
+  // the newer value — exactly what this predicate exists to prevent. Re-check, and
+  // discard rather than adopt, mirroring saveAdjustment's own 409 path.
+  useEffect(() => {
+    if (!pendingRemoteOrder || hasUnsavedEdits) return;
+    if (isNewerRevision(order, pendingRemoteOrder)) adoptAuthoritativeOrder(pendingRemoteOrder);
+    setPendingRemoteOrder(null);
+  }, [pendingRemoteOrder, order, hasUnsavedEdits, adoptAuthoritativeOrder]);
 
   useEffect(() => {
-    if (!pendingRemoteOrder || editing || adjExpanded || returnsDirty || closing || confirmAction) return;
-    adoptAuthoritativeOrder(pendingRemoteOrder);
-    setPendingRemoteOrder(null);
-  }, [pendingRemoteOrder, editing, adjExpanded, returnsDirty, closing, confirmAction, adoptAuthoritativeOrder]);
+    if (!pendingSilentReload || hasUnsavedEdits) return;
+    setPendingSilentReload(false);
+    load({ silent: true });
+  }, [pendingSilentReload, hasUnsavedEdits, load]);
 
   const items = Array.isArray(order?.items) ? order.items : [];
   const bottleItems = items.filter((i) => i?.requires_bottle_return && num(i.unit_deposit_fee) > 0);
@@ -360,6 +401,7 @@ export default function OrderDetailPage() {
           setOrder(updated);
           setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
           setAdjReason(updated.adjustment_reason || '');
+          setAdjDirty(false);
           addToast('Adjustment saved.', 'success');
           return;
         } catch {
@@ -375,6 +417,7 @@ export default function OrderDetailPage() {
       adoptAuthoritativeOrder(updated);
       setAdjValue(Number(updated.adjustment) ? String(updated.adjustment) : '');
       setAdjReason(updated.adjustment_reason || '');
+      setAdjDirty(false);
       addToast('Adjustment saved.', 'success');
     } catch (err) {
       const stale = await handleStaleOrderWrite(err, {
@@ -792,7 +835,17 @@ export default function OrderDetailPage() {
           {order.status !== 'draft' && (
             <button
               type="button"
-              onClick={() => setAdjExpanded((v) => !v)}
+              onClick={() => {
+                // Cancel has to discard what was typed, not merely declare the form
+                // clean: a lingering adjValue reads back as the saved rate the next
+                // time the panel opens, and Save Adjustment would then commit the
+                // amount the operator believed they had thrown away. Re-derive both
+                // fields from the order exactly as adoptAuthoritativeOrder does.
+                setAdjExpanded((v) => !v);
+                setAdjValue(Number(order.adjustment) ? String(order.adjustment) : '');
+                setAdjReason(order.adjustment_reason || '');
+                setAdjDirty(false);
+              }}
               disabled={offlineViewingSynced}
               title={offlineViewingSynced ? 'Needs a connection' : undefined}
               className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
@@ -813,7 +866,7 @@ export default function OrderDetailPage() {
                 type="number"
                 step="0.01"
                 value={adjValue}
-                onChange={(e) => setAdjValue(e.target.value)}
+                onChange={(e) => { setAdjValue(e.target.value); setAdjDirty(true); }}
                 className={INPUT}
                 placeholder="e.g. -50 for discount, 200 for surcharge"
               />
@@ -824,7 +877,7 @@ export default function OrderDetailPage() {
               </label>
               <textarea
                 value={adjReason}
-                onChange={(e) => setAdjReason(e.target.value)}
+                onChange={(e) => { setAdjReason(e.target.value); setAdjDirty(true); }}
                 rows={2}
                 className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
                            focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"

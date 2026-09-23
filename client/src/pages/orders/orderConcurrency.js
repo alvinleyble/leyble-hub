@@ -32,13 +32,39 @@ export async function handleStaleOrderWrite(err, { addToast, onCurrent } = {}) {
   return true;
 }
 
+/**
+ * The matching row from a `leyble:orders-changed` delta that this screen has not yet
+ * seen. `syncOrderDelta` re-delivers this device's OWN writes too (sync.js has no
+ * self-origination filter) and every write path here already adopts the server's
+ * response, so an id/receipt-number match alone is not news — the echo of a save
+ * arrives at the revision the screen is already showing. `isNewerRevision` is what
+ * separates the two, and it also drops a delta page fetched before a save that has
+ * since landed, which must never be adopted backwards over the newer value.
+ */
 export function orderChangedInEvent(order, detail) {
   if (!order || !detail) return null;
   const changed = Array.isArray(detail.orders) ? detail.orders : [];
-  return changed.find((candidate) =>
+  const match = changed.find((candidate) =>
     String(candidate.id) === String(order.id)
       || (order.receipt_number && candidate.receipt_number === order.receipt_number)
   ) || null;
+  return match && isNewerRevision(order, match) ? match : null;
+}
+
+/**
+ * `orders.revision` is a `BIGINT` (migration 048) and pg hands it over as a string, so
+ * it is compared as a BigInt and never as a Number — past 2^53 a Number silently loses
+ * the low digits and two different revisions start comparing equal. `null` is returned
+ * for anything that cannot be ordered as an integer, which each predicate below then
+ * biases its own way.
+ */
+function comparableRevision(value) {
+  if (value === undefined || value === null || value === '') return null;
+  try {
+    return BigInt(String(value).trim());
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -53,9 +79,9 @@ export function orderChangedInEvent(order, detail) {
  * real one is not.
  */
 export function isNewerRevision(held, incoming) {
-  const heldRevision = Number(held?.revision);
-  const incomingRevision = Number(incoming?.revision);
-  if (!Number.isFinite(heldRevision) || !Number.isFinite(incomingRevision)) return true;
+  const heldRevision = comparableRevision(held?.revision);
+  const incomingRevision = comparableRevision(incoming?.revision);
+  if (heldRevision === null || incomingRevision === null) return true;
   return incomingRevision > heldRevision;
 }
 
@@ -72,10 +98,10 @@ export function isNewerRevision(held, incoming) {
  * direction.
  */
 export function isOneRevisionAhead(held, incoming) {
-  const heldRevision = Number(held?.revision);
-  const incomingRevision = Number(incoming?.revision);
-  if (!Number.isFinite(heldRevision) || !Number.isFinite(incomingRevision)) return false;
-  return incomingRevision === heldRevision + 1;
+  const heldRevision = comparableRevision(held?.revision);
+  const incomingRevision = comparableRevision(incoming?.revision);
+  if (heldRevision === null || incomingRevision === null) return false;
+  return incomingRevision === heldRevision + 1n;
 }
 
 export function orderStatusLabel(status) {
