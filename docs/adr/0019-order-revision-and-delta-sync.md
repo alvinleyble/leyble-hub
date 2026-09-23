@@ -15,7 +15,13 @@ Connected foreground tablets keep their local order copies current with a bounde
   delta sync** (including bulk-action independent commit/outcome reporting and the
   connection-check backoff/app-wide scope) — **Done.** Migration 048 adds the revision;
   `server/src/routes/orders.js` enforces it; `client/src/offline/foregroundOrderSync.js`
-  owns the app-wide foreground cadence and backoff.
+  owns the app-wide foreground cadence and backoff. The delta has no self-origination
+  filter and every write path here adopts the server's response, so an id match alone is
+  this device's own echo as often as another device's edit: `orderChangedInEvent()` routes
+  every match through `isNewerRevision(held, incoming)` (strictly greater, compared as the
+  `BIGINT` it is), and `OrderDetailPage` asks again before it adopts a copy it parked
+  behind an open edit — a write that is not banner-gated, such as a receipt print, can
+  move the screen past what is parked.
 - **A drained write is adopted, never left to the poll** — **Done.** A receipt print is
   the only such write for an order a screen is already holding from the server
   (`queueReceiptPrinted` under `V25_OFFLINE_CORE`), so the revision bump it causes used to

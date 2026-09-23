@@ -15,7 +15,7 @@ import {
   getReceipt, putOrderSnapshot, updateLocalOrder, transitionLocalOrder,
   canTransitionOffline, isOrderUnsynced,
 } from '../../offline/index.js';
-import { handleStaleOrderWrite, orderChangedInEvent } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision, orderChangedInEvent } from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -287,11 +287,19 @@ export default function OrderDetailPage() {
     };
   }, [load, order, hasUnsavedEdits, adoptAuthoritativeOrder]);
 
+  // The strictly-newer rule has to hold where a parked delta is APPLIED, not only
+  // where it arrived. Not every write is gated by the amber banner: the header's Print
+  // Receipt button stays live behind it, and `POST /orders/:id/receipt-printed` carries
+  // no revision precondition while migration 048's trigger still bumps one, so the row
+  // on screen can move PAST what is parked while it waits. Adopting the parked copy
+  // then would roll both the screen and putOrderSnapshot's cached row backwards over
+  // the newer value — exactly what this predicate exists to prevent. Re-check, and
+  // discard rather than adopt, mirroring saveAdjustment's own 409 path.
   useEffect(() => {
     if (!pendingRemoteOrder || hasUnsavedEdits) return;
-    adoptAuthoritativeOrder(pendingRemoteOrder);
+    if (isNewerRevision(order, pendingRemoteOrder)) adoptAuthoritativeOrder(pendingRemoteOrder);
     setPendingRemoteOrder(null);
-  }, [pendingRemoteOrder, hasUnsavedEdits, adoptAuthoritativeOrder]);
+  }, [pendingRemoteOrder, order, hasUnsavedEdits, adoptAuthoritativeOrder]);
 
   useEffect(() => {
     if (!pendingSilentReload || hasUnsavedEdits) return;
@@ -827,7 +835,17 @@ export default function OrderDetailPage() {
           {order.status !== 'draft' && (
             <button
               type="button"
-              onClick={() => { setAdjExpanded((v) => !v); setAdjDirty(false); }}
+              onClick={() => {
+                // Cancel has to discard what was typed, not merely declare the form
+                // clean: a lingering adjValue reads back as the saved rate the next
+                // time the panel opens, and Save Adjustment would then commit the
+                // amount the operator believed they had thrown away. Re-derive both
+                // fields from the order exactly as adoptAuthoritativeOrder does.
+                setAdjExpanded((v) => !v);
+                setAdjValue(Number(order.adjustment) ? String(order.adjustment) : '');
+                setAdjReason(order.adjustment_reason || '');
+                setAdjDirty(false);
+              }}
               disabled={offlineViewingSynced}
               title={offlineViewingSynced ? 'Needs a connection' : undefined}
               className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed

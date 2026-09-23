@@ -452,6 +452,118 @@ test('a drain re-read is not deferred merely because the order carries an adjust
   r.unmount();
 });
 
+test('cancelling an adjustment entry discards it instead of leaving it to be saved later', async () => {
+  stubReads(adjustable({ revision: '6', adjustment: -50, adjustment_reason: 'Negotiated' }));
+  const patches = [];
+  api.patch = async (path, body) => {
+    patches.push(body);
+    return adjustable({
+      revision: '7', adjustment: body.adjustment, adjustment_reason: body.adjustment_reason,
+    });
+  };
+
+  const r = renderDetail();
+  await settle();
+  // The panel auto-expands for the saved -50; type over it, then change your mind.
+  typeAdjustment(r, '-75', 'Thrown away');
+  r.click(r.button('Cancel'));
+  await settle();
+
+  assert.match(r.text(), /Negotiated/, 'the collapsed summary still reads the saved rate');
+  assert.doesNotMatch(r.text(), /Thrown away/);
+
+  // Re-opening must not present the discarded figure as though it were the saved one.
+  r.click(r.button('Edit'));
+  await settle();
+  assert.equal(r.container.querySelector('input[type="number"]').value, '-50');
+  assert.equal(r.container.querySelector('textarea').value, 'Negotiated');
+
+  // And saving from there commits the saved rate, never the amount cancel threw away.
+  r.click(r.button('Save Adjustment'));
+  await settle();
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].adjustment, -50);
+  assert.equal(patches[0].adjustment_reason, 'Negotiated');
+  r.unmount();
+});
+
+// printWeb opens a popup and waits for its afterprint; jsdom's window.open answers
+// null, so stand in a fake whose afterprint this test fires itself.
+function stubPrintWindow() {
+  const original = window.open;
+  const handlers = {};
+  window.open = () => ({
+    closed: false,
+    document: { write() {}, close() {} },
+    focus() {}, print() {},
+    addEventListener: (type, fn) => { handlers[type] = fn; },
+    removeEventListener: () => {},
+  });
+  return {
+    afterPrint: () => handlers.afterprint?.(),
+    restore: () => { window.open = original; },
+  };
+}
+
+test('a parked delta is re-weighed when it is applied, never adopted backwards', async () => {
+  // The strictly-newer rule has to hold where a parked copy is APPLIED too: the header's
+  // Print Receipt is not gated by the amber banner, and POST /orders/:id/receipt-printed
+  // carries no revision precondition while migration 048's trigger still bumps one — so
+  // the screen can move PAST what is parked while the operator finishes an entry.
+  stubReads(adjustable({ revision: '5' }));
+  const printed = adjustable({
+    revision: '7',
+    adjustment: -10,
+    adjustment_reason: 'Other tablet',
+    delivered_receipt_printed_at: '2026-09-09T02:00:00.000Z',
+    delivered_receipt_printed_by_name: 'Josie',
+  });
+  const posts = [];
+  api.post = async (path, body) => { posts.push({ path, body }); return printed; };
+  const popup = stubPrintWindow();
+
+  try {
+    const r = renderDetail();
+    await settle();
+    r.click(r.button('+ Add Adjustment'));
+    await settle();
+    typeAdjustment(r, '-50', 'Mine');
+
+    // Another tablet edits the order; 6 is newer than the 5 on screen, so it is parked
+    // beside the entry and announced — correct, and unchanged by this fix.
+    act(() => window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
+      detail: { ids: [42], orders: [adjustable({
+        revision: '6', adjustment: -10, adjustment_reason: 'Other tablet',
+      })] },
+    })));
+    await settle();
+    assert.match(r.text(), /This order changed on another device/);
+
+    // The operator prints from the header, which the banner does not block. The route
+    // answers with the row at revision 7 — the print on top of that remote edit.
+    r.click(r.button('Print Receipt'));
+    await settle();
+    act(() => popup.afterPrint());
+    await settle();
+    r.click(r.button('Yes, tag as printed'));
+    await settle();
+    assert.deepEqual(posts.map((post) => post.path), ['/orders/42/receipt-printed']);
+    assert.match(r.text(), /Printed \(delivered\)/);
+
+    // Going idle flushes the parked copy — which is now OLDER than what is on screen.
+    r.click(r.button('Cancel'));
+    await settle();
+
+    assert.match(r.text(), /Printed \(delivered\)/,
+      'the parked revision 6 is discarded, not adopted over the printed revision 7');
+    assert.match(r.text(), /Other tablet/, 'and the remote edit revision 7 carries is kept');
+    assert.doesNotMatch(r.text(), /changed on another device/, 'the warning clears either way');
+    r.unmount();
+  } finally {
+    popup.restore();
+  }
+});
+
 // The review queue holds its own map of orders and gates on its own dirty flags, so
 // it needs the same predicate applied to its own loop.
 function renderReviewQueue(orderIds = [42]) {

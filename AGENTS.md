@@ -890,12 +890,24 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   adopts the server's response — so the echo of a save normally arrives at the revision the
   screen is already showing. **A delta is somebody else's change only when its revision is
   strictly NEWER than the one that screen holds**: `isNewerRevision()` in
-  `client/src/pages/orders/orderConcurrency.js` is the shared predicate, applied inside
-  `orderChangedInEvent()` and by `ReviewQueueModal`'s own loop. Equal means this device (the
-  false "changed on another device" warning after saving an adjustment); older means a delta
-  page fetched before a save that has since landed, which must be ignored rather than adopted
-  backwards over the newer value. Compare as `BigInt` — `revision` is a `BIGINT` returned as
-  a string and must never become a `Number`.
+  `client/src/pages/orders/orderConcurrency.js` is the shared predicate — signature
+  `isNewerRevision(held, incoming)`, and getting the two the wrong way round inverts it
+  silently — applied inside `orderChangedInEvent()` and by `ReviewQueueModal`'s own loops.
+  Equal means this device (the false "changed on another device" warning after saving an
+  adjustment); older means a delta page fetched before a save that has since landed, which
+  must be ignored rather than adopted backwards over the newer value. Compare as `BigInt`
+  (`comparableRevision`) — `revision` is a `BIGINT` returned as a string and must never
+  become a `Number`.
+- **The strictly-newer rule is re-checked where a parked delta is APPLIED, not only where it
+  arrives.** `OrderDetailPage`'s deferred-flush effect asks
+  `isNewerRevision(order, pendingRemoteOrder)` again before adopting, and discards the parked
+  copy otherwise. Not every write is gated by the amber banner — the header's Print Receipt
+  stays live behind it, and `POST /orders/:id/receipt-printed` carries no revision
+  precondition while migration 048's trigger still bumps one — so the row on screen can move
+  PAST what is parked while the operator finishes an entry. Adopting it then rolls both the
+  screen and `putOrderSnapshot`'s cached row backwards, which offline is what shows a printed
+  receipt as unprinted. Any new place that parks a server row for later adoption owes the
+  same re-check.
 - **A silent background re-read must be gated on the same dirty flags as a delta, and
   the adjustment's dirty flag is `adjDirty`, never `adjExpanded`.**
   `leyble:drain-complete` fires whenever *anything* in the outbox drains, and
@@ -910,6 +922,10 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   derived `hasUnsavedEdits` value computed at render, and that single value is also each
   effect's dependency — so the invariant holds structurally rather than by four hand-aligned
   copies, and a new confirm payload no longer re-subscribes the window listeners.
+  **Whatever clears `adjDirty` must also put `adjValue`/`adjReason` back** — the panel's
+  Cancel re-derives both from `order` the way `adoptAuthoritativeOrder` does. Clearing the
+  flag alone left the typed amount in the field, where it read back as the saved rate on the
+  next open and Save Adjustment would commit the figure the operator had discarded.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 
