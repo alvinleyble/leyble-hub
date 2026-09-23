@@ -319,7 +319,9 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   drained-write adoption bullet under "Order concurrency & delta sync" below.
   `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
   touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
-  the synced server row spinner-free. **`runDrainPass` in `outbox.js` is the single
+  the synced server row spinner-free; that re-read is deferred while the operator has
+  unsaved edits, per the silent-re-read bullet in that same section.
+  **`runDrainPass` in `outbox.js` is the single
   place that notifies, and callers must not notify again** — it routes any pass that
   sent something through `handleDrainCompletion` from its own `finally`, after the
   `draining` mutex clears and without awaiting it. This used to be each caller's
@@ -874,14 +876,55 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   so a genuine remote change still arrives unseen via `leyble:orders-changed` and still
   warns. Add an entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in
   `client/src/offline/outbox.js` only if its route answers with the full order row.
-  `isNewerRevision()` in `client/src/pages/orders/orderConcurrency.js` is the one
-  newer/not-newer comparison every screen uses; an echo of a revision already held is not
-  news. The drain path asks a narrower question on top of it — `isOneRevisionAhead()`,
-  since migration 048 advances the revision by exactly one per UPDATE and the print is one
-  UPDATE. Only a row exactly one ahead of what the screen holds is the print **and nothing
+  On top of the shared `isNewerRevision()` rule (see the next bullet) the drain path asks
+  a narrower question — `isOneRevisionAhead()`, since migration 048 advances the revision
+  by exactly one per UPDATE and the print is one UPDATE.
+  Only a row exactly one ahead of what the screen holds is the print **and nothing
   else** and can be adopted silently; a row further ahead carries somebody else's write too
   and goes down the ordinary "changed on another device" path, banner and all. Regression
   coverage: `client/test/review-queue-receipt-print-sync.test.mjs`.
+- **The delta re-delivers this device's OWN writes, so a `leyble:orders-changed` match is
+  not by itself another device.** `syncOrderDelta` is "everything changed anywhere (this
+  tablet or another one)" and has no self-origination filter, while every write path here
+  adopts the server's response — so the echo of a save normally arrives at the revision the
+  screen is already showing. **A delta is somebody else's change only when its revision is
+  strictly NEWER than the one that screen holds**: `isNewerRevision()` in
+  `client/src/pages/orders/orderConcurrency.js` is the shared predicate — signature
+  `isNewerRevision(held, incoming)`, and getting the two the wrong way round inverts it
+  silently — applied inside `orderChangedInEvent()` and by `ReviewQueueModal`'s own loops.
+  Equal means this device (the false "changed on another device" warning after saving an
+  adjustment); older means a delta page fetched before a save that has since landed, which
+  must be ignored rather than adopted backwards over the newer value. Compare as `BigInt`
+  (`comparableRevision`) — `revision` is a `BIGINT` returned as a string and must never
+  become a `Number`.
+- **The strictly-newer rule is re-checked where a parked delta is APPLIED, not only where it
+  arrives.** `OrderDetailPage`'s deferred-flush effect asks
+  `isNewerRevision(order, pendingRemoteOrder)` again before adopting, and discards the parked
+  copy otherwise. Not every write is gated by the amber banner — the header's Print Receipt
+  stays live behind it, and `POST /orders/:id/receipt-printed` carries no revision
+  precondition while migration 048's trigger still bumps one — so the row on screen can move
+  PAST what is parked while the operator finishes an entry. Adopting it then rolls both the
+  screen and `putOrderSnapshot`'s cached row backwards, which offline is what shows a printed
+  receipt as unprinted. Any new place that parks a server row for later adoption owes the
+  same re-check.
+- **A silent background re-read must be gated on the same dirty flags as a delta, and
+  the adjustment's dirty flag is `adjDirty`, never `adjExpanded`.**
+  `leyble:drain-complete` fires whenever *anything* in the outbox drains, and
+  `OrderDetailPage`'s handler ends in `adoptAuthoritativeOrder`, which rewrites
+  `adjValue`/`adjReason`/`adjExpanded` from the server row. Ungated, an unrelated drain
+  silently wiped the adjustment an operator was still typing and collapsed the panel. It is
+  deferred while the operator has UNSAVED edits and flushed once the screen is idle — never
+  dropped. `adjExpanded` is display state (`adoptAuthoritativeOrder` opens the panel for any
+  non-zero adjustment, with nobody having touched it), so gating on it strands the deferred
+  re-read — and the held `pendingRemoteOrder` — forever on every order carrying an
+  adjustment. All four gates (the two handlers and the two deferred-flush effects) read one
+  derived `hasUnsavedEdits` value computed at render, and that single value is also each
+  effect's dependency — so the invariant holds structurally rather than by four hand-aligned
+  copies, and a new confirm payload no longer re-subscribes the window listeners.
+  **Whatever clears `adjDirty` must also put `adjValue`/`adjReason` back** — the panel's
+  Cancel re-derives both from `order` the way `adoptAuthoritativeOrder` does. Clearing the
+  flag alone left the typed amount in the field, where it read back as the saved rate on the
+  next open and Save Adjustment would commit the figure the operator had discarded.
 - App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
   explicitly under first-setup — not part of this ADR's own scope.
 

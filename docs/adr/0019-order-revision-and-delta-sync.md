@@ -4,7 +4,7 @@ PostgreSQL is the authority for every non-draft order change. Each command carri
 
 Connected foreground tablets keep their local order copies current with a bounded cursor-based delta pull every 5 seconds, with catch-up after reconnect. This rollout starts with orders only; inventory and all other app areas remain later slices. Supabase Realtime is not used: the existing authenticated Express delta endpoint provides complete, ordered recovery without a second client credential or authorization path. Awareness never decides whether a write is valid; the database does.
 
-## Implementation status (as of 2026-09-17)
+## Implementation status (as of 2026-09-23)
 
 - **First-setup full-history gate** — **Done.** Merged via PR #117 on `dev`
   (`useSyncGate().blocking` / `isFirstSetupPending` in `client/src/offline/sync.js`,
@@ -15,7 +15,13 @@ Connected foreground tablets keep their local order copies current with a bounde
   delta sync** (including bulk-action independent commit/outcome reporting and the
   connection-check backoff/app-wide scope) — **Done.** Migration 048 adds the revision;
   `server/src/routes/orders.js` enforces it; `client/src/offline/foregroundOrderSync.js`
-  owns the app-wide foreground cadence and backoff.
+  owns the app-wide foreground cadence and backoff. The delta has no self-origination
+  filter and every write path here adopts the server's response, so an id match alone is
+  this device's own echo as often as another device's edit: `orderChangedInEvent()` routes
+  every match through `isNewerRevision(held, incoming)` (strictly greater, compared as the
+  `BIGINT` it is), and `OrderDetailPage` asks again before it adopts a copy it parked
+  behind an open edit — a write that is not banner-gated, such as a receipt print, can
+  move the screen past what is parked.
 - **A drained write is adopted, never left to the poll** — **Done.** A receipt print is
   the only such write for an order a screen is already holding from the server
   (`queueReceiptPrinted` under `V25_OFFLINE_CORE`), so the revision bump it causes used to
