@@ -575,7 +575,11 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   retry usually carries the revision the failed-but-committed write itself produced, and
   keying on the body verbatim would mint a new key and commit twice. Any answer from the
   server — success, 409, 400 — forgets the key immediately, so re-typing identical
-  values after a *successful* save is a new write and is never deduplicated. A body that
+  values after a *successful* save is a new write and is never deduplicated. Forgetting is
+  scoped to the **order**: an answer to any mutation of `/orders/<id>` or
+  `/orders/<id>/<action>` drops every key held for that order, so an earlier unknown
+  attempt is never replayed against a later deliberate write (dispatch times out, revert
+  answers, dispatch again is a real transition). A body that
   already carries a `request_key` (the outbox's own) is passed through untouched.
 - **Device state lives in native storage only** — `@capacitor/preferences`, **one key per
   record**, all under the `v25.` prefix, via `client/src/offline/nativeStore.js`. Never

@@ -278,7 +278,7 @@ async function request(path, options = {}) {
       // Nothing answered, so whether the server committed is unknowable from here. Hold
       // the key: the next attempt at this same edit resends it and the server settles it,
       // either by doing the write or by handing back the one it already did.
-      if (mutationKey) rememberMutationKey(mutationKey.signature, mutationKey.key);
+      if (mutationKey) rememberMutationKey(mutationKey.signature, mutationKey.key, mutationKey.order);
       // A rejected fetch here is a network error, a DNS failure, or our own timeout abort
       // — the request never reached the server at all. That is the Lie-Fi signal: flip to
       // offline immediately rather than waiting for the caller to notice a hung screen or
@@ -312,7 +312,7 @@ async function request(path, options = {}) {
 
   // The server answered. Whatever it said — a success, a 409, a 400 — the question this
   // key existed to settle is settled, and the next write from this screen is a new one.
-  if (mutationKey) forgetMutationKey(mutationKey.signature);
+  if (mutationKey) forgetMutationKey(mutationKey.signature, mutationKey.order);
 
   if (res.status === 401) {
     // ADR 0017 #8 — a takeover is the one 401 that has a story worth telling. The

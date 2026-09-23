@@ -187,3 +187,43 @@ test('a create is never keyed from its body', async () => {
     stopReachabilityWatcher();
   }
 });
+
+test('an answer on any write to the order forgets every key held for that order', async () => {
+  reset();
+  const originalFetch = globalThis.fetch;
+  const sent = [];
+  const fail = (_url, opts) => {
+    sent.push({ url: _url, body: JSON.parse(opts.body) });
+    const err = new Error('Failed to fetch');
+    err.name = 'TypeError';
+    return Promise.reject(err);
+  };
+  const answer = (_url, opts) => {
+    sent.push({ url: _url, body: JSON.parse(opts.body) });
+    return Promise.resolve(jsonResponse({ id: 5, revision: '9' }));
+  };
+  try {
+    globalThis.fetch = fail;
+    await assert.rejects(api.post('/orders/5/status', { status: 'in_transit', revision: '3' }));
+    await assert.rejects(api.post('/orders/7/status', { status: 'in_transit', revision: '1' }));
+    const dispatchKey = sent[0].body.request_key;
+    const otherOrderKey = sent[1].body.request_key;
+
+    globalThis.fetch = answer;
+    await api.post('/orders/5/status', { status: 'pending', revision: '4' });
+    await api.post('/orders/5/status', { status: 'in_transit', revision: '5' });
+    assert.notEqual(
+      sent[3].body.request_key, dispatchKey,
+      'a later answered write to the same order means the earlier attempt is no longer a retry'
+    );
+
+    await api.post('/orders/7/status', { status: 'in_transit', revision: '1' });
+    assert.equal(
+      sent[4].body.request_key, otherOrderKey,
+      'a key held for a different order survives an answer on this one'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    stopReachabilityWatcher();
+  }
+});

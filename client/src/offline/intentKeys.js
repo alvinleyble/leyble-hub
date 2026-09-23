@@ -37,6 +37,15 @@
 // edits the order again after a successful save gets a fresh key and a normal write, even
 // if they happen to retype the identical values; nothing is deduplicated against a write
 // that is already known to have finished.
+//
+// That forgetting is scoped to the ORDER, not just the one signature. An answer to ANY
+// mutation of order 5 — `/orders/5`, `/orders/5/status`, `/orders/5/adjustment`, … —
+// drops every key held for order 5. Once a later write to that order has been answered,
+// this device holds fresh knowledge of its state, and an earlier unknown attempt is no
+// longer a retry: dispatch (timed out, committed), revert to pending (answered), then
+// dispatch again must be a real transition, not a replay of the spent first key that the
+// server would answer with the still-pending order. Keys held for other orders are
+// untouched.
 
 // ── Deliberately in memory, not in `v25.` storage ───────────────────────────
 //
@@ -54,7 +63,7 @@ import { newRequestKey } from './requestKeys.js';
 // receipt number as the pre-039 fallback), and deriving a key from its body instead
 // would let two genuinely separate sales of the same goods collapse into one.
 const ORDER_MUTATION_PATH =
-  /^\/orders\/[^/?]+(\/(status|close|finalize|adjustment|receipt-printed))?$/;
+  /^\/orders\/([^/?]+)(\/(status|close|finalize|adjustment|receipt-printed))?$/;
 
 const KEYED_METHODS = new Set(['POST', 'PATCH']);
 
@@ -64,7 +73,7 @@ const KEYED_METHODS = new Set(['POST', 'PATCH']);
 const TTL_MS = 30 * 60 * 1000;
 const MAX_TRACKED = 64;
 
-const pendingKeys = new Map(); // signature → { key, at }
+const pendingKeys = new Map(); // signature → { key, at, order }
 
 function prune() {
   const cutoff = Date.now() - TTL_MS;
@@ -93,7 +102,8 @@ function intentSignature(path, method, body) {
  */
 export function prepareMutationKey(path, method, rawBody) {
   if (!KEYED_METHODS.has(method)) return null;
-  if (!ORDER_MUTATION_PATH.test(path)) return null;
+  const match = ORDER_MUTATION_PATH.exec(path);
+  if (!match) return null;
   if (typeof rawBody !== 'string' || !rawBody) return null;
 
   let body;
@@ -109,7 +119,9 @@ export function prepareMutationKey(path, method, rawBody) {
   const signature = intentSignature(path, method, body);
   const held = pendingKeys.get(signature);
   const key = held ? held.key : newRequestKey();
-  return { signature, key, body: JSON.stringify({ ...body, request_key: key }) };
+  return {
+    signature, key, order: match[1], body: JSON.stringify({ ...body, request_key: key }),
+  };
 }
 
 /**
@@ -117,16 +129,23 @@ export function prepareMutationKey(path, method, rawBody) {
  * abort). The server may or may not have committed, so hold the key: the next attempt at
  * the same intent resends it and the server settles the question.
  */
-export function rememberMutationKey(signature, key) {
+export function rememberMutationKey(signature, key, order) {
   if (!signature || !key) return;
   pendingKeys.delete(signature);
-  pendingKeys.set(signature, { key, at: Date.now() });
+  pendingKeys.set(signature, { key, at: Date.now(), order });
   prune();
 }
 
-/** The server answered — success or refusal. Either way the question is settled. */
-export function forgetMutationKey(signature) {
+/**
+ * The server answered — success or refusal. Either way the question is settled, and not
+ * just for this signature: every key held for the same order is dropped with it.
+ */
+export function forgetMutationKey(signature, order) {
   if (signature) pendingKeys.delete(signature);
+  if (order == null) return;
+  for (const [held, entry] of pendingKeys) {
+    if (entry.order === order) pendingKeys.delete(held);
+  }
 }
 
 /** Test seam. Nothing in the app clears the whole map. */
