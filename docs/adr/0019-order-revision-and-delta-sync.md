@@ -4,7 +4,7 @@ PostgreSQL is the authority for every non-draft order change. Each command carri
 
 Connected foreground tablets keep their local order copies current with a bounded cursor-based delta pull every 5 seconds, with catch-up after reconnect. This rollout starts with orders only; inventory and all other app areas remain later slices. Supabase Realtime is not used: the existing authenticated Express delta endpoint provides complete, ordered recovery without a second client credential or authorization path. Awareness never decides whether a write is valid; the database does.
 
-## Implementation status (as of 2026-09-23)
+## Implementation status (as of 2026-09-25)
 
 - **First-setup full-history gate** — **Done.** Merged via PR #117 on `dev`
   (`useSyncGate().blocking` / `isFirstSetupPending` in `client/src/offline/sync.js`,
@@ -50,6 +50,17 @@ Connected foreground tablets keep their local order copies current with a bounde
   with itself. The compare-and-swap semantics in the Decisions below are unchanged for
   every request that carries no key. See `AGENTS.md`'s "The same key covers order
   MUTATIONS" bullet for the mechanism.
+- **A timed-out save's own echo is not another device** — **Done.** A save the client
+  gave up on at 5s while the server committed it leaves the screen at R while the
+  server is at R+1, so the next delta was announced in the Edit Order modal as "changed
+  on another device". Revision arithmetic alone cannot settle it (R+1 is also what one
+  remote edit looks like while this device's never landed), so the host asks the
+  server: `confirmOwnWrite()` in `client/src/pages/orders/orderConcurrency.js` resends
+  the held, unanswered attempt under its own `request_key`. A spent key is replayed
+  (ours); an unspent one is refused `409` against the newer revision (not ours); neither
+  writes. Only a row exactly one ahead of both the screen and the attempt's own revision
+  is a candidate, and anything unproven keeps the warning. See `AGENTS.md`'s "A delta
+  one revision past a timed-out save" bullet.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).

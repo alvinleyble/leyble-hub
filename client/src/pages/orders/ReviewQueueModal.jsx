@@ -10,7 +10,9 @@ import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
-import { handleStaleOrderWrite, isNewerRevision, isOneRevisionAhead } from './orderConcurrency.js';
+import {
+  handleStaleOrderWrite, isNewerRevision, isOneRevisionAhead, useParkedOrderOwnership,
+} from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -95,6 +97,9 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const order = orders[activeId];
+  // Same rule as OrderDetailPage: the Edit modal's warning waits for the server to rule
+  // out this device's own timed-out save before it calls the change another device's.
+  const pendingRemoteOwnership = useParkedOrderOwnership(order, pendingRemoteOrder);
 
   useEffect(() => {
     const onOrdersChanged = (event) => {
@@ -376,7 +381,9 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
               <p className="text-slate-400 text-center py-20">Order not found.</p>
             ) : (
               <div className="max-w-2xl mx-auto">
-                {pendingRemoteOrder && (
+                {/* While the Edit modal is open it carries its own copy of this warning,
+                    judged by useParkedOrderOwnership — same split as OrderDetailPage. */}
+                {pendingRemoteOrder && !editing && (
                   <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
                     ⚠️ This order changed on another device. Your entries are unchanged; submitting them may be refused.
                   </div>
@@ -634,7 +641,8 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
       {editing && order && (
         <OrderCreateModal
           editOrder={order}
-          staleWarning={Boolean(pendingRemoteOrder)}
+          staleWarning={pendingRemoteOwnership === 'foreign'}
+          ownWriteRevision={pendingRemoteOwnership === 'own' ? pendingRemoteOrder.revision : null}
           onStale={(current) => {
             setPendingRemoteOrder(null);
             setReviewDirty(false);

@@ -73,7 +73,7 @@ const KEYED_METHODS = new Set(['POST', 'PATCH']);
 const TTL_MS = 30 * 60 * 1000;
 const MAX_TRACKED = 64;
 
-const pendingKeys = new Map(); // signature → { key, at, order }
+const pendingKeys = new Map(); // signature → { key, at, order, attempt }
 
 function prune() {
   const cutoff = Date.now() - TTL_MS;
@@ -121,6 +121,7 @@ export function prepareMutationKey(path, method, rawBody) {
   const key = held ? held.key : newRequestKey();
   return {
     signature, key, order: match[1], body: JSON.stringify({ ...body, request_key: key }),
+    attempt: { method, path, body },
   };
 }
 
@@ -129,11 +130,37 @@ export function prepareMutationKey(path, method, rawBody) {
  * abort). The server may or may not have committed, so hold the key: the next attempt at
  * the same intent resends it and the server settles the question.
  */
-export function rememberMutationKey(signature, key, order) {
+export function rememberMutationKey(signature, key, order, attempt = null) {
   if (!signature || !key) return;
   pendingKeys.delete(signature);
-  pendingKeys.set(signature, { key, at: Date.now(), order });
+  pendingKeys.set(signature, { key, at: Date.now(), order, attempt });
   prune();
+}
+
+/**
+ * The unanswered attempts this device is holding for one order, each with the key it
+ * went out under and the exact request it made (`attempt.body` is the body as sent,
+ * minus the key, so its `revision` is the one the attempt was made against).
+ *
+ * `refs` are the identifiers the order may have been addressed by — a row id and a
+ * receipt number, since the path segment is whichever the screen happened to use. This
+ * is what lets a screen ask whether a change the delta just delivered could be its own
+ * write that it was never told landed (orderConcurrency.js `confirmOwnWrite`).
+ */
+export function heldMutationAttempts(refs) {
+  prune();
+  const wanted = new Set(
+    (Array.isArray(refs) ? refs : [refs])
+      .filter((ref) => ref !== undefined && ref !== null && ref !== '')
+      .map(String)
+  );
+  const held = [];
+  for (const entry of pendingKeys.values()) {
+    if (entry.attempt && wanted.has(String(entry.order))) {
+      held.push({ key: entry.key, ...entry.attempt });
+    }
+  }
+  return held;
 }
 
 /**
