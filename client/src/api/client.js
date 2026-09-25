@@ -278,7 +278,11 @@ async function request(path, options = {}) {
       // Nothing answered, so whether the server committed is unknowable from here. Hold
       // the key: the next attempt at this same edit resends it and the server settles it,
       // either by doing the write or by handing back the one it already did.
-      if (mutationKey) rememberMutationKey(mutationKey.signature, mutationKey.key, mutationKey.order);
+      if (mutationKey) {
+        rememberMutationKey(
+          mutationKey.signature, mutationKey.key, mutationKey.order, mutationKey.attempt
+        );
+      }
       // A rejected fetch here is a network error, a DNS failure, or our own timeout abort
       // — the request never reached the server at all. That is the Lie-Fi signal: flip to
       // offline immediately rather than waiting for the caller to notice a hung screen or

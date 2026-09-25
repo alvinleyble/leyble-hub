@@ -7,7 +7,7 @@ import Spinner from '../../components/ui/Spinner';
 import Combobox from '../../components/ui/Combobox';
 import Modal from '../../components/ui/Modal';
 import { orderRef } from '../../utils/orderRef';
-import { handleStaleOrderWrite } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision } from './orderConcurrency.js';
 import { customerTypeBadge, customerTypeLabel, hasCustomPricing } from '../../utils/customerTypes';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import CaseStepper from '../../components/pos/CaseStepper';
@@ -137,6 +137,7 @@ function CustomerAndOrderTypeFields({
 
 export default function OrderCreateModal({
   onClose, onSaved, onStale, editOrder = null, offlineUnsynced = false, staleWarning = false,
+  ownWriteRevision = null,
 }) {
   const { addToast } = useToast();
   const isEdit = Boolean(editOrder);
@@ -224,6 +225,20 @@ export default function OrderCreateModal({
   // Captured exactly once when the form opens. A background delta may warn the
   // operator, but must never silently replace the precondition under their typing.
   const editRevisionRef    = useRef(editOrder?.revision ?? null);
+  // The one exception: the host has PROVEN (orderConcurrency.js `confirmOwnWrite`) that
+  // the newer revision is this form's own save — one the client timed out on while the
+  // server committed it. The server then holds exactly the opening revision plus this
+  // operator's own attempt, so there is nothing for the precondition to protect them
+  // from. Keeping the opening revision instead would get a save of anything they typed
+  // since refused as "changed on another device" — the very false alarm this proof
+  // suppresses. An unchanged retry is unaffected either way: it still carries the held
+  // request key and is answered as a replay. Only ever moves forward.
+  useEffect(() => {
+    if (ownWriteRevision === null || ownWriteRevision === undefined) return;
+    if (isNewerRevision({ revision: editRevisionRef.current }, { revision: ownWriteRevision })) {
+      editRevisionRef.current = ownWriteRevision;
+    }
+  }, [ownWriteRevision]);
 
   // ── Save-customer-defaults prompt (combined custom price + delivery fee) ───
   // One combined confirmation surface, shown at most once per save, for whichever of

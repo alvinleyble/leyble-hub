@@ -962,6 +962,26 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   Cancel re-derives both from `order` the way `adoptAuthoritativeOrder` does. Clearing the
   flag alone left the typed amount in the field, where it read back as the saved rate on the
   next open and Save Adjustment would commit the figure the operator had discarded.
+- **Built:** a delta one revision past a timed-out save is judged by the SERVER, not by
+  the revision. A save the client aborted at 5s while the server committed it leaves the
+  screen at R and the server at R+1 — the same shape as one edit from another device
+  while this device's never landed — so `isNewerRevision()` alone raised the Edit Order
+  modal's "changed on another device" over the operator's own save. Both hosts
+  (`OrderDetailPage`, `ReviewQueueModal`) run the parked delta through
+  `useParkedOrderOwnership()` in `orderConcurrency.js`: when `intentKeys.js` still holds
+  an unanswered attempt sent against the revision the screen holds, and the delta is
+  exactly one past it, `confirmOwnWrite()` resends that attempt verbatim under its own
+  key. Migration 050 claims the key before the revision check, so a spent key is a
+  replay (ours) and an unspent one a `409` against the newer revision (not ours) —
+  neither writes; that is also why it is never sent without a revision or for a draft.
+  The body carries its key, so the resend bypasses `intentKeys.js` and leaves the held
+  key in place for the operator's own retry. The modal's warning is hidden while the
+  answer is pending and shown for anything unproven. A proven own write also moves the
+  modal's precondition forward (`ownWriteRevision`) — otherwise a save of anything typed
+  after the failure is refused as another device's change. Known residue: the modal's
+  two-request save (edit, then adjustment) whose SECOND request times out is not
+  provable this way (the screen never learned the first revision), so it still warns.
+  Coverage: `client/test/edit-modal-own-timeout-warning.test.mjs`.
 - **Built (adjacent, not an ADR 0019 slice):** request-key idempotency on order
   mutations, which sits *in front of* the revision guard rather than changing it —
   migration 050, documented under "The same key covers order MUTATIONS" above. It is

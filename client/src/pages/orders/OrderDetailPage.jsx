@@ -15,7 +15,9 @@ import {
   getReceipt, putOrderSnapshot, updateLocalOrder, transitionLocalOrder,
   canTransitionOffline, isOrderUnsynced,
 } from '../../offline/index.js';
-import { handleStaleOrderWrite, isNewerRevision, orderChangedInEvent } from './orderConcurrency.js';
+import {
+  handleStaleOrderWrite, isNewerRevision, orderChangedInEvent, useParkedOrderOwnership,
+} from './orderConcurrency.js';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -152,6 +154,10 @@ export default function OrderDetailPage() {
   // never merged into or substituted for it. Closing the edit adopts this snapshot;
   // saving against the old revision is still authoritatively rejected by the server.
   const [pendingRemoteOrder, setPendingRemoteOrder] = useState(null);
+  // A parked delta is not always another device: a save this screen timed out on while
+  // the server committed it arrives as the next strictly-newer revision too. The Edit
+  // modal's warning is shown only once the server has confirmed it is NOT that write.
+  const pendingRemoteOwnership = useParkedOrderOwnership(order, pendingRemoteOrder);
   // Same idea for the silent post-drain re-read: deferred while an action is open,
   // then run once the screen is idle again. See the effect below.
   const [pendingSilentReload, setPendingSilentReload] = useState(false);
@@ -1090,7 +1096,8 @@ export default function OrderDetailPage() {
         <OrderCreateModal
           editOrder={order}
           offlineUnsynced={unsynced}
-          staleWarning={Boolean(pendingRemoteOrder)}
+          staleWarning={pendingRemoteOwnership === 'foreign'}
+          ownWriteRevision={pendingRemoteOwnership === 'own' ? pendingRemoteOrder.revision : null}
           onStale={(current) => {
             setPendingRemoteOrder(null);
             adoptAuthoritativeOrder(current);
