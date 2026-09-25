@@ -1,0 +1,35 @@
+name: Deploy Staging to Render
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-render-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Trigger Render Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render staging deploy hook
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.RENDER_STAGING_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_STAGING_DEPLOY_HOOK_URL secret is not configured or empty. Please configure this repository secret."
+            exit 1
+          fi
+
+          echo "Triggering Render staging deploy hook..."
+          curl -sS --fail -X POST \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --retry 3 \
+            --retry-delay 2 \
+            "$DEPLOY_HOOK_URL"
+          echo ""
+          echo "Render staging deploy hook successfully triggered."
