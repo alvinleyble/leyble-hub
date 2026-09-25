@@ -353,6 +353,15 @@ export default function OrdersPage() {
     clearSelection();
   }, [statusTab, page, clearSelection]);
 
+  // Handing the selection to the review queue consumes it. OrdersPage stays mounted under
+  // the queue, so every dispatch/close made inside it bumps a selected order's revision
+  // and the orders-changed listener above would otherwise read the operator's own work
+  // as a change from elsewhere (ADR 0019) and freeze bulk actions behind "Clear all".
+  const openReviewQueue = (mode) => {
+    setReviewQueue({ ids: Array.from(selectedIds), mode });
+    clearSelection();
+  };
+
   // D6 / G21 — Possible duplicate detection across loaded orders
   const possibleDoubleIds = useMemo(
     () => getPossibleDoubleOrderIds(orders),
@@ -827,7 +836,7 @@ export default function OrdersPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => setReviewQueue({ ids: Array.from(selectedIds), mode: 'pending' })}
+                    onClick={() => openReviewQueue('pending')}
                   >
                     Review Selected
                   </Button>
@@ -841,13 +850,13 @@ export default function OrdersPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => setReviewQueue({ ids: Array.from(selectedIds), mode: 'in_transit' })}
+                    onClick={() => openReviewQueue('in_transit')}
                   >
                     Review Selected
                   </Button>
                 )}
                 {statusTab === 'completed' && (
-                  <Button size="sm" onClick={() => setReviewQueue({ ids: Array.from(selectedIds), mode: 'delivered' })}>
+                  <Button size="sm" onClick={() => openReviewQueue('delivered')}>
                     Review Selected
                   </Button>
                 )}
@@ -1343,7 +1352,7 @@ export default function OrdersPage() {
         <ReviewQueueModal
           orderIds={reviewQueue.ids}
           mode={reviewQueue.mode}
-          onClose={() => { setReviewQueue(null); load(); }}
+          onClose={() => { setReviewQueue(null); clearSelection(); load(); }}
         />
       )}
     </div>
