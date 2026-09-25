@@ -81,6 +81,8 @@ See [Order Lifecycle](order-lifecycle.md) for status rules and stock/deposit beh
 | POST | `/orders/:id/status` | Transition status; validated by `getAllowedTransitions`. Deducts/restores stock at dispatch boundary (`in_transit` delivery / `completed` pickup) |
 | POST | `/orders/:id/close` | Record `bottles_returned` per item and move to `done`; folds deposit into total |
 
+`PATCH /orders/:id`, `PATCH /orders/:id/adjustment` and `POST /orders/:id/{status,close,finalize,receipt-printed}` accept an optional `request_key` (migration 050). A key already spent on the same order returns the stored order with `200` and writes nothing; a key spent on a different order is `409 request_key_reused`. The key is checked before the revision and status checks. `DELETE /orders/:id` does not take one. See [DATABASE.md §18](DATABASE.md#18-request_keys-050).
+
 ---
 
 ## Stations — `stations.js`

@@ -33,9 +33,26 @@
 // since a parked order is an orders row) and, since ADR 0015 §8 / migration 036,
 // `supplier_deliveries`. Adding a table here is the whole integration.
 
+// ── Creates vs. mutations ───────────────────────────────────────────────────
+//
+// Everything above stores the key ON the row the request created, which is only
+// possible because a create's result is a new row. An UPDATE has none: the order
+// already exists and is edited many times, so `claimRequestKey` below stores the key
+// in `request_keys` (migration 050) alongside the entity it was spent on.
+//
+// It is the same mechanism, not a second one — the same device-minted key, the same
+// `normalizeRequestKey`, the same "a conflict means this already happened, answer with
+// what is stored" rule. Only the storage site differs, and only because an update has
+// no row of its own to carry it.
+
 // Whitelist, because the table name is interpolated into SQL. Never take this from
 // a request body.
 const RECEIPT_TABLES = new Set(['orders', 'supplier_deliveries']);
+
+// The same idea for `request_keys.entity_type`: a closed set, never a request field.
+// `order` is the only member today; a second entity is one entry here plus the claim
+// call in its route.
+const MUTATION_ENTITIES = new Set(['order']);
 
 const UNIQUE_VIOLATION = '23505';
 
@@ -112,13 +129,60 @@ function isUniqueViolation(err, indexName) {
 const isDuplicateRequestKey = isUniqueViolation;
 const isDuplicateReceiptNumber = isUniqueViolation;
 
+/**
+ * Claims `key` for one mutation of one entity, inside the caller's transaction.
+ *
+ * Returns `{ claimed: true }` the first time a key is seen: the caller owns this
+ * attempt and goes on to do the work. The claim lives in the same transaction as that
+ * work, so a rolled-back write releases its key and a committed one keeps it — the key
+ * is spent exactly when the write it guards is.
+ *
+ * Returns `{ claimed: false, entityType, entityId }` when the key is already stored,
+ * which means this exact attempt already ran to completion. The caller must NOT repeat
+ * the work; it answers with the entity as stored. `entityId` is returned rather than
+ * assumed so a key replayed against a different entity is recognisable as misuse
+ * instead of being answered with some other order's data.
+ *
+ * `ON CONFLICT DO NOTHING` rather than a look-then-insert: it is one round trip on the
+ * common path (round trips are the budget here — see CLAUDE.md), and it waits on a
+ * concurrent claim of the same key rather than racing it, which is what makes two
+ * overlapping retries of one aborted save resolve to a single write.
+ */
+async function claimRequestKey(runner, { key, entityType, entityId }) {
+  if (!MUTATION_ENTITIES.has(entityType)) {
+    throw new Error(`Entity '${entityType}' is not covered by request-key idempotency`);
+  }
+  const { rowCount } = await runner.query(
+    `INSERT INTO request_keys (request_key, entity_type, entity_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (request_key) DO NOTHING`,
+    [key, entityType, entityId]
+  );
+  if (rowCount === 1) return { claimed: true, entityType, entityId };
+
+  // A separate statement, so it reads a fresh snapshot and therefore sees the row that
+  // caused the conflict even when that row was committed by another transaction while
+  // the INSERT above was waiting on it.
+  const { rows: [prior] } = await runner.query(
+    'SELECT entity_type, entity_id FROM request_keys WHERE request_key = $1',
+    [key]
+  );
+  return {
+    claimed: false,
+    entityType: prior ? prior.entity_type : null,
+    entityId: prior ? Number(prior.entity_id) : null,
+  };
+}
+
 module.exports = {
   normalizeRequestKey,
+  claimRequestKey,
   findByRequestKey,
   findByReceiptNumber,
   isDuplicateRequestKey,
   isDuplicateReceiptNumber,
   isUniqueViolation,
   RECEIPT_TABLES,
+  MUTATION_ENTITIES,
   REQUEST_KEY_MAX_LENGTH,
 };

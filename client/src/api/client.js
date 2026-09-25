@@ -1,6 +1,9 @@
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { markOffline } from '../offline/status.js';
+import {
+  prepareMutationKey, rememberMutationKey, forgetMutationKey,
+} from '../offline/intentKeys.js';
 import { formatConnectionError } from '../utils/errors.js';
 import { getAppVersion, getAppBuild } from '../version/appVersion.js';
 
@@ -223,6 +226,17 @@ async function request(path, options = {}) {
   // network failure below.
   const callerSignal = fetchOptions.signal;
   const method = (fetchOptions.method || 'GET').toUpperCase();
+
+  // The retry key on a mutation of an existing order (migration 050, intentKeys.js).
+  //
+  // It belongs here rather than in each caller because the abort that makes it necessary
+  // is here: REQUEST_TIMEOUT_MS gives up on a request the server is still committing, so
+  // EVERY mutating order write is exposed, including ones added later. intentKeys.js
+  // decides which requests those are and returns null for the rest — which is almost all
+  // of them, and always includes a body that already carries the outbox's own key.
+  const mutationKey = prepareMutationKey(path, method, fetchOptions.body);
+  if (mutationKey) fetchOptions.body = mutationKey.body;
+
   const isSafeIdempotent = method === 'GET' || method === 'HEAD';
   const allowRetry = fetchOptions.retry !== false && isSafeIdempotent;
 
@@ -261,6 +275,10 @@ async function request(path, options = {}) {
       });
       break;
     } catch (err) {
+      // Nothing answered, so whether the server committed is unknowable from here. Hold
+      // the key: the next attempt at this same edit resends it and the server settles it,
+      // either by doing the write or by handing back the one it already did.
+      if (mutationKey) rememberMutationKey(mutationKey.signature, mutationKey.key, mutationKey.order);
       // A rejected fetch here is a network error, a DNS failure, or our own timeout abort
       // — the request never reached the server at all. That is the Lie-Fi signal: flip to
       // offline immediately rather than waiting for the caller to notice a hung screen or
@@ -291,6 +309,10 @@ async function request(path, options = {}) {
       if (onCallerAbort) callerSignal.removeEventListener('abort', onCallerAbort);
     }
   }
+
+  // The server answered. Whatever it said — a success, a 409, a 400 — the question this
+  // key existed to settle is settled, and the next write from this screen is a new one.
+  if (mutationKey) forgetMutationKey(mutationKey.signature, mutationKey.order);
 
   if (res.status === 401) {
     // ADR 0017 #8 — a takeover is the one 401 that has a story worth telling. The
