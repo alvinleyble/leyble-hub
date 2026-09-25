@@ -61,6 +61,8 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Northfla
 This is the **staging** service — production runs on Northflank (see
 [`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md)); Render's free tier
 spin-down is acceptable for internal staging validation, which is why it was reassigned here.
+Deploys from `staging` are triggered by GitHub Actions ([`.github/workflows/deploy-render-staging.yml`](../../.github/workflows/deploy-render-staging.yml))
+via Render's deploy hook secret (`RENDER_STAGING_DEPLOY_HOOK_URL`).
 1. Create a **Web Service** at https://render.com from this GitHub repo. **Root Directory:
    leave blank** (repo root).
    - Build command: `npm --prefix server install && node server/db/migrate.js`
