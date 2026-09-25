@@ -39,6 +39,17 @@ Connected foreground tablets keep their local order copies current with a bounde
   holds is the print and nothing else. A row further ahead carries another device's write
   in the same window and takes the ordinary stale-warning path instead of being adopted
   silently — it never clears a warning it cannot explain.
+- **Request-key idempotency on order mutations** — **Done (adjacent work, not a
+  decision of this ADR).** Migration 050 plus `claimRequestKey` in
+  `server/src/lib/idempotency.js`. It sits IN FRONT of the revision guard: a mutating
+  order write may carry the same device-minted `request_key` a create does, and the
+  route answers a key it already holds with the stored order before the revision is
+  compared. It exists because `client/src/api/client.js` aborts every request after 5
+  seconds without cancelling the handler, so a committed save is reported as a failure
+  and the retry became either a second edit or a `409 stale_write` describing a conflict
+  with itself. The compare-and-swap semantics in the Decisions below are unchanged for
+  every request that carries no key. See `AGENTS.md`'s "The same key covers order
+  MUTATIONS" bullet for the mechanism.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).

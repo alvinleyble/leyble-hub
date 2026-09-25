@@ -6,7 +6,7 @@ const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber, parseBareSequence } = require('../lib/receiptNumbers');
 const { assertIssuableStation } = require('../lib/personNumbers');
 const {
-  normalizeRequestKey, findByRequestKey, findByReceiptNumber,
+  normalizeRequestKey, claimRequestKey, findByRequestKey, findByReceiptNumber,
   isDuplicateRequestKey, isDuplicateReceiptNumber,
 } = require('../lib/idempotency');
 
@@ -66,6 +66,59 @@ function expectedRevision(value) {
 
 function revisionMatches(order, revision) {
   return revision === null || String(order.revision) === revision;
+}
+
+// ── The retry key on a MUTATION (migration 050) ─────────────────────────────
+//
+// client/src/api/client.js gives every request 5 seconds and then aborts it. The abort
+// reaches the socket, not this process: the handler runs on and the transaction commits,
+// so the operator is told the save failed while it actually landed. Whatever they do
+// next is the damage — retry and the order is edited twice, or hold the revision their
+// own unreported write superseded and be refused with ADR 0019's 409.
+//
+// So a mutating order write may carry the same device-minted `request_key` a create
+// does, and the two helpers below are how a route spends it: read it once up front (a
+// malformed one is a 400, exactly as on POST /orders — silently ignoring it would
+// silently remove the protection), then claim it inside the transaction, before the
+// revision is compared.
+//
+// Before, deliberately. A retry of an aborted save holds a revision that is now stale
+// BECAUSE OF ITS OWN first attempt; checking the revision first would answer it with a
+// 409 that describes a conflict with itself. The key is the more specific question —
+// "has this exact attempt already happened?" — and it is asked first. A genuinely
+// different write, carrying its own key, falls through to the revision check unchanged.
+function orderRequestKey(req) {
+  return normalizeRequestKey(req.body?.request_key);
+}
+
+// Answers the request and returns true when this attempt has already been made, so the
+// caller stops. Returns false when the key is fresh (or absent) and the write should go
+// ahead. Always called with an open transaction; it rolls back before answering, since
+// a replay must change nothing.
+async function requestKeyAlreadySpent(client, res, requestKey, orderId) {
+  if (!requestKey) return false;
+  const claim = await claimRequestKey(client, {
+    key: requestKey, entityType: 'order', entityId: orderId,
+  });
+  if (claim.claimed) return false;
+
+  await client.query('ROLLBACK');
+  if (claim.entityType !== 'order' || claim.entityId !== orderId) {
+    // The same key spent on something else. Not a retry of this write, so answering it
+    // with this order would be a lie and repeating the write would be a duplicate. 409
+    // lands it in the device's needs-attention list, where a human decides — the same
+    // treatment a receipt-number collision gets on POST / for the same reason.
+    res.status(409).json({
+      code: 'request_key_reused',
+      error: 'This request key was already used for a different write. Re-issue the request.',
+    });
+    return true;
+  }
+  // The stored order, not a replayed response body: it is the authoritative current
+  // state, revision included, which is what the client needs to carry on from. Same
+  // answer POST / gives a resent create.
+  res.json(await getFullOrder(claim.entityId));
+  return true;
 }
 
 async function sendStaleWrite(client, res, orderId, revision) {
@@ -951,6 +1004,14 @@ router.get('/:id', async (req, res, next) => {
 
 // PATCH /api/v1/orders/:id — edit metadata and/or line items (all statuses)
 router.patch('/:id', async (req, res, next) => {
+  // Before the connection: a malformed key is a 400 and never opens a transaction.
+  let requestKey;
+  try {
+    requestKey = orderRequestKey(req);
+  } catch (err) {
+    return next(err);
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -969,6 +1030,9 @@ router.patch('/:id', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
+
+    // The 5s-abort replay, answered with the order this same attempt already wrote.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
 
     const { notes, items, personnel, customer_id, order_type, delivery_fee_charged } = req.body;
     const isDraft = order.status === 'draft';
@@ -1145,6 +1209,13 @@ router.patch('/:id', async (req, res, next) => {
 
 // POST /api/v1/orders/:id/finalize — turn a draft into a real Pending order
 router.post('/:id/finalize', async (req, res, next) => {
+  let requestKey;
+  try {
+    requestKey = orderRequestKey(req);
+  } catch (err) {
+    return next(err);
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -1163,6 +1234,9 @@ router.post('/:id/finalize', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
+    // Ahead of the draft check: a replay of a finalize that already committed finds a
+    // 'pending' order and would otherwise be refused for not being a draft any more.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (order.status !== 'draft') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Only draft orders can be finalized' });
@@ -1259,8 +1333,10 @@ router.patch('/:id/adjustment', async (req, res, next) => {
   }
 
   let revision;
+  let requestKey;
   try {
     revision = expectedRevision(req.body.revision);
+    requestKey = orderRequestKey(req);
   } catch (err) {
     return res.status(err.status).json({ error: err.message });
   }
@@ -1281,6 +1357,7 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (!revisionMatches(order, revision)) {
       return sendStaleWrite(client, res, order.id, revision);
     }
@@ -1319,27 +1396,50 @@ router.patch('/:id/adjustment', async (req, res, next) => {
 // POST /api/v1/orders/:id/receipt-printed — tag that a receipt was printed and
 // confirmed by the user, for either the 'pending' or 'delivered' phase
 router.post('/:id/receipt-printed', async (req, res, next) => {
+  const { phase } = req.body;
+  if (!['pending', 'delivered'].includes(phase)) {
+    return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
+  }
+
+  let requestKey;
   try {
-    const { phase } = req.body;
-    if (!['pending', 'delivered'].includes(phase)) {
-      return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
+    requestKey = orderRequestKey(req);
+  } catch (err) {
+    return next(err);
+  }
+
+  // This route used to run on the pool with no transaction, which was fine while
+  // re-sending it was merely wasteful (a re-stamped timestamp, a second activity-log
+  // row, two revision bumps for one print). Claiming a retry key has to be atomic with
+  // the write it guards, so the whole thing is one transaction now. It stays
+  // deliberately unguarded by ADR 0019's revision: recording a print is additive.
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
     }
 
-    const orderId = await resolveOrderId(db, req.params.id);
-    if (!orderId) return res.status(404).json({ error: 'Order not found' });
-
-    const { rows: [order] } = await db.query(
-      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
+    const { rows: [order] } = await client.query(
+      'SELECT id, receipt_number FROM orders WHERE id = $1 FOR UPDATE', [orderId]
     );
-    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
 
     const column = phase === 'pending' ? 'pending_receipt_printed' : 'delivered_receipt_printed';
-    await db.query(
+    await client.query(
       `UPDATE orders SET ${column}_at = NOW(), ${column}_by = $1, updated_at = NOW() WHERE id = $2`,
       [req.user.id, order.id]
     );
 
-    await logActivity(db, {
+    await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
       action:     'receipt_printed',
@@ -1347,9 +1447,13 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       performedBy: req.user.id,
     });
 
+    await client.query('COMMIT');
     res.json(await getFullOrder(order.id));
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 });
 
@@ -1376,12 +1480,18 @@ router.post('/:id/status', async (req, res, next) => {
 
     const { status: newStatus, expected_status: expectedStatus } = req.body;
     let revision;
+    let requestKey;
     try {
       revision = expectedRevision(req.body.revision);
+      requestKey = orderRequestKey(req);
     } catch (err) {
       await client.query('ROLLBACK');
       return res.status(err.status).json({ error: err.message });
     }
+    // Ahead of both guards. A replayed transition has already moved the order (and
+    // already moved the stock, ADR 0012), so the state machine would refuse it with a
+    // 422 and strand the outbox record — the very thing the key exists to prevent.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (!revisionMatches(order, revision)
         || (expectedStatus !== undefined && expectedStatus !== order.status)) {
       return sendStaleWrite(client, res, order.id, revision);
@@ -1502,12 +1612,17 @@ router.post('/:id/close', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     let revision;
+    let requestKey;
     try {
       revision = expectedRevision(req.body.revision);
+      requestKey = orderRequestKey(req);
     } catch (err) {
       await client.query('ROLLBACK');
       return res.status(err.status).json({ error: err.message });
     }
+    // Ahead of the status check for the same reason finalize is: a replayed close finds
+    // an order that is already 'done'.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (!revisionMatches(order, revision)) {
       return sendStaleWrite(client, res, order.id, revision);
     }

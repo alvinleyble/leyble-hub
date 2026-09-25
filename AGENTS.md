@@ -544,6 +544,43 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   record, ADR 0014's mixed-fleet window) and must never be removed.** Mechanism is
   table-agnostic in `server/src/lib/idempotency.js` — `orders` and `supplier_deliveries`
   carry the same column shape, so a third table is one allowlist entry.
+- **The same key covers order MUTATIONS, and it is checked BEFORE ADR 0019's revision**
+  (migration 050, `claimRequestKey` in `server/src/lib/idempotency.js`). `api/client.js`
+  aborts every request after 5s; the abort reaches the socket, not Express, so the
+  handler commits while the operator is told the save failed. The retry then either
+  edits the order twice (staging order 2218 — one edit 14s after another) or is refused
+  with `409 stale_write` against a revision its own unreported write superseded. So
+  `PATCH /orders/:id`, `PATCH /orders/:id/adjustment`, `POST /orders/:id/status`,
+  `/close`, `/finalize` and `/receipt-printed` all accept `request_key`, claim it inside
+  their own transaction, and answer a key already stored with the order as stored.
+  **Claim before the revision check and before the status/state-machine checks** — a
+  replay is stale and out-of-state *because of its own first attempt*, so asking those
+  questions first answers it with a 409 or a 422 describing a conflict with itself. It
+  is the 039 mechanism, not a second one: same device-minted key, same
+  `normalizeRequestKey`, same "a conflict means this already happened". Only the storage
+  site differs (`request_keys`, since an UPDATE has no row of its own to carry the key).
+  Costs exactly one extra round trip, flat, and only when a key is sent — pinned by
+  `server/test/orders-edit-batching.test.js`. `DELETE /orders/:id` is deliberately
+  excluded: a replayed delete 404s and the outbox already reads that as success.
+  **`POST /orders` is excluded from the client-side derivation too** — a create already
+  has its own wire identity (the outbox record's key, the receipt number as the pre-039
+  fallback), and deriving one from the body would let two separate sales of the same
+  goods collapse into one.
+- **Where the key comes from on a LIVE screen: `client/src/offline/intentKeys.js`.** The
+  outbox keeps a key per durable record; a screen has no record, just an operator who
+  tapped Save, saw it fail and tapped again. So `api/client.js` derives the key from the
+  *intent* — method, path, and the body **with `revision` removed** — and holds it only
+  while that attempt's outcome is UNKNOWN (a network failure or its own timeout abort).
+  Dropping `revision` is load-bearing: `foregroundOrderSync` refreshes every 5s, so the
+  retry usually carries the revision the failed-but-committed write itself produced, and
+  keying on the body verbatim would mint a new key and commit twice. Any answer from the
+  server — success, 409, 400 — forgets the key immediately, so re-typing identical
+  values after a *successful* save is a new write and is never deduplicated. Forgetting is
+  scoped to the **order**: an answer to any mutation of `/orders/<id>` or
+  `/orders/<id>/<action>` drops every key held for that order, so an earlier unknown
+  attempt is never replayed against a later deliberate write (dispatch times out, revert
+  answers, dispatch again is a real transition). A body that
+  already carries a `request_key` (the outbox's own) is passed through untouched.
 - **Device state lives in native storage only** — `@capacitor/preferences`, **one key per
   record**, all under the `v25.` prefix, via `client/src/offline/nativeStore.js`. Never
   `localStorage`, never IndexedDB (Android evicts them; "clear data" wipes them). It must
@@ -925,6 +962,12 @@ never let it drift from the ADR's own "Implementation status" section (keep the 
   Cancel re-derives both from `order` the way `adoptAuthoritativeOrder` does. Clearing the
   flag alone left the typed amount in the field, where it read back as the saved rate on the
   next open and Save Adjustment would commit the figure the operator had discarded.
+- **Built (adjacent, not an ADR 0019 slice):** request-key idempotency on order
+  mutations, which sits *in front of* the revision guard rather than changing it —
+  migration 050, documented under "The same key covers order MUTATIONS" above. It is
+  what stops the 5s client abort turning one save into two edits, or into a
+  `409 stale_write` the operator cannot act on. The compare-and-swap semantics below are
+  untouched for every request that carries no key.
 - App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
   explicitly under first-setup — not part of this ADR's own scope.
 
@@ -1018,6 +1061,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no device/person identity behind a receipt number | `users.receipt_person` (the permanent person number) and the `user_devices` table (one row per person-and-device pair, holding that pair's `device_letter`) added (migration 043) |
 | no session concept on `users` | `session_id` / `session_device` / `session_started_at` added (migration 044) — ADR 0017 #8's one session per account; all nullable, and a token with no `sid` claim is still accepted |
 | receipt number has no device letter | `orders.receipt_device` + `supplier_deliveries.receipt_device` added and both `GENERATED` display columns rebuilt over them (migration 040) — ADR 0017's `1A-00042`. Both partial unique indexes rebuilt with the letter `COALESCE`d **inside the index expression**, which is what keeps them protecting pre-letter rows |
+| no store of retry keys for order UPDATES | `request_keys` table added (migration 050) — `(request_key PK, entity_type, entity_id, created_at)`. Migration 039's `orders.request_key` covers CREATES, where the key can ride the row the request made; an UPDATE has no such row, so a mutating order write claims its key here inside the same transaction. Nothing prunes it yet |
 | `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots, now **dead columns**: [ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) removed the slot concept and nothing reads or writes them. `activity_logs.entity_type` widened to accept `'station'` in the same migration, which is still live — that is where a device-letter allocation is recorded |
 | `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_device`/`receipt_sequence` triple + partial unique index, and a `GENERATED` `delivery_ref` (`1A-DEL-00007`) added (migrations 036, 040) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8, ADR 0017 #14) |
 

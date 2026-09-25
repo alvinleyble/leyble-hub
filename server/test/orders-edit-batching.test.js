@@ -334,6 +334,47 @@ describe('Order edit stays inside the write budget (batched PATCH transaction)',
       }
     });
 
+    it('adds exactly one round trip for the retry key, however many lines there are',
+      async () => {
+        // Migration 050's claim is what makes an aborted-then-retried save commit once,
+        // and it costs one INSERT … ON CONFLICT. One, flat: it is a statement about the
+        // ATTEMPT, not about the order, so a twelve-line edit pays the same as a
+        // three-line one. Worth pinning because round trips are the whole budget here —
+        // that a save can blow through 5s is the defect the key exists to survive, not a
+        // licence to spend more of them.
+        //
+        // A fresh dispatched order per measurement: editing an order twice would make the
+        // second edit cheaper (no stock delta left to apply) and the comparison
+        // meaningless.
+        const editBody = ({ products }, requestKey) => JSON.stringify({
+          notes: 'keyed edit',
+          items: products.map((p, i) => ({
+            product_id: p.id, quantity: 4 + i, unit_price: 130 + i,
+          })),
+          ...(requestKey ? { request_key: requestKey } : {}),
+        });
+        const editOnce = async (fixture, requestKey) => measure(async () => {
+          const res = await api(`/${fixture.order.id}`, {
+            method: 'PATCH', body: editBody(fixture, requestKey),
+          });
+          await expectStatus(res, 200);
+        });
+
+        const keyless   = await editOnce(await dispatchedOrderWith(12));
+        const keyedBig  = await editOnce(await dispatchedOrderWith(12), `rk_batchbig${Date.now()}`);
+        const keyedSmall = await editOnce(await dispatchedOrderWith(3), `rk_batchsmall${Date.now()}`);
+
+        assert.equal(
+          keyedBig.count, keyless.count + 1,
+          `the key cost ${keyedBig.count - keyless.count} round trips, not 1:\n` +
+          keyedBig.statements.join('\n---\n')
+        );
+        assert.equal(
+          keyedBig.count, keyedSmall.count,
+          "the key's cost must not grow with the order"
+        );
+      });
+
     it('completes a 12-line dispatched edit well inside the write budget at 40ms/query',
       async () => {
         const { order, products } = await dispatchedOrderWith(12);
