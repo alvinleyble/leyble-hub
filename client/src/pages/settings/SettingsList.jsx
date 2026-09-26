@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import NavIcon from '../../components/layout/NavIcon';
 import { usePrinter } from '../../context/PrinterContext';
-import { listRecords, subscribeOutbox } from '../../offline/outbox';
 import { getAppInfo } from '../../version/appVersion';
 
 // The Settings screen itself: one row per sub-setting — icon, name, a one-line summary
@@ -13,25 +12,8 @@ export const SETTINGS_SCREENS = [
   { id: 'profile', title: 'Profile',     icon: 'profile' },
   { id: 'printer', title: 'Printer',     icon: 'printer' },
   { id: 'device',  title: 'This device', icon: 'device' },
-  { id: 'sync',    title: 'Sync',        icon: 'sync' },
   { id: 'about',   title: 'About',       icon: 'about' },
 ];
-
-function useWaitingCount() {
-  const [count, setCount] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      listRecords()
-        .then((records) => { if (alive) setCount(records.length); })
-        .catch(() => { if (alive) setCount(null); });
-    };
-    load();
-    const unsubscribe = subscribeOutbox(load);
-    return () => { alive = false; unsubscribe(); };
-  }, []);
-  return count;
-}
 
 function useAboutSummary(native) {
   const [summary, setSummary] = useState(native ? '' : 'Shown in the Android app');
@@ -56,14 +38,12 @@ function SavedPrinterName() {
 export default function SettingsList({
   userName, receiptSummary, native = Capacitor.isNativePlatform(),
 }) {
-  const waiting = useWaitingCount();
   const about = useAboutSummary(native);
 
   const summaries = {
     profile: userName,
     printer: native ? <SavedPrinterName /> : 'Set up in the Android app',
     device: !receiptSummary ? '' : (receiptSummary.series || 'Not set up yet'),
-    sync: waiting === null ? '' : (waiting === 0 ? 'All sent' : `${waiting} waiting`),
     about,
   };
 

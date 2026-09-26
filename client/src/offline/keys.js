@@ -74,15 +74,6 @@ export function snapshotIdentifier(order) {
 // sync, and whether it has ever finished its one-time first setup.
 export const SYNC_STATE_KEY = `${NS}sync.state`;
 
-// When this device last successfully exchanged data with the server for sync — an
-// outbox drain that sent something, a sync run or order poll that got an answer. Read
-// by Settings' "Last synced". Its own key, never a field of SYNC_STATE_KEY: the drain
-// writes it, and a read-modify-write of the sync state from the drain would race the
-// sync run's own cursor writes. Distinct from `last_sync_completed_at` in that state,
-// which a sync run stamps whether or not the server answered (it drives the reconnect
-// throttle, not a display).
-export const LAST_SYNCED_KEY = `${NS}sync.lastSyncedAt`;
-
 // Reference data cached whole (server-replaced, not built up locally) — see
 // catalogue.js. Personnel joins products/customers here so Driver/Helper assignment
 // in the order modal works blind (ADR 0015 §9).

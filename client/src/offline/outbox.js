@@ -6,7 +6,6 @@ import { markOffline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
 import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
-import { recordLastSynced } from './lastSynced.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -501,7 +500,6 @@ async function runDrainPass() {
       }
     }
 
-    if (sent > 0) await recordLastSynced();
     const remaining = await listRecords();
     await pruneRefs(remaining);
     const waiting = remaining.filter((r) => r.status === QUEUED).length;

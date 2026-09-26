@@ -6,15 +6,14 @@ import SettingsList, { SETTINGS_SCREENS } from './settings/SettingsList';
 import ProfileSection from './settings/ProfileSection';
 import PrinterSection from './settings/PrinterSection';
 import DeviceSection, { useDeviceReceiptSummary } from './settings/DeviceSection';
-import SyncSection from './settings/SyncSection';
 import AboutSection from './settings/AboutSection';
 
 // Settings, reached from the hamburger menu. `/settings` is a list of rows — Profile,
-// Printer, This device, Sync, About — and each opens on its own screen at
+// Printer, This device, About — and each opens on its own screen at
 // `/settings/<id>` with a back control to the list. Everyone sees all of it; the app
 // has no roles yet. Apart from the account switch and the printer choice, everything
-// below Profile is read-only: it shows what printing, numbering and sync are doing
-// without changing how they do it.
+// below Profile is read-only: it shows what printing and numbering are doing without
+// changing how they do it.
 export default function SettingsPage() {
   const { section } = useParams();
   const { user } = useAuth();
@@ -49,7 +48,6 @@ export default function SettingsPage() {
       {section === 'profile' && <ProfileSection />}
       {section === 'printer' && <PrinterSection deviceSeries={receiptSummary?.series || null} />}
       {section === 'device' && <DeviceSection summary={receiptSummary} />}
-      {section === 'sync' && <SyncSection />}
       {section === 'about' && <AboutSection />}
     </div>
   );
