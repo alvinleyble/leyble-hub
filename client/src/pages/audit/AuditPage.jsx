@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -164,8 +165,8 @@ export default function AuditPage() {
 
   const hasFilters = Boolean(productId || actionType || fromDate || toDate);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (productId)  params.set('product_id',  productId);
     if (actionType) params.set('action_type', actionType);
@@ -181,7 +182,7 @@ export default function AuditPage() {
     // quietly-refreshed window rather than a mirror of an append-only table that grows
     // forever. When the live call fails, the held copy is filtered here instead, so
     // the same filter controls keep working on the copy.
-    loadWithCache(AUDIT_INVENTORY_CACHE, () => api.get(`/audit?${qs}`), { cacheable: !hasFilters })
+    return loadWithCache(AUDIT_INVENTORY_CACHE, () => api.get(`/audit?${qs}`), { cacheable: !hasFilters })
       .then(({ data, fromCache: cached, cachedAt: at }) => {
         const rows = Array.isArray(data) ? data : [];
         setEntries(cached ? filterInventoryRows(rows, { productId, actionType, fromDate, toDate }) : rows);
@@ -189,7 +190,7 @@ export default function AuditPage() {
         setCachedAt(at);
       })
       .catch(() => addToast('Offline and this device has no audit log saved yet — connect once to set it up.', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [productId, actionType, fromDate, toDate, hasFilters, addToast]);
 
   useEffect(() => { if (tab === 'inventory') load(); }, [tab, load]);
@@ -211,8 +212,8 @@ export default function AuditPage() {
 
   const hasActivityFilters = Boolean(entityType || activityFromDate || activityToDate);
 
-  const loadActivity = useCallback(() => {
-    setActivityLoading(true);
+  const loadActivity = useCallback(({ silent = false } = {}) => {
+    if (!silent) setActivityLoading(true);
     const params = new URLSearchParams();
     if (entityType)       params.set('entity_type', entityType);
     if (activityFromDate) params.set('from_date',   activityFromDate);
@@ -220,7 +221,7 @@ export default function AuditPage() {
     params.set('limit', '500');
     const qs = params.toString();
 
-    loadWithCache(AUDIT_ACTIVITY_CACHE, () => api.get(`/audit/activity?${qs}`), { cacheable: !hasActivityFilters })
+    return loadWithCache(AUDIT_ACTIVITY_CACHE, () => api.get(`/audit/activity?${qs}`), { cacheable: !hasActivityFilters })
       .then(({ data, fromCache: cached, cachedAt: at }) => {
         const rows = Array.isArray(data) ? data : [];
         setActivityEntries(cached
@@ -230,10 +231,13 @@ export default function AuditPage() {
         setCachedAt(at);
       })
       .catch(() => addToast('Offline and this device has no activity log saved yet — connect once to set it up.', 'error'))
-      .finally(() => setActivityLoading(false));
+      .finally(() => { if (!silent) setActivityLoading(false); });
   }, [entityType, activityFromDate, activityToDate, hasActivityFilters, addToast]);
 
   useEffect(() => { if (tab === 'activity') loadActivity(); }, [tab, loadActivity]);
+
+  // Pull-down / re-tapping the menu item reloads whichever tab is open, quietly.
+  useRefreshListener(() => (tab === 'activity' ? loadActivity({ silent: true }) : load({ silent: true })));
 
   const clearActivityFilters = () => {
     setEntityType('');

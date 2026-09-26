@@ -327,7 +327,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `draining` mutex clears and without awaiting it. This used to be each caller's
   duty (Round 2 Fix 1), which only held for the callers that remembered: the ones
   that wanted the send and nothing else — `status.js`'s reachability recovery,
-  `RefreshButton`, `OrderCreateModal`, `parkedOrders` — called the bare
+  `refreshApp` (`offline/refresh.js`), `OrderCreateModal`, `parkedOrders` — called the bare
   `drainOutbox()` and dropped the signal, so whichever caller happened to win the
   mutex decided whether any screen heard about the drain at all. A bare
   `drainOutbox().catch(() => {})` is now the correct shape everywhere; adding a
@@ -706,19 +706,11 @@ settled rules. What a future session most needs to know:
   device's own server-issued watermarks. Never add a code path that re-pulls everything
   on an already-set-up device.
 - **The app-wide first-setup gate is a separate, broader question from `setup_complete`**
-  ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md), `isFirstSetup()` /
-  `useSyncGate().blocking` in `sync.js`). Slice 3.2 originally unlocked the app the
-  moment `setup_complete` went true and let the order-history backfill stream in behind
-  an already-open app; ADR 0019 reversed that after field review — a tablet that can
-  take an order against a history it does not yet hold is exactly the "required data
-  missing" state ADR 0015 §5 exists to prevent everywhere else. The gate
-  (`isFirstSetupPending` in `sync.js`) now stays up until `orders_backfill_complete` is
-  ALSO true, reopens on a later login/resume only if that backfill never finished, and
-  otherwise never re-engages once a device has finished its one first setup. It shows
-  one screen, `FirstSetupGateScreen.jsx`, with two truthful sub-states driven by
-  `phase`: actively downloading, and — `phase` back to `'idle'` while still blocking —
-  waiting for connection, with a Retry action that fires a plain `trigger: 'login'` sync
-  (never throttled).
+  ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md) — see its Implementation
+  status for the mechanism). Invariant: the app must stay unavailable until
+  `orders_backfill_complete` is true, not just `setup_complete` — a tablet that can take
+  an order against a history it does not yet hold is exactly the "required data missing"
+  state ADR 0015 §5 exists to prevent everywhere else.
 - **`GET /orders/sync`** (registered above `GET /:id` — Express would read "sync" as an id)
   serves COMPLETE snapshots, keyset-paginated on `(updated_at, id)`: `direction=back`
   backfills newest-first and resumably, `direction=forward` is the delta. `/products`,
@@ -885,111 +877,28 @@ Every V1 screen now works blind. What a future session most needs to know:
 
 ### Order concurrency & delta sync ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md))
 
-Update this section's status line in place as each slice below lands — never delete it, and
-never let it drift from the ADR's own "Implementation status" section (keep the two in step).
+The ADR is the single source of truth for this mechanism — its decisions, implementation
+status, and code pointers. Update the ADR's own status section as slices land; do not
+re-describe the mechanism here. Invariants an agent must not break:
 
-- **Built:** the first-setup full-history gate — a brand-new tablet stays blocked until the
-  complete order-history backfill finishes, not just once reference data lands. Merged via
-  PR #117 on `dev`. Mechanism is documented under "Full-app offline sync (Slice 3.2, ADR
-  0015)" above (`useSyncGate().blocking`/`isFirstSetupPending` in `client/src/offline/
-  sync.js`, `FirstSetupGateScreen.jsx`) rather than repeated here.
-- **Built:** the server-authoritative order revision guard (migration 048 and
-  `server/src/routes/orders.js`) rejects a stale non-draft mutation with `409 stale_write`
-  plus the current full order. The client always adopts that order and never retries or
-  merges the rejected intent; draft autosaves and receipt-print records remain unguarded.
-  `client/src/offline/foregroundOrderSync.js` runs the orders-only cursor delta every five
-  seconds across the signed-in app, pauses in the background, backs off while unreachable
-  and wakes immediately on confirmed recovery. `leyble:orders-changed` drives spinner-free
-  detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
-- **Built:** a write whose POST happens inside a drain is adopted through
-  `leyble:drain-complete`, not left for the poll to deliver as somebody else's edit. A
-  receipt print is the only such write for an order a screen is already holding from the
-  server (`usePrintReceipt` → `queueReceiptPrinted` under `V25_OFFLINE_CORE`, so the screen
-  never sees the route's answer while the server bumps `revision`); `transitionLocalOrder`'s
-  `order_status` record also POSTs inside the drain and also answers with the full order,
-  but only ever for an order this device created and has not synced, which is why it is
-  deliberately NOT in the allowlist. The drain writes the response to local history and
-  carries it on the event as `detail.orders` — **only records this device actually sent**,
-  so a genuine remote change still arrives unseen via `leyble:orders-changed` and still
-  warns. Add an entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in
-  `client/src/offline/outbox.js` only if its route answers with the full order row.
-  On top of the shared `isNewerRevision()` rule (see the next bullet) the drain path asks
-  a narrower question — `isOneRevisionAhead()`, since migration 048 advances the revision
-  by exactly one per UPDATE and the print is one UPDATE.
-  Only a row exactly one ahead of what the screen holds is the print **and nothing
-  else** and can be adopted silently; a row further ahead carries somebody else's write too
-  and goes down the ordinary "changed on another device" path, banner and all. Regression
-  coverage: `client/test/review-queue-receipt-print-sync.test.mjs`.
-- **The delta re-delivers this device's OWN writes, so a `leyble:orders-changed` match is
-  not by itself another device.** `syncOrderDelta` is "everything changed anywhere (this
-  tablet or another one)" and has no self-origination filter, while every write path here
-  adopts the server's response — so the echo of a save normally arrives at the revision the
-  screen is already showing. **A delta is somebody else's change only when its revision is
-  strictly NEWER than the one that screen holds**: `isNewerRevision()` in
-  `client/src/pages/orders/orderConcurrency.js` is the shared predicate — signature
-  `isNewerRevision(held, incoming)`, and getting the two the wrong way round inverts it
-  silently — applied inside `orderChangedInEvent()` and by `ReviewQueueModal`'s own loops.
-  Equal means this device (the false "changed on another device" warning after saving an
-  adjustment); older means a delta page fetched before a save that has since landed, which
-  must be ignored rather than adopted backwards over the newer value. Compare as `BigInt`
-  (`comparableRevision`) — `revision` is a `BIGINT` returned as a string and must never
-  become a `Number`.
-- **The strictly-newer rule is re-checked where a parked delta is APPLIED, not only where it
-  arrives.** `OrderDetailPage`'s deferred-flush effect asks
-  `isNewerRevision(order, pendingRemoteOrder)` again before adopting, and discards the parked
-  copy otherwise. Not every write is gated by the amber banner — the header's Print Receipt
-  stays live behind it, and `POST /orders/:id/receipt-printed` carries no revision
-  precondition while migration 048's trigger still bumps one — so the row on screen can move
-  PAST what is parked while the operator finishes an entry. Adopting it then rolls both the
-  screen and `putOrderSnapshot`'s cached row backwards, which offline is what shows a printed
-  receipt as unprinted. Any new place that parks a server row for later adoption owes the
-  same re-check.
-- **A silent background re-read must be gated on the same dirty flags as a delta, and
-  the adjustment's dirty flag is `adjDirty`, never `adjExpanded`.**
-  `leyble:drain-complete` fires whenever *anything* in the outbox drains, and
-  `OrderDetailPage`'s handler ends in `adoptAuthoritativeOrder`, which rewrites
-  `adjValue`/`adjReason`/`adjExpanded` from the server row. Ungated, an unrelated drain
-  silently wiped the adjustment an operator was still typing and collapsed the panel. It is
-  deferred while the operator has UNSAVED edits and flushed once the screen is idle — never
-  dropped. `adjExpanded` is display state (`adoptAuthoritativeOrder` opens the panel for any
-  non-zero adjustment, with nobody having touched it), so gating on it strands the deferred
-  re-read — and the held `pendingRemoteOrder` — forever on every order carrying an
-  adjustment. All four gates (the two handlers and the two deferred-flush effects) read one
-  derived `hasUnsavedEdits` value computed at render, and that single value is also each
-  effect's dependency — so the invariant holds structurally rather than by four hand-aligned
-  copies, and a new confirm payload no longer re-subscribes the window listeners.
-  **Whatever clears `adjDirty` must also put `adjValue`/`adjReason` back** — the panel's
-  Cancel re-derives both from `order` the way `adoptAuthoritativeOrder` does. Clearing the
-  flag alone left the typed amount in the field, where it read back as the saved rate on the
-  next open and Save Adjustment would commit the figure the operator had discarded.
-- **Built:** a delta one revision past a timed-out save is judged by the SERVER, not by
-  the revision. A save the client aborted at 5s while the server committed it leaves the
-  screen at R and the server at R+1 — the same shape as one edit from another device
-  while this device's never landed — so `isNewerRevision()` alone raised the Edit Order
-  modal's "changed on another device" over the operator's own save. Both hosts
-  (`OrderDetailPage`, `ReviewQueueModal`) run the parked delta through
-  `useParkedOrderOwnership()` in `orderConcurrency.js`: when `intentKeys.js` still holds
-  an unanswered attempt sent against the revision the screen holds, and the delta is
-  exactly one past it, `confirmOwnWrite()` resends that attempt verbatim under its own
-  key. Migration 050 claims the key before the revision check, so a spent key is a
-  replay (ours) and an unspent one a `409` against the newer revision (not ours) —
-  neither writes; that is also why it is never sent without a revision or for a draft.
-  The body carries its key, so the resend bypasses `intentKeys.js` and leaves the held
-  key in place for the operator's own retry. The modal's warning is hidden while the
-  answer is pending and shown for anything unproven. A proven own write also moves the
-  modal's precondition forward (`ownWriteRevision`) — otherwise a save of anything typed
-  after the failure is refused as another device's change. Known residue: the modal's
-  two-request save (edit, then adjustment) whose SECOND request times out is not
-  provable this way (the screen never learned the first revision), so it still warns.
-  Coverage: `client/test/edit-modal-own-timeout-warning.test.mjs`.
-- **Built (adjacent, not an ADR 0019 slice):** request-key idempotency on order
-  mutations, which sits *in front of* the revision guard rather than changing it —
-  migration 050, documented under "The same key covers order MUTATIONS" above. It is
-  what stops the 5s client abort turning one save into two edits, or into a
-  `409 stale_write` the operator cannot act on. The compare-and-swap semantics below are
-  untouched for every request that carries no key.
-- App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
-  explicitly under first-setup — not part of this ADR's own scope.
+- Every non-draft order mutation carries the revision the operator saw; the server alone
+  decides staleness. Draft autosaves and receipt-print records are the only exemptions.
+- A delta/echo counts as "another device" only when its revision is **strictly greater**
+  than what the screen holds, via `isNewerRevision(held, incoming)` — argument order
+  matters, and revisions must compare as `BigInt`, never `Number`.
+- Re-run that same check at the point a parked delta is actually *applied*, not only where
+  it arrives — a non-banner-gated write (e.g. a receipt print) can move the screen past a
+  parked copy in the meantime.
+- Only add an entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in `client/src/offline/outbox.js`
+  if its route answers with the full order row.
+- A silent background re-read must gate on `adjDirty` (the adjustment's real dirty flag),
+  never `adjExpanded` (display-only), and whatever clears `adjDirty` must also restore
+  `adjValue`/`adjReason` from `order` — otherwise a discarded edit reads back as saved.
+- A parked delta exactly one revision past a still-unanswered own save must be confirmed
+  via `confirmOwnWrite()`/`useParkedOrderOwnership()` before treating it as another
+  device's change, not assumed to be someone else's edit.
+- Bulk order actions commit per order, never as one all-or-nothing transaction.
+- App-wide skeletal loaders are a separate, later slice — not part of this ADR's scope.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 

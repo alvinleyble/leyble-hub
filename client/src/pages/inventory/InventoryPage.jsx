@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -118,7 +119,7 @@ export default function InventoryPage() {
   // from; this page just never asked for it, so a blind tablet showed a blank grid.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
-    api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
+    return api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
       .then((rows) => { setProducts(rows); setFromCache(false); })
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('products') : await getCachedProducts();
@@ -186,6 +187,10 @@ export default function InventoryPage() {
     refreshConflicts();
     return subscribeConflicts(() => refreshConflicts());
   }, [refreshConflicts]);
+
+  // Pull-down / re-tapping the menu item — silent for the same reason as the
+  // reconnect reload above.
+  useRefreshListener(() => Promise.all([load(true), loadQueued(), refreshConflicts()]));
 
   const {
     printList, printing,

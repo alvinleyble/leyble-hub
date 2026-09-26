@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -47,15 +48,15 @@ export default function IncomingPage() {
   // (30 days; see backOfficeCache.js). Only the unfiltered baseline is cached, so a
   // filtered read never overwrites it and the filters are applied to the held copy
   // here instead.
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (supplierFilter.trim()) params.set('supplier_name', supplierFilter.trim());
     if (fromDate) params.set('from_date', fromDate);
     if (toDate)   params.set('to_date', toDate);
     const qs = params.toString();
 
-    loadWithCache(DELIVERIES_CACHE, () => api.get(`/incoming${qs ? `?${qs}` : ''}`), {
+    return loadWithCache(DELIVERIES_CACHE, () => api.get(`/incoming${qs ? `?${qs}` : ''}`), {
       cacheable: !hasFilters, dateField: 'received_at',
     })
       .then(({ data, fromCache: cached, cachedAt: at }) => {
@@ -65,7 +66,7 @@ export default function IncomingPage() {
         setCachedAt(at);
       })
       .catch(() => addToast('Offline and this device has no deliveries saved yet — connect once to set it up.', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [supplierFilter, fromDate, toDate, hasFilters, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -82,6 +83,9 @@ export default function IncomingPage() {
     loadQueued();
     return subscribeOutbox(() => loadQueued());
   }, [loadQueued]);
+
+  // Pull-down / re-tapping the menu item: reload quietly behind the rows on screen.
+  useRefreshListener(() => Promise.all([load({ silent: true }), loadQueued()]));
 
   const visibleQueued = filterDeliveries(queuedDeliveries, { supplierFilter, fromDate, toDate });
   const displayDeliveries = mergeDeliveries(deliveries, visibleQueued);
