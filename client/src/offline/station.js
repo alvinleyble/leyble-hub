@@ -339,6 +339,27 @@ export async function issueDeliveryRef() {
   return run;
 }
 
+// What Settings' "This device" shows, read-only: the series this device issues under for
+// whoever is signed in ('1A', or '3' for a device still on a pre-letter number) and the
+// last receipt number it issued in that series. Reads the same state issuance does and
+// never touches the counter. `series` is null before the first online sign-in here;
+// `lastReceiptNumber` is null until the first receipt.
+export async function getDeviceReceiptSummary() {
+  let issuing;
+  try {
+    issuing = await resolveIssuingSeries();
+  } catch {
+    return { series: null, lastReceiptNumber: null };
+  }
+  const { person, letter, series } = issuing;
+  const counters = await readCounters(SEQUENCE_KEY, series);
+  const last = Number(counters[series]) || 0;
+  return {
+    series,
+    lastReceiptNumber: last > 0 ? formatReceiptNumber(person, last, letter) : null,
+  };
+}
+
 // Test seam: resets the in-process serialisation state between cases.
 export function __resetIssuance() {
   issuing = Promise.resolve();

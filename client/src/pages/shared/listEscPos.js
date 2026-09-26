@@ -169,3 +169,25 @@ export function customerListEscPos(customers) {
   footer(w);
   return new Uint8Array(w.buf);
 }
+
+// A short test page for Settings' "Test print": proves the saved printer is reachable
+// and cuts paper, without printing anything that could be mistaken for a receipt.
+export function printerTestPageEscPos({ printerName, deviceSeries } = {}) {
+  const w = makeWriter();
+  const { b, ln, hr } = w;
+  const now = new Date();
+  const hours = now.getHours();
+  const time = `${hours % 12 || 12}:${String(now.getMinutes()).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`;
+  header(w, 'PRINTER TEST', 'Test page', `${dateStr()} ${time}`);
+  if (printerName) ln(padLR('Printer:', String(printerName).slice(0, W - 10)));
+  if (deviceSeries) ln(padLR('Receipts from this device:', String(deviceSeries)));
+  hr();
+  ln();
+  b(ESC, 0x61, 0x01);    // center
+  for (const line of wrap('If you can read this, the printer is working.')) ln(line);
+  ln('This is not a receipt.');
+  b(ESC, 0x61, 0x00);    // left
+  b(ESC, 0x64, 0x04);    // feed 4 lines
+  b(GS,  0x56, 0x41, 0x03); // partial cut
+  return new Uint8Array(w.buf);
+}
