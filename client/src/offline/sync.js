@@ -4,6 +4,7 @@ import { nativeStore } from './nativeStore.js';
 import { SYNC_STATE_KEY } from './keys.js';
 import { refreshEntity, applyCatalogueDelta } from './catalogue.js';
 import { putOrderSnapshot } from './receiptHistory.js';
+import { recordLastSynced } from './lastSynced.js';
 
 // ADR 0015 §4 / Slice 3.2, revised by ADR 0019 — EAGER SYNC AT SETUP, INCREMENTAL SYNC
 // AFTER THAT.
@@ -318,6 +319,7 @@ export async function pollOrderDelta() {
     try {
       const result = await syncOrderDelta(await getSyncState());
       await patchSyncState({ last_sync_completed_at: Date.now() });
+      await recordLastSynced();
       notifyOrdersChanged(result.orders);
       return { ran: true, ordersSynced: result.synced, orders: result.orders };
     } finally {
@@ -367,6 +369,7 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
     });
 
     const result = { ran: true, firstSetup: needsEssentialsPull, entitiesSynced: [], ordersSynced: 0, error: null };
+    let ordersDeltaSynced = false;
 
     try {
       // 1. Reference data. Per entity, so one failing endpoint cannot roll back the
@@ -393,8 +396,11 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
       // 2. Order history. The forward delta first (cheap, and the part that matters
       //    for orders other tablets just created), then whatever backfill is still owed.
       try {
-        const { synced, orders } = await syncOrderDelta(await getSyncState());
+        const beforeDelta = await getSyncState();
+        const { synced, orders } = await syncOrderDelta(beforeDelta);
         result.ordersSynced += synced;
+        // With no cursor yet the delta asks the server nothing, so it proves nothing.
+        ordersDeltaSynced = Boolean(beforeDelta.orders_delta_cursor);
         notifyOrdersChanged(orders);
       } catch (err) {
         result.error = result.error || err;
@@ -417,6 +423,10 @@ export async function runSync({ trigger = 'login', waitForOrders = false } = {})
       }
 
       await patchSyncState({ last_sync_completed_at: Date.now() });
+      // `last_sync_completed_at` is stamped even when every step failed offline (it only
+      // drives the reconnect throttle), so Settings' "Last synced" is recorded only when
+      // the server actually answered some part of this run.
+      if (result.entitiesSynced.length > 0 || ordersDeltaSynced) await recordLastSynced();
 
       // Re-read rather than assume: backfillOrderHistory() swallows its own errors, so
       // an interrupted first setup falls through to here with the gate still owed. The

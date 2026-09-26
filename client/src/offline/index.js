@@ -21,6 +21,8 @@ export * from './advisory.js';
 export * from './status.js';
 export * from './drainNotifier.js';
 export * from './sync.js';
+export * from './lastSynced.js';
+export * from './waitingItems.js';
 export * from './foregroundOrderSync.js';
 export * from './queuedCustomers.js';
 export * from './queuedPersonnel.js';
