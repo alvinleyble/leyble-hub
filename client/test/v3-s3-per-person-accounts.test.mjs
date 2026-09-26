@@ -12,7 +12,8 @@ import { render, React, act } from './render.mjs';
 import { api } from '../src/api/client.js';
 import { AuthProvider, setStoredSession, __setIsNativeForTest } from '../src/context/AuthContext.jsx';
 
-const Sidebar = (await import('../src/components/layout/Sidebar.jsx')).default;
+const SettingsPage = (await import('../src/pages/SettingsPage.jsx')).default;
+const MenuDrawer = (await import('../src/components/layout/MenuDrawer.jsx')).default;
 
 let originalApiGet;
 
@@ -28,19 +29,33 @@ afterEach(() => {
   __setIsNativeForTest(false);
 });
 
-test('the sidebar names the signed-in account and offers no profile switch', async () => {
+test('Settings names the signed-in account and offers an account switch, not a profile switch', async () => {
   api.get = async (path) => {
     if (path === '/auth/me') return { id: 2, email: 'luis@leyblestore.com', full_name: 'Luis', role: 'admin' };
-    if (path === '/customers') return [];
     throw new Error(`unexpected GET ${path}`);
   };
 
-  const view = render(React.createElement(AuthProvider, null, React.createElement(Sidebar)));
+  const view = render(React.createElement(AuthProvider, null, React.createElement(SettingsPage)));
   await act(async () => { await Promise.resolve(); });
 
-  assert.match(view.text(), /Luis/, 'the chrome names whoever signed in');
+  assert.match(view.text(), /Luis/, 'Settings names whoever signed in');
+  assert.match(view.text(), /Switch account/);
   assert.doesNotMatch(view.text(), /Switch profile/, 'the profile switch is gone with the picker');
+  view.unmount();
+});
+
+test('the menu offers Log out and no longer names the signed-in account', async () => {
+  api.get = async (path) => {
+    if (path === '/auth/me') return { id: 2, email: 'luis@leyblestore.com', full_name: 'Luis', role: 'admin' };
+    throw new Error(`unexpected GET ${path}`);
+  };
+
+  const view = render(React.createElement(AuthProvider, null,
+    React.createElement(MenuDrawer, { open: true, onClose: () => {} })));
+  await act(async () => { await Promise.resolve(); });
+
   assert.match(view.text(), /Log out/, 'signing out is still the way off an account');
+  assert.doesNotMatch(view.text(), /Luis/, 'the name moved into Settings');
   view.unmount();
 });
 
@@ -52,7 +67,7 @@ test('nothing asks the server for a profile list any more', async () => {
     return [];
   };
 
-  const view = render(React.createElement(AuthProvider, null, React.createElement(Sidebar)));
+  const view = render(React.createElement(AuthProvider, null, React.createElement(SettingsPage)));
   await act(async () => { await Promise.resolve(); });
 
   assert.equal(asked.includes('/auth/profiles'), false, 'GET /auth/profiles is deleted server-side');

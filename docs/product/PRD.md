@@ -81,8 +81,8 @@ Authentication is a single shared-style login per account (JWT); see
 - `:focus-visible` ring on all interactive elements.
 - Status always conveyed with **text + color**, never color alone.
 - Peso amounts formatted as `₱1,234.56`.
-- Responsive: permanent sidebar only on large fine-pointer screens (`desktop:` breakpoint);
-  phones/tablets get a hamburger drawer.
+- Navigation: one top tab bar on every screen size (icons only on phones, icon + name on
+  tablets and computers); Tickets, Audit Log, Settings and Log out sit behind its hamburger menu.
 
 See also: [Glossary](glossary.md) · [Architecture](../architecture/ARCHITECTURE.md) ·
 [Order Lifecycle](../architecture/order-lifecycle.md).

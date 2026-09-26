@@ -3,10 +3,17 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
-      screens: {
-        // Permanent sidebar only on real desktops (mouse/trackpad). Phones and
-        // tablets get the hamburger drawer in BOTH portrait and landscape.
-        desktop: { raw: '(min-width: 1024px) and (pointer: fine)' },
+      // The top tab bar's status light: a gentle brighten-and-dim, faster when red.
+      // Used behind `motion-safe:` so reduced-motion users get the colour alone.
+      keyframes: {
+        'status-pulse': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.45' },
+        },
+      },
+      animation: {
+        'status-pulse': 'status-pulse 2.4s ease-in-out infinite',
+        'status-pulse-fast': 'status-pulse 0.9s ease-in-out infinite',
       },
       colors: {
         // ── V2 Design Tokens (Theme-aware via CSS variables) ────────────
