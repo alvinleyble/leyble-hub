@@ -7,10 +7,11 @@ import { TAB_ITEMS, isCurrentPage } from './navigation';
 import { useDuplicateBubble } from './useDuplicateBubble';
 
 /**
- * The row of tabs across the top of every screen, on every screen size. Phones show
- * icons only (the name stays as visually hidden text, so each tab is still named for
- * a screen reader); tablets and computers add the name under or beside the icon.
- * The status light and the menu button sit at the far right.
+ * The two rows across the top of every screen, on every screen size. The title row
+ * carries the app name on the left and the status light then the menu button on the
+ * right; under it, the six tabs share the full width in equal segments. Phones show
+ * tab icons only (the name stays as visually hidden text, so each tab is still named
+ * for a screen reader); tablets and computers add the name under or beside the icon.
  *
  * Tapping the tab of the page that is already open refreshes it instead of
  * re-navigating to it, like re-tapping Home in any social app.
@@ -23,8 +24,27 @@ export default function TopTabBar({ onRefresh, onOpenMenu, menuOpen = false, dup
   });
 
   return (
-    <header className="flex shrink-0 items-stretch h-14 sm:h-16 lg:h-14 bg-slate-900 text-slate-100">
-      <nav className="flex flex-1 min-w-0" aria-label="Main navigation">
+    <header className="flex shrink-0 flex-col bg-slate-900 text-slate-100">
+      <div className="flex h-12 items-center justify-between pl-4 pr-1 sm:pl-5 sm:pr-2" data-testid="app-title-row">
+        <p className="truncate text-lg font-bold tracking-tight">Leyble Hub</p>
+        <div className="flex h-full shrink-0 items-center">
+          <StatusLight />
+          <button
+            type="button"
+            onClick={onOpenMenu}
+            aria-label="Open menu"
+            aria-expanded={menuOpen}
+            aria-haspopup="dialog"
+            data-testid="nav-menu-button"
+            className="flex h-12 w-12 items-center justify-center rounded-lg hover:bg-slate-800
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          >
+            <NavIcon name="menu" />
+          </button>
+        </div>
+      </div>
+
+      <nav className="flex h-14 sm:h-16 lg:h-14 border-t border-slate-800" aria-label="Main navigation">
         {TAB_ITEMS.map(({ path, label, icon }) => {
           const bubble = path === '/customers' ? duplicateCount : 0;
           return (
@@ -40,7 +60,7 @@ export default function TopTabBar({ onRefresh, onOpenMenu, menuOpen = false, dup
               data-testid={`nav-link-${path.slice(1)}`}
               title={label}
               className={({ isActive }) =>
-                `group relative flex flex-1 min-w-0 lg:max-w-[11rem] flex-col lg:flex-row items-center justify-center
+                `group relative flex flex-1 basis-0 min-w-0 flex-col lg:flex-row items-center justify-center
                  gap-0.5 lg:gap-2 px-1 transition-colors duration-100
                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400
                  ${isActive ? 'text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`
@@ -80,22 +100,6 @@ export default function TopTabBar({ onRefresh, onOpenMenu, menuOpen = false, dup
           );
         })}
       </nav>
-
-      <div className="flex shrink-0 items-center pr-1 sm:pr-2">
-        <StatusLight />
-        <button
-          type="button"
-          onClick={onOpenMenu}
-          aria-label="Open menu"
-          aria-expanded={menuOpen}
-          aria-haspopup="dialog"
-          data-testid="nav-menu-button"
-          className="flex h-12 w-12 items-center justify-center rounded-lg hover:bg-slate-800
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-        >
-          <NavIcon name="menu" />
-        </button>
-      </div>
     </header>
   );
 }
