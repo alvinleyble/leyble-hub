@@ -1,5 +1,5 @@
-// Refresh without a refresh button: pull the page down from its top, or tap the menu
-// item of the page that is already open. Both run one shared routine (offline/refresh.js)
+// Refresh without a refresh button: pull the page down from its top, or tap the tab
+// (or menu item) of the page that is already open. Both run one shared routine (offline/refresh.js)
 // that checks the line, sends what is waiting, and asks the page on screen to reload.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,8 +13,10 @@ import { refreshApp, useRefreshListener, REFRESH_EVENT } from '../src/offline/re
 import { useAppRefresh } from '../src/components/layout/useAppRefresh.js';
 import { usePullToRefresh, shouldIgnorePull, PULL_THRESHOLD } from '../src/components/layout/usePullToRefresh.js';
 
-const Sidebar = (await import('../src/components/layout/Sidebar.jsx')).default;
-const { isCurrentPage } = await import('../src/components/layout/Sidebar.jsx');
+import { isCurrentPage } from '../src/components/layout/navigation.js';
+
+const TopTabBar = (await import('../src/components/layout/TopTabBar.jsx')).default;
+const MenuDrawer = (await import('../src/components/layout/MenuDrawer.jsx')).default;
 
 const h = React.createElement;
 
@@ -146,7 +148,7 @@ test('useAppRefresh: a broken refresh says it failed', async () => {
   }
 });
 
-// ── Re-tapping the open page's menu item ──────────────────────────────────────
+// ── Re-tapping the open page's tab ────────────────────────────────────────────
 
 test('isCurrentPage: exact page only — a sub-page is not the page', () => {
   assert.equal(isCurrentPage('/orders', '/orders'), true);
@@ -159,7 +161,7 @@ function Where() {
   return h('output', { 'data-testid': 'where' }, useLocation().pathname);
 }
 
-async function renderSidebarAt(path, props) {
+async function renderNavAt(path, component, props) {
   api.get = async (p) => {
     if (p === '/auth/me') return { id: 1, email: 'josie@leyblestore.com', full_name: 'Josie', role: 'admin' };
     return [];
@@ -167,7 +169,7 @@ async function renderSidebarAt(path, props) {
   const view = render(h(AuthProvider, null,
     h(Routes, null, h(Route, { path: '/', element: h(Navigate, { to: path, replace: true }) }), h(Route, { path: '*', element: null })),
     h(Where),
-    h(Sidebar, props)));
+    h(component, props)));
   await act(async () => { await Promise.resolve(); });
   return view;
 }
@@ -175,30 +177,48 @@ async function renderSidebarAt(path, props) {
 const whereOf = (view) => view.container.querySelector('[data-testid="where"]').textContent;
 const link = (view, name) => view.container.querySelector(`[data-testid="nav-link-${name}"]`);
 
-test('Sidebar: tapping the page already open refreshes it instead of navigating', async () => {
+test('Tab bar: tapping the tab of the page already open refreshes it instead of navigating', async () => {
   let refreshed = 0;
-  let closed = 0;
-  const view = await renderSidebarAt('/orders', { onRefresh: () => { refreshed += 1; }, onClose: () => { closed += 1; } });
+  const view = await renderNavAt('/orders', TopTabBar, { onRefresh: () => { refreshed += 1; }, onOpenMenu: () => {} });
   assert.equal(whereOf(view), '/orders');
 
   view.click(link(view, 'orders'));
-  assert.equal(refreshed, 1, 'Outgoing Orders on Outgoing Orders refreshes');
-  assert.equal(closed, 1, 'the phone menu still closes');
+  assert.equal(refreshed, 1, 'Outgoing on Outgoing refreshes');
   assert.equal(whereOf(view), '/orders');
 
   view.click(link(view, 'inventory'));
-  assert.equal(refreshed, 1, 'a different page is an ordinary navigation');
-  assert.equal(closed, 2);
+  assert.equal(refreshed, 1, 'a different tab is an ordinary navigation');
   assert.equal(whereOf(view), '/inventory');
+
+  view.click(link(view, 'inventory'));
+  assert.equal(refreshed, 2, 'and re-tapping that one refreshes it in turn');
   view.unmount();
 });
 
-test('Sidebar: from a sub-page, the section link navigates back rather than refreshing', async () => {
+test('Tab bar: from a sub-page, the section tab navigates back rather than refreshing', async () => {
   let refreshed = 0;
-  const view = await renderSidebarAt('/orders/12', { onRefresh: () => { refreshed += 1; } });
+  const view = await renderNavAt('/orders/12', TopTabBar, { onRefresh: () => { refreshed += 1; }, onOpenMenu: () => {} });
   view.click(link(view, 'orders'));
   assert.equal(refreshed, 0);
   assert.equal(whereOf(view), '/orders');
+  view.unmount();
+});
+
+test('Menu: re-tapping the open page refreshes it, and every tap closes the menu', async () => {
+  let refreshed = 0;
+  let closed = 0;
+  const view = await renderNavAt('/tickets', MenuDrawer, {
+    open: true, onRefresh: () => { refreshed += 1; }, onClose: () => { closed += 1; },
+  });
+  view.click(link(view, 'tickets'));
+  assert.equal(refreshed, 1, 'Tickets on Tickets refreshes');
+  assert.equal(closed, 1);
+  assert.equal(whereOf(view), '/tickets');
+
+  view.click(link(view, 'audit'));
+  assert.equal(refreshed, 1);
+  assert.equal(closed, 2);
+  assert.equal(whereOf(view), '/audit');
   view.unmount();
 });
 

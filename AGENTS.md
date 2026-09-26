@@ -223,10 +223,11 @@ const PHP = (n) =>
 
 **Toasts**: `const { addToast } = useToast()` → `addToast(msg, 'success' | 'error')`.
 
-**Responsive layout**: the permanent sidebar only renders on the custom `desktop:` screen
-(`min-width: 1024px` **and** `pointer: fine`, see `client/tailwind.config.js`); phones/tablets
-get the hamburger drawer in both portrait and landscape. Width-based `sm:`/`md:`/`lg:` are
-still used for everything else (table columns etc.).
+**Navigation**: every screen size uses one top tab bar (`TopTabBar.jsx`, items in
+`client/src/components/layout/navigation.js`) — six tabs, icons only below `sm:`, with the
+status light (`StatusLight.jsx`) and the hamburger menu (`MenuDrawer.jsx`: Tickets, Audit Log,
+Settings, Log out) at the far right. There is no sidebar. Width-based `sm:`/`md:`/`lg:` are
+used for everything responsive (table columns etc.).
 
 ### V2 tablet shell (in progress — see [docs/product/proposals/v2-tablet-pos-overhaul.md](docs/product/proposals/v2-tablet-pos-overhaul.md))
 
@@ -341,7 +342,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   event, another save). `outbox.js` now schedules an immediate follow-up pass itself
   the moment the in-flight one finishes, and that rerun notifies from its own
   `finally` exactly like every other pass — this is what the
-  chrome-wide `OfflineMarker` showing "N waiting" for minutes after an unrelated
+  chrome-wide connection marker (now `StatusLight`) showing "N waiting" for minutes after an unrelated
   order's own banner had already cleared turned out to be.
 - **A failed send's retry bookkeeping writes onto the CURRENT stored record, never the
   pass-start snapshot** (`saveDrainOutcome` in `outbox.js`). `runDrainPass` reads
@@ -762,7 +763,7 @@ Every V1 screen now works blind. What a future session most needs to know:
   app. Answering one ENQUEUES a fresh ordinary write; it never patches a half-sent
   record. `StockReconcileModal.jsx` offers mine / theirs / **a third value I just
   counted**, and the prompt lives on the Inventory page (flag-independent) rather than
-  in `OfflineMarker` (which returns null without `V25_OFFLINE_CORE`).
+  in `StatusLight` (which returns null without `V25_OFFLINE_CORE`).
 - **A conflict is another HUMAN's edit, not the server's number moving.** Stock moves
   all day on its own — every dispatch deducts, every delivery adds. `findCompetingEdit`
   in `productMutations.js` looks for an `inventory_audit_logs` row with `action_type`
