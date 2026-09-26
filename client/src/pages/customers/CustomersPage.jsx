@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -95,7 +96,7 @@ export default function CustomersPage() {
     if (showInactive) params.set('include_inactive', 'true');
     if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
 
-    api.get(`/customers?${params}`)
+    return api.get(`/customers?${params}`)
       .then(setCustomers)
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('customers') : await getCachedCustomers();
@@ -131,6 +132,9 @@ export default function CustomersPage() {
     loadQueuedCustomers();
     return subscribeOutbox(() => loadQueuedCustomers());
   }, [loadQueuedCustomers]);
+
+  // Pull-down / re-tapping the menu item: reload quietly behind the rows on screen.
+  useRefreshListener(() => Promise.all([load(true), loadQueuedCustomers()]));
 
   const searchLower = debouncedSearch.trim().toLowerCase();
   const visibleQueuedCustomers = searchLower

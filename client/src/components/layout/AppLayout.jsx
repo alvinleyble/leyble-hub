@@ -1,11 +1,20 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
-import OfflineMarker, { RefreshButton } from './OfflineMarker';
+import OfflineMarker from './OfflineMarker';
+import RefreshIndicator from './RefreshIndicator';
+import { useAppRefresh } from './useAppRefresh';
+import { usePullToRefresh } from './usePullToRefresh';
 
 export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false);
   const closeNav = () => setNavOpen(false);
+
+  // Refresh the way other apps do: pull the page down from its top, or tap the menu
+  // item of the page that is already open (every device). Both run the same routine.
+  const mainRef = useRef(null);
+  const { refresh, refreshing } = useAppRefresh();
+  const pull = usePullToRefresh(mainRef, { onRefresh: refresh, disabled: refreshing || navOpen });
 
   // `desktop:` = min-width 1024px AND a fine pointer (mouse/trackpad) — see
   // tailwind.config.js. Phones/tablets get the slide-in drawer in both
@@ -16,7 +25,7 @@ export default function AppLayout() {
           always-visible offline marker (G9) lives in the sidebar's brand
           header here instead. */}
       <div className="hidden desktop:flex">
-        <Sidebar offlineMarker={<OfflineMarker variant="v1" />} />
+        <Sidebar offlineMarker={<OfflineMarker variant="v1" />} onRefresh={refresh} />
       </div>
 
       {/* Slide-in drawer — phones/tablets, any orientation */}
@@ -32,7 +41,7 @@ export default function AppLayout() {
           navOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <Sidebar onClose={closeNav} />
+        <Sidebar onClose={closeNav} onRefresh={refresh} />
       </div>
 
       {/* Main column */}
@@ -54,14 +63,23 @@ export default function AppLayout() {
           </button>
           <p className="text-lg font-bold tracking-tight select-none">Leyble Hub</p>
           <div className="ml-auto flex items-center gap-2">
-            <RefreshButton variant="v1" />
             <OfflineMarker variant="v1" />
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto focus:outline-none" tabIndex={-1} id="main-content">
-          <Outlet />
-        </main>
+        {/* `overscroll-y-contain` keeps the WebView's own overscroll glow / pull effect
+            out of the way of ours. */}
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <RefreshIndicator pull={pull} refreshing={refreshing} />
+          <main
+            ref={mainRef}
+            className="flex-1 overflow-y-auto overscroll-y-contain focus:outline-none"
+            tabIndex={-1}
+            id="main-content"
+          >
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
   );

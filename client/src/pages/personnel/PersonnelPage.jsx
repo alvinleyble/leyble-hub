@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -30,12 +31,12 @@ export default function PersonnelPage() {
   // Offline fallback — Slice 3.2's catalogue sync already holds this device's copy of
   // personnel (client/src/offline/catalogue.js), the same cache OrderCreateModal reads
   // from; this page just never asked for it, so a blind tablet showed a blank table.
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (showInactive) params.set('include_inactive', 'true');
 
-    api.get(`/personnel?${params}`)
+    return api.get(`/personnel?${params}`)
       .then((rows) => { setPersonnel(rows); setFromCache(false); })
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('personnel') : await getCachedPersonnel();
@@ -46,7 +47,7 @@ export default function PersonnelPage() {
         setPersonnel(cached);
         setFromCache(true);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [showInactive, addToast]);
 
   useEffect(() => { load(); }, [load]);
@@ -67,6 +68,9 @@ export default function PersonnelPage() {
     loadQueuedPersonnel();
     return subscribeOutbox(() => loadQueuedPersonnel());
   }, [loadQueuedPersonnel]);
+
+  // Pull-down / re-tapping the menu item: reload quietly behind the rows on screen.
+  useRefreshListener(() => Promise.all([load({ silent: true }), loadQueuedPersonnel()]));
 
   // 9.0/9.1/9.2 — delete, photo upload/delete, and the active/inactive toggle stay
   // online-only; the rest of the edit form and + Add Personnel no longer do (G3).

@@ -510,7 +510,7 @@ async function runDrainPass() {
     draining = false;
     // Every pass that sent something notifies from here, the one place a pass can
     // finish. It used to be each caller's job, and the callers that only wanted the
-    // send — status.js's reachability recovery, RefreshButton, OrderCreateModal,
+    // send — status.js's reachability recovery, refreshApp, OrderCreateModal,
     // parkedOrders — called the bare drainOutbox() and silently dropped the signal, so
     // whichever of them happened to win the `draining` mutex decided whether any screen
     // heard about the drain at all. Fired after `draining` is cleared so a listener is

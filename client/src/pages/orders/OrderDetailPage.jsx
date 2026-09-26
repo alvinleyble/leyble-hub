@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -207,7 +208,7 @@ export default function OrderDetailPage() {
   // operator is actively looking at.
   const load = useCallback(({ silent = false } = {}) => {
     if (!silent) setLoading(true);
-    api.get(`/orders/${id}`)
+    return api.get(`/orders/${id}`)
       .then((o) => {
         // ADR 0015 §4 — every order this device has ever SEEN is held in full, not just
         // the ones it created. The background sync is what makes the whole history
@@ -253,10 +254,10 @@ export default function OrderDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // G27 — Silent Background Sync + Refresh Button. drainNotifier.js dispatches this once a background
+  // G27 — Silent Background Sync. drainNotifier.js dispatches this once a background
   // drain has actually sent something; re-read quietly so an order that just synced
   // swaps to its server row and drops the "Waiting to sync" banner without anyone
-  // asking and without a spinner. leyble:refresh triggers an active reload.
+  // asking and without a spinner.
   useEffect(() => {
     // The silent re-read ends in adoptAuthoritativeOrder, which resets adjValue /
     // adjReason / adjExpanded from the server row — so firing it while the operator
@@ -273,7 +274,6 @@ export default function OrderDetailPage() {
       }
       load({ silent: true });
     };
-    const onRefresh = () => load();
     const onOrdersChanged = (event) => {
       const current = orderChangedInEvent(order, event.detail);
       if (!current) return;
@@ -284,14 +284,24 @@ export default function OrderDetailPage() {
       adoptAuthoritativeOrder(current);
     };
     window.addEventListener('leyble:drain-complete', onDrainComplete);
-    window.addEventListener('leyble:refresh', onRefresh);
     window.addEventListener('leyble:orders-changed', onOrdersChanged);
     return () => {
       window.removeEventListener('leyble:drain-complete', onDrainComplete);
-      window.removeEventListener('leyble:refresh', onRefresh);
       window.removeEventListener('leyble:orders-changed', onOrdersChanged);
     };
   }, [load, order, hasUnsavedEdits, adoptAuthoritativeOrder]);
+
+  // Pull-down / re-tapping the menu item. The re-read ends in adoptAuthoritativeOrder
+  // just like the drain re-read above, and a pull is easy to start by accident while
+  // typing an adjustment — so it defers on unsaved edits the same way, and runs once
+  // the screen is idle.
+  useRefreshListener(() => {
+    if (hasUnsavedEdits) {
+      setPendingSilentReload(true);
+      return undefined;
+    }
+    return load({ silent: true });
+  });
 
   // The strictly-newer rule has to hold where a parked delta is APPLIED, not only
   // where it arrived. Not every write is gated by the amber banner: the header's Print

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -33,9 +34,9 @@ export default function TicketsPage() {
   // filtering here is both simpler and strictly more useful blind, since every tab
   // then works off the same cached copy instead of only the one that was open when the
   // line dropped.
-  const load = useCallback(() => {
-    setLoading(true);
-    loadWithCache(TICKETS_CACHE, () => api.get('/tickets'))
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    return loadWithCache(TICKETS_CACHE, () => api.get('/tickets'))
       .then(({ data, fromCache: cached, cachedAt: at }) => {
         setTickets(Array.isArray(data) ? data : []);
         setFromCache(cached);
@@ -48,10 +49,13 @@ export default function TicketsPage() {
         setUnreachable(true);
         addToast('Offline and this device has no tickets saved yet — connect once to set it up.', 'error');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [addToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Pull-down / re-tapping the menu item: reload quietly behind the rows on screen.
+  useRefreshListener(() => load({ silent: true }));
 
   const visibleTickets = statusFilter === 'all'
     ? tickets
