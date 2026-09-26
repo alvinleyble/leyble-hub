@@ -1,5 +1,6 @@
-// The top tab bar that replaced the sidebar: six tabs across the top of every screen
-// size, the status light and the hamburger at the far right, and the menu behind it.
+// The top bar that replaced the sidebar: a title row (Leyble Hub, then the status light
+// and the hamburger at the far right), six tabs under it across the full width on every
+// screen size, and the menu behind the hamburger.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { render as rawRender, React, act } from './render.mjs';
@@ -18,6 +19,8 @@ import {
 const TopTabBar = (await import('../src/components/layout/TopTabBar.jsx')).default;
 const MenuDrawer = (await import('../src/components/layout/MenuDrawer.jsx')).default;
 const { StatusLightButton } = await import('../src/components/layout/StatusLight.jsx');
+const { readFileSync } = await import('node:fs');
+const TopTabBarSource = readFileSync(new URL('../src/components/layout/TopTabBar.jsx', import.meta.url), 'utf8');
 
 const h = React.createElement;
 
@@ -99,17 +102,52 @@ test('the page on screen is the active tab, including from one of its sub-pages'
   view.unmount();
 });
 
-test('the hamburger sits at the far right and opens the menu', async () => {
+test('the title row holds Leyble Hub on the left, then the light and the hamburger at the far right', async () => {
   api.get = async () => [];
   let opened = 0;
   const view = await renderAt('/dashboard', h(TopTabBar, { onOpenMenu: () => { opened += 1; } }));
   const header = view.container.querySelector('header');
-  const buttons = header.querySelectorAll('button');
+  const [titleRow, nav] = header.children;
+  assert.equal(titleRow.getAttribute('data-testid'), 'app-title-row', 'the title row comes first…');
+  assert.equal(nav.getAttribute('aria-label'), 'Main navigation', '…and the tabs sit under it');
+  assert.equal(titleRow.firstElementChild.textContent, 'Leyble Hub');
+  assert.doesNotMatch(titleRow.textContent, /Josie|Alvin|Luis/, 'no signed-in name under the title');
+
+  assert.equal(nav.querySelector('button'), null, 'nothing but tabs in the tab row');
+  assert.equal(nav.querySelector('[data-testid="nav-menu-button"]'), null);
+  const buttons = titleRow.querySelectorAll('button');
   const last = buttons[buttons.length - 1];
   assert.equal(last.getAttribute('data-testid'), 'nav-menu-button');
   assert.equal(last.getAttribute('aria-label'), 'Open menu');
   view.click(last);
   assert.equal(opened, 1);
+  view.unmount();
+});
+
+test('the light sits in the title row, directly left of the hamburger', async () => {
+  api.get = async () => [];
+  const view = await renderAt('/dashboard', h(TopTabBar, { onOpenMenu: () => {} }));
+  const menuButton = view.container.querySelector('[data-testid="nav-menu-button"]');
+  const cluster = menuButton.parentElement;
+  assert.equal(cluster.closest('[data-testid="app-title-row"]')?.getAttribute('data-testid'), 'app-title-row');
+  // StatusLight renders null with the build flag off (always, under test), so the
+  // hamburger is the only thing there; the light's own slot is the one just before it.
+  assert.equal(cluster.lastElementChild, menuButton);
+  assert.match(TopTabBarSource, /<StatusLight \/>\s*<button[\s\S]*?data-testid="nav-menu-button"/,
+    'the light is rendered immediately before the hamburger');
+  view.unmount();
+});
+
+test('the six tabs share the full width in equal segments on every screen size', async () => {
+  api.get = async () => [];
+  const view = await renderAt('/dashboard', h(TopTabBar, { onOpenMenu: () => {} }));
+  const tabs = view.all('nav[aria-label="Main navigation"] a');
+  assert.equal(tabs.length, 6);
+  for (const a of tabs) {
+    assert.match(a.className, /\bflex-1\b/);
+    assert.match(a.className, /\bbasis-0\b/, 'equal widths whatever the label length');
+    assert.doesNotMatch(a.className, /max-w-/, 'no cap that would leave a gap on wide screens');
+  }
   view.unmount();
 });
 

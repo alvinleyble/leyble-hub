@@ -17,7 +17,7 @@ export default function AppLayout() {
   const { refresh, refreshing } = useAppRefresh();
   const pull = usePullToRefresh(mainRef, { onRefresh: refresh, disabled: refreshing || menuOpen });
 
-  // One layout for every screen size: the tab bar across the top, the page under it.
+  // One layout for every screen size: the title row and tab row across the top, the page under them.
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
       <TopTabBar onRefresh={refresh} onOpenMenu={openMenu} menuOpen={menuOpen} />
