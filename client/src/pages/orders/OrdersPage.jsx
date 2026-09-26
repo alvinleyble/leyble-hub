@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -216,7 +217,7 @@ export default function OrdersPage() {
     // cached copy when it does not, unioned either way with the drafts this device
     // parked itself and still holds.
     if (statusTab === 'draft') {
-      loadParkedOrders()
+      return loadParkedOrders()
         .then(({ drafts: parked, fromCache }) => {
           setFromLocalHistory(fromCache);
           const matched = filterLocalHistory(parked, {
@@ -228,7 +229,6 @@ export default function OrdersPage() {
           setTotalPages(Math.max(1, Math.ceil(matched.length / pageSize)));
         })
         .finally(() => { if (!silent) setLoading(false); });
-      return;
     }
 
     const params = new URLSearchParams();
@@ -239,7 +239,7 @@ export default function OrdersPage() {
     params.set('page', String(page));
     params.set('limit', String(pageSize));
 
-    api.get(`/orders?${params}`)
+    return api.get(`/orders?${params}`)
       .then((res) => {
         setFromLocalHistory(false);
         if (res && res.orders && res.pagination) {
@@ -289,7 +289,7 @@ export default function OrdersPage() {
   // outage instead of silently emptying (criterion 5.1). It used to fall back to this
   // device's synced order history, which by construction never contains a draft.
   const loadDrafts = useCallback(() => {
-    loadParkedOrders()
+    return loadParkedOrders()
       .then(({ drafts: parked }) => setDrafts(parked))
       .catch(() => setDrafts([]));
   }, []);
@@ -297,15 +297,12 @@ export default function OrdersPage() {
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
   useEffect(() => { loadDraftsRef.current = loadDrafts; }, [loadDrafts]);
 
-  // Reload orders and drafts when header Refresh Button is clicked
-  useEffect(() => {
-    const onRefresh = () => {
-      loadRef.current?.();
-      loadDraftsRef.current?.();
-    };
-    window.addEventListener('leyble:refresh', onRefresh);
-    return () => window.removeEventListener('leyble:refresh', onRefresh);
-  }, []);
+  // Pull-down / re-tapping the menu item reloads orders and drafts — quietly, since
+  // the refresh spinner at the top of the page is already saying so.
+  useRefreshListener(() => Promise.all([
+    loadRef.current?.({ silent: true }),
+    loadDraftsRef.current?.(),
+  ]));
 
   // ADR 0019 — the app-wide poll stores complete snapshots before emitting this event.
   // Refresh this filtered page without a spinner, explain rows that moved away, and

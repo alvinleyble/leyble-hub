@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../offline/refresh';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/ui/Badge';
@@ -91,7 +92,7 @@ export default function DashboardPage() {
   // wants last night's figures and a way through to the counter, not an error string.
   const load = useCallback(({ silent = false } = {}) => {
     if (!silent) { setLoading(true); setError(''); }
-    loadWithCache(DASHBOARD_CACHE, () => api.get('/dashboard'))
+    return loadWithCache(DASHBOARD_CACHE, () => api.get('/dashboard'))
       .then(({ data: payload, fromCache: cached, cachedAt: at }) => {
         setData(payload);
         setFromCache(cached);
@@ -121,6 +122,10 @@ export default function DashboardPage() {
     }).catch(() => { if (!cancelled) load(); });
     return () => { cancelled = true; };
   }, [load]);
+
+  // Pull-down / re-tapping the menu item. Quiet, like the cache-first reload above:
+  // the figures already on screen stay put until the fresh ones land.
+  useRefreshListener(() => load({ silent: true }));
 
   if (loading) {
     return <DashboardSkeleton />;

@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { V25_OFFLINE_CORE } from '../../config/features';
 import { countDuplicateCustomers } from '../../utils/duplicateCustomers';
 import AccountSwitchModal from '../accounts/AccountSwitchModal';
-import RefreshButton from './RefreshButton';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Dashboard' },
@@ -18,9 +17,16 @@ const NAV_ITEMS = [
   { path: '/audit',     label: 'Audit Log' },
 ];
 
-export default function Sidebar({ onClose, offlineMarker }) {
+// True when `path` is exactly the page on screen. A sub-page does not count: tapping
+// Outgoing Orders from an order's detail page goes back to the list, not a refresh.
+export function isCurrentPage(pathname, path) {
+  return pathname.replace(/\/+$/, '') === path;
+}
+
+export default function Sidebar({ onClose, offlineMarker, onRefresh }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [dupDismissed, setDupDismissed] = useState(false);
   // ADR 0017 #7 — the remembered-account switcher, reached by tapping the name under the
@@ -92,7 +98,6 @@ export default function Sidebar({ onClose, offlineMarker }) {
           </button>
           {offlineMarker && (
             <div className="mt-2 flex items-center gap-2">
-              <RefreshButton variant="v1" />
               {offlineMarker}
             </div>
           )}
@@ -114,7 +119,9 @@ export default function Sidebar({ onClose, offlineMarker }) {
         )}
       </div>
 
-      {/* Navigation links — each row is at least 48px tall */}
+      {/* Navigation links — each row is at least 48px tall. Tapping the page that is
+          already open refreshes it instead of re-navigating to it (like re-tapping Home
+          in any social app), on the desktop rail and the phone/tablet drawer alike. */}
       <nav className="flex-1 py-2 overflow-y-auto">
         {NAV_ITEMS.map(({ path, label }) => {
           const isCustomers = path === '/customers';
@@ -123,7 +130,13 @@ export default function Sidebar({ onClose, offlineMarker }) {
             <NavLink
               key={path}
               to={path}
-              onClick={onClose}
+              onClick={(e) => {
+                if (onRefresh && isCurrentPage(pathname, path)) {
+                  e.preventDefault();
+                  onRefresh();
+                }
+                if (onClose) onClose();
+              }}
               data-testid={`nav-link-${path.slice(1)}`}
               className={({ isActive }) =>
                 `flex items-center justify-between min-h-[48px] px-5 text-base font-medium transition-colors duration-100

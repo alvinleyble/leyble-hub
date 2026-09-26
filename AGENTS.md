@@ -327,7 +327,7 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   `draining` mutex clears and without awaiting it. This used to be each caller's
   duty (Round 2 Fix 1), which only held for the callers that remembered: the ones
   that wanted the send and nothing else — `status.js`'s reachability recovery,
-  `RefreshButton`, `OrderCreateModal`, `parkedOrders` — called the bare
+  `refreshApp` (`offline/refresh.js`), `OrderCreateModal`, `parkedOrders` — called the bare
   `drainOutbox()` and dropped the signal, so whichever caller happened to win the
   mutex decided whether any screen heard about the drain at all. A bare
   `drainOutbox().catch(() => {})` is now the correct shape everywhere; adding a
