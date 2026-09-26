@@ -75,6 +75,35 @@ const PATHS = {
       <path d="M6 12h10" />
     </>
   ),
+  // Settings rows (pages/settings/SettingsList.jsx).
+  profile: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4.5 20.5c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5" />
+    </>
+  ),
+  printer: (
+    <>
+      <path d="M6.5 9V3.5h11V9" />
+      <rect x="3" y="9" width="18" height="8" rx="2" />
+      <path d="M6.5 14h11v6.5h-11z" />
+    </>
+  ),
+  device: (
+    <>
+      <rect x="5" y="2.5" width="14" height="19" rx="2" />
+      <path d="M10.5 18h3" />
+    </>
+  ),
+  about: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <path d="M12 7.5h.01" />
+    </>
+  ),
+  chevronRight: <path d="M9 5l7 7-7 7" />,
+  chevronLeft: <path d="M15 5l-7 7 7 7" />,
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
 };

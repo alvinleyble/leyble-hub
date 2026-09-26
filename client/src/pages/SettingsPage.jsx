@@ -1,72 +1,54 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React from 'react';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import Button from '../components/ui/Button';
-import AccountSwitchModal from '../components/accounts/AccountSwitchModal';
+import NavIcon from '../components/layout/NavIcon';
+import SettingsList, { SETTINGS_SCREENS } from './settings/SettingsList';
+import ProfileSection from './settings/ProfileSection';
+import PrinterSection from './settings/PrinterSection';
+import DeviceSection, { useDeviceReceiptSummary } from './settings/DeviceSection';
+import AboutSection from './settings/AboutSection';
 
-// Settings, reached from the hamburger menu. For now it holds who is signed in and the
-// ADR 0017 #7 account switch that used to hang off the name under the sidebar's brand;
-// the rest of what belongs here is a later item.
+// Settings, reached from the hamburger menu. `/settings` is a list of rows — Profile,
+// Printer, This device, About — and each opens on its own screen at
+// `/settings/<id>` with a back control to the list. Everyone sees all of it; the app
+// has no roles yet. Apart from the account switch and the printer choice, everything
+// below Profile is read-only: it shows what printing and numbering are doing without
+// changing how they do it.
 export default function SettingsPage() {
+  const { section } = useParams();
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const receiptSummary = useDeviceReceiptSummary(user?.id);
 
-  // Deliberately NOT a logout. Signing in as a fourth person must not cost whoever is
-  // holding the tablet the passwordless switch back to their own account — the login
-  // screen adds the new account and makes it active on its own.
-  const handleAddAccount = () => {
-    setSwitcherOpen(false);
-    navigate('/login');
-  };
+  if (!section) {
+    return (
+      <SettingsList
+        userName={user?.full_name || user?.email || ''}
+        receiptSummary={receiptSummary}
+      />
+    );
+  }
 
-  const name = user?.full_name || user?.email || '';
+  const screen = SETTINGS_SCREENS.find((s) => s.id === section);
+  if (!screen) return <Navigate to="/settings" replace />;
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Settings</h1>
-
-      <section
-        aria-labelledby="settings-profile-heading"
-        className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+      <Link
+        to="/settings"
+        className="-ml-2 inline-flex min-h-[48px] items-center gap-1 rounded-lg px-2 text-base font-semibold text-blue-700
+                   hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        data-testid="settings-back"
       >
-        <h2 id="settings-profile-heading" className="text-lg font-semibold text-slate-900 mb-4">
-          Profile
-        </h2>
-        <div className="flex items-center gap-4">
-          <span
-            aria-hidden="true"
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-blue-700 text-xl font-bold text-white select-none"
-          >
-            {name.trim().charAt(0).toUpperCase() || '?'}
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-slate-500">Signed in as</p>
-            <p className="truncate text-lg font-semibold text-slate-900" data-testid="settings-profile-name">{name}</p>
-            {user?.email && user.email !== name && (
-              <p className="truncate text-base text-slate-600">{user.email}</p>
-            )}
-          </div>
-        </div>
-        <p className="mt-4 text-base text-slate-600">
-          Receipts are numbered and signed with whoever is signed in here.
-        </p>
-        <Button
-          variant="secondary"
-          className="mt-4 w-full sm:w-auto"
-          onClick={() => setSwitcherOpen(true)}
-          data-testid="account-switcher-button"
-        >
-          Switch account
-        </Button>
-      </section>
-
-      {switcherOpen && (
-        <AccountSwitchModal
-          onClose={() => setSwitcherOpen(false)}
-          onAddAccount={handleAddAccount}
-        />
-      )}
+        <NavIcon name="chevronLeft" className="h-5 w-5" />
+        Settings
+      </Link>
+      <h1 id="settings-screen-title" className="mt-1 mb-6 text-2xl font-bold text-slate-900">
+        {screen.title}
+      </h1>
+      {section === 'profile' && <ProfileSection />}
+      {section === 'printer' && <PrinterSection deviceSeries={receiptSummary?.series || null} />}
+      {section === 'device' && <DeviceSection summary={receiptSummary} />}
+      {section === 'about' && <AboutSection />}
     </div>
   );
 }
