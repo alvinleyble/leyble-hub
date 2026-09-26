@@ -9,8 +9,11 @@ Connected foreground tablets keep their local order copies current with a bounde
 - **First-setup full-history gate** — **Done.** Merged via PR #117 on `dev`
   (`useSyncGate().blocking` / `isFirstSetupPending` in `client/src/offline/sync.js`,
   `FirstSetupGateScreen.jsx`). A brand-new tablet now stays blocked until
-  `orders_backfill_complete` is true, not just `setup_complete`. See `AGENTS.md`'s
-  "Full-app offline sync (Slice 3.2, ADR 0015)" section for the mechanism.
+  `orders_backfill_complete` is true, not just `setup_complete`. The gate reopens on a
+  later login or resume only if that backfill never finished, and otherwise never
+  re-engages once a device has completed its one first setup; the screen shows two
+  truthful phases — actively downloading, and waiting-for-connection with a Retry action
+  that fires a plain, never-throttled sync.
 - **Server-authoritative order-revision stale-write guard + the 5-second foreground
   delta sync** (including bulk-action independent commit/outcome reporting and the
   connection-check backoff/app-wide scope) — **Done.** Migration 048 adds the revision;
@@ -18,10 +21,15 @@ Connected foreground tablets keep their local order copies current with a bounde
   owns the app-wide foreground cadence and backoff. The delta has no self-origination
   filter and every write path here adopts the server's response, so an id match alone is
   this device's own echo as often as another device's edit: `orderChangedInEvent()` routes
-  every match through `isNewerRevision(held, incoming)` (strictly greater, compared as the
-  `BIGINT` it is), and `OrderDetailPage` asks again before it adopts a copy it parked
-  behind an open edit — a write that is not banner-gated, such as a receipt print, can
-  move the screen past what is parked.
+  every match through `isNewerRevision(held, incoming)` (strictly greater, compared as
+  `BigInt` via `comparableRevision` — `revision` is a `BIGINT` returned as a string and
+  must never become a `Number`; argument order matters, since reversing it inverts the
+  check silently). Equal means this device's own echo (e.g. the false "changed on
+  another device" warning right after saving an adjustment); older means a delta page
+  fetched before a save that has since landed, and must be ignored rather than adopted
+  backwards over the newer value. `OrderDetailPage` asks again with the same predicate
+  before it adopts a copy it parked behind an open edit — a write that is not
+  banner-gated, such as a receipt print, can move the screen past what is parked.
 - **A drained write is adopted, never left to the poll** — **Done.** A receipt print is
   the only such write for an order a screen is already holding from the server
   (`queueReceiptPrinted` under `V25_OFFLINE_CORE`), so the revision bump it causes used to
@@ -38,7 +46,18 @@ Connected foreground tablets keep their local order copies current with a bounde
   UPDATE and the print is one UPDATE, so only a row exactly one ahead of what the screen
   holds is the print and nothing else. A row further ahead carries another device's write
   in the same window and takes the ordinary stale-warning path instead of being adopted
-  silently — it never clears a warning it cannot explain.
+  silently — it never clears a warning it cannot explain. An entity type is added to
+  `ORDER_SNAPSHOT_ENTITY_TYPES` in `client/src/offline/outbox.js` only when its route
+  answers with the full order row. Regression coverage:
+  `client/test/review-queue-receipt-print-sync.test.mjs`.
+- **A silent background re-read must not clobber an unsaved adjustment edit** — **Done.**
+  `leyble:drain-complete` fires on any outbox drain, and `OrderDetailPage`'s handler
+  (`adoptAuthoritativeOrder`) rewrites the adjustment fields from the server row. The
+  re-read is gated on `adjDirty`, never `adjExpanded` (display-only state), and is
+  deferred while the operator has unsaved edits, flushing once idle rather than being
+  dropped. Whatever clears `adjDirty` must also restore `adjValue`/`adjReason` from
+  `order` — clearing the flag alone left a discarded edit reading back as saved on the
+  next open.
 - **Request-key idempotency on order mutations** — **Done (adjacent work, not a
   decision of this ADR).** Migration 050 plus `claimRequestKey` in
   `server/src/lib/idempotency.js`. It sits IN FRONT of the revision guard: a mutating
@@ -59,8 +78,10 @@ Connected foreground tablets keep their local order copies current with a bounde
   the held, unanswered attempt under its own `request_key`. A spent key is replayed
   (ours); an unspent one is refused `409` against the newer revision (not ours); neither
   writes. Only a row exactly one ahead of both the screen and the attempt's own revision
-  is a candidate, and anything unproven keeps the warning. See `AGENTS.md`'s "A delta
-  one revision past a timed-out save" bullet.
+  is a candidate, and anything unproven keeps the warning. Known residue: a host's own
+  two-request save (edit, then adjustment) whose SECOND request times out is not
+  provable this way, since the screen never learned the first request's revision, so it
+  still warns. Coverage: `client/test/edit-modal-own-timeout-warning.test.mjs`.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).
