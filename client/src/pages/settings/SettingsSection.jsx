@@ -1,18 +1,15 @@
 import React from 'react';
 
-// One card on the Settings page. Every section shares this frame so the page reads as
-// one list of cards, top to bottom.
-export default function SettingsSection({ id, title, children, testId }) {
-  const headingId = `settings-${id}-heading`;
+// The card that holds one sub-setting's content, on its own screen under /settings/<id>.
+// The screen's own title (SettingsSubScreen's h1) names it, so the card carries no
+// heading of its own.
+export default function SettingsSection({ id, children, testId }) {
   return (
     <section
-      aria-labelledby={headingId}
+      aria-labelledby="settings-screen-title"
       className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
       data-testid={testId || `settings-${id}`}
     >
-      <h2 id={headingId} className="text-lg font-semibold text-slate-900 mb-4">
-        {title}
-      </h2>
       {children}
     </section>
   );

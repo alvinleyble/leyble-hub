@@ -24,7 +24,7 @@ export function useDeviceReceiptSummary(userId) {
 
 export default function DeviceSection({ summary }) {
   return (
-    <SettingsSection id="device" title="This device">
+    <SettingsSection id="device">
       {!summary ? (
         <p className="text-base text-slate-500">Loading…</p>
       ) : summary.series ? (

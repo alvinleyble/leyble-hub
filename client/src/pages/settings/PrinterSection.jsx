@@ -11,7 +11,7 @@ const TRANSPORT_LABELS = { bluetooth: 'Bluetooth', wifi: 'Wi-Fi' };
 // changes here. The browser build has no printer plugin, so it says so.
 export default function PrinterSection({ native = Capacitor.isNativePlatform(), deviceSeries = null }) {
   return (
-    <SettingsSection id="printer" title="Printer">
+    <SettingsSection id="printer">
       {native ? (
         <ConnectedPrinterPanel deviceSeries={deviceSeries} />
       ) : (

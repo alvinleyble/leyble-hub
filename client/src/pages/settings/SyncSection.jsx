@@ -50,7 +50,7 @@ export default function SyncSection() {
   }, []);
 
   return (
-    <SettingsSection id="sync" title="Sync">
+    <SettingsSection id="sync">
       <dl>
         <SettingRow label="Last synced" testId="settings-sync-last">
           {lastSynced === undefined ? '…' : formatSyncedAt(lastSynced)}

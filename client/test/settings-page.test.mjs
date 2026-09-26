@@ -306,22 +306,148 @@ test('About in the app: version, build and the server minimum verdict', async ()
   await expectMin(/Could not check/);
 });
 
-// ── The page ────────────────────────────────────────────────────────────────
+// ── The page: a list of rows, each opening its own screen ──────────────────
 
-test('Settings shows Profile, Printer, This device, Sync and About, top to bottom', async () => {
+const { createRoot } = await import('react-dom/client');
+const { MemoryRouter, Routes, Route, useLocation } = await import('react-router-dom');
+
+let currentPath = null;
+function PathProbe() {
+  currentPath = useLocation().pathname;
+  return null;
+}
+
+// render.mjs mounts at `/` with no routes, so the routed page gets its own router here,
+// matching App.jsx's two Settings routes.
+function renderSettingsAt(path) {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(
+      React.createElement(ToastProvider, null,
+        React.createElement(AuthProvider, null,
+          React.createElement(MemoryRouter, { initialEntries: [path] },
+            React.createElement(PathProbe),
+            React.createElement(Routes, null,
+              React.createElement(Route, { path: '/settings', element: React.createElement(SettingsPage) }),
+              React.createElement(Route, { path: '/settings/:section', element: React.createElement(SettingsPage) }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+  return {
+    container,
+    q: (sel) => container.querySelector(sel),
+    all: (sel) => [...container.querySelectorAll(sel)],
+    click: (el) => act(() => { el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })); }),
+    unmount: () => { act(() => root.unmount()); container.remove(); },
+  };
+}
+
+async function settingsSetup() {
   api.get = async () => { throw new Error('Failed to fetch'); };
   await setStoredSession(ALVIN);
   await signInWithLetter({ lastSequence: 42 });
+}
+
+test('/settings is a list of rows — Profile, Printer, This device, Sync, About — each with a summary and nothing expanded', async () => {
+  await settingsSetup();
+  const view = renderSettingsAt('/settings');
+  await settle();
+
+  const rows = view.all('[data-testid^="settings-row-"][href]');
+  assert.deepEqual(rows.map((r) => r.getAttribute('href')),
+    ['/settings/profile', '/settings/printer', '/settings/device', '/settings/sync', '/settings/about']);
+  const summary = (id) => view.q(`[data-testid="settings-row-${id}-summary"]`).textContent;
+  assert.match(rows[2].textContent, /This device/);
+  assert.equal(summary('profile'), 'Alvin');
+  assert.equal(summary('printer'), 'Set up in the Android app');
+  assert.equal(summary('device'), '1A');
+  assert.equal(summary('sync'), 'All sent');
+  assert.equal(summary('about'), 'Shown in the Android app');
+  // Collapsed: none of the sub-settings' content is on the list screen.
+  for (const id of ['profile', 'printer', 'device', 'sync', 'about']) {
+    assert.equal(view.q(`[data-testid="settings-${id}"]`), null, `${id} content is not shown on the list`);
+  }
+  view.unmount();
+});
+
+test('the Sync row counts what is still waiting', async () => {
+  await settingsSetup();
+  await enqueue({ entityType: 'customer', endpoint: '/customers', payload: { name: 'A' }, profileKey: ALVIN.email });
+  await enqueue({ entityType: 'customer', endpoint: '/customers', payload: { name: 'B' }, profileKey: ALVIN.email });
+  const view = renderSettingsAt('/settings');
+  await settle();
+  assert.equal(view.q('[data-testid="settings-row-sync-summary"]').textContent, '2 waiting');
+  view.unmount();
+});
+
+test('tapping a row opens that sub-setting on its own screen, and Back returns to the list', async () => {
+  await settingsSetup();
+  const view = renderSettingsAt('/settings');
+  await settle();
+
+  view.click(view.q('[data-testid="settings-row-device"]'));
+  await settle();
+  assert.equal(currentPath, '/settings/device');
+  assert.equal(view.q('h1').textContent, 'This device');
+  assert.equal(view.q('[data-testid="settings-device-series"]').textContent, '1A');
+  assert.equal(view.q('[data-testid="settings-device-last-receipt"]').textContent, '1A-00042');
+  assert.equal(view.q('[data-testid="settings-row-device"]'), null, 'the list is gone');
+
+  view.click(view.q('[data-testid="settings-back"]'));
+  await settle();
+  assert.equal(currentPath, '/settings');
+  assert.ok(view.q('[data-testid="settings-row-device"]'));
+  view.unmount();
+});
+
+test('each sub-screen holds exactly its own section', async () => {
+  await settingsSetup();
+  const cases = {
+    profile: 'settings-profile-name',
+    printer: 'settings-printer-web-note',
+    device: 'settings-device-series',
+    sync: 'settings-sync-last',
+    about: 'settings-about-web-note',
+  };
+  for (const [id, testId] of Object.entries(cases)) {
+    const view = renderSettingsAt(`/settings/${id}`);
+    await settle();
+    assert.ok(view.q(`[data-testid="${testId}"]`), `${id} shows its content`);
+    assert.deepEqual(view.all('section').map((sec) => sec.dataset.testid), [`settings-${id}`]);
+    assert.ok(view.q('[data-testid="settings-back"]'));
+    view.unmount();
+  }
+});
+
+test('an unknown sub-setting goes back to the list', async () => {
+  await settingsSetup();
+  const view = renderSettingsAt('/settings/nope');
+  await settle();
+  assert.equal(currentPath, '/settings');
+  assert.ok(view.q('[data-testid="settings-row-profile"]'));
+  view.unmount();
+});
+
+test('in the app the rows summarise the saved printer (Not set) and the installed version', async () => {
+  const { PrinterProvider } = await import('../src/context/PrinterContext.jsx');
+  const SettingsList = (await import('../src/pages/settings/SettingsList.jsx')).default;
+  setMockAppInfo({ version: '1.2.1', build: '30', id: 'com.leyble.hub' });
   const view = render(
     React.createElement(ToastProvider, null,
-      React.createElement(AuthProvider, null, React.createElement(SettingsPage))),
+      React.createElement(PrinterProvider, null,
+        React.createElement(SettingsList, {
+          native: true, userName: 'Alvin', receiptSummary: { series: null, lastReceiptNumber: null },
+        }))),
   );
   await settle();
-  const headings = view.all('h2').map((h) => h.textContent.trim());
-  assert.deepEqual(headings, ['Profile', 'Printer', 'This device', 'Sync', 'About']);
-  assert.equal(view.container.querySelector('[data-testid="settings-device-series"]').textContent, '1A');
-  assert.equal(view.container.querySelector('[data-testid="settings-device-last-receipt"]').textContent, '1A-00042');
-  assert.ok(view.container.querySelector('[data-testid="settings-printer-web-note"]'));
-  assert.ok(view.container.querySelector('[data-testid="settings-about-web-note"]'));
+  const summary = (id) => view.container.querySelector(`[data-testid="settings-row-${id}-summary"]`).textContent;
+  assert.equal(summary('printer'), 'Not set');
+  assert.equal(summary('about'), 'Version 1.2.1 · build 30');
+  assert.equal(summary('device'), 'Not set up yet');
   view.unmount();
 });

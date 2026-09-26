@@ -80,6 +80,7 @@ function AppRoutes() {
           <Route path="/tickets"      element={<TicketsPage />} />
           <Route path="/audit"        element={<AuditPage />} />
           <Route path="/settings"     element={<SettingsPage />} />
+          <Route path="/settings/:section" element={<SettingsPage />} />
           <Route path="*"             element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Route>

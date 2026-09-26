@@ -13,6 +13,9 @@ import { api } from '../src/api/client.js';
 import { AuthProvider, setStoredSession, __setIsNativeForTest } from '../src/context/AuthContext.jsx';
 
 const SettingsPage = (await import('../src/pages/SettingsPage.jsx')).default;
+// Settings is a list of rows since the sub-setting split; the name and the switch live
+// on the Profile screen (/settings/profile).
+const ProfileSection = (await import('../src/pages/settings/ProfileSection.jsx')).default;
 const MenuDrawer = (await import('../src/components/layout/MenuDrawer.jsx')).default;
 
 let originalApiGet;
@@ -35,7 +38,7 @@ test('Settings names the signed-in account and offers an account switch, not a p
     throw new Error(`unexpected GET ${path}`);
   };
 
-  const view = render(React.createElement(AuthProvider, null, React.createElement(SettingsPage)));
+  const view = render(React.createElement(AuthProvider, null, React.createElement(ProfileSection)));
   await act(async () => { await Promise.resolve(); });
 
   assert.match(view.text(), /Luis/, 'Settings names whoever signed in');

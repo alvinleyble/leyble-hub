@@ -35,7 +35,7 @@ export default function AboutSection({ native = Capacitor.isNativePlatform() }) 
   }, [native]);
 
   return (
-    <SettingsSection id="about" title="About">
+    <SettingsSection id="about">
       {native ? (
         <dl>
           <SettingRow label="Installed" testId="settings-about-version">
