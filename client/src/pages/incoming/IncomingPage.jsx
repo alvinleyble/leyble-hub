@@ -110,7 +110,7 @@ export default function IncomingPage() {
           placeholder="Filter by supplier…"
           value={supplierFilter}
           onChange={(e) => setSupplierFilter(e.target.value)}
-          className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
+          className="w-full sm:w-auto sm:flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                      focus:outline-none focus:ring-2 focus:ring-blue-600"
           aria-label="Filter by supplier"
         />

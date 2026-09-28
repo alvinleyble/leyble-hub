@@ -53,6 +53,23 @@ const ROLE_COLOR = {
 const INPUT = `w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
+// The line-items table shows 3 columns on a phone and 5 from `sm` up (Price/Case and
+// Deposit are `hidden sm:table-cell`). A colSpan cannot be responsive, so a cell that
+// spans columns is rendered twice and CSS shows the copy whose span fits. A single
+// colSpan={4} totals label pushed every amount into a 5th column past the card's
+// clipped right edge on phones.
+function SpanCell({ phone, sm, className, children }) {
+  return (
+    <>
+      <td colSpan={phone} className={`sm:hidden ${className}`}>{children}</td>
+      <td colSpan={sm} className={`hidden sm:table-cell ${className}`}>{children}</td>
+    </>
+  );
+}
+
+// A totals-row label spans every column left of Total.
+const TotalsLabel = (props) => <SpanCell phone={2} sm={4} {...props} />;
+
 // Matches the loaded page's own section heights: back/print bar, the order header
 // card (status badges, customer block, timestamps grid), the line-items table, and
 // the totals footer — so the page doesn't jump once the real order lands.
@@ -117,7 +134,7 @@ function OrderDetailSkeleton() {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-400 bg-slate-50">
-              <td colSpan={4} className="px-5 py-4 text-right"><Skeleton className="h-4 w-24 ml-auto" /></td>
+              <TotalsLabel className="px-5 py-4 text-right"><Skeleton className="h-4 w-24 ml-auto" /></TotalsLabel>
               <td className="px-5 py-4"><Skeleton className="h-6 w-24 ml-auto" /></td>
             </tr>
           </tfoot>
@@ -725,9 +742,9 @@ export default function OrderDetailPage() {
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-5 py-6 text-center text-slate-400">
+                <SpanCell phone={3} sm={5} className="px-5 py-6 text-center text-slate-400">
                   Line items not available offline
-                </td>
+                </SpanCell>
               </tr>
             ) : (
               items.map((item) => (
@@ -770,13 +787,13 @@ export default function OrderDetailPage() {
             {hasDeposits && isDepositable && (
               <>
                 <tr className="border-t border-slate-400 bg-slate-50">
-                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Items</td>
+                  <TotalsLabel className="px-5 py-3 text-right text-slate-500">Items</TotalsLabel>
                   <td className="px-5 py-3 text-right tabular-nums text-slate-700">
                     {PHP(itemsSubtotal)}
                   </td>
                 </tr>
                 <tr className="border-t border-slate-300 bg-slate-50">
-                  <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Deposit fee</td>
+                  <TotalsLabel className="px-5 py-3 text-right text-slate-500">Deposit fee</TotalsLabel>
                   <td className={`px-5 py-3 text-right tabular-nums ${depositTotal < 0 ? 'text-green-700' : 'text-slate-700'}`}>
                     {depositTotal < 0
                       ? `− ${PHP(Math.abs(depositTotal))}`
@@ -787,7 +804,7 @@ export default function OrderDetailPage() {
             )}
             {hasDeliveryFee && (
               <tr className="border-t border-slate-300 bg-slate-50">
-                <td colSpan={4} className="px-5 py-3 text-right text-slate-500">Delivery Fee</td>
+                <TotalsLabel className="px-5 py-3 text-right text-slate-500">Delivery Fee</TotalsLabel>
                 <td className="px-5 py-3 text-right tabular-nums font-medium text-slate-700">
                   {PHP(deliveryFeeCharged)}
                 </td>
@@ -795,12 +812,12 @@ export default function OrderDetailPage() {
             )}
             {hasAdj && (
               <tr className="border-t border-slate-300 bg-slate-50">
-                <td colSpan={4} className="px-5 py-3 text-right text-slate-500">
+                <TotalsLabel className="px-5 py-3 text-right text-slate-500">
                   Adjustment
                   {order.adjustment_reason && (
                     <span className="ml-2 text-xs text-slate-400 italic">({order.adjustment_reason})</span>
                   )}
-                </td>
+                </TotalsLabel>
                 <td className={`px-5 py-3 text-right tabular-nums font-medium
                   ${num(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
                   {num(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
@@ -808,9 +825,9 @@ export default function OrderDetailPage() {
               </tr>
             )}
             <tr className="border-t-2 border-slate-400 bg-slate-50">
-              <td colSpan={4} className="px-5 py-4 text-right font-bold text-slate-700">
+              <TotalsLabel className="px-5 py-4 text-right font-bold text-slate-700">
                 Order Total
-              </td>
+              </TotalsLabel>
               <td className="px-5 py-4 text-right font-bold text-xl tabular-nums text-slate-900">
                 {PHP(liveTotal)}
               </td>
