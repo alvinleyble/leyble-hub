@@ -6,6 +6,10 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import Modal from '../../components/ui/Modal';
+import BackLink from '../../components/ui/BackLink';
+import { StatusBadge, TagBadge } from '../../components/ui/Badge';
+import NavIcon from '../../components/layout/NavIcon';
+import { formatPeso } from '../../utils/money';
 import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
@@ -31,26 +35,19 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const PHP = (n) =>
-  `₱${num(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen goes through the shared formatter (design standard Q15), so a
+// negative adjustment reads "−₱96.00", not "₱-96.00".
+const PHP = (n) => formatPeso(num(n));
 
 const fmtDate = (d, opts = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) =>
   d ? new Date(d).toLocaleString('en-PH', opts) : null;
-
-const STATUS = {
-  pending:    { label: 'Pending',     color: 'bg-blue-100 text-blue-800 border-blue-300' },
-  in_transit: { label: 'In Transit',  color: 'bg-amber-100 text-amber-800 border-amber-300' },
-  completed:  { label: 'Delivered',   color: 'bg-green-100 text-green-800 border-green-300' },
-  done:       { label: 'Closed',      color: 'bg-slate-100 text-slate-600 border-slate-200' },
-  cancelled:  { label: 'Cancelled',   color: 'bg-red-100 text-red-700 border-red-300' },
-};
 
 const ROLE_COLOR = {
   Driver: 'bg-purple-100 text-purple-800 border-purple-300',
   Helper: 'bg-teal-100 text-teal-800 border-teal-300',
 };
 
-const INPUT = `w-full px-4 py-2.5 border border-slate-300 rounded-lg text-base text-slate-900
+const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
 
 // The line-items table shows 3 columns on a phone and 5 from `sm` up (Price/Case and
@@ -75,7 +72,7 @@ const TotalsLabel = (props) => <SpanCell phone={2} sm={4} {...props} />;
 // the totals footer — so the page doesn't jump once the real order lands.
 function OrderDetailSkeleton() {
   return (
-    <SkeletonGroup label="Loading order" className="p-6 max-w-3xl mx-auto">
+    <SkeletonGroup label="Loading order" className="px-4 py-4 md:px-6 md:py-6 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <Skeleton className="h-4 w-16" />
         <Skeleton className="h-8 w-28 rounded-lg" />
@@ -213,7 +210,9 @@ export default function OrderDetailPage() {
     setFromLocalSnapshot(false);
     setAdjValue(Number(current.adjustment) ? String(current.adjustment) : '');
     setAdjReason(current.adjustment_reason || '');
-    setAdjExpanded(Number(current.adjustment) !== 0);
+    // A saved adjustment shows as a read-only line with an Edit button (design
+    // standard Q13, UI audit F16) — never as an open form that looks unsaved.
+    setAdjExpanded(false);
     setAdjDirty(false);
     setReturnsDirty(false);
     putOrderSnapshot(current).catch(() => {});
@@ -255,7 +254,7 @@ export default function OrderDetailPage() {
             setFromLocalSnapshot(true);
             setAdjValue(Number(local.adjustment) ? String(local.adjustment) : '');
             setAdjReason(local.adjustment_reason || '');
-            setAdjExpanded(Number(local.adjustment) !== 0);
+            setAdjExpanded(false);
             setAdjDirty(false);
             return;
           }
@@ -506,7 +505,7 @@ export default function OrderDetailPage() {
   if (notFound) {
     return (
       <div className="p-6 max-w-2xl mx-auto text-center">
-        <p className="text-xl font-semibold text-slate-400 mt-20">Order not found.</p>
+        <p className="text-xl font-semibold text-slate-600 mt-20">Order not found.</p>
         <Button className="mt-4" variant="secondary" onClick={() => navigate('/orders')}>
           ← Back to Orders
         </Button>
@@ -518,11 +517,11 @@ export default function OrderDetailPage() {
     return (
       <div className="p-6 max-w-2xl mx-auto text-center" data-testid="order-recovery-card">
         <div className="mt-16 p-8 bg-white border border-slate-200 rounded-xl shadow-sm">
-          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 text-2xl" aria-hidden="true">
-            ⚠️
+          <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700" aria-hidden="true">
+            <NavIcon name="warning" className="w-7 h-7" />
           </div>
           <h2 className="text-lg font-semibold text-slate-900 mb-2">Unable to reach the server to load this order.</h2>
-          <p className="text-sm text-slate-500 mb-6">
+          <p className="text-sm text-slate-600 mb-6">
             Please check your network connection or try again.
           </p>
           <div className="flex items-center justify-center gap-3">
@@ -530,15 +529,14 @@ export default function OrderDetailPage() {
               ← Back to Orders
             </Button>
             <Button variant="primary" onClick={() => load()}>
-              🔄 Try Again
+              <NavIcon name="refresh" className="w-5 h-5" />
+              Try Again
             </Button>
           </div>
         </div>
       </div>
     );
   }
-
-  const st = STATUS[order.status] ?? { label: order.status, color: 'bg-slate-100 text-slate-500 border-slate-200' };
 
   // Slice 3.2 / ADR 0015 §5 — two different reasons an action here can be unavailable,
   // and the operator deserves to be told which:
@@ -587,65 +585,61 @@ export default function OrderDetailPage() {
   const hasDeposits = items.some((i) => num(i?.unit_deposit_fee) > 0);
 
   return (
-    <div className="p-6 max-w-3xl mx-auto" data-testid="order-detail">
+    <div className="px-4 py-4 md:px-6 md:py-6 max-w-3xl mx-auto" data-testid="order-detail">
 
-      {/* Back + Print */}
-      <div className="flex items-center justify-between mb-6">
-        <button
-          onClick={() => navigate('/orders')}
-          className="text-sm font-medium text-blue-700 hover:text-blue-900 flex items-center gap-1"
-        >
-          ← Orders
-        </button>
+      {/* Back + Print — one back control for the whole app (UI audit F23), 48px tall. */}
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <BackLink onClick={() => navigate('/orders')}>Orders</BackLink>
         {!['in_transit'].includes(order.status) && (
-          <div className="flex items-center gap-3">
-            <Button variant="secondary" size="sm" onClick={handlePrint} loading={printing}>
-              Print Receipt
-            </Button>
+          <div className="flex items-center gap-2">
             {IS_NATIVE && (
               <button
                 onClick={handleChangePrinter}
-                className="text-xs text-slate-400 hover:text-slate-600 underline
+                className="min-h-[48px] px-2 text-sm text-slate-600 hover:text-slate-900 underline
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
               >
                 Change printer
               </button>
             )}
+            <Button variant="secondary" size="sm" onClick={handlePrint} loading={printing}>
+              <NavIcon name="printer" className="w-5 h-5" />
+              Print Receipt
+            </Button>
           </div>
         )}
       </div>
 
       {/* G27 — static, non-interactive: this is the only sync-state UI on this page. */}
       {unsynced && (
-        <div className="mb-4 -mt-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
-          <span aria-hidden="true">⏳</span>
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900">
+          <NavIcon name="clock" className="w-5 h-5 shrink-0" />
           <span>Waiting to sync — this order is saved on this device and will reach the server once connected.</span>
         </div>
       )}
 
       {!unsynced && fromLocalSnapshot && (
-        <div className="mb-4 -mt-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-800">
-          <span aria-hidden="true">⏳</span>
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900">
+          <NavIcon name="clock" className="w-5 h-5 shrink-0" />
           <span>Offline — showing this device's saved copy of this order. Status changes need a connection.</span>
         </div>
       )}
 
       {pendingRemoteOrder && !editing && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
-          <span aria-hidden="true">⚠️</span>
+          <NavIcon name="warning" className="w-5 h-5 shrink-0" />
           <span>This order changed on another device. Finish or cancel the open action, then review the updated order.</span>
         </div>
       )}
 
       {(order.pending_receipt_printed_at || order.delivered_receipt_printed_at) && (
-        <div className="mb-4 -mt-4 space-y-1">
+        <div className="mb-4 space-y-1">
           {order.pending_receipt_printed_at && (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-600">
               Printed (pending) {fmtDate(order.pending_receipt_printed_at)} by {order.pending_receipt_printed_by_name}
             </p>
           )}
           {order.delivered_receipt_printed_at && (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-600">
               Printed (delivered) {fmtDate(order.delivered_receipt_printed_at)} by {order.delivered_receipt_printed_by_name}
             </p>
           )}
@@ -653,46 +647,39 @@ export default function OrderDetailPage() {
       )}
 
       {/* Order header */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-4">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 md:p-6 mb-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order</p>
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-1">Order</p>
             <h1 className="text-2xl font-bold text-slate-900">{orderRef(order)}</h1>
-            <p className="text-sm text-slate-500 mt-1">{fmtDate(order.created_at)}</p>
+            <p className="text-sm text-slate-600 mt-1">{fmtDate(order.created_at)}</p>
             {order.sold_by_name?.trim() && (
-              <p className="text-sm text-slate-500 mt-0.5">Sold by: {order.sold_by_name.trim()}</p>
+              <p className="text-sm text-slate-600 mt-0.5">Sold by: {order.sold_by_name.trim()}</p>
             )}
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border
-              ${isPickup
-                ? 'bg-blue-100 text-blue-800 border-blue-300'
-                : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-              {isPickup ? '🏪 Pickup' : '🚚 Delivery'}
-            </span>
-            <span className={`inline-flex items-center px-4 py-1.5 rounded-full text-sm font-bold border ${st.color}`}>
-              {st.label}
-            </span>
+            <TagBadge kind={isPickup ? 'pickup' : 'delivery'} />
+            <StatusBadge status={order.status} />
           </div>
         </div>
 
         {/* Customer */}
         <div className="mt-5 pt-5 border-t border-slate-300">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Customer</p>
+          <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-2">Customer</p>
           <p className="text-base font-semibold text-slate-800">{order.customer_name || 'Customer'}</p>
-          {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
-          {order.customer_phone   && <p className="text-sm text-slate-500">{order.customer_phone}</p>}
+          {order.customer_address && <p className="text-sm text-slate-600">{order.customer_address}</p>}
+          {order.customer_phone   && <p className="text-sm text-slate-600">{order.customer_phone}</p>}
         </div>
 
         {/* Personnel */}
         {(order.personnel || []).length > 0 && (
           <div className="mt-4 pt-4 border-t border-slate-300">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Assigned Personnel</p>
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-2">Assigned Personnel</p>
             <div className="flex flex-wrap gap-2">
               {(order.personnel || []).filter(Boolean).map((p, idx) => (
                 <div key={p.id ?? p.personnel_id ?? idx} className="flex items-center gap-1.5">
                   <span className="text-sm font-medium text-slate-700">{p.full_name}</span>
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border
                     ${ROLE_COLOR[p.role] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                     {p.role}
                   </span>
@@ -711,8 +698,8 @@ export default function OrderDetailPage() {
             { label: 'Closed',                               val: order.closed_at },
           ].filter((t) => t.val).map((t) => (
             <div key={t.label}>
-              <p className="text-xs font-semibold text-slate-400 uppercase">{t.label}</p>
-              <p className="text-xs text-slate-600 mt-0.5">
+              <p className="text-sm font-semibold text-slate-600 uppercase">{t.label}</p>
+              <p className="text-sm text-slate-800 mt-0.5">
                 {fmtDate(t.val, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
               </p>
             </div>
@@ -721,7 +708,7 @@ export default function OrderDetailPage() {
 
         {order.notes && (
           <div className="mt-4 pt-4 border-t border-slate-300">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Notes</p>
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-1">Notes</p>
             <p className="text-sm text-slate-600 italic">"{order.notes}"</p>
           </div>
         )}
@@ -731,7 +718,7 @@ export default function OrderDetailPage() {
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
+            <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wide border-b border-slate-400">
               <th className="text-left px-3 sm:px-5 py-3 font-semibold">Product</th>
               <th className="text-right px-3 sm:px-5 py-3 font-semibold">Qty</th>
               <th className="text-right px-4 py-3 font-semibold hidden sm:table-cell">Price/Case</th>
@@ -742,7 +729,7 @@ export default function OrderDetailPage() {
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <SpanCell phone={3} sm={5} className="px-3 sm:px-5 py-6 text-center text-slate-400">
+                <SpanCell phone={3} sm={5} className="px-3 sm:px-5 py-6 text-center text-slate-500">
                   Line items not available offline
                 </SpanCell>
               </tr>
@@ -765,7 +752,7 @@ export default function OrderDetailPage() {
                     <div>
                       <div>{PHP(item.unit_deposit_fee)}/bottle</div>
                       {num(item.bottles_returned) > 0 && (
-                        <div className="text-xs text-green-700 mt-0.5">
+                        <div className="text-sm text-green-800 mt-0.5">
                           −{item.bottles_returned} returned
                         </div>
                       )}
@@ -775,7 +762,7 @@ export default function OrderDetailPage() {
                 <td className="px-3 sm:px-5 py-3 text-right tabular-nums font-semibold text-slate-800">
                   <div>{PHP(num(item.quantity) * num(item.unit_price))}</div>
                   {num(item.unit_deposit_fee) > 0 && isDepositable && (
-                    <div className={`text-xs font-normal mt-0.5 ${itemNetDeposit(item) < 0 ? 'text-green-700' : 'text-slate-500'}`}>
+                    <div className={`text-sm font-normal mt-0.5 whitespace-nowrap ${itemNetDeposit(item) < 0 ? 'text-green-800' : 'text-slate-600'}`}>
                       {itemNetDeposit(item) < 0
                         ? `− ${PHP(Math.abs(itemNetDeposit(item)))} credit`
                         : `+ ${PHP(itemNetDeposit(item))} dep.`}
@@ -817,7 +804,7 @@ export default function OrderDetailPage() {
                 <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">
                   Adjustment
                   {order.adjustment_reason && (
-                    <span className="ml-2 text-xs text-slate-400 italic">({order.adjustment_reason})</span>
+                    <span className="ml-2 text-sm text-slate-500 italic">({order.adjustment_reason})</span>
                   )}
                 </TotalsLabel>
                 <td className={`px-3 sm:px-5 py-3 text-right tabular-nums font-medium
@@ -849,15 +836,15 @@ export default function OrderDetailPage() {
       )}
 
       {/* Adjustment */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Adjustment</p>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 md:p-5 mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-600 uppercase tracking-wide">Adjustment</p>
             {!adjExpanded && (
-              <p className="text-sm text-slate-500 mt-1">
+              <p className="text-base text-slate-600 mt-1">
                 {hasAdj
-                  ? <span className={num(order.adjustment) > 0 ? 'text-red-600 font-semibold' : 'text-green-700 font-semibold'}>
-                      {num(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
+                  ? <span className={num(order.adjustment) > 0 ? 'text-red-700 font-semibold' : 'text-green-800 font-semibold'}>
+                      <span className="whitespace-nowrap">{num(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}</span>
                       {order.adjustment_reason && ` — ${order.adjustment_reason}`}
                     </span>
                   : 'None'}
@@ -883,8 +870,9 @@ export default function OrderDetailPage() {
               }}
               disabled={offlineViewingSynced}
               title={offlineViewingSynced ? 'Needs a connection' : undefined}
-              className="text-sm text-blue-700 hover:text-blue-900 font-medium disabled:opacity-40 disabled:cursor-not-allowed
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+              className="shrink-0 min-h-[48px] px-3 rounded-lg text-base text-blue-700 hover:bg-blue-50 font-semibold
+                         disabled:opacity-40 disabled:cursor-not-allowed
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
               {adjExpanded ? 'Cancel' : hasAdj ? 'Edit' : '+ Add Adjustment'}
             </button>
@@ -944,8 +932,8 @@ export default function OrderDetailPage() {
           scope lock (no edit, no convert-to-order, no cancel) whether or not this view
           came from the offline read-only fallback (captain decision 2026-09-02). */}
       {order.status !== 'draft' && (
-      <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Actions</p>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 md:p-5 mb-4">
+        <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">Actions</p>
 
         {confirmAction ? (
           <div className={`p-4 rounded-lg border ${confirmAction.danger ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}`}>

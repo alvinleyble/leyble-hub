@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import NavIcon from '../components/layout/NavIcon';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, getLastKnownIdentity } from '../context/AuthContext';
 import Button from '../components/ui/Button';
@@ -132,12 +133,12 @@ export default function LoginPage() {
             role="status"
             className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-sm font-semibold flex items-start gap-2.5 shadow-sm"
           >
-            <span className="text-lg shrink-0">⚠️</span>
+            <NavIcon name="warning" className="w-6 h-6 shrink-0" />
             <div>
               <p className="font-bold text-amber-950">
                 This device is holding {unsentCount} unsent receipt{unsentCount === 1 ? '' : 's'}.
               </p>
-              <p className="mt-0.5 text-xs text-amber-800 font-normal">
+              <p className="mt-0.5 text-sm text-amber-800 font-normal">
                 Sales are saved locally and will automatically sync once connected to the server.
               </p>
             </div>

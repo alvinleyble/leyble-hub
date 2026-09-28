@@ -13,6 +13,28 @@ import { saveOrderLocalFirst } from '../src/offline/posSave.js';
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
 const DashboardPage = (await import('../src/pages/DashboardPage.jsx')).default;
 
+
+// The shared phone card recipe (components/ui/ListCard.jsx, design standard Q6):
+// line 1 = customer + total, line 2 = receipt · date + "Sold by", line 3 = badges.
+const cardLines = (card) => [...card.querySelectorAll('[data-card-line]')];
+function assertRecipe(card, { name, ref, total, date, soldBy }) {
+  const [l1, l2, l3] = cardLines(card);
+  assert.equal(cardLines(card).length, 3, 'card has the three recipe lines');
+  const nameP = l1.querySelector('p');
+  assert.ok(nameP.textContent.includes(name), 'line 1 names the customer');
+  assert.ok(!/truncate|line-clamp/.test(nameP.className), 'a long name wraps; it is never cut short');
+  const totalEl = l1.querySelector('.shrink-0');
+  assert.ok(totalEl.textContent.includes(total), 'line 1 carries the total');
+  assert.ok(totalEl.className.includes('whitespace-nowrap'), 'the total never splits across lines');
+  assert.ok(l2.textContent.includes(ref), 'line 2 carries the receipt reference');
+  if (date) assert.ok(l2.textContent.includes(date), 'line 2 carries the date & time');
+  assert.equal(l2.querySelector('.text-right').textContent.trim(), soldBy, 'line 2 names who sold it');
+  assert.ok(l2.className.includes('text-sm') && l2.className.includes('text-slate-600'),
+    'details are 14px slate-600 — the design standard Q7 floor, not 12px light grey');
+  assert.ok(l3, 'line 3 holds the badges');
+  assert.equal(card.querySelectorAll('.text-xs').length, 0, 'nothing on the card is under 14px');
+}
+
 let originalApiGet;
 let originalApiPost;
 let originalApiDel;
@@ -67,7 +89,7 @@ test('formatCardDateTime: safely handles null, undefined, empty, and invalid dat
   assert.equal(formatCardDateTime({}), '');
 });
 
-test('OrdersPage: mobile cards render strict 3-row layout with Date & Time and Sold by', async () => {
+test('OrdersPage: mobile cards follow the shared card recipe with Date & Time and Sold by', async () => {
   const mockOrders = [
     {
       id: 801,
@@ -127,69 +149,24 @@ test('OrdersPage: mobile cards render strict 3-row layout with Date & Time and S
 
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  // Locate the mobile card container
-  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
-  assert.ok(mobileContainer, 'Mobile cards container (.lg:hidden.divide-y) should exist');
+  const mobileContainer = r.container.querySelector('.md\\:hidden.divide-y');
+  assert.ok(mobileContainer, 'Phone cards container (.md:hidden.divide-y) should exist');
 
   const cards = mobileContainer.querySelectorAll('[data-testid="orders-row"]');
   assert.equal(cards.length, 3, 'Should render 3 mobile order cards');
 
-  // Test Card 1 (with sold_by_name and long names)
-  const card1 = cards[0];
-  const card1Rows = card1.children;
-  assert.equal(card1Rows.length, 3, 'Card must have strict 3-row layout');
-
-  // Row 1: Receipt ref & Total
-  assert.ok(card1Rows[0].className.includes('justify-between'), 'Row 1 has justify-between');
-  assert.ok(card1Rows[0].textContent.includes('#801') || card1Rows[0].textContent.includes('1-000801'), 'Row 1 displays receipt reference');
-  assert.ok(card1Rows[0].textContent.includes('1,250.00'), 'Row 1 displays total amount');
-  const row1Total = card1Rows[0].querySelector('.shrink-0');
-  assert.ok(row1Total, 'Row 1 total amount has shrink-0');
-
-  // Row 2: Customer Name (min-w-0 truncate) & Date/Time (shrink-0 text-xs text-slate-500)
-  assert.ok(card1Rows[1].className.includes('justify-between'), 'Row 2 has justify-between');
-  assert.ok(card1Rows[1].className.includes('items-baseline'), 'Row 2 has items-baseline');
-  const row2CustName = card1Rows[1].querySelector('p');
-  assert.ok(row2CustName.className.includes('min-w-0'), 'Row 2 customer name has min-w-0');
-  assert.ok(row2CustName.className.includes('truncate'), 'Row 2 customer name has truncate');
-  assert.ok(row2CustName.textContent.includes('Very Long Customer Name'), 'Row 2 displays customer name');
-
-  const row2DateTime = card1Rows[1].querySelector('.shrink-0');
-  assert.ok(row2DateTime, 'Row 2 Date & Time has shrink-0');
-  assert.ok(row2DateTime.className.includes('text-xs'), 'Row 2 Date & Time has text-xs');
-  assert.ok(row2DateTime.className.includes('text-slate-500'), 'Row 2 Date & Time has text-slate-500');
-  assert.ok(row2DateTime.textContent.includes('Jul 3'), 'Row 2 displays formatted Date & Time');
-
-  // Row 3: Status pills (shrink-0) & Sold by (min-w-0 truncate text-xs text-slate-500 text-right)
-  assert.ok(card1Rows[2].className.includes('justify-between'), 'Row 3 has justify-between');
-  assert.ok(card1Rows[2].className.includes('items-center'), 'Row 3 has items-center');
-  assert.ok(card1Rows[2].className.includes('mt-2'), 'Row 3 has mt-2');
-
-  const row3Pills = card1Rows[2].querySelector('.shrink-0');
-  assert.ok(row3Pills, 'Row 3 status pills wrapper has shrink-0');
-
-  const row3SoldBy = card1Rows[2].querySelector('.text-right');
-  assert.ok(row3SoldBy, 'Row 3 Sold by has text-right');
-  assert.ok(row3SoldBy.className.includes('min-w-0'), 'Row 3 Sold by has min-w-0');
-  assert.ok(row3SoldBy.className.includes('truncate'), 'Row 3 Sold by has truncate');
-  assert.ok(row3SoldBy.className.includes('text-xs'), 'Row 3 Sold by has text-xs');
-  assert.ok(row3SoldBy.className.includes('text-slate-500'), 'Row 3 Sold by has text-slate-500');
-  assert.equal(row3SoldBy.textContent.trim(), 'Sold by: Cashier Maria Long Surname That Truncates');
-
-  // Test Card 2 (sold_by_name is null -> falls back to 'Sold by: —')
-  const card2 = cards[1];
-  const card2SoldBy = card2.children[2].querySelector('.text-right');
-  assert.equal(card2SoldBy.textContent.trim(), 'Sold by: —', 'Card 2 should fallback to Sold by: — when sold_by_name is null');
-
-  // Test Card 3 (sold_by_name is whitespace -> falls back to 'Sold by: —')
-  const card3 = cards[2];
-  const card3SoldBy = card3.children[2].querySelector('.text-right');
-  assert.equal(card3SoldBy.textContent.trim(), 'Sold by: —', 'Card 3 should fallback to Sold by: — when sold_by_name is whitespace');
+  assertRecipe(cards[0], {
+    name: 'Very Long Customer Name', ref: '#801', total: '1,250.00', date: 'Jul 3',
+    soldBy: 'Sold by: Cashier Maria Long Surname That Truncates',
+  });
+  // sold_by_name null / whitespace -> "Sold by: —"
+  assertRecipe(cards[1], { name: 'Corner Sari-Sari Store', ref: '#802', total: '500.00', soldBy: 'Sold by: —' });
+  assertRecipe(cards[2], { name: 'Neighborhood Bakery', ref: '#803', total: '320.00', soldBy: 'Sold by: —' });
 
   r.unmount();
 });
 
-test('DashboardPage: mobile cards render strict 3-row layout with Date & Time and Sold by', async () => {
+test('DashboardPage: mobile cards follow the shared card recipe with Date & Time and Sold by', async () => {
   const payload = {
     summary: { in_transit_count: 0, pending_count: 2, completed_count: 0, pending_tickets: 0 },
     orders: [
@@ -231,57 +208,19 @@ test('DashboardPage: mobile cards render strict 3-row layout with Date & Time an
   const r = render(React.createElement(DashboardPage, null));
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
-  assert.ok(mobileContainer, 'Dashboard mobile cards container (.lg:hidden.divide-y) should exist');
+  const mobileContainer = r.container.querySelector('.md\\:hidden.divide-y');
+  assert.ok(mobileContainer, 'Dashboard phone cards container (.md:hidden.divide-y) should exist');
 
   const cards = mobileContainer.querySelectorAll('[data-testid="dashboard-order-row"]');
   assert.equal(cards.length, 2, 'Should render 2 mobile dashboard order cards');
 
-  // Test Card 1
-  const card1 = cards[0];
-  const card1Rows = card1.children;
-  assert.equal(card1Rows.length, 3, 'Dashboard card must have strict 3-row layout');
-
-  // Row 1
-  assert.ok(card1Rows[0].textContent.includes('#901') || card1Rows[0].textContent.includes('1-000901'));
-  assert.ok(card1Rows[0].textContent.includes('3,450.00'));
-  assert.ok(card1Rows[0].querySelector('.shrink-0'), 'Row 1 total has shrink-0');
-
-  // Row 2
-  assert.ok(card1Rows[1].className.includes('justify-between'), 'Row 2 has justify-between');
-  assert.ok(card1Rows[1].className.includes('items-baseline'), 'Row 2 has items-baseline');
-  const custP = card1Rows[1].querySelector('p');
-  assert.ok(custP.className.includes('min-w-0'), 'Row 2 customer name has min-w-0');
-  assert.ok(custP.className.includes('truncate'), 'Row 2 customer name has truncate');
-  assert.ok(custP.textContent.includes('Alvin Store Main'));
-
-  const dateSpan = card1Rows[1].querySelector('.shrink-0');
-  assert.ok(dateSpan, 'Row 2 Date & Time has shrink-0');
-  assert.ok(dateSpan.className.includes('text-xs'), 'Row 2 Date & Time has text-xs');
-  assert.ok(dateSpan.className.includes('text-slate-500'), 'Row 2 Date & Time has text-slate-500');
-  assert.ok(dateSpan.textContent.includes('Jul 3'), 'Row 2 Date & Time includes Jul 3');
-
-  // Row 3
-  assert.ok(card1Rows[2].className.includes('justify-between'), 'Row 3 has justify-between');
-  assert.ok(card1Rows[2].className.includes('items-center'), 'Row 3 has items-center');
-  assert.ok(card1Rows[2].className.includes('mt-2'), 'Row 3 has mt-2');
-  assert.ok(card1Rows[2].querySelector('.shrink-0'), 'Row 3 status pill has shrink-0');
-
-  const soldBySpan = card1Rows[2].querySelector('.text-right');
-  assert.ok(soldBySpan, 'Row 3 Sold by has text-right');
-  assert.ok(soldBySpan.className.includes('min-w-0'), 'Row 3 Sold by has min-w-0');
-  assert.ok(soldBySpan.className.includes('truncate'), 'Row 3 Sold by has truncate');
-  assert.equal(soldBySpan.textContent.trim(), 'Sold by: Manager Luis');
-
-  // Test Card 2 fallback
-  const card2 = cards[1];
-  const card2SoldBy = card2.children[2].querySelector('.text-right');
-  assert.equal(card2SoldBy.textContent.trim(), 'Sold by: —');
+  assertRecipe(cards[0], { name: 'Alvin Store Main', ref: '#901', total: '3,450.00', date: 'Jul 3', soldBy: 'Sold by: Manager Luis' });
+  assertRecipe(cards[1], { name: 'Wholesale Depot', ref: '#902', total: '880.00', soldBy: 'Sold by: —' });
 
   r.unmount();
 });
 
-test('OrdersPage: unsynced local order mobile card renders strict 3-row layout with Date & Time and Sold by', async () => {
+test('OrdersPage: unsynced local order mobile card follows the shared card recipe', async () => {
   await registerStation(1);
   api.request = async () => { const err = new Error('Failed to fetch'); throw err; };
   api.get = async () => [];
@@ -299,39 +238,15 @@ test('OrdersPage: unsynced local order mobile card renders strict 3-row layout w
   );
   await act(async () => { await new Promise((res) => setTimeout(res, 35)); });
 
-  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
+  const mobileContainer = r.container.querySelector('.md\\:hidden.divide-y');
   assert.ok(mobileContainer);
 
   const card = mobileContainer.children[0];
   assert.ok(card);
-  assert.equal(card.children.length, 3, 'Local unsynced card must have 3 rows');
-
-  // Row 1: Receipt ref & Total
-  assert.ok(card.children[0].textContent.includes('#local-1') || card.children[0].textContent.includes(localOrder.receipt_number));
-  assert.ok(card.children[0].textContent.includes('300.00'));
-  assert.ok(card.children[0].querySelector('.shrink-0'), 'Row 1 total has shrink-0');
-
-  // Row 2: Customer Name (min-w-0 truncate) & Date/Time (shrink-0 text-xs text-slate-500)
-  assert.ok(card.children[1].className.includes('justify-between'));
-  assert.ok(card.children[1].className.includes('items-baseline'));
-  const custName = card.children[1].querySelector('p');
-  assert.ok(custName.className.includes('min-w-0'));
-  assert.ok(custName.className.includes('truncate'));
-  assert.ok(custName.textContent.includes('Aling Nena'));
-
-  const dateSpan = card.children[1].querySelector('.shrink-0');
-  assert.ok(dateSpan.className.includes('text-xs'));
-  assert.ok(dateSpan.className.includes('text-slate-500'));
-
-  // Row 3: Status pills (shrink-0) & Sold by (min-w-0 truncate text-xs text-slate-500 text-right)
-  assert.ok(card.children[2].className.includes('justify-between'));
-  assert.ok(card.children[2].className.includes('items-center'));
-  assert.ok(card.children[2].querySelector('.shrink-0'), 'Row 3 status pill has shrink-0');
-
-  const soldBy = card.children[2].querySelector('.text-right');
-  assert.ok(soldBy.className.includes('min-w-0'));
-  assert.ok(soldBy.className.includes('truncate'));
-  assert.ok(soldBy.textContent.includes('Sold by:'));
+  const ref = card.textContent.includes(localOrder.receipt_number) ? localOrder.receipt_number : '#local-1';
+  assertRecipe(card, { name: 'Aling Nena', ref, total: '300.00', soldBy: card.querySelector('[data-card-line="2"] .text-right').textContent.trim() });
+  assert.match(card.querySelector('[data-card-line="2"] .text-right').textContent, /^Sold by:/);
+  assert.match(card.textContent, /Waiting to sync/, 'the local order is badged as waiting to sync');
 
   r.unmount();
 });

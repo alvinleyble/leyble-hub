@@ -1,4 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { DetailList, SectionHeading } from '../../components/ui/DetailList';
+import { StockBadge, TagBadge } from '../../components/ui/Badge';
+import NavIcon from '../../components/layout/NavIcon';
+import { PHP } from '../../utils/money';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -12,9 +16,6 @@ import { updateProductLocalFirst, pendingProductEditIds } from '../../offline/pr
 import { subscribeOutbox } from '../../offline/outbox.js';
 import { STOCK_FIELD, PRICE_FIELD } from '../../offline/reconcile.js';
 import { checkIsOnline } from '../../offline/status.js';
-
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -48,11 +49,11 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
   const [adjSaving, setAdjSaving]   = useState(false);
   const [fromCache, setFromCache]   = useState(false);
   const [pendingSync, setPendingSync] = useState(false);
+  // Read first, edit on request (design standard Q13): the details open as a summary
+  // and only the Edit button turns them into the form.
+  const [editing, setEditing]       = useState(false);
 
-  const hydrate = (data) => {
-    setProduct(data);
-    setAuditLog(data.audit_log ?? []);
-    setForm({
+  const formFrom = (data) => ({
       name:                 data.name,
       category:             data.category ?? '',
       unit:                 data.unit,
@@ -63,8 +64,16 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
       current_stock:        String(data.current_stock),
       is_active:            data.is_active,
       requires_bottle_return: data.requires_bottle_return ?? false,
-    });
+  });
+
+  const hydrate = (data) => {
+    setProduct(data);
+    setAuditLog(data.audit_log ?? []);
+    setForm(formFrom(data));
   };
+
+  // Leaving the form without saving puts back what the product actually holds.
+  const cancelEditing = () => { setForm(formFrom(product)); setFormErrors({}); setEditing(false); };
 
   // ADR 0015 §6 — the panel renders from the held catalogue copy when the line is
   // down, so stock can still be counted and corrected blind. The audit log is the one
@@ -171,6 +180,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
         'success'
       );
       onSaved();
+      setEditing(false);
       load();
     } catch (err) {
       addToast(err.message || 'Failed to update product.', 'error');
@@ -237,11 +247,11 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
           <button
             onClick={onClose}
             aria-label="Close panel"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                       hover:text-slate-700 hover:bg-slate-100
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-600
+                       hover:text-slate-900 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -272,7 +282,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                   role="status"
                   className="flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3"
                 >
-                  <span className="text-xl leading-none shrink-0" aria-hidden="true">⏳</span>
+                  <NavIcon name="clock" className="w-6 h-6 shrink-0 text-amber-800" />
                   <p className="text-sm font-semibold text-amber-900">
                     Waiting to sync — changes saved on this tablet have not reached the other
                     devices yet.
@@ -285,16 +295,15 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
             <div className="px-6 py-5 bg-slate-50 border-b border-slate-400">
               <div className="flex items-end justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Current Stock</p>
-                  <p className={`text-5xl font-bold tabular-nums mt-1 ${
-                    Number(product.current_stock ?? 0) <= 0 ? 'text-red-600' :
-                    Number(product.current_stock ?? 0) <= 10 ? 'text-amber-600' : 'text-slate-900'
-                  }`}>
+                  <p className="text-sm font-semibold text-slate-600 uppercase tracking-wide">Current Stock</p>
+                  <p className="text-5xl font-bold tabular-nums mt-1 text-slate-900">
                     {product.current_stock != null ? product.current_stock : '—'}
-                    <span className="text-xl font-medium text-slate-400 ml-2">{product.unit || ''}</span>
+                    <span className="text-xl font-medium text-slate-600 ml-2">{product.unit || ''}</span>
                   </p>
+                  {/* The state as a word, not just a red/amber number (design standard Q5). */}
+                  <StockBadge stock={product.current_stock} className="mt-2" />
                   {Number(product.units_per_case || 1) > 1 && (
-                    <p className="text-sm text-slate-400 mt-1">
+                    <p className="text-sm text-slate-600 mt-1">
                       {product.units_per_case} bottles per case
                     </p>
                   )}
@@ -321,7 +330,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                         key={value}
                         type="button"
                         onClick={() => setAdjMode(value)}
-                        className={`flex-1 min-h-[44px] rounded-lg border text-sm font-semibold transition-colors
+                        className={`flex-1 min-h-[48px] rounded-lg border text-base font-semibold transition-colors
                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
                           ${adjMode === value
                             ? 'bg-blue-700 text-white border-blue-700'
@@ -350,7 +359,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                     {adjMode !== 'set' && (
                       <div className="flex items-end">
                         <div className="px-3 py-2 bg-slate-50 rounded-lg border border-slate-200 text-sm text-slate-500 w-full">
-                          <span className="block text-xs text-slate-400 mb-0.5">Result</span>
+                          <span className="block text-sm text-slate-600 mb-0.5">Result</span>
                           <span className="font-bold text-slate-800">
                             {adjMode === 'add'
                               ? Number(product?.current_stock ?? 0) + (Number(adjQty) || 0)
@@ -391,10 +400,28 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
               )}
             </div>
 
-            {/* ── Edit details form ─────────────────────────────── */}
+            {/* ── Details: read first (design standard Q13) ────────── */}
+            {!editing ? (
+              <div className="px-6 py-5 border-b border-slate-400" data-testid="product-details-summary">
+                <SectionHeading title="Details" onEdit={() => setEditing(true)} editLabel="Edit details"
+                                testId="product-edit-details" />
+                <DetailList items={[
+                  { label: 'Product Name', value: product.name, wide: true },
+                  { label: 'Category', value: product.category },
+                  { label: 'Unit', value: product.unit },
+                  { label: 'SKU', value: product.sku },
+                  { label: 'Bottles per Case', value: product.units_per_case },
+                  { label: 'Wholesale Price (per case)', value: <span className="tabular-nums">{PHP(product.base_wholesale_price)}</span> },
+                  { label: 'Deposit Fee (per bottle)', value: product.requires_bottle_return
+                    ? <span className="tabular-nums">{PHP(product.deposit_fee)}</span> : 'None — not a returnable bottle' },
+                  { label: 'Status', value: product.is_active === false
+                    ? <TagBadge kind="inactive" /> : <TagBadge kind="active" /> },
+                ]} />
+              </div>
+            ) : (
             <form onSubmit={handleSaveDetails} noValidate>
               <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
+                <SectionHeading title="Details" />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
                   <FormField label="Product Name" required error={formErrors.name} className="sm:col-span-2">
@@ -419,7 +446,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                     <input type="number" min="1" step="1" value={form.units_per_case}
                       onChange={set('units_per_case')}
                       disabled={mutationsBlocked} title={blockedTip}
-                      className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
+                      className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-500'} />
                   </FormField>
 
                   <FormField label="Current Stock" required error={formErrors.current_stock}
@@ -438,7 +465,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                       <label
                         htmlFor="is_active"
                         className={`text-base font-medium ${mutationsBlocked
-                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                          ? 'text-slate-500 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
                       >
                         Active (visible when creating orders)
                       </label>
@@ -454,7 +481,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
               </div>
 
               <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Pricing (per case)</p>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">Pricing (per case)</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField label="Wholesale Price (₱)" required error={formErrors.base_wholesale_price}>
                     <input type="number" min="0" step="0.01" value={form.base_wholesale_price}
@@ -465,13 +492,13 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                     <input type="number" min="0" step="0.01" value={form.deposit_fee}
                       disabled={mutationsBlocked || !form.requires_bottle_return}
                       onChange={set('deposit_fee')} title={blockedTip}
-                      className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-400'} />
+                      className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-500'} />
                   </FormField>
                 </div>
               </div>
 
               <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">Returns</p>
                 <label
                   className={`flex items-center gap-3 min-h-[48px] select-none
                               ${mutationsBlocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
@@ -487,9 +514,9 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                     }))}
                     className="w-6 h-6 accent-blue-700 disabled:opacity-50"
                   />
-                  <span className={`text-base ${mutationsBlocked ? 'text-slate-400' : 'text-slate-700'}`}>
+                  <span className={`text-base ${mutationsBlocked ? 'text-slate-500' : 'text-slate-700'}`}>
                     Requires bottle return
-                    <span className="block text-sm text-slate-400">Off for plastic / non-returnable products</span>
+                    <span className="block text-sm text-slate-600">Off for plastic / non-returnable products</span>
                   </span>
                 </label>
                 {mutationsBlocked && (
@@ -500,18 +527,20 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                 )}
               </div>
 
-              <div className="px-6 py-4 flex justify-end border-b border-slate-400">
+              <div className="px-6 py-4 flex justify-end gap-2 border-b border-slate-400">
+                <Button variant="secondary" onClick={cancelEditing} disabled={saving}>Cancel</Button>
                 <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
+            )}
 
             {/* ── Audit log ─────────────────────────────────────── */}
             <div className="px-6 py-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+              <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">
                 Audit Log (last 50)
               </p>
               {(auditLog || []).length === 0 ? (
-                <p className="text-slate-400 text-sm">
+                <p className="text-slate-600 text-sm">
                   {fromCache
                     ? 'The audit log lives on the server — it needs a connection to read.'
                     : 'No audit entries yet.'}
@@ -545,9 +574,9 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                         </p>
                       )}
                       {entry.reason && (
-                        <p className="text-xs text-slate-400 mt-0.5 italic">"{entry.reason}"</p>
+                        <p className="text-sm text-slate-600 mt-0.5 italic">"{entry.reason}"</p>
                       )}
-                      <p className="text-xs text-slate-400 mt-1">
+                      <p className="text-sm text-slate-600 mt-1">
                         {entry.performed_by_name ?? 'System'}
                         {' · '}
                         {new Date(entry.created_at).toLocaleString('en-PH', {

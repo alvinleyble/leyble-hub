@@ -32,6 +32,18 @@ import {
 } from '../src/offline/productMutations.js';
 import { applyCatalogueDelta } from '../src/offline/catalogue.js';
 
+// Detail panels open read-only (design standard Q13, UI audit F17); the edit form is
+// behind the "Edit details" button, so a test that edits a field opens it first.
+async function openEditForm(view) {
+  const edit = view.container.querySelector('[data-testid$="-edit-details"]');
+  if (!edit) return;
+  await act(async () => {
+    edit.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 10));
+  });
+}
+
+
 const ProductDetailPanel = (await import('../src/pages/inventory/ProductDetailPanel.jsx')).default;
 const ProductFormModal   = (await import('../src/pages/inventory/ProductFormModal.jsx')).default;
 const CustomerDetailPanel = (await import('../src/pages/customers/CustomerDetailPanel.jsx')).default;
@@ -78,6 +90,7 @@ async function renderPanelOffline() {
     onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(r);
   return r;
 }
 
@@ -88,6 +101,7 @@ async function renderPanelOnline() {
     productId: PRODUCT.id, onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(r);
   return r;
 }
 
@@ -280,6 +294,7 @@ test('8.5: the customer active flag is locked offline while the rest of the form
     customerId: CUSTOMER.id, onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(r);
 
   const active = r.container.querySelector('#cust_active');
   assert.ok(active, 'the toggle is still shown, not hidden');

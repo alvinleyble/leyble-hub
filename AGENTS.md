@@ -941,7 +941,7 @@ into the bundle — documented in `e2e/appium/README.md`.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
-- 16px+ fonts
+- 16px for decision-making text; 14px floor for secondary details; no grey lighter than slate-500
 - Visible labels above inputs — no placeholder-as-label
 - `:focus-visible` ring on all interactive elements
 - Status always conveyed with text + color, never color alone

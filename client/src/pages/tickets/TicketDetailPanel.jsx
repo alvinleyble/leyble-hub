@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
+import NavIcon from '../../components/layout/NavIcon';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import { TicketStatusBadge } from '../../components/ui/Badge';
+import { formatSignedPeso } from '../../utils/money';
 import Spinner from '../../components/ui/Spinner';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import { orderRefFromId } from '../../utils/orderRef';
 import { checkIsOnline } from '../../offline/status.js';
-
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function TicketDetailPanel({ ticketId, onClose, onResolved, cachedTicket = null }) {
   const { addToast } = useToast();
@@ -86,22 +86,17 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
               {ticket ? `Ticket #${ticket.id}` : 'Ticket'}
             </h2>
             {ticket && (
-              <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border
-                ${ticket.status === 'resolved'
-                  ? 'bg-green-100 text-green-800 border-green-300'
-                  : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
-                {ticket.status === 'resolved' ? 'Resolved' : 'Pending'}
-              </span>
+              <TicketStatusBadge status={ticket.status === 'resolved' ? 'resolved' : 'pending'} className="shrink-0" />
             )}
           </div>
           <button
             onClick={onClose}
             aria-label="Close panel"
-            className="shrink-0 w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+            className="shrink-0 w-12 h-12 flex items-center justify-center rounded-lg text-slate-500
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -111,7 +106,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
           </div>
         ) : !ticket ? (
           <div className="flex-1 flex items-center justify-center">
-            <p className="text-slate-400 text-base">Ticket not found.</p>
+            <p className="text-slate-500 text-base">Ticket not found.</p>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">
@@ -133,10 +128,10 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
 
               {ticket.amount != null && (
                 <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Amount</p>
+                  <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-1">Amount</p>
                   <p className={`text-xl font-bold tabular-nums
-                    ${Number(ticket.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
-                    {Number(ticket.amount) >= 0 ? '+' : ''}{PHP(ticket.amount)}
+                    whitespace-nowrap ${Number(ticket.amount) < 0 ? 'text-red-700' : 'text-green-800'}`}>
+                    {formatSignedPeso(ticket.amount)}
                   </p>
                 </div>
               )}
@@ -144,7 +139,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
               <div className="grid grid-cols-2 gap-4">
                 {ticket.related_order_id && (
                   <div>
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Related Order</p>
+                    <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-1">Related Order</p>
                     <Link
                       to={`/orders/${ticket.related_order_id}`}
                       onClick={onClose}
@@ -158,7 +153,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
 
                 {ticket.personnel_name && (
                   <div>
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Related Personnel</p>
+                    <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-1">Related Personnel</p>
                     <p className="text-base text-slate-800 font-medium">{ticket.personnel_name}</p>
                   </div>
                 )}
@@ -166,9 +161,9 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
 
               <div className="grid grid-cols-2 gap-4 text-sm text-slate-500">
                 <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">Created By</p>
+                  <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-1">Created By</p>
                   <p>{ticket.created_by_name ?? '—'}</p>
-                  <p className="text-xs mt-0.5">
+                  <p className="text-sm mt-0.5">
                     {new Date(ticket.created_at).toLocaleDateString('en-PH', {
                       year: 'numeric', month: 'short', day: 'numeric',
                     })}
@@ -180,14 +175,14 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
             {/* ── Resolution ───────────────────────────────────────── */}
             {ticket.status === 'resolved' ? (
               <div className="px-6 py-5 bg-green-50 border-b border-green-200">
-                <p className="text-xs font-bold text-green-700 uppercase tracking-widest mb-2">Resolution</p>
+                <p className="text-sm font-bold text-green-700 uppercase tracking-widest mb-2">Resolution</p>
                 <div className="grid grid-cols-2 gap-4 text-sm text-green-800 mb-3">
                   <div>
-                    <p className="font-semibold text-xs text-green-600 mb-0.5">Resolved By</p>
+                    <p className="font-semibold text-sm text-green-600 mb-0.5">Resolved By</p>
                     <p>{ticket.resolved_by_name ?? '—'}</p>
                   </div>
                   <div>
-                    <p className="font-semibold text-xs text-green-600 mb-0.5">Resolved On</p>
+                    <p className="font-semibold text-sm text-green-600 mb-0.5">Resolved On</p>
                     <p>{ticket.resolved_at
                       ? new Date(ticket.resolved_at).toLocaleDateString('en-PH', {
                           year: 'numeric', month: 'short', day: 'numeric',
@@ -240,7 +235,7 @@ export default function TicketDetailPanel({ ticketId, onClose, onResolved, cache
                 >
                   Resolve Ticket
                 </Button>
-                <p className="text-xs text-slate-400 mt-2">
+                <p className="text-sm text-slate-500 mt-2">
                   {mutationsBlocked
                     ? 'Resolving a ticket needs a connection — it changes a record every device shares.'
                     : 'Resolved tickets cannot be reopened or edited.'}

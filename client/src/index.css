@@ -117,3 +117,8 @@
 
   .no-print { display: none !important; }
 }
+
+/* Sideways chip rows (ChipRow.jsx, design standard Q4) scroll without a visible
+   scrollbar; the faded edge is the hint instead. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import NavIcon from '../layout/NavIcon';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import { CUSTOMER_TYPE_OPTIONS } from '../../utils/customerTypes';
@@ -70,7 +71,7 @@ export default function CustomerCreateModal({ onClose, onSaved }) {
                        hover:bg-v2-raised hover:text-v2-text
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 

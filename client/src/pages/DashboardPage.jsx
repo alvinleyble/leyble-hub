@@ -2,38 +2,49 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useRefreshListener } from '../offline/refresh';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { StatusBadge } from '../components/ui/Badge';
+import { StatusBadge, StockBadge, TagBadge } from '../components/ui/Badge';
+import Page, { PAGE_PADDING } from '../components/ui/Page';
+import PageHeader from '../components/ui/PageHeader';
+import ListCard from '../components/ui/ListCard';
+import NavIcon from '../components/layout/NavIcon';
+import { PHP } from '../utils/money';
+import { LOW_STOCK_THRESHOLD } from '../utils/statusBadges';
 import { Skeleton, SkeletonGroup } from '../components/ui/Skeleton';
 import OfflineBanner from '../components/ui/OfflineBanner';
 import { orderRef } from '../utils/orderRef';
 import { formatCardDateTime } from '../utils/dateFormat';
 import { loadWithCache, readBackOfficeCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
 
-const PHP = (amount) =>
-  `₱${Number(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
+// The four counts at the top. Shorter on phones (UI audit F18) so the orders below
+// them start on the first screen; the tile colours follow the shared status colours
+// (design standard Q5): In Transit amber, Pending blue, Delivered-awaiting-close green.
 function SummaryCard({ label, value, colorClass = 'text-slate-900', bgClass = 'bg-white border-slate-200' }) {
   return (
-    <div className={`rounded-xl border p-5 ${bgClass}`}>
-      <p className="text-sm font-semibold text-slate-500 uppercase tracking-wide">{label}</p>
-      <p className={`text-4xl font-bold mt-2 tabular-nums ${colorClass}`}>{value}</p>
+    <div className={`rounded-xl border px-4 py-3 md:p-5 ${bgClass}`}>
+      <p className="text-sm font-semibold text-slate-700 uppercase tracking-wide">{label}</p>
+      <p className={`text-3xl md:text-4xl font-bold mt-1 md:mt-2 tabular-nums ${colorClass}`}>{value}</p>
     </div>
   );
 }
+
+const isPrinted = (order) => Boolean(
+  (order.status === 'pending' && order.pending_receipt_printed_at)
+  || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)
+);
 
 // Mirrors the loaded layout's exact card/section heights (grid-cols-2 md:grid-cols-4
 // summary cards, the Active Orders table, the Low Stock panel) so nothing shifts once
 // real data replaces it.
 function DashboardSkeleton() {
   return (
-    <SkeletonGroup label="Loading dashboard" className="p-6 max-w-7xl mx-auto">
+    <SkeletonGroup label="Loading dashboard" className={`${PAGE_PADDING} max-w-7xl mx-auto`}>
       <div className="h-8 w-40 mb-6">
         <Skeleton className="h-8 w-40" />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-8">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="rounded-xl border p-5 bg-white border-slate-200">
+          <div key={i} className="rounded-xl border px-4 py-3 md:p-5 bg-white border-slate-200">
             <Skeleton className="h-3 w-20 mb-3" />
             <Skeleton className="h-9 w-16" />
           </div>
@@ -135,8 +146,8 @@ export default function DashboardPage() {
   // works with no connection at all, never the raw failure text.
   if (error || !data) {
     return (
-      <div className="p-6 max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">Dashboard</h1>
+      <Page wide={false}>
+        <PageHeader title="Dashboard" />
         <OfflineBanner message="No connection, and this device has no dashboard figures saved yet.">
           <Link
             to="/orders"
@@ -154,7 +165,7 @@ export default function DashboardPage() {
         <button onClick={load} className="mt-4 text-blue-700 underline text-base min-h-[48px]">
           Try again
         </button>
-      </div>
+      </Page>
     );
   }
 
@@ -165,8 +176,8 @@ export default function DashboardPage() {
   const low_stock = data.low_stock ?? [];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Dashboard</h1>
+    <Page>
+      <PageHeader title="Dashboard" />
 
       {fromCache && (
         <OfflineBanner cachedAt={cachedAt}>
@@ -182,18 +193,18 @@ export default function DashboardPage() {
       )}
 
       {/* ── Summary cards ─────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-8">
         <SummaryCard
           label="In Transit"
           value={summary.in_transit_count}
-          bgClass="bg-blue-50 border-blue-200"
-          colorClass="text-blue-800"
+          bgClass="bg-amber-50 border-amber-200"
+          colorClass="text-amber-900"
         />
         <SummaryCard
           label="Pending"
           value={summary.pending_count}
-          bgClass="bg-amber-50 border-amber-200"
-          colorClass="text-amber-800"
+          bgClass="bg-blue-50 border-blue-200"
+          colorClass="text-blue-800"
         />
         <SummaryCard
           label="Awaiting Close"
@@ -209,86 +220,62 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 md:gap-6">
 
-        {/* ── Active orders table ────────────────────────────────── */}
+        {/* ── Active orders ──────────────────────────────────────── */}
         <section className="xl:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-400">
-            <h2 className="text-lg font-bold text-slate-900">Active Orders</h2>
+          <div className="flex items-center justify-between gap-3 pl-4 md:pl-5 pr-2 py-2 border-b border-slate-300">
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-slate-900">Active Orders</h2>
+              {/* The server's order, kept on purpose: the work that needs doing first. */}
+              <p className="text-sm text-slate-600">In transit first, then pending — oldest first</p>
+            </div>
             <Link
               to="/orders"
-              className="text-blue-700 text-sm font-semibold hover:underline
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
+              className="inline-flex items-center gap-1 min-h-[48px] px-3 rounded-lg text-blue-700 text-base font-semibold
+                         hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 shrink-0"
             >
               View all
+              <NavIcon name="chevronRight" className="w-5 h-5" />
             </Link>
           </div>
 
           {orders.length === 0 ? (
-            <p className="px-5 py-12 text-center text-slate-400 text-base">
+            <p className="px-5 py-12 text-center text-slate-500 text-base">
               No active orders at the moment
             </p>
           ) : (
             <div className="overflow-x-auto" data-testid="dashboard-orders-list">
-              {/* Phone-width cards (D5) — receipt, customer, status, total (the D5-specified
-                  Orders field set), same rows/testids as the table below, hidden at lg */}
-              <div className="lg:hidden divide-y divide-slate-300">
+              {/* Phone + upright-tablet cards (D5, Q1) in the shared card recipe (Q6).
+                  The whole card is the tap target; the receipt number is no longer a
+                  separate 25px link (UI audit F9). */}
+              <div className="md:hidden divide-y divide-slate-300">
                 {orders.map((order) => (
-                  <div
+                  <ListCard
                     key={order.id}
                     data-testid="dashboard-order-row"
                     onClick={() => navigate(`/orders/${order.id}`)}
-                    className="p-4 active:bg-blue-50 cursor-pointer"
-                  >
-                    {/* Row 1: Receipt reference & Total */}
-                    <div className="flex items-start justify-between gap-2">
-                      <Link
-                        to={`/orders/${order.id}`}
-                        className="font-mono text-sm text-slate-500
-                                   focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
-                      >
-                        {orderRef(order)}
-                      </Link>
-                      <p className="text-right font-semibold text-slate-900 tabular-nums shrink-0">
-                        {PHP(order.total_amount)}
-                      </p>
-                    </div>
-
-                    {/* Row 2: Customer Name & Date/Time */}
-                    <div className="flex justify-between items-baseline gap-2 mt-1">
-                      <p className="font-semibold text-slate-900 min-w-0 truncate">{order.customer_name}</p>
-                      <span className="shrink-0 text-xs text-slate-500">
-                        {formatCardDateTime(order.created_at)}
-                      </span>
-                    </div>
-
-                    {/* Row 3: Status pills & Sold by */}
-                    <div className="flex justify-between items-center gap-2 mt-2">
-                      <div className="flex flex-wrap gap-1.5 items-center shrink-0">
-                        <StatusBadge status={order.status} />
-                        {((order.status === 'pending' && order.pending_receipt_printed_at)
-                          || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)) && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
-                            🖶 Printed
-                          </span>
-                        )}
-                      </div>
-                      <span className="min-w-0 truncate text-xs text-slate-500 text-right">
-                        Sold by: {order.sold_by_name?.trim() || '—'}
-                      </span>
-                    </div>
-                  </div>
+                    title={order.customer_name}
+                    titleRight={PHP(order.total_amount)}
+                    meta={<><span className="font-mono">{orderRef(order)}</span> · {formatCardDateTime(order.created_at)}</>}
+                    metaRight={`Sold by: ${order.sold_by_name?.trim() || '—'}`}
+                    badges={[
+                      <StatusBadge key="status" status={order.status} />,
+                      isPrinted(order) && <TagBadge key="printed" kind="printed" />,
+                    ]}
+                  />
                 ))}
               </div>
 
-              <table className="hidden lg:table w-full text-base">
+              {/* No Personnel column any more: the V3.5 order form stopped assigning a
+                  driver/helper, so it read "—" on every row (UI audit F18). */}
+              <table className="hidden md:table w-full text-base">
                 <thead>
-                  <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">
-                    <th className="text-left px-5 py-3 font-semibold">Receipt</th>
-                    <th className="text-left px-5 py-3 font-semibold">Customer</th>
-                    <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Personnel</th>
-                    <th className="text-left px-5 py-3 font-semibold">Status</th>
-                    <th className="text-right px-5 py-3 font-semibold">Total</th>
+                  <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider">
+                    <th className="text-left px-4 lg:px-5 py-3 font-semibold">Receipt</th>
+                    <th className="text-left px-4 lg:px-5 py-3 font-semibold">Customer</th>
+                    <th className="text-left px-4 lg:px-5 py-3 font-semibold">Status</th>
+                    <th className="text-right px-4 lg:px-5 py-3 font-semibold">Total</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-300">
@@ -299,31 +286,17 @@ export default function DashboardPage() {
                       onClick={() => navigate(`/orders/${order.id}`)}
                       className="hover:bg-slate-50 transition-colors cursor-pointer"
                     >
-                      <td className="px-5 py-4">
-                        <Link
-                          to={`/orders/${order.id}`}
-                          className="font-mono text-sm text-slate-500
-                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
-                        >
-                          {orderRef(order)}
-                        </Link>
+                      <td className="px-4 lg:px-5 py-4 font-mono text-sm text-slate-600 whitespace-nowrap">
+                        {orderRef(order)}
                       </td>
-                      <td className="px-5 py-4 font-medium text-slate-900">{order.customer_name}</td>
-                      <td className="px-5 py-4 text-slate-500 hidden lg:table-cell text-sm max-w-[180px]">
-                        <span className="block truncate">{order.personnel_summary ?? '—'}</span>
-                      </td>
-                      <td className="px-5 py-4">
+                      <td className="px-4 lg:px-5 py-4 font-medium text-slate-900">{order.customer_name}</td>
+                      <td className="px-4 lg:px-5 py-4">
                         <div className="flex flex-wrap gap-1.5 items-center">
                           <StatusBadge status={order.status} />
-                          {((order.status === 'pending' && order.pending_receipt_printed_at)
-                            || (['completed', 'done'].includes(order.status) && order.delivered_receipt_printed_at)) && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
-                              🖶 Printed
-                            </span>
-                          )}
+                          {isPrinted(order) && <TagBadge kind="printed" />}
                         </div>
                       </td>
-                      <td className="px-5 py-4 text-right font-semibold text-slate-900 tabular-nums">
+                      <td className="px-4 lg:px-5 py-4 text-right font-semibold text-slate-900 tabular-nums whitespace-nowrap">
                         {PHP(order.total_amount)}
                       </td>
                     </tr>
@@ -338,29 +311,30 @@ export default function DashboardPage() {
         <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-400">
             <h2 className="text-lg font-bold text-slate-900">Low Stock</h2>
-            <p className="text-sm text-slate-400 mt-0.5">Products at or below 10 units</p>
+            <p className="text-sm text-slate-600 mt-0.5">Products at or below {LOW_STOCK_THRESHOLD} units</p>
           </div>
 
           {low_stock.length === 0 ? (
-            <p className="px-5 py-12 text-center text-slate-400 text-base">
+            <p className="px-5 py-12 text-center text-slate-500 text-base">
               All stock levels are healthy
             </p>
           ) : (
             <ul className="divide-y divide-slate-300">
               {low_stock.map((p) => (
-                <li key={p.id} className="flex items-center justify-between gap-4 px-5 py-4 min-h-[48px]">
+                <li key={p.id} className="flex items-center justify-between gap-4 px-4 md:px-5 py-3 min-h-[48px]">
                   <div className="min-w-0">
-                    <p className="font-semibold text-slate-900 truncate">{p.name}</p>
+                    <p className="font-semibold text-slate-900 line-clamp-2 break-words">{p.name}</p>
                     {p.category && (
-                      <p className="text-xs text-slate-400 mt-0.5">{p.category}</p>
+                      <p className="text-sm text-slate-600 mt-0.5">{p.category}</p>
                     )}
                   </div>
-                  <span
-                    className={`text-base font-bold tabular-nums shrink-0
-                      ${p.current_stock === 0 ? 'text-red-600' : 'text-amber-600'}`}
-                  >
-                    {p.current_stock} {p.unit}
-                  </span>
+                  {/* The number and a worded badge — never colour alone (Q5). */}
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    <span className="text-base font-bold tabular-nums text-slate-900 whitespace-nowrap">
+                      {p.current_stock} {p.unit}
+                    </span>
+                    <StockBadge stock={p.current_stock} />
+                  </div>
                 </li>
               ))}
             </ul>
@@ -368,6 +342,6 @@ export default function DashboardPage() {
         </section>
 
       </div>
-    </div>
+    </Page>
   );
 }

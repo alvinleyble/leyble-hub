@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
+import NavIcon from '../../components/layout/NavIcon';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import { batchPriceLocalFirst } from '../../offline/productMutations.js';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
+import { formatPeso } from '../../utils/money';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -146,11 +148,11 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
           </h2>
           <button
             onClick={onClose} aria-label="Close" disabled={saving}
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-500
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -200,7 +202,7 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
           <div className="border border-slate-200 rounded-lg overflow-hidden mb-5">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-xs border-b border-slate-400">
+                <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider text-sm border-b border-slate-400">
                   <th className="text-left px-4 py-2 font-semibold">Product</th>
                   <th className="text-left px-4 py-2 font-semibold hidden sm:table-cell">SKU</th>
                   <th className="text-right px-4 py-2 font-semibold">Current</th>
@@ -231,17 +233,17 @@ export default function BatchPriceEditModal({ products, onClose, onSaved }) {
                           <span className="font-semibold text-slate-900">{PHP(next)}</span>
                         )}
                         {wasClamped && (
-                          <p className="text-xs text-amber-600 font-semibold mt-0.5">Clamped to ₱0.00</p>
+                          <p className="text-sm text-amber-600 font-semibold mt-0.5">Clamped to ₱0.00</p>
                         )}
                         {invalid && (
-                          <p className="text-xs text-red-600 font-semibold mt-0.5">Enter a price</p>
+                          <p className="text-sm text-red-600 font-semibold mt-0.5">Enter a price</p>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {invalid ? (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-500">—</span>
                         ) : delta === 0 ? (
-                          <span className="font-semibold text-slate-400">No change</span>
+                          <span className="font-semibold text-slate-500">No change</span>
                         ) : (
                           <span className={`font-semibold ${delta > 0 ? 'text-green-600' : 'text-red-600'}`}>
                             {delta > 0 ? `+${PHP(delta)}` : `− ${PHP(Math.abs(delta))}`}

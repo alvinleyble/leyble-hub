@@ -105,18 +105,18 @@ async function renderDraftsTab() {
   return r;
 }
 
-test('OrdersPage mobile card shows a server draft as "Draft", and keeps its 3-row layout', async () => {
+test('OrdersPage mobile card shows a server draft as "Draft", and keeps its 3-line card recipe', async () => {
   const r = await renderDraftsTab();
 
-  const mobile = r.container.querySelector('.lg\\:hidden.divide-y');
+  const mobile = r.container.querySelector('.md\\:hidden.divide-y');
   assert.ok(mobile, 'the phone-width card list must still render');
   const cards = mobile.querySelectorAll('[data-testid="orders-row"]');
   assert.equal(cards.length, 1, 'the draft must still be listed');
 
-  assert.equal(cards[0].children.length, 3, 'the balanced 3-row card layout must be unbroken');
+  assert.equal(cards[0].querySelectorAll('[data-card-line]').length, 3, 'the 3-line card recipe must be unbroken');
 
-  const ref = cards[0].querySelector('p.font-mono');
-  assert.ok(ref, 'row 1 still carries the reference');
+  const ref = cards[0].querySelector('[data-card-line="2"] .font-mono');
+  assert.ok(ref, 'line 2 still carries the reference');
   assert.equal(ref.textContent.trim(), 'Draft');
   assert.doesNotMatch(cards[0].textContent, /#2482/, 'the row id must not appear anywhere on the card');
 
@@ -184,15 +184,15 @@ test('DashboardPage shows a draft as "Draft" in both the card and the table view
   const r = render(React.createElement(DashboardPage, null));
   await settle(40);
 
-  const cards = r.container.querySelectorAll('.lg\\:hidden.divide-y [data-testid="dashboard-order-row"]');
+  const cards = r.container.querySelectorAll('.md\\:hidden.divide-y [data-testid="dashboard-order-row"]');
   assert.equal(cards.length, 2);
-  assert.equal(cards[0].children.length, 3, 'the balanced 3-row card layout must be unbroken');
-  assert.equal(cards[0].querySelector('a.font-mono').textContent.trim(), 'Draft');
+  assert.equal(cards[0].querySelectorAll('[data-card-line]').length, 3, 'the 3-line card recipe must be unbroken');
+  assert.equal(cards[0].querySelector('.font-mono').textContent.trim(), 'Draft');
   assert.doesNotMatch(cards[0].textContent, /#2482/);
 
   const tableRows = r.container.querySelectorAll('table [data-testid="dashboard-order-row"]');
   assert.equal(tableRows.length, 2);
-  assert.equal(tableRows[0].querySelector('a.font-mono').textContent.trim(), 'Draft');
+  assert.equal(tableRows[0].querySelector('.font-mono').textContent.trim(), 'Draft');
   assert.doesNotMatch(tableRows[0].textContent, /#2482/);
 
   // The switch is off in tests, so the pending order keeps its `#<id>` here — the point

@@ -146,7 +146,7 @@ export default function PrinterPicker({
                                    focus-visible:ring-2 focus-visible:ring-blue-600"
                       >
                         <p className="font-semibold text-slate-900 text-base">{d.name}</p>
-                        <p className="text-xs text-slate-400 mt-0.5 font-mono">{d.address}</p>
+                        <p className="text-sm text-slate-500 mt-0.5 font-mono">{d.address}</p>
                       </button>
                     </li>
                   ))}
@@ -252,7 +252,7 @@ export default function PrinterPicker({
                 <p className="text-sm font-semibold text-slate-700">
                   Printer prints “+EVENT” lines?
                 </p>
-                <p className="text-xs text-slate-500 mt-0.5 mb-2 leading-snug">
+                <p className="text-sm text-slate-500 mt-0.5 mb-2 leading-snug">
                   One-time fix — tells the printer to stop printing connection notices, then
                   reboots it (~15s). Needs the printer’s IP filled in above.
                 </p>

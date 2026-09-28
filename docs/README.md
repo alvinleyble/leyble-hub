@@ -17,6 +17,9 @@ Antipolo, Philippines. This folder is the single home for project documentation.
 - [product/proposals/v3-0-pos-order-creation-in-v1.md](product/proposals/v3-0-pos-order-creation-in-v1.md) — V3.0 POS-style order creation in V1, settled decisions and re-hosted offline core.
 - [product/proposals/v2-5-offline-accessibility.md](product/proposals/v2-5-offline-accessibility.md) — V2.5 offline / local-first POS, all eighteen settled decisions.
 
+### Design
+- [design/design-standard.md](design/design-standard.md) — the UI rules every screen follows (page header, search + filters, chips, badges, cards, text size, touch targets, icons, money) and the four-size screenshot check each UI change ships with.
+
 ### Architecture & technical
 - [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) — stack, topology, 3-tier environments, auth, layout.
 - [architecture/DATABASE.md](architecture/DATABASE.md) — current schema, reconciled to whatever is in `server/db/migrations/` (that directory, not this line, is the count).

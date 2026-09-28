@@ -2,17 +2,19 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
-import Button from '../../components/ui/Button';
+import Page, { SECTION_GAP } from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import { ChipRow, Chip } from '../../components/ui/ChipRow';
+import ListCard from '../../components/ui/ListCard';
+import { TicketStatusBadge } from '../../components/ui/Badge';
+import { formatSignedPeso } from '../../utils/money';
 import Spinner from '../../components/ui/Spinner';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import TicketFormModal from './TicketFormModal';
 import TicketDetailPanel from './TicketDetailPanel';
-import { orderRefFromId } from '../../utils/orderRef';
+import { orderRefFromId, keepRefsWhole } from '../../utils/orderRef';
 import { loadWithCache, TICKETS_CACHE } from '../../offline/backOfficeCache.js';
 import { checkIsOnline } from '../../offline/status.js';
-
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function TicketsPage() {
   const { addToast } = useToast();
@@ -77,52 +79,54 @@ export default function TicketsPage() {
     { value: 'all',      label: 'All' },
   ];
 
-  return (
-    <div className="p-6 max-w-7xl mx-auto">
+  // Money in a list that mixes credits and debits (design standard Q15): "+₱120.00" /
+  // "−₱135.00", red for money owed, never split across lines.
+  const amountText = (t) => (
+    <span className={`font-semibold tabular-nums whitespace-nowrap ${Number(t.amount) < 0 ? 'text-red-700' : 'text-green-800'}`}>
+      {formatSignedPeso(t.amount)}
+    </span>
+  );
+  const fmtCreated = (t) => new Date(t.created_at).toLocaleDateString('en-PH', {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
 
-      {/* ── Header ───────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Tickets</h1>
-        <Button
-          onClick={() => setCreating(true)}
-          disabled={mutationsBlocked}
-          title={mutationsBlocked ? "Needs a connection — new tickets can't be raised offline" : undefined}
-        >
-          + New Ticket
-        </Button>
-      </div>
+  return (
+    <Page>
+      <PageHeader
+        title="Tickets"
+        primary={{
+          label: '+ New Ticket',
+          onClick: () => setCreating(true),
+          disabled: mutationsBlocked,
+        }}
+      />
+      {mutationsBlocked && (
+        <p className="-mt-2 mb-4 text-sm text-slate-600">Needs a connection — new tickets can&apos;t be raised offline.</p>
+      )}
 
       {fromCache && <OfflineBanner cachedAt={cachedAt} />}
 
-      {/* ── Status filter ────────────────────────────────────────── */}
-      <div className="flex gap-1.5 mb-6">
+      {/* ── Status filter — the same chips as every other list (design standard Q4) ── */}
+      <ChipRow label="Ticket status" className={SECTION_GAP}>
         {STATUS_OPTS.map((opt) => (
-          <button
+          <Chip
             key={opt.value}
+            selected={statusFilter === opt.value}
             onClick={() => setStatusFilter(opt.value)}
             data-testid={`tickets-filter-${opt.value}`}
-            className={`px-4 py-2 rounded-full text-sm font-semibold border transition-colors
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
-              ${statusFilter === opt.value
-                ? opt.value === 'pending'
-                  ? 'bg-amber-500 text-white border-amber-500'
-                  : opt.value === 'resolved'
-                  ? 'bg-green-600 text-white border-green-600'
-                  : 'bg-slate-700 text-white border-slate-700'
-                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
           >
             {opt.label}
-          </button>
+          </Chip>
         ))}
-      </div>
+      </ChipRow>
 
-      {/* ── Table ────────────────────────────────────────────────── */}
+      {/* ── List ─────────────────────────────────────────────────── */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
           <Spinner size="lg" />
         </div>
       ) : visibleTickets.length === 0 ? (
-        <p className="text-center text-slate-400 text-base py-20">
+        <p className="text-center text-slate-500 text-base py-20">
           {statusFilter === 'pending'
             ? 'No open tickets. All clear!'
             : statusFilter === 'resolved'
@@ -131,55 +135,35 @@ export default function TicketsPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="tickets-list">
-          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg.
-              The status badge's data-testid lives ONLY here (not on the table's copy
-              below) because e2e/appium/tests/tickets.test.mjs reads its text with
-              getText(), which returns "" for a display:none element — duplicating the
-              testid onto the hidden table row would make that assertion fail on a phone
-              emulator. */}
-          <div className="lg:hidden divide-y divide-slate-200">
+          {/* Phone + upright-tablet cards (D5, Q1). The status badge's data-testid lives
+              ONLY here (not on the table's copy below) because
+              e2e/appium/tests/tickets.test.mjs reads its text with getText(), which
+              returns "" for a display:none element — duplicating the testid onto the
+              hidden table row would make that assertion fail on a phone emulator. */}
+          <div className="md:hidden divide-y divide-slate-200">
             {visibleTickets.map((t) => (
-              <div
+              <ListCard
                 key={t.id}
                 onClick={() => setSelectedId(t.id)}
                 data-testid="tickets-row"
-                className="p-4 active:bg-blue-50 cursor-pointer"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-slate-400 font-mono text-sm">#{t.id}</p>
-                    <p className="font-semibold text-slate-900">{t.title}</p>
-                    <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{t.description}</p>
-                  </div>
-                  {t.amount != null && (
-                    <span className={`font-semibold tabular-nums shrink-0 ${Number(t.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
-                      {Number(t.amount) >= 0 ? '+' : ''}{PHP(t.amount)}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-2">
-                  <span
-                    data-testid="tickets-status-badge"
-                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
-                    ${t.status === 'resolved'
-                      ? 'bg-green-100 text-green-800 border-green-300'
-                      : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
-                    {t.status === 'resolved' ? 'Resolved' : 'Pending'}
-                  </span>
-                </div>
-              </div>
+                title={keepRefsWhole(t.title)}
+                titleRight={t.amount != null && amountText(t)}
+                meta={<span className="line-clamp-2">{keepRefsWhole(t.description)}</span>}
+                metaRight={`#${t.id} · ${fmtCreated(t)}`}
+                badges={<TicketStatusBadge status={t.status} data-testid="tickets-status-badge" />}
+              />
             ))}
           </div>
 
-          <table className="hidden lg:table w-full text-base">
+          <table className="hidden md:table w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
-                <th className="text-left px-5 py-3 font-semibold">#</th>
-                <th className="text-left px-5 py-3 font-semibold">Title</th>
-                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Related</th>
-                <th className="text-right px-5 py-3 font-semibold hidden sm:table-cell">Amount</th>
-                <th className="text-left px-5 py-3 font-semibold">Status</th>
-                <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Date</th>
+              <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">#</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Title</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Related</th>
+                <th className="text-right px-4 lg:px-5 py-3 font-semibold">Amount</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Status</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Date</th>
               </tr>
             </thead>
             <tbody>
@@ -190,44 +174,30 @@ export default function TicketsPage() {
                   data-testid="tickets-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
-                  <td className="px-5 py-4 text-slate-400 font-mono text-sm">
+                  <td className="px-4 lg:px-5 py-4 text-slate-600 font-mono text-sm">
                     #{t.id}
                   </td>
-                  <td className="px-5 py-4">
-                    <p className="font-semibold text-slate-900">{t.title}</p>
-                    <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{t.description}</p>
+                  <td className="px-4 lg:px-5 py-4">
+                    <p className="font-semibold text-slate-900">{keepRefsWhole(t.title)}</p>
+                    <p className="text-sm text-slate-600 mt-0.5 line-clamp-1">{keepRefsWhole(t.description)}</p>
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell">
+                  <td className="px-4 lg:px-5 py-4 text-sm text-slate-600 hidden lg:table-cell">
                     {t.related_order_id && (
-                      <span className="inline-block mr-2">Order {orderRefFromId(t.related_order_id, t.related_order_receipt_number)}</span>
+                      <span className="inline-block mr-2 whitespace-nowrap">Order {orderRefFromId(t.related_order_id, t.related_order_receipt_number)}</span>
                     )}
                     {t.personnel_name && (
                       <span className="inline-block">{t.personnel_name}</span>
                     )}
                     {!t.related_order_id && !t.personnel_name && '—'}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums hidden sm:table-cell">
-                    {t.amount != null ? (
-                      <span className={`font-semibold ${Number(t.amount) < 0 ? 'text-red-600' : 'text-green-700'}`}>
-                        {Number(t.amount) >= 0 ? '+' : ''}{PHP(t.amount)}
-                      </span>
-                    ) : (
-                      <span className="text-slate-300">—</span>
-                    )}
+                  <td className="px-4 lg:px-5 py-4 text-right">
+                    {t.amount != null ? amountText(t) : <span className="text-slate-500">—</span>}
                   </td>
-                  <td className="px-5 py-4">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border
-                      ${t.status === 'resolved'
-                        ? 'bg-green-100 text-green-800 border-green-300'
-                        : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
-                      {t.status === 'resolved' ? 'Resolved' : 'Pending'}
-                    </span>
+                  <td className="px-4 lg:px-5 py-4">
+                    <TicketStatusBadge status={t.status} />
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-400 hidden lg:table-cell tabular-nums">
-                    {new Date(t.created_at).toLocaleDateString('en-PH', {
-                      year: 'numeric', month: 'short', day: 'numeric',
-                    })}
+                  <td className="px-4 lg:px-5 py-4 text-sm text-slate-600 hidden lg:table-cell tabular-nums whitespace-nowrap">
+                    {fmtCreated(t)}
                   </td>
                 </tr>
               ))}
@@ -252,6 +222,6 @@ export default function TicketsPage() {
           cachedTicket={tickets.find((t) => String(t.id) === String(selectedId)) || null}
         />
       )}
-    </div>
+    </Page>
   );
 }

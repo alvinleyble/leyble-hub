@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import NavIcon from '../../components/layout/NavIcon';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Combobox from '../../components/ui/Combobox';
@@ -18,9 +19,10 @@ import {
   enqueue, drainOutbox, loadCustomerPrices, loadCatalogue, queuedCustomersFromOutbox,
   checkIsOnline, ref,
 } from '../../offline/index.js';
+import { formatPeso } from '../../utils/money';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 const INPUT = `w-full h-11 px-3 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -47,7 +49,7 @@ function CustomerAndOrderTypeFields({
   return (
     <>
       <div>
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Customer</p>
+        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1.5">Customer</p>
         <Combobox
           items={activeCustomers}
           match={customerMatches}
@@ -72,11 +74,11 @@ function CustomerAndOrderTypeFields({
               <span className="min-w-0 truncate">
                 <span className="font-medium text-slate-800">{c.name}</span>
                 {c.address && (
-                  <span className="italic text-slate-400"> - {c.address}</span>
+                  <span className="italic text-slate-500"> - {c.address}</span>
                 )}
               </span>
               {c.customer_type && c.customer_type !== 'regular' && (
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
+                <span className={`text-sm font-semibold px-2 py-0.5 rounded-full border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
                   {customerTypeLabel(c.customer_type)}
                 </span>
               )}
@@ -84,7 +86,7 @@ function CustomerAndOrderTypeFields({
           )}
         />
         {selectedCustomer && (
-          <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1">
+          <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm space-y-1">
             <div className="flex items-center justify-between gap-1.5 flex-wrap">
               <span className="font-bold text-slate-900">{selectedCustomer.name}</span>
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-semibold border ${customerTypeBadge(selectedCustomer.customer_type)}`}>
@@ -105,12 +107,12 @@ function CustomerAndOrderTypeFields({
             )}
           </div>
         )}
-        {customerError && <p className="text-xs text-red-600 mt-1 font-medium">{customerError}</p>}
+        {customerError && <p className="text-sm text-red-700 mt-1 font-medium">{customerError}</p>}
       </div>
 
       {!isEdit && (
         <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Order Type</p>
+          <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-1.5">Order Type</p>
           <div className="flex gap-2" role="group" aria-label="Order type">
             {['delivery', 'pickup'].map((type) => (
               <button
@@ -118,14 +120,15 @@ function CustomerAndOrderTypeFields({
                 type="button"
                 onClick={() => setOrderType(type)}
                 aria-pressed={orderType === type}
-                className={`flex-1 h-10 rounded-xl text-sm font-semibold border transition-colors
+                className={`flex-1 h-12 inline-flex items-center justify-center gap-2 rounded-xl text-base font-semibold border transition-colors
                   ${orderType === type
                     ? type === 'delivery'
                       ? 'bg-slate-800 text-white border-slate-800 shadow-sm'
                       : 'bg-blue-700 text-white border-blue-700 shadow-sm'
                     : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
               >
-                {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                <NavIcon name={type === 'delivery' ? 'truck' : 'store'} className="w-5 h-5" />
+                {type === 'delivery' ? 'Delivery' : 'Pickup'}
               </button>
             ))}
           </div>
@@ -1045,7 +1048,7 @@ export default function OrderCreateModal({
                 <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? (editOrder?.receipt_number ? `Draft ${editOrder.receipt_number}` : 'Draft') : 'New Order'}</span>
               </h2>
               {isDraftMode && draftId && (
-                <p className="text-xs font-medium mt-0.5 text-slate-500">
+                <p className="text-sm font-medium mt-0.5 text-slate-600">
                   {draftStatus === 'saving' ? '● Saving draft…' : '✓ Draft saved automatically'}
                 </p>
               )}
@@ -1053,34 +1056,34 @@ export default function OrderCreateModal({
             <button
               onClick={onClose}
               aria-label="Close"
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
-                         hover:text-slate-700 hover:bg-slate-100 transition-colors
+              className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-600
+                         hover:text-slate-900 hover:bg-slate-100 transition-colors
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
-              ✕
+              <NavIcon name="close" className="w-6 h-6" />
             </button>
           </div>
 
           {staleWarning && isRealEdit && (
             <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-6 py-3 text-sm font-semibold text-amber-900" role="status">
-              ⚠️ This order changed on another device. Your form is unchanged; saving it may be refused. Review the current order and re-enter any still-valid change.
+              This order changed on another device. Your form is unchanged; saving it may be refused. Review the current order and re-enter any still-valid change.
             </div>
           )}
 
           {loading ? (
             <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
           ) : (
-            <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] lg:divide-x divide-slate-200 overflow-hidden">
+            <div className="relative grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_22rem] lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] md:divide-x divide-slate-200 overflow-hidden">
 
               {/* ── LEFT COLUMN: Product Catalogue ──────────────────── */}
               {/* pb-24 (D3): keeps the last row of tiles clear of the collapsed bottom-sheet
                   bar below `lg`, where the sheet overlays this column. Untouched at `lg`+. */}
-              <div className="flex flex-col min-h-0 h-full p-4 pb-24 sm:p-5 sm:pb-24 lg:pb-5 overflow-hidden bg-slate-50/40">
+              <div className="flex flex-col min-h-0 h-full p-4 pb-24 sm:p-5 sm:pb-24 md:pb-5 overflow-hidden bg-slate-50/40">
                 {/* D3.1 — phone-width-only header for customer + order type, pinned above
                     the grid. Starts open; auto-collapses to a one-line summary once a
                     customer is picked; tap the summary to reopen and change it. Hidden at
                     `lg`+, where these fields live in their original spot below (D2). */}
-                <div className="lg:hidden shrink-0 mb-3">
+                <div className="md:hidden shrink-0 mb-3">
                   {customerHeaderOpen ? (
                     <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3 shadow-sm">
                       <CustomerAndOrderTypeFields
@@ -1102,14 +1105,16 @@ export default function OrderCreateModal({
                       type="button"
                       onClick={() => setCustomerHeaderPinnedOpen(true)}
                       className="flex h-12 w-full items-center justify-between gap-2 rounded-xl
-                                 border border-slate-200 bg-white px-3.5 text-sm font-semibold
+                                 border border-slate-200 bg-white px-3.5 text-base font-semibold
                                  text-slate-900 shadow-sm focus-visible:outline-none
                                  focus-visible:ring-2 focus-visible:ring-blue-600"
                     >
                       <span className="truncate">
                         {selectedCustomer?.name} · {orderType === 'delivery' ? 'Delivery' : 'Pickup'}
                       </span>
-                      <span aria-hidden="true" className="shrink-0 text-slate-500">✎ Change</span>
+                      <span aria-hidden="true" className="shrink-0 inline-flex items-center gap-1 text-blue-700">
+                        <NavIcon name="edit" className="w-4 h-4" />Change
+                      </span>
                     </button>
                   )}
                 </div>
@@ -1134,8 +1139,8 @@ export default function OrderCreateModal({
                             border-t border-slate-200 bg-white shadow-[0_-6px_24px_-6px_rgba(15,23,42,0.3)]
                             transition-[height] duration-300 ease-out
                             ${sheetExpanded ? 'h-[88%]' : 'h-16'}
-                            lg:static lg:z-auto lg:h-full lg:min-h-0 lg:rounded-none lg:border-t-0
-                            lg:shadow-none lg:transition-none`}
+                            md:static md:z-auto md:h-full md:min-h-0 md:rounded-none md:border-t-0
+                            md:shadow-none md:transition-none`}
               >
                 {/* Collapsed/expand handle — phone width only */}
                 <button
@@ -1143,12 +1148,12 @@ export default function OrderCreateModal({
                   onClick={() => setSheetExpanded((v) => !v)}
                   aria-expanded={sheetExpanded}
                   aria-controls="order-cart-sheet-body"
-                  className="lg:hidden flex w-full shrink-0 flex-col items-center justify-center gap-1
+                  className="md:hidden flex w-full shrink-0 flex-col items-center justify-center gap-1
                              h-16 px-4 focus-visible:outline-none focus-visible:ring-2
                              focus-visible:ring-inset focus-visible:ring-blue-600"
                 >
                   <span aria-hidden="true" className="h-1 w-10 rounded-full bg-slate-300" />
-                  <span className="flex w-full items-center justify-between gap-2 text-sm">
+                  <span className="flex w-full items-center justify-between gap-2 text-base">
                     <span className="font-bold text-slate-900 tabular-nums truncate">
                       {totalCases(items)} cs · {PHP(grandTotal)}
                     </span>
@@ -1161,13 +1166,13 @@ export default function OrderCreateModal({
 
                 <div
                   id="order-cart-sheet-body"
-                  className={`min-h-0 flex-1 flex-col overflow-hidden ${sheetExpanded ? 'flex' : 'hidden'} lg:flex`}
+                  className={`min-h-0 flex-1 flex-col overflow-hidden ${sheetExpanded ? 'flex' : 'hidden'} md:flex`}
                 >
 
                 {/* Order Header: Customer & Order Type — hidden below `lg` (D3.1: these
                     fields live in the pinned header above the grid there instead). At
                     `lg`+ this renders exactly as it always has (D2). */}
-                <div className="hidden lg:block p-4 border-b border-slate-200 shrink-0 space-y-3 bg-white">
+                <div className="hidden md:block p-4 border-b border-slate-200 shrink-0 space-y-3 bg-white">
                   <CustomerAndOrderTypeFields
                     activeCustomers={activeCustomers}
                     selectedCustomer={selectedCustomer}
@@ -1186,18 +1191,19 @@ export default function OrderCreateModal({
                 {/* Scrollable Order Items & Sections */}
                 <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
                   {isEdit && ['in_transit', 'completed', 'done'].includes(editOrder?.status) && (
-                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800">
-                      ⚠ This order has been dispatched — changing items will automatically adjust inventory.
+                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-900">
+                      This order has been dispatched — changing items will automatically adjust inventory.
                     </div>
                   )}
 
                   {/* Line Items List */}
                   <div>
-                    {errors.items && <p className="text-xs text-red-600 mb-2 font-medium">{errors.items}</p>}
+                    {errors.items && <p className="text-sm text-red-700 mb-2 font-medium">{errors.items}</p>}
 
                     {items.length === 0 ? (
-                      <div className="py-12 text-center text-sm text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                        Tap a product on the left to start the order.
+                      <div className="py-12 text-center text-base text-slate-600 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                        {/* No "on the left": on a phone the products are above (UI audit F20). */}
+                        Tap a product to start the order.
                       </div>
                     ) : (
                       <ul className="space-y-2.5">
@@ -1212,17 +1218,17 @@ export default function OrderCreateModal({
                                   {item.sku || item.product_name}
                                 </p>
                                 {item.sku && (
-                                  <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
+                                  <p className="text-sm text-slate-500 truncate">{item.product_name}</p>
                                 )}
                               </div>
                               <button
                                 type="button"
                                 onClick={() => removeItem(item._key)}
                                 aria-label={`Remove ${item.product_name}`}
-                                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400
+                                className="w-12 h-12 -m-2 flex items-center justify-center rounded-lg text-slate-500
                                            hover:text-red-600 hover:bg-red-50 shrink-0 transition-colors"
                               >
-                                ✕
+                                <NavIcon name="close" className="w-5 h-5" />
                               </button>
                             </div>
 
@@ -1236,9 +1242,9 @@ export default function OrderCreateModal({
                               <div className="w-28">
                                 <label
                                   htmlFor={`price-${item._key}`}
-                                  className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1"
+                                  className="block text-sm font-semibold text-slate-600 mb-1"
                                 >
-                                  Price /cs
+                                  Price / case
                                 </label>
                                 <input
                                   id={`price-${item._key}`}
@@ -1247,12 +1253,12 @@ export default function OrderCreateModal({
                                   step="0.01"
                                   value={item.unit_price}
                                   onChange={(e) => updateItemPrice(item._key, e.target.value)}
-                                  className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                  className="h-12 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-right text-base font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                                 />
                               </div>
 
                               <div className="text-right">
-                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Total</p>
+                                <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">Total</p>
                                 <p className="text-base font-bold text-slate-900 tabular-nums">
                                   {PHP(lineTotal(item))}
                                 </p>
@@ -1283,7 +1289,7 @@ export default function OrderCreateModal({
                           placeholder="0.00"
                         />
                       </FormField>
-                      {errors.deliveryFee && <p className="text-xs text-red-600">{errors.deliveryFee}</p>}
+                      {errors.deliveryFee && <p className="text-sm text-red-600">{errors.deliveryFee}</p>}
                     </div>
                   )}
 
@@ -1291,9 +1297,9 @@ export default function OrderCreateModal({
                   <div className="pt-2 border-t border-slate-200">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Adjustment</p>
+                        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Adjustment</p>
                         {!adjExpanded && Number(adjValue) !== 0 && (
-                          <p className="text-xs font-semibold text-blue-800 mt-0.5">
+                          <p className="text-sm font-semibold text-blue-800 mt-0.5">
                             {Number(adjValue) > 0 ? '+' : ''}{PHP(adjValue)}
                             {adjReason && ` — ${adjReason}`}
                           </p>
@@ -1302,7 +1308,7 @@ export default function OrderCreateModal({
                       <button
                         type="button"
                         onClick={() => setAdjExpanded((v) => !v)}
-                        className="text-xs text-blue-700 hover:text-blue-900 font-semibold focus-visible:outline-none"
+                        className="min-h-[48px] px-2 -mr-2 rounded-lg text-sm text-blue-700 hover:text-blue-900 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                       >
                         {adjExpanded ? 'Close' : Number(adjValue) !== 0 ? 'Edit' : '+ Add Adjustment'}
                       </button>
@@ -1329,7 +1335,7 @@ export default function OrderCreateModal({
                             placeholder="e.g. Suki discount"
                           />
                         </FormField>
-                        {errors.adjustment && <p className="text-xs text-red-600">{errors.adjustment}</p>}
+                        {errors.adjustment && <p className="text-sm text-red-600">{errors.adjustment}</p>}
                       </div>
                     )}
                   </div>
@@ -1357,7 +1363,7 @@ export default function OrderCreateModal({
                       <span className="tabular-nums font-medium text-slate-900">{PHP(totals.goods)}</span>
                     </div>
                     {deliveryFeeCharged() !== null && (
-                      <div className="flex justify-between text-slate-600 text-xs">
+                      <div className="flex justify-between text-slate-600 text-sm">
                         <span>Delivery Fee</span>
                         <span className="tabular-nums font-semibold text-slate-900">
                           {PHP(deliveryFeeNum)}
@@ -1365,7 +1371,7 @@ export default function OrderCreateModal({
                       </div>
                     )}
                     {totals.adjustment !== 0 && (
-                      <div className="flex justify-between text-slate-600 text-xs">
+                      <div className="flex justify-between text-slate-600 text-sm">
                         <span>Adjustment{adjReason ? ` (${adjReason})` : ''}</span>
                         <span className={`tabular-nums font-semibold ${totals.adjustment > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
                           {totals.adjustment > 0 ? '+' : ''}{PHP(totals.adjustment)}
@@ -1380,7 +1386,7 @@ export default function OrderCreateModal({
 
                   {confirmingDiscard ? (
                     <div className="flex items-center justify-between gap-2 p-2 bg-red-50 border border-red-200 rounded-xl">
-                      <span className="text-xs font-medium text-red-800">Discard draft?</span>
+                      <span className="text-sm font-medium text-red-800">Discard draft?</span>
                       <div className="flex gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setConfirmingDiscard(false)} disabled={saving}>Keep</Button>
                         <Button size="sm" variant="danger" onClick={handleDiscard} loading={saving}>Discard</Button>
@@ -1394,10 +1400,12 @@ export default function OrderCreateModal({
                         variant="secondary"
                         onClick={handleReset}
                         disabled={saving || (items.length === 0 && !adjValue && !notes)}
-                        className="text-slate-700"
+                        className="text-slate-700 px-3 sm:px-5"
                         title="Reset order items and notes while keeping customer"
                       >
-                        🔄 Reset
+                        <NavIcon name="refresh" className="w-5 h-5" />
+                        {/* Icon-only on a narrow phone so the row never wraps; still named. */}
+                        <span className="sr-only sm:not-sr-only">Reset</span>
                       </Button>
 
                       {isDraftMode && draftId && (
@@ -1405,7 +1413,7 @@ export default function OrderCreateModal({
                           type="button"
                           onClick={() => setConfirmingDiscard(true)}
                           disabled={saving}
-                          className="text-xs font-semibold text-red-600 hover:text-red-700 hover:underline px-2 py-1 disabled:opacity-50"
+                          className="min-h-[48px] text-sm font-semibold text-red-700 hover:text-red-800 hover:underline px-2 disabled:opacity-50"
                         >
                           Discard
                         </button>
@@ -1425,9 +1433,10 @@ export default function OrderCreateModal({
                         data-testid="order-edit-save"
                         onClick={handleSubmit}
                         loading={saving}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                        className="whitespace-nowrap font-bold"
                       >
-                        {isRealEdit ? 'Save Changes' : '💾 Create Order'}
+                        {/* Blue like every main action (design standard Q14). */}
+                        {isRealEdit ? 'Save Changes' : 'Create Order'}
                       </Button>
                     </div>
                   )}
@@ -1551,7 +1560,7 @@ export default function OrderCreateModal({
                            focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-50"
               >
                 <span className="text-base font-semibold text-slate-800">{opt.label}</span>
-                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-sm font-semibold
                                   ${customerTypeBadge(opt.value)}`}>
                   {opt.desc}
                 </span>
