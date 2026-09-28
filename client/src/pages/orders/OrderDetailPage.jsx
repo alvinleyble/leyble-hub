@@ -114,28 +114,28 @@ function OrderDetailSkeleton() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-400">
-              <th className="px-5 py-3"><Skeleton className="h-3 w-14" /></th>
-              <th className="px-5 py-3"><Skeleton className="h-3 w-8 ml-auto" /></th>
+              <th className="px-3 sm:px-5 py-3"><Skeleton className="h-3 w-14" /></th>
+              <th className="px-3 sm:px-5 py-3"><Skeleton className="h-3 w-8 ml-auto" /></th>
               <th className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-14 ml-auto" /></th>
               <th className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
-              <th className="px-5 py-3"><Skeleton className="h-3 w-12 ml-auto" /></th>
+              <th className="px-3 sm:px-5 py-3"><Skeleton className="h-3 w-12 ml-auto" /></th>
             </tr>
           </thead>
           <tbody>
             {[0, 1, 2].map((i) => (
               <tr key={i} className="border-t border-slate-300">
-                <td className="px-5 py-3"><Skeleton className="h-4 w-28" /></td>
-                <td className="px-5 py-3"><Skeleton className="h-4 w-10 ml-auto" /></td>
+                <td className="px-3 sm:px-5 py-3"><Skeleton className="h-4 w-28" /></td>
+                <td className="px-3 sm:px-5 py-3"><Skeleton className="h-4 w-10 ml-auto" /></td>
                 <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-4 w-14 ml-auto" /></td>
                 <td className="px-4 py-3 hidden sm:table-cell"><Skeleton className="h-4 w-14 ml-auto" /></td>
-                <td className="px-5 py-3"><Skeleton className="h-4 w-16 ml-auto" /></td>
+                <td className="px-3 sm:px-5 py-3"><Skeleton className="h-4 w-16 ml-auto" /></td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-400 bg-slate-50">
-              <TotalsLabel className="px-5 py-4 text-right"><Skeleton className="h-4 w-24 ml-auto" /></TotalsLabel>
-              <td className="px-5 py-4"><Skeleton className="h-6 w-24 ml-auto" /></td>
+              <TotalsLabel className="px-3 sm:px-5 py-4 text-right"><Skeleton className="h-4 w-24 ml-auto" /></TotalsLabel>
+              <td className="px-3 sm:px-5 py-4"><Skeleton className="h-6 w-24 ml-auto" /></td>
             </tr>
           </tfoot>
         </table>
@@ -732,27 +732,29 @@ export default function OrderDetailPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
-              <th className="text-left px-5 py-3 font-semibold">Product</th>
-              <th className="text-right px-5 py-3 font-semibold">Qty</th>
+              <th className="text-left px-3 sm:px-5 py-3 font-semibold">Product</th>
+              <th className="text-right px-3 sm:px-5 py-3 font-semibold">Qty</th>
               <th className="text-right px-4 py-3 font-semibold hidden sm:table-cell">Price/Case</th>
               <th className="text-right px-4 py-3 font-semibold hidden sm:table-cell">Deposit</th>
-              <th className="text-right px-5 py-3 font-semibold">Total</th>
+              <th className="text-right px-3 sm:px-5 py-3 font-semibold">Total</th>
             </tr>
           </thead>
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <SpanCell phone={3} sm={5} className="px-5 py-6 text-center text-slate-400">
+                <SpanCell phone={3} sm={5} className="px-3 sm:px-5 py-6 text-center text-slate-400">
                   Line items not available offline
                 </SpanCell>
               </tr>
             ) : (
               items.map((item) => (
               <tr key={item.id ?? `${item.product_id}-${item.unit_price}`} className="border-t border-slate-300">
-                <td className="px-5 py-3">
-                  <p className="font-medium text-slate-800">{item.sku || item.product_name || 'Item'}</p>
+                <td className="px-3 sm:px-5 py-3">
+                  {/* A long unbroken SKU (RH1000SUPER) otherwise sets a minimum Product
+                      width that, beside a large total, pushes the table past a phone's card. */}
+                  <p className="font-medium text-slate-800 [overflow-wrap:anywhere] sm:[overflow-wrap:normal]">{item.sku || item.product_name || 'Item'}</p>
                 </td>
-                <td className="px-5 py-3 text-right tabular-nums text-slate-700">
+                <td className="px-3 sm:px-5 py-3 text-right tabular-nums text-slate-700">
                   {item.quantity ?? '—'} {item.unit || ''}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-500 hidden sm:table-cell">
@@ -770,7 +772,7 @@ export default function OrderDetailPage() {
                     </div>
                   ) : '—'}
                 </td>
-                <td className="px-5 py-3 text-right tabular-nums font-semibold text-slate-800">
+                <td className="px-3 sm:px-5 py-3 text-right tabular-nums font-semibold text-slate-800">
                   <div>{PHP(num(item.quantity) * num(item.unit_price))}</div>
                   {num(item.unit_deposit_fee) > 0 && isDepositable && (
                     <div className={`text-xs font-normal mt-0.5 ${itemNetDeposit(item) < 0 ? 'text-green-700' : 'text-slate-500'}`}>
@@ -787,14 +789,14 @@ export default function OrderDetailPage() {
             {hasDeposits && isDepositable && (
               <>
                 <tr className="border-t border-slate-400 bg-slate-50">
-                  <TotalsLabel className="px-5 py-3 text-right text-slate-500">Items</TotalsLabel>
-                  <td className="px-5 py-3 text-right tabular-nums text-slate-700">
+                  <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">Items</TotalsLabel>
+                  <td className="px-3 sm:px-5 py-3 text-right tabular-nums text-slate-700">
                     {PHP(itemsSubtotal)}
                   </td>
                 </tr>
                 <tr className="border-t border-slate-300 bg-slate-50">
-                  <TotalsLabel className="px-5 py-3 text-right text-slate-500">Deposit fee</TotalsLabel>
-                  <td className={`px-5 py-3 text-right tabular-nums ${depositTotal < 0 ? 'text-green-700' : 'text-slate-700'}`}>
+                  <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">Deposit fee</TotalsLabel>
+                  <td className={`px-3 sm:px-5 py-3 text-right tabular-nums ${depositTotal < 0 ? 'text-green-700' : 'text-slate-700'}`}>
                     {depositTotal < 0
                       ? `− ${PHP(Math.abs(depositTotal))}`
                       : `+ ${PHP(depositTotal)}`}
@@ -804,31 +806,31 @@ export default function OrderDetailPage() {
             )}
             {hasDeliveryFee && (
               <tr className="border-t border-slate-300 bg-slate-50">
-                <TotalsLabel className="px-5 py-3 text-right text-slate-500">Delivery Fee</TotalsLabel>
-                <td className="px-5 py-3 text-right tabular-nums font-medium text-slate-700">
+                <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">Delivery Fee</TotalsLabel>
+                <td className="px-3 sm:px-5 py-3 text-right tabular-nums font-medium text-slate-700">
                   {PHP(deliveryFeeCharged)}
                 </td>
               </tr>
             )}
             {hasAdj && (
               <tr className="border-t border-slate-300 bg-slate-50">
-                <TotalsLabel className="px-5 py-3 text-right text-slate-500">
+                <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">
                   Adjustment
                   {order.adjustment_reason && (
                     <span className="ml-2 text-xs text-slate-400 italic">({order.adjustment_reason})</span>
                   )}
                 </TotalsLabel>
-                <td className={`px-5 py-3 text-right tabular-nums font-medium
+                <td className={`px-3 sm:px-5 py-3 text-right tabular-nums font-medium
                   ${num(order.adjustment) > 0 ? 'text-red-600' : 'text-green-700'}`}>
                   {num(order.adjustment) > 0 ? '+' : ''}{PHP(order.adjustment)}
                 </td>
               </tr>
             )}
             <tr className="border-t-2 border-slate-400 bg-slate-50">
-              <TotalsLabel className="px-5 py-4 text-right font-bold text-slate-700">
+              <TotalsLabel className="px-3 sm:px-5 py-4 text-right font-bold text-slate-700">
                 Order Total
               </TotalsLabel>
-              <td className="px-5 py-4 text-right font-bold text-xl tabular-nums text-slate-900">
+              <td className="px-3 sm:px-5 py-4 text-right font-bold text-xl tabular-nums text-slate-900">
                 {PHP(liveTotal)}
               </td>
             </tr>
