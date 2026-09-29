@@ -145,25 +145,23 @@ export default function PersonnelPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="personnel-list">
-          {/* Phone + upright-tablet cards (D5, Q1). Only an unusual state is badged
-              (Q6): waiting to sync, or inactive. */}
-          <div className="md:hidden divide-y divide-slate-200">
+          {/* Phone + upright-tablet rows (D5; tables from 1024px). Personnel keeps its
+              previous row (round-8 grill): name, mobile or an em dash, and the one
+              status badge on the right — Waiting to sync, Active or Inactive. */}
+          <div className="lg:hidden divide-y divide-slate-200">
             {filtered.map((p) => (
               <ListCard
                 key={p.id}
                 onClick={() => openPerson(p)}
                 data-testid="personnel-row"
                 title={<span className={p.is_active ? '' : 'text-slate-500 line-through'}>{p.full_name}</span>}
-                meta={p.phone || null}
-                badges={[
-                  (p._unsynced || pendingEditIds.has(String(p.id))) && <TagBadge key="sync" kind="unsynced" />,
-                  p.is_active === false && <TagBadge key="inactive" kind="inactive" />,
-                ]}
+                meta={p.phone || '—'}
+                aside={statusBadge(p)}
               />
             ))}
           </div>
 
-          <table className="hidden md:table w-full text-base">
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-4 lg:px-5 py-3 font-semibold">Name</th>
@@ -185,7 +183,7 @@ export default function PersonnelPage() {
                     </p>
                   </td>
                   <td className="px-4 lg:px-5 py-4 text-slate-600">
-                    {p.phone ?? '—'}
+                    {p.phone || '—'}
                   </td>
                   <td className="px-4 lg:px-5 py-4">{statusBadge(p)}</td>
                 </tr>

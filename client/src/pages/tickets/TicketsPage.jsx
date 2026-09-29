@@ -140,22 +140,26 @@ export default function TicketsPage() {
               e2e/appium/tests/tickets.test.mjs reads its text with getText(), which
               returns "" for a display:none element — duplicating the testid onto the
               hidden table row would make that assertion fail on a phone emulator. */}
-          <div className="md:hidden divide-y divide-slate-200">
+          <div className="lg:hidden divide-y divide-slate-200">
             {visibleTickets.map((t) => (
               <ListCard
                 key={t.id}
                 onClick={() => setSelectedId(t.id)}
                 data-testid="tickets-row"
-                title={keepRefsWhole(t.title)}
+                title={(
+                  <>
+                    <span className="block font-mono text-sm font-normal text-slate-500">#{t.id}</span>
+                    {keepRefsWhole(t.title)}
+                  </>
+                )}
                 titleRight={t.amount != null && amountText(t)}
-                meta={<span className="line-clamp-2">{keepRefsWhole(t.description)}</span>}
-                metaRight={`#${t.id} · ${fmtCreated(t)}`}
+                meta={t.description ? <span className="line-clamp-1">{keepRefsWhole(t.description)}</span> : null}
                 badges={<TicketStatusBadge status={t.status} data-testid="tickets-status-badge" />}
               />
             ))}
           </div>
 
-          <table className="hidden md:table w-full text-base">
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-4 lg:px-5 py-3 font-semibold">#</th>

@@ -1073,17 +1073,17 @@ export default function OrderCreateModal({
           {loading ? (
             <div className="flex-1 flex items-center justify-center"><Spinner size="lg" /></div>
           ) : (
-            <div className="relative grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_22rem] lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] md:divide-x divide-slate-200 overflow-hidden">
+            <div className="relative grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_26rem] xl:grid-cols-[minmax(0,1fr)_30rem] lg:divide-x divide-slate-200 overflow-hidden">
 
               {/* ── LEFT COLUMN: Product Catalogue ──────────────────── */}
               {/* pb-24 (D3): keeps the last row of tiles clear of the collapsed bottom-sheet
                   bar below `lg`, where the sheet overlays this column. Untouched at `lg`+. */}
-              <div className="flex flex-col min-h-0 h-full p-4 pb-24 sm:p-5 sm:pb-24 md:pb-5 overflow-hidden bg-slate-50/40">
+              <div className="flex flex-col min-h-0 h-full p-4 pb-24 sm:p-5 sm:pb-24 lg:pb-5 overflow-hidden bg-slate-50/40">
                 {/* D3.1 — phone-width-only header for customer + order type, pinned above
                     the grid. Starts open; auto-collapses to a one-line summary once a
                     customer is picked; tap the summary to reopen and change it. Hidden at
                     `lg`+, where these fields live in their original spot below (D2). */}
-                <div className="md:hidden shrink-0 mb-3">
+                <div className="lg:hidden shrink-0 mb-3">
                   {customerHeaderOpen ? (
                     <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3 shadow-sm">
                       <CustomerAndOrderTypeFields
@@ -1139,8 +1139,8 @@ export default function OrderCreateModal({
                             border-t border-slate-200 bg-white shadow-[0_-6px_24px_-6px_rgba(15,23,42,0.3)]
                             transition-[height] duration-300 ease-out
                             ${sheetExpanded ? 'h-[88%]' : 'h-16'}
-                            md:static md:z-auto md:h-full md:min-h-0 md:rounded-none md:border-t-0
-                            md:shadow-none md:transition-none`}
+                            lg:static lg:z-auto lg:h-full lg:min-h-0 lg:rounded-none lg:border-t-0
+                            lg:shadow-none lg:transition-none`}
               >
                 {/* Collapsed/expand handle — phone width only */}
                 <button
@@ -1148,7 +1148,7 @@ export default function OrderCreateModal({
                   onClick={() => setSheetExpanded((v) => !v)}
                   aria-expanded={sheetExpanded}
                   aria-controls="order-cart-sheet-body"
-                  className="md:hidden flex w-full shrink-0 flex-col items-center justify-center gap-1
+                  className="lg:hidden flex w-full shrink-0 flex-col items-center justify-center gap-1
                              h-16 px-4 focus-visible:outline-none focus-visible:ring-2
                              focus-visible:ring-inset focus-visible:ring-blue-600"
                 >
@@ -1166,13 +1166,13 @@ export default function OrderCreateModal({
 
                 <div
                   id="order-cart-sheet-body"
-                  className={`min-h-0 flex-1 flex-col overflow-hidden ${sheetExpanded ? 'flex' : 'hidden'} md:flex`}
+                  className={`min-h-0 flex-1 flex-col overflow-hidden ${sheetExpanded ? 'flex' : 'hidden'} lg:flex`}
                 >
 
                 {/* Order Header: Customer & Order Type — hidden below `lg` (D3.1: these
                     fields live in the pinned header above the grid there instead). At
                     `lg`+ this renders exactly as it always has (D2). */}
-                <div className="hidden md:block p-4 border-b border-slate-200 shrink-0 space-y-3 bg-white">
+                <div className="hidden lg:block p-4 border-b border-slate-200 shrink-0 space-y-3 bg-white">
                   <CustomerAndOrderTypeFields
                     activeCustomers={activeCustomers}
                     selectedCustomer={selectedCustomer}

@@ -351,7 +351,7 @@ export default function AuditPage() {
                     at lg. The action badge's data-testid lives ONLY here (not on the
                     table's copy below) because e2e/appium/tests/audit.test.mjs reads its
                     text with getText(), which returns "" for a display:none element. */}
-                <div className="md:hidden divide-y divide-slate-200">
+                <div className="lg:hidden divide-y divide-slate-200">
                   {entries.map((e) => (
                     <ListCard
                       key={e.id}
@@ -363,7 +363,6 @@ export default function AuditPage() {
                         </span>
                       ) : <span className="text-slate-500 font-normal">—</span>}
                       meta={<span className="tabular-nums">{fmtCardDateTime(e.created_at)}</span>}
-                      metaRight={e.performed_by_name ?? null}
                       badges={(
                         <span
                           data-testid="audit-action-badge"
@@ -376,7 +375,7 @@ export default function AuditPage() {
                   ))}
                 </div>
 
-                <table className="hidden md:table w-full text-sm">
+                <table className="hidden lg:table w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
@@ -384,7 +383,7 @@ export default function AuditPage() {
                       <th className="text-left px-5 py-3 font-semibold">Action</th>
                       <th className="text-right px-5 py-3 font-semibold">Change</th>
                       <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Prev → New</th>
-                      <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Reason / Reference</th>
+                      <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Reason / Reference</th>
                       <th className="text-left px-5 py-3 font-semibold hidden xl:table-cell">By</th>
                     </tr>
                   </thead>
@@ -418,7 +417,7 @@ export default function AuditPage() {
                             ? `${e.previous_value} → ${e.new_value}`
                             : '—'}
                         </td>
-                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell max-w-xs">
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell max-w-xs">
                           <span className="block truncate">
                             {e.reason ?? (
                               e.related_order_id
@@ -494,7 +493,7 @@ export default function AuditPage() {
             <>
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="audit-list">
                 {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
-                <div className="md:hidden divide-y divide-slate-200">
+                <div className="lg:hidden divide-y divide-slate-200">
                   {activityEntries.map((e) => (
                     <ListCard
                       key={e.id}
@@ -507,14 +506,13 @@ export default function AuditPage() {
                         </span>
                       )}
                       meta={<span className="tabular-nums">{fmtCardDateTime(e.created_at)}</span>}
-                      metaRight={e.performed_by_name ?? null}
                     >
                       <p className="text-slate-700 text-sm mt-1.5">{e.summary}</p>
                     </ListCard>
                   ))}
                 </div>
 
-                <table className="hidden md:table w-full text-sm">
+                <table className="hidden lg:table w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>

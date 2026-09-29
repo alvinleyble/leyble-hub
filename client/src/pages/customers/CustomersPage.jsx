@@ -26,7 +26,7 @@ function CustomersTableSkeleton() {
   const rows = [0, 1, 2, 3, 4, 5];
   return (
     <SkeletonGroup label="Loading customers" className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      <div className="md:hidden divide-y divide-slate-200">
+      <div className="lg:hidden divide-y divide-slate-200">
         {rows.map((i) => (
           <div key={i} className="p-4">
             <div className="flex items-start justify-between gap-3">
@@ -41,12 +41,12 @@ function CustomersTableSkeleton() {
         ))}
       </div>
 
-      <table className="hidden md:table w-full text-base">
+      <table className="hidden lg:table w-full text-base">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-400">
             <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
             <th className="px-5 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-10" /></th>
-            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-14" /></th>
             <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-16" /></th>
             <th className="px-5 py-3"><Skeleton className="h-3 w-12" /></th>
           </tr>
@@ -56,7 +56,7 @@ function CustomersTableSkeleton() {
             <tr key={i} className="border-t border-slate-300">
               <td className="px-5 py-4"><Skeleton className="h-4 w-36" /></td>
               <td className="px-5 py-4 hidden sm:table-cell"><Skeleton className="h-5 w-16 rounded-full" /></td>
-              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-24" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-24" /></td>
               <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-40" /></td>
               <td className="px-5 py-4"><Skeleton className="h-5 w-16 rounded-full" /></td>
             </tr>
@@ -163,12 +163,11 @@ export default function CustomersPage() {
     setSelectedId(c.id);
   };
 
-  // Badges only when something is unusual (design standard Q6): waiting to sync, or
-  // inactive. An ordinary active customer carries none (UI audit F21).
-  const statusBadges = (c) => [
-    (c._unsynced || pendingEditIds.has(String(c.id))) && <TagBadge key="sync" kind="unsynced" />,
-    !c.is_active && <TagBadge key="inactive" kind="inactive" />,
-  ];
+  // Customers badges every row Active or Inactive (round-8 grill, the captain's call
+  // over Q6's "only when unusual"); a queued edit adds Waiting to sync beside it.
+  const activeBadge = (c) => <TagBadge kind={c.is_active ? 'active' : 'inactive'} />;
+  const syncBadge = (c) => (c._unsynced || pendingEditIds.has(String(c.id))) && <TagBadge key="sync" kind="unsynced" />;
+  const orDash = (v) => (v == null || String(v).trim() === '' ? '—' : v);
 
   const typeBadge = (c) => (
     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap ${customerTypeBadge(c.customer_type)}`}>
@@ -218,8 +217,10 @@ export default function CustomersPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="customers-list">
-          {/* Phone + upright-tablet cards (D5, Q1) — same rows/testids as the table. */}
-          <div className="md:hidden divide-y divide-slate-200">
+          {/* Phone + upright-tablet rows (D5; tables from 1024px), round-8 grill:
+              line 1 name + type, line 2 mobile · address (an em dash for each blank)
+              with the Active/Inactive badge. Same testids as the table. */}
+          <div className="lg:hidden divide-y divide-slate-200">
             {displayCustomers.map((c) => (
               <ListCard
                 key={c.id}
@@ -227,13 +228,14 @@ export default function CustomersPage() {
                 data-testid="customers-row"
                 title={<span className={c.is_active ? '' : 'text-slate-500 line-through'}>{c.name}</span>}
                 titleRight={typeBadge(c)}
-                meta={c.phone || c.address ? [c.phone, c.address].filter(Boolean).join(' · ') : null}
-                badges={statusBadges(c)}
+                meta={`${orDash(c.phone)} · ${orDash(c.address)}`}
+                metaRight={activeBadge(c)}
+                badges={[syncBadge(c)]}
               />
             ))}
           </div>
 
-          <table className="hidden md:table w-full text-base">
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-4 lg:px-5 py-3 font-semibold">Name</th>
@@ -258,10 +260,10 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-4 lg:px-5 py-4">{typeBadge(c)}</td>
                   <td className="px-4 lg:px-5 py-4 text-slate-600 whitespace-nowrap">
-                    {c.phone ?? '—'}
+                    {orDash(c.phone)}
                   </td>
                   <td className="px-4 lg:px-5 py-4 text-slate-600 text-sm hidden lg:table-cell">
-                    <span className="block max-w-[220px] truncate">{c.address ?? '—'}</span>
+                    <span className="block max-w-[220px] truncate">{orDash(c.address)}</span>
                   </td>
                   <td className="px-4 lg:px-5 py-4">
                     {(c._unsynced || pendingEditIds.has(String(c.id))) ? (

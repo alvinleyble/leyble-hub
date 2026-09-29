@@ -40,7 +40,7 @@ export const TAG = {
   pickup:     { label: 'Pickup',              tone: 'blue' },
   delivery:   { label: 'Delivery',            tone: 'slate' },
   printed:    { label: 'Printed',             tone: 'slate' },
-  notPrinted: { label: 'Not printed',         tone: 'amber' },
+  notPrinted: { label: 'Not Printed',         tone: 'amber' },
   unsynced:   { label: 'Waiting to sync',     tone: 'amber' },
   duplicate:  { label: 'Possible duplicate',  tone: 'amber' },
   inactive:   { label: 'Inactive',            tone: 'slate' },

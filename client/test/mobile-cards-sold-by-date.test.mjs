@@ -15,9 +15,11 @@ const DashboardPage = (await import('../src/pages/DashboardPage.jsx')).default;
 
 
 // The shared phone card recipe (components/ui/ListCard.jsx, design standard Q6):
-// line 1 = customer + total, line 2 = receipt · date + "Sold by", line 3 = badges.
+// line 1 = customer + total, line 2 = receipt (· date on the Dashboard) + "Sold by",
+// line 3 = badges. Outgoing puts the date & time on line 3's right, under Sold by
+// (design standard R3), so its tests pass dateLine: 3.
 const cardLines = (card) => [...card.querySelectorAll('[data-card-line]')];
-function assertRecipe(card, { name, ref, total, date, soldBy }) {
+function assertRecipe(card, { name, ref, total, date, soldBy, dateLine = 2 }) {
   const [l1, l2, l3] = cardLines(card);
   assert.equal(cardLines(card).length, 3, 'card has the three recipe lines');
   const nameP = l1.querySelector('p');
@@ -27,7 +29,13 @@ function assertRecipe(card, { name, ref, total, date, soldBy }) {
   assert.ok(totalEl.textContent.includes(total), 'line 1 carries the total');
   assert.ok(totalEl.className.includes('whitespace-nowrap'), 'the total never splits across lines');
   assert.ok(l2.textContent.includes(ref), 'line 2 carries the receipt reference');
-  if (date) assert.ok(l2.textContent.includes(date), 'line 2 carries the date & time');
+  if (date && dateLine === 2) assert.ok(l2.textContent.includes(date), 'line 2 carries the date & time');
+  if (dateLine === 3) {
+    const right = l3.lastElementChild;
+    assert.ok(right && right.className.includes('shrink-0'), 'line 3 has a right-hand column');
+    if (date) assert.ok(right.textContent.includes(date), 'the date & time sit on the right, under Sold by');
+    assert.ok(!l2.textContent.includes(' · '), 'line 2 is the receipt alone, no date');
+  }
   assert.equal(l2.querySelector('.text-right').textContent.trim(), soldBy, 'line 2 names who sold it');
   assert.ok(l2.className.includes('text-sm') && l2.className.includes('text-slate-600'),
     'details are 14px slate-600 — the design standard Q7 floor, not 12px light grey');
@@ -149,19 +157,19 @@ test('OrdersPage: mobile cards follow the shared card recipe with Date & Time an
 
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  const mobileContainer = r.container.querySelector('.md\\:hidden.divide-y');
-  assert.ok(mobileContainer, 'Phone cards container (.md:hidden.divide-y) should exist');
+  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
+  assert.ok(mobileContainer, 'Phone cards container (.lg:hidden.divide-y) should exist');
 
   const cards = mobileContainer.querySelectorAll('[data-testid="orders-row"]');
   assert.equal(cards.length, 3, 'Should render 3 mobile order cards');
 
   assertRecipe(cards[0], {
     name: 'Very Long Customer Name', ref: '#801', total: '1,250.00', date: 'Jul 3',
-    soldBy: 'Sold by: Cashier Maria Long Surname That Truncates',
+    soldBy: 'Sold by: Cashier Maria Long Surname That Truncates', dateLine: 3,
   });
   // sold_by_name null / whitespace -> "Sold by: —"
-  assertRecipe(cards[1], { name: 'Corner Sari-Sari Store', ref: '#802', total: '500.00', soldBy: 'Sold by: —' });
-  assertRecipe(cards[2], { name: 'Neighborhood Bakery', ref: '#803', total: '320.00', soldBy: 'Sold by: —' });
+  assertRecipe(cards[1], { name: 'Corner Sari-Sari Store', ref: '#802', total: '500.00', soldBy: 'Sold by: —', dateLine: 3 });
+  assertRecipe(cards[2], { name: 'Neighborhood Bakery', ref: '#803', total: '320.00', soldBy: 'Sold by: —', dateLine: 3 });
 
   r.unmount();
 });
@@ -208,8 +216,8 @@ test('DashboardPage: mobile cards follow the shared card recipe with Date & Time
   const r = render(React.createElement(DashboardPage, null));
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
-  const mobileContainer = r.container.querySelector('.md\\:hidden.divide-y');
-  assert.ok(mobileContainer, 'Dashboard phone cards container (.md:hidden.divide-y) should exist');
+  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
+  assert.ok(mobileContainer, 'Dashboard phone cards container (.lg:hidden.divide-y) should exist');
 
   const cards = mobileContainer.querySelectorAll('[data-testid="dashboard-order-row"]');
   assert.equal(cards.length, 2, 'Should render 2 mobile dashboard order cards');
@@ -238,13 +246,13 @@ test('OrdersPage: unsynced local order mobile card follows the shared card recip
   );
   await act(async () => { await new Promise((res) => setTimeout(res, 35)); });
 
-  const mobileContainer = r.container.querySelector('.md\\:hidden.divide-y');
+  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
   assert.ok(mobileContainer);
 
   const card = mobileContainer.children[0];
   assert.ok(card);
   const ref = card.textContent.includes(localOrder.receipt_number) ? localOrder.receipt_number : '#local-1';
-  assertRecipe(card, { name: 'Aling Nena', ref, total: '300.00', soldBy: card.querySelector('[data-card-line="2"] .text-right').textContent.trim() });
+  assertRecipe(card, { name: 'Aling Nena', ref, total: '300.00', soldBy: card.querySelector('[data-card-line="2"] .text-right').textContent.trim(), dateLine: 3 });
   assert.match(card.querySelector('[data-card-line="2"] .text-right').textContent, /^Sold by:/);
   assert.match(card.textContent, /Waiting to sync/, 'the local order is badged as waiting to sync');
 

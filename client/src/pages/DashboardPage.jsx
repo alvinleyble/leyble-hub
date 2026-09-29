@@ -249,7 +249,7 @@ export default function DashboardPage() {
               {/* Phone + upright-tablet cards (D5, Q1) in the shared card recipe (Q6).
                   The whole card is the tap target; the receipt number is no longer a
                   separate 25px link (UI audit F9). */}
-              <div className="md:hidden divide-y divide-slate-300">
+              <div className="lg:hidden divide-y divide-slate-300">
                 {orders.map((order) => (
                   <ListCard
                     key={order.id}
@@ -269,7 +269,7 @@ export default function DashboardPage() {
 
               {/* No Personnel column any more: the V3.5 order form stopped assigning a
                   driver/helper, so it read "—" on every row (UI audit F18). */}
-              <table className="hidden md:table w-full text-base">
+              <table className="hidden lg:table w-full text-base">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider">
                     <th className="text-left px-4 lg:px-5 py-3 font-semibold">Receipt</th>

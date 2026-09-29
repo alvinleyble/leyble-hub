@@ -47,11 +47,41 @@ function fmtFilterDate(value) {
 // Matches the table's own column widths/padding (px-5 py-4 cells, w-28/w-36/w-64
 // column widths) and the phone-card rows below it, so the real content lands in the
 // same footprint once it arrives.
+const isOrderPrinted = (o) => Boolean(
+  (o.status === 'pending' && o.pending_receipt_printed_at) ||
+  (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)
+);
+
+// The tablet table's Print Status column: "Printed" or "Not Printed", always a word
+// (Q5). A draft has no receipt to print, so it reads as a dash.
+function PrintStatus({ order }) {
+  if (order.status === 'draft') return <span className="text-slate-500">—</span>;
+  return <TagBadge kind={isOrderPrinted(order) ? 'printed' : 'notPrinted'} />;
+}
+
+// "Sep 5, 2026, 8:05 PM" for the tablet table's Date column (round-8 grill: date + time).
+function formatTableDateTime(value) {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-PH', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+// The date and time on the right of an order card's badge line, under Sold by.
+function CardDateTime({ value }) {
+  return (
+    <span className="block text-right text-sm text-slate-600 tabular-nums whitespace-nowrap">
+      {formatCardDateTime(value)}
+    </span>
+  );
+}
+
 function OrdersTableSkeleton() {
   const rows = [0, 1, 2, 3, 4, 5];
   return (
     <SkeletonGroup label="Loading orders" className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      <div className="md:hidden divide-y divide-slate-200">
+      <div className="lg:hidden divide-y divide-slate-200">
         {rows.map((i) => (
           <div key={i} className="p-4">
             <div className="flex items-start justify-between gap-2">
@@ -70,26 +100,28 @@ function OrdersTableSkeleton() {
         ))}
       </div>
 
-      <table className="hidden md:table w-full text-base">
+      <table className="hidden lg:table w-full text-base">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-400">
-            <th className="px-4 lg:px-5 py-3 lg:w-28"><Skeleton className="h-3 w-14" /></th>
-            <th className="px-4 lg:px-5 py-3"><Skeleton className="h-3 w-16" /></th>
-            <th className="px-4 lg:px-5 py-3 lg:w-36"><Skeleton className="h-3 w-14" /></th>
-            <th className="px-4 lg:px-5 py-3 lg:w-36"><Skeleton className="h-3 w-12 ml-auto" /></th>
-            <th className="px-4 lg:px-5 py-3 lg:w-36 hidden lg:table-cell"><Skeleton className="h-3 w-12" /></th>
-            <th className="px-4 lg:px-5 py-3 lg:w-64"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3"><Skeleton className="h-3 w-16" /></th>
+            <th className="px-4 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-32"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-4 py-3 w-40"><Skeleton className="h-3 w-12" /></th>
+            <th className="px-4 py-3 w-36"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-48"><Skeleton className="h-3 w-14" /></th>
           </tr>
         </thead>
         <tbody>
           {rows.map((i) => (
             <tr key={i} className="border-t border-slate-300">
-              <td className="px-4 lg:px-5 py-4 lg:w-28"><Skeleton className="h-4 w-16" /></td>
-              <td className="px-4 lg:px-5 py-4"><Skeleton className="h-4 w-40" /></td>
-              <td className="px-4 lg:px-5 py-4 lg:w-36"><Skeleton className="h-4 w-24" /></td>
-              <td className="px-4 lg:px-5 py-4 lg:w-36"><Skeleton className="h-4 w-20 ml-auto" /></td>
-              <td className="px-4 lg:px-5 py-4 lg:w-36 hidden lg:table-cell"><Skeleton className="h-4 w-20" /></td>
-              <td className="px-4 lg:px-5 py-4 lg:w-64"><Skeleton className="h-5 w-24 rounded-full" /></td>
+              <td className="px-4 py-4 w-28"><Skeleton className="h-4 w-16" /></td>
+              <td className="px-4 py-4"><Skeleton className="h-4 w-32" /></td>
+              <td className="px-4 py-4 w-28"><Skeleton className="h-4 w-20" /></td>
+              <td className="px-4 py-4 w-32"><Skeleton className="h-4 w-20 ml-auto" /></td>
+              <td className="px-4 py-4 w-40"><Skeleton className="h-4 w-28" /></td>
+              <td className="px-4 py-4 w-36"><Skeleton className="h-5 w-24 rounded-full" /></td>
+              <td className="px-4 py-4 w-48"><Skeleton className="h-5 w-24 rounded-full" /></td>
             </tr>
           ))}
         </tbody>
@@ -359,11 +391,6 @@ export default function OrdersPage() {
     [orders]
   );
 
-  const isOrderPrinted = (o) => Boolean(
-    (o.status === 'pending' && o.pending_receipt_printed_at) ||
-    (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)
-  );
-
   // Instant client-side search & filtering (G20, G21)
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim();
@@ -631,7 +658,7 @@ export default function OrdersPage() {
     toDate && { key: 'to', label: `To ${fmtFilterDate(toDate)}`, onRemove: () => setToDate('') },
     printFilter !== 'all' && {
       key: 'print',
-      label: printFilter === 'printed' ? 'Receipt printed' : 'Receipt not printed',
+      label: printFilter === 'printed' ? 'Printed' : 'Not Printed',
       onRemove: () => setPrintFilter('all'),
     },
   ].filter(Boolean);
@@ -720,12 +747,12 @@ export default function OrdersPage() {
               <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
                      className={FILTER_INPUT} aria-label="To date" />
             </FilterField>
-            <FilterField label="Receipt printed">
+            <FilterField label="Print Status">
               <select value={printFilter} onChange={(e) => setPrintFilter(e.target.value)}
                       className={FILTER_INPUT} aria-label="Filter status by print state">
                 <option value="all">All</option>
                 <option value="printed">Printed</option>
-                <option value="unprinted">Not printed</option>
+                <option value="unprinted">Not Printed</option>
               </select>
             </FilterField>
           </div>
@@ -891,22 +918,23 @@ export default function OrdersPage() {
           </p>
         )}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="orders-list">
-          {/* Phone and upright-tablet cards (D5; switch at 768px, design standard Q1) —
-              same rows/testids as the table below. Card recipe Q6: customer and total,
-              then reference · date and who sold it, then the badges. */}
-          <div className="md:hidden divide-y divide-slate-200">
+          {/* Phone and upright-tablet cards (D5; tables from 1024px, design standard Q1) —
+              same rows/testids as the table below. Round-8 grill line order: left is
+              customer, receipt number, badges; right is total, Sold by, date and time. */}
+          <div className="lg:hidden divide-y divide-slate-200">
             {visibleLocalUnsyncedOrders.map((o) => (
               <ListCard
                 key={o.id}
                 onClick={() => navigate(`/orders/${o.receipt_number}`)}
                 title={o.customer_name}
                 titleRight={PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
-                meta={<><span className="font-mono">{orderRef(o)}</span> · {formatCardDateTime(o.created_at)}</>}
+                meta={<span className="font-mono">{orderRef(o)}</span>}
                 metaRight={`Sold by: ${o.sold_by_name?.trim() || '—'}`}
                 badges={[
                   <TagBadge key="sync" kind="unsynced" />,
                   o.order_type === 'pickup' && <TagBadge key="pickup" kind="pickup" />,
                 ]}
+                badgesRight={<CardDateTime value={o.created_at} />}
               />
             ))}
             {filteredOrders.map((o) => (
@@ -927,7 +955,7 @@ export default function OrdersPage() {
                 titleRight={PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                 // orderRef() names a draft 'Draft' — a parked one by its own
                 // device-issued number — so neither kind can show a row id.
-                meta={<><span className="font-mono">{orderRef(o)}</span> · {formatCardDateTime(o.created_at)}</>}
+                meta={<span className="font-mono">{orderRef(o)}</span>}
                 metaRight={`Sold by: ${o.sold_by_name?.trim() || '—'}`}
                 badges={[
                   <StatusBadge key="status" status={o.status} />,
@@ -938,24 +966,29 @@ export default function OrdersPage() {
                   // <span> badges, and this card copy must not double that count.
                   possibleDoubleIds.has(o.id) && <TagBadge key="dup" kind="duplicate" as="div" />,
                 ]}
-                badgesRight={statusTab === 'draft' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
-                  >
-                    Discard
-                  </Button>
+                badgesRight={(
+                  <div className="flex flex-col items-end gap-2">
+                    <CardDateTime value={o.created_at} />
+                    {statusTab === 'draft' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
+                      >
+                        Discard
+                      </Button>
+                    )}
+                  </div>
                 )}
               />
             ))}
           </div>
 
-          <table className="hidden md:table w-full text-base">
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400 whitespace-nowrap">
                 {showCheckboxes && (
-                  <th className="px-4 lg:px-5 py-3 w-12">
+                  <th className="px-4 py-3 w-12">
                     <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                       <input
                         type="checkbox"
@@ -968,15 +1001,16 @@ export default function OrdersPage() {
                     </label>
                   </th>
                 )}
-                <th className="text-left px-4 lg:px-5 py-3 font-semibold lg:w-28">Receipt</th>
-                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Customer</th>
-                <th className="text-left px-4 lg:px-5 py-3 font-semibold lg:w-36">Sold by</th>
-                <th className="text-right px-4 lg:px-5 py-3 font-semibold lg:w-36">Total</th>
-                <th className="text-left px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell lg:w-36">Date</th>
-                {/* The print-state filter that used to sit in this header is in the
-                    Filters panel now (design standard Q3), on every screen size. */}
-                <th className="text-left px-4 lg:px-4 lg:px-5 py-3 font-semibold lg:w-64">Status</th>
-                {statusTab === 'draft' && <th className="px-4 lg:px-5 py-3 lg:w-28" />}
+                <th className="text-left px-4 py-3 font-semibold w-28">Receipt</th>
+                <th className="text-left px-4 py-3 font-semibold">Customer</th>
+                <th className="text-left px-4 py-3 font-semibold w-28">Sold by</th>
+                <th className="text-right px-4 py-3 font-semibold w-32">Total</th>
+                <th className="text-left px-4 py-3 font-semibold w-40">Date</th>
+                {/* Round-8 grill: print status is its own column. Its filter stays in
+                    the Filters panel (design standard Q3), never in this header. */}
+                <th className="text-left px-4 py-3 font-semibold w-36">Print Status</th>
+                <th className="text-left px-4 py-3 font-semibold w-48">Status</th>
+                {statusTab === 'draft' && <th className="px-4 py-3 w-28" />}
               </tr>
             </thead>
             <tbody>
@@ -990,22 +1024,21 @@ export default function OrdersPage() {
                     // Not selectable for bulk actions — there is no server row yet to
                     // act on (Dispatch/Cancel are disabled on its own detail page for
                     // exactly the same reason, G28).
-                    <td className="px-4 lg:px-5 py-4 w-12" />
+                    <td className="px-4 py-4 w-12" />
                   )}
-                  <td className="px-4 lg:px-5 py-4 font-mono text-slate-600 text-sm whitespace-nowrap lg:w-28">{orderRef(o)}</td>
-                  <td className="px-4 lg:px-5 py-4">
-                    <p className="font-semibold text-slate-900">{o.customer_name}</p>
+                  <td className="px-4 py-4 font-mono text-slate-600 text-sm whitespace-nowrap w-28">{orderRef(o)}</td>
+                  <td className="px-4 py-4">
+                    <p className="font-semibold text-slate-900 break-words">{o.customer_name}</p>
                   </td>
-                  <td className="px-4 lg:px-5 py-4 text-sm text-slate-600 lg:w-36">{o.sold_by_name?.trim() || '—'}</td>
-                  <td className="px-4 lg:px-5 py-4 text-right font-bold text-slate-900 tabular-nums lg:w-36">
+                  <td className="px-4 py-4 text-sm text-slate-600 w-28">{o.sold_by_name?.trim() || '—'}</td>
+                  <td className="px-4 py-4 text-right font-bold text-slate-900 tabular-nums whitespace-nowrap w-32">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-4 lg:px-5 py-4 text-sm text-slate-500 hidden lg:table-cell lg:w-36">
-                    {new Date(o.created_at).toLocaleDateString('en-PH', {
-                      month: 'short', day: 'numeric', year: 'numeric',
-                    })}
+                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums w-40">
+                    {formatTableDateTime(o.created_at)}
                   </td>
-                  <td className="px-4 lg:px-5 py-4 lg:w-64">
+                  <td className="px-4 py-4 w-36"><PrintStatus order={o} /></td>
+                  <td className="px-4 py-4 w-48">
                     <div className="flex flex-wrap gap-1.5 items-center">
                       <TagBadge kind="unsynced" />
                       {o.order_type === 'pickup' && <TagBadge kind="pickup" />}
@@ -1024,10 +1057,10 @@ export default function OrdersPage() {
                 >
                   {showCheckboxes && o._local && (
                     // Nothing to bulk-act on yet — this draft has no server row.
-                    <td className="px-4 lg:px-5 py-4 w-12" />
+                    <td className="px-4 py-4 w-12" />
                   )}
                   {showCheckboxes && !o._local && (
-                    <td className="px-4 lg:px-5 py-4 w-12" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-4 w-12" onClick={(e) => e.stopPropagation()}>
                       <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -1044,27 +1077,25 @@ export default function OrdersPage() {
                       its name here — never `#` from an id that does not exist. A server
                       draft has no number either (none is burned until it is finalized),
                       and orderRef() names that one 'Draft' rather than leaking `#<id>`. */}
-                  <td className="px-4 lg:px-5 py-4 font-mono text-slate-600 text-sm whitespace-nowrap lg:w-28">
+                  <td className="px-4 py-4 font-mono text-slate-600 text-sm whitespace-nowrap w-28">
                     {orderRef(o)}
                   </td>
-                  <td className="px-4 lg:px-5 py-4">
-                    <p className="font-semibold text-slate-900">{o.customer_name}</p>
+                  <td className="px-4 py-4">
+                    <p className="font-semibold text-slate-900 break-words">{o.customer_name}</p>
                   </td>
-                  <td className="px-4 lg:px-5 py-4 text-sm text-slate-600 lg:w-36">{o.sold_by_name?.trim() || '—'}</td>
-                  <td className="px-4 lg:px-5 py-4 text-right font-bold text-slate-900 tabular-nums lg:w-36">
+                  <td className="px-4 py-4 text-sm text-slate-600 w-28">{o.sold_by_name?.trim() || '—'}</td>
+                  <td className="px-4 py-4 text-right font-bold text-slate-900 tabular-nums whitespace-nowrap w-32">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-4 lg:px-5 py-4 text-sm text-slate-500 hidden lg:table-cell lg:w-36">
-                    {new Date(o.created_at).toLocaleDateString('en-PH', {
-                      month: 'short', day: 'numeric', year: 'numeric',
-                    })}
+                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums w-40">
+                    {formatTableDateTime(o.created_at)}
                   </td>
-                  <td className="px-4 lg:px-5 py-4 lg:w-64">
+                  <td className="px-4 py-4 w-36"><PrintStatus order={o} /></td>
+                  <td className="px-4 py-4 w-48">
                     <div className="flex flex-wrap gap-1.5 items-center">
                       <StatusBadge status={o.status} />
                       {o._local && <TagBadge kind="unsynced" />}
                       {o.order_type === 'pickup' && <TagBadge kind="pickup" />}
-                      {isOrderPrinted(o) && <TagBadge kind="printed" />}
                       {possibleDoubleIds.has(o.id) && (
                         <TagBadge
                           kind="duplicate"
@@ -1074,7 +1105,7 @@ export default function OrdersPage() {
                     </div>
                   </td>
                   {statusTab === 'draft' && (
-                    <td className="px-4 lg:px-5 py-4 text-right lg:w-28" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-4 text-right w-28" onClick={(e) => e.stopPropagation()}>
                       <Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(o)}>
                         Discard
                       </Button>

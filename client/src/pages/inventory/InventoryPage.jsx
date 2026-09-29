@@ -51,7 +51,7 @@ function InventoryTableSkeleton() {
   const rows = [0, 1, 2, 3, 4, 5];
   return (
     <SkeletonGroup label="Loading inventory" className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      <div className="md:hidden divide-y divide-slate-200">
+      <div className="lg:hidden divide-y divide-slate-200">
         {rows.map((i) => (
           <div key={i} className="p-4 flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1.5">
@@ -66,14 +66,14 @@ function InventoryTableSkeleton() {
         ))}
       </div>
 
-      <table className="hidden md:table w-full text-base">
+      <table className="hidden lg:table w-full text-base">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-400">
             <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
             <th className="px-5 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-10" /></th>
             <th className="px-5 py-3"><Skeleton className="h-3 w-16 ml-auto" /></th>
-            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-16 ml-auto" /></th>
-            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-16 ml-auto" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
             <th className="px-5 py-3"><Skeleton className="h-3 w-12 ml-auto" /></th>
             <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-12" /></th>
           </tr>
@@ -84,8 +84,8 @@ function InventoryTableSkeleton() {
               <td className="px-5 py-4"><Skeleton className="h-4 w-36" /></td>
               <td className="px-5 py-4 hidden sm:table-cell"><Skeleton className="h-4 w-14" /></td>
               <td className="px-5 py-4"><Skeleton className="h-4 w-16 ml-auto" /></td>
-              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-12 ml-auto" /></td>
-              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-12 ml-auto" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
               <td className="px-5 py-4"><Skeleton className="h-4 w-10 ml-auto" /></td>
               <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-5 w-16 rounded-full" /></td>
             </tr>
@@ -392,10 +392,10 @@ export default function InventoryPage() {
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="inventory-list">
-          {/* Phone + upright-tablet cards (D5, Q1 switch at 768px) — same rows/testids as
+          {/* Phone + upright-tablet cards (D5; tables from 1024px, Q1) — same rows/testids as
               the table below. Price and stock are both labelled (UI audit F4), and a
               stock state is a worded badge, never just a coloured number. */}
-          <div className="md:hidden divide-y divide-slate-200">
+          <div className="lg:hidden divide-y divide-slate-200">
             {categories.map((cat) => (
               <React.Fragment key={cat}>
                 <div className="bg-slate-100 border-y border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 uppercase tracking-wide">
@@ -429,7 +429,7 @@ export default function InventoryPage() {
             ))}
           </div>
 
-          <table className="hidden md:table w-full text-base">
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
                 {batchMode && (

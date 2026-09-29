@@ -108,7 +108,7 @@ async function renderDraftsTab() {
 test('OrdersPage mobile card shows a server draft as "Draft", and keeps its 3-line card recipe', async () => {
   const r = await renderDraftsTab();
 
-  const mobile = r.container.querySelector('.md\\:hidden.divide-y');
+  const mobile = r.container.querySelector('.lg\\:hidden.divide-y');
   assert.ok(mobile, 'the phone-width card list must still render');
   const cards = mobile.querySelectorAll('[data-testid="orders-row"]');
   assert.equal(cards.length, 1, 'the draft must still be listed');
@@ -184,7 +184,7 @@ test('DashboardPage shows a draft as "Draft" in both the card and the table view
   const r = render(React.createElement(DashboardPage, null));
   await settle(40);
 
-  const cards = r.container.querySelectorAll('.md\\:hidden.divide-y [data-testid="dashboard-order-row"]');
+  const cards = r.container.querySelectorAll('.lg\\:hidden.divide-y [data-testid="dashboard-order-row"]');
   assert.equal(cards.length, 2);
   assert.equal(cards[0].querySelectorAll('[data-card-line]').length, 3, 'the 3-line card recipe must be unbroken');
   assert.equal(cards[0].querySelector('.font-mono').textContent.trim(), 'Draft');

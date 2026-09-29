@@ -7,11 +7,13 @@ import React from 'react';
  *            products apart), with the money or key number on the right;
  *   line 2 — the one most useful detail, and a secondary fact on the right;
  *   line 3 — badges, only when there is something to say, and any per-row action.
+ * `aside` is the compact variant some lists keep (Personnel, Customers — round-8 grill):
+ * one element, usually a status badge, centred on the right of the whole card.
  * The whole card is the tap target. Text is 16px for line 1 and 14px (slate-600) for
  * the details — the design standard's Q7 floor.
  */
 export default function ListCard({
-  onClick, leading, title, titleRight, meta, metaRight, badges, badgesRight, children,
+  onClick, leading, title, titleRight, meta, metaRight, badges, badgesRight, aside, children,
   className = '', ...props
 }) {
   const badgeList = Array.isArray(badges) ? badges.filter(Boolean) : badges;
@@ -46,6 +48,7 @@ export default function ListCard({
         )}
         {children}
       </div>
+      {aside && <div className="shrink-0 self-center">{aside}</div>}
     </div>
   );
 }

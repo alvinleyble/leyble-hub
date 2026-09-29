@@ -154,7 +154,7 @@ export default function IncomingPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           {/* Phone + upright-tablet cards (UI audit F7: this was the one list with no
               card view, and it silently dropped # Items and Logged By on phones). */}
-          <div className="md:hidden divide-y divide-slate-200">
+          <div className="lg:hidden divide-y divide-slate-200">
             {displayDeliveries.map((d) => (
               <ListCard
                 key={d.id}
@@ -171,7 +171,7 @@ export default function IncomingPage() {
             ))}
           </div>
 
-          <table className="hidden md:table w-full text-base">
+          <table className="hidden lg:table w-full text-base">
             <thead>
               <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
                 <th className="text-left px-4 lg:px-5 py-3 font-semibold">Date Received</th>
