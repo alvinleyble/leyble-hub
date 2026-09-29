@@ -5,6 +5,7 @@ import { isSimulatedOffline } from '../config/features';
 import { markOffline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
+import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -20,11 +21,22 @@ export const NEEDS_ATTENTION = 'needs_attention';
 
 // ── Writing ─────────────────────────────────────────────────────────────────
 
+// Serialised through one in-flight chain — same shape as station.js's
+// ensureStationRegistered — because two enqueue() calls fired without an await between
+// them (e.g. Promise.all over several outbox writes from one save, such as the combined
+// customer-defaults prompt's price + delivery-fee writes) would otherwise both read the
+// same counter value before either's write lands, mint the same id, and the second
+// record silently overwrites the first at that outbox key.
+let nextIdChain = Promise.resolve();
 async function nextRecordId() {
-  const raw = await nativeStore.getString(NEXT_ID_KEY);
-  const next = (Number(raw) || 0) + 1;
-  await nativeStore.setString(NEXT_ID_KEY, next);
-  return next;
+  const result = nextIdChain.then(async () => {
+    const raw = await nativeStore.getString(NEXT_ID_KEY);
+    const next = (Number(raw) || 0) + 1;
+    await nativeStore.setString(NEXT_ID_KEY, next);
+    return next;
+  });
+  nextIdChain = result.catch(() => {});
+  return result;
 }
 
 /**
@@ -97,6 +109,21 @@ async function removeRecord(id) {
   await nativeStore.remove(outboxKey(id));
 }
 
+// A drain pass's per-record bookkeeping (attempts/last_error/status) must land on
+// whatever is CURRENTLY stored for this record, not the snapshot `listRecords()` took
+// at the start of the pass — an edit made to the same record while this record's own
+// send was in flight (updateLocalOrder rewriting it mid-drain, for instance) would
+// otherwise be silently reverted the moment the pass gets around to recording that
+// send's outcome. Skips the write entirely if the record is gone by then (already
+// discarded concurrently) rather than resurrecting it.
+async function saveDrainOutcome(record, patch) {
+  const current = await nativeStore.getJson(outboxKey(record.id));
+  if (!current) return null;
+  const merged = { ...current, ...patch };
+  await nativeStore.setJson(outboxKey(record.id), merged);
+  return merged;
+}
+
 // ── Reading ─────────────────────────────────────────────────────────────────
 
 // Every record still on the device, oldest first. Keys carry a zero-padded id, so the
@@ -164,6 +191,41 @@ async function rememberResult(id, response) {
   if (response && typeof response === 'object' && response.id !== undefined) {
     await nativeStore.setJson(`${REF_PREFIX}${id}`, { id: response.id, remembered_at: Date.now() });
   }
+}
+
+// ── Adopting an order the drain itself just rewrote ──────────────────────────
+//
+// Every order write made straight from a screen adopts the row the route hands back.
+// A receipt print under V25_OFFLINE_CORE cannot: `queueReceiptPrinted` returns a local
+// copy and the POST happens later, inside the drain, so the screen that asked for the
+// print never sees the answer. The server still bumps `updated_at` and ADR 0019's
+// `revision` (POST /orders/:id/receipt-printed), and the next foreground delta then
+// delivers that bump as if another device had made it.
+//
+// So the drain adopts it on the screen's behalf: the response is written to local
+// history and carried out on the drain result, which `handleDrainCompletion` puts on
+// `leyble:drain-complete`. Only records this device actually sent appear there — a
+// genuine remote edit still arrives unseen through `leyble:orders-changed`, and must.
+//
+// One entity type today; a second is one entry, provided its route answers with the
+// full order row rather than a partial.
+const ORDER_SNAPSHOT_ENTITY_TYPES = new Set(['receipt_printed']);
+
+function orderSnapshotFrom(record, response) {
+  if (!ORDER_SNAPSHOT_ENTITY_TYPES.has(record.entity_type)) return null;
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return null;
+  if (response.id === undefined || response.id === null || !response.status) return null;
+  return response;
+}
+
+// The response is authoritative for the write it answers, but a pass can finish after
+// the foreground sync has already stored something later (another device dispatched
+// the order while this print was in flight). Held history only ever moves forward.
+async function holdOrderSnapshot(snapshot) {
+  const held = await getReceipt(snapshot.receipt_number || snapshot.id).catch(() => null);
+  const heldRevision = Number(held?.revision);
+  if (Number.isFinite(heldRevision) && heldRevision > Number(snapshot.revision)) return;
+  await putOrderSnapshot(snapshot).catch(() => {});
 }
 
 // Round 4 Fix 6 — a remembered ref must not be deleted just because nothing *yet
@@ -304,6 +366,8 @@ async function runDrainPass() {
   queuedRerun = false;
   let sent = 0;
   let failed = 0;
+  let result = null;
+  const syncedOrders = [];
   try {
     const records = await listRecords();
     const blocked = new Set();
@@ -346,9 +410,10 @@ async function runDrainPass() {
           // forever with zero attempts and no operator-visible signal.
           const dependencyStillInOutbox = records.some((r) => r.id === err.refId);
           if (!dependencyStillInOutbox) {
-            record.status = NEEDS_ATTENTION;
-            record.last_error = `Depends on outbox record ${err.refId}, which no longer exists and left no resolvable reference.`;
-            await saveRecord(record);
+            await saveDrainOutcome(record, {
+              status: NEEDS_ATTENTION,
+              last_error: `Depends on outbox record ${err.refId}, which no longer exists and left no resolvable reference.`,
+            });
             blocked.add(record.id);
             failed++;
             continue;
@@ -381,6 +446,11 @@ async function runDrainPass() {
           ...(authorKey ? { accountKey: authorKey } : {}),
         });
         await rememberResult(record.id, response);
+        const snapshot = orderSnapshotFrom(record, response);
+        if (snapshot) {
+          await holdOrderSnapshot(snapshot);
+          syncedOrders.push(snapshot);
+        }
         await removeRecord(record.id);
         sent++;
       } catch (err) {
@@ -403,11 +473,11 @@ async function runDrainPass() {
           break;
         }
 
-        record.attempts = (record.attempts || 0) + 1;
-        record.last_error = err.message || String(err);
+        const attempts = (record.attempts || 0) + 1;
+        const last_error = err.message || String(err);
 
         if (isNetworkFailure(err) || err.status >= 500) {
-          await saveRecord(record);
+          await saveDrainOutcome(record, { attempts, last_error });
           blocked.add(record.id);
           markOffline();
           break; // the line is down or the server is unwell; stop the pass
@@ -424,8 +494,7 @@ async function runDrainPass() {
           continue;
         }
 
-        record.status = NEEDS_ATTENTION;
-        await saveRecord(record);
+        await saveDrainOutcome(record, { status: NEEDS_ATTENTION, attempts, last_error });
         blocked.add(record.id);
         failed++;
       }
@@ -435,20 +504,27 @@ async function runDrainPass() {
     await pruneRefs(remaining);
     const waiting = remaining.filter((r) => r.status === QUEUED).length;
     notifyOutboxListeners({ type: 'drain', sent, failed, waiting });
-    return { sent, failed, waiting };
+    result = { sent, failed, waiting, orders: syncedOrders };
+    return result;
   } finally {
     draining = false;
+    // Every pass that sent something notifies from here, the one place a pass can
+    // finish. It used to be each caller's job, and the callers that only wanted the
+    // send — status.js's reachability recovery, refreshApp, OrderCreateModal,
+    // parkedOrders — called the bare drainOutbox() and silently dropped the signal, so
+    // whichever of them happened to win the `draining` mutex decided whether any screen
+    // heard about the drain at all. Fired after `draining` is cleared so a listener is
+    // free to drain again, and not awaited so a slow duplicate-detection GET inside the
+    // notifier cannot hold the mutex open.
+    if (result && result.sent > 0) handleDrainCompletion(result).catch(() => {});
     if (queuedRerun) {
       queuedRerun = false;
       // Fire-and-forget: the caller that got skipped already has its own
-      // {skipped:true} result and isn't waiting on this. Route a successful rerun
-      // through the same notifier every other drain path uses, so a record that
-      // only missed this pass by a race still tells OrderDetailPage / the marker
-      // the moment it actually syncs, instead of waiting on the next unrelated
-      // trigger.
-      runDrainPass()
-        .then((res) => { if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {}); })
-        .catch(() => {});
+      // {skipped:true} result and isn't waiting on this. The rerun notifies from its
+      // own finally block, so a record that only missed this pass by a race still
+      // tells OrderDetailPage / the marker the moment it actually syncs, instead of
+      // waiting on the next unrelated trigger.
+      runDrainPass().catch(() => {});
     }
   }
 }

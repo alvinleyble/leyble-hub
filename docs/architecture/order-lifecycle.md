@@ -78,8 +78,12 @@ So the deposit is charged only on bottles **not** returned.
   This is intentional: the refundable deposit is not part of the running total.
 - **When `done`:** `SUM(line_total)` — deposit on un-returned bottles is now folded in.
 
-The separate `orders.adjustment` (± manual correction, with `adjustment_reason`) is stored
-alongside and surfaced in the UI/receipt; it is not part of `recomputeTotal`'s goods sum.
+The separate `orders.adjustment` (± manual correction, with `adjustment_reason`) and
+`orders.delivery_fee_charged` (snapshotted from `customers.delivery_fee` — see
+[AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal))
+are stored alongside and surfaced in the UI/receipt as client-computed grand-total terms
+(`itemsSubtotal + depositTotal + delivery_fee_charged + adjustment`); neither is part of
+`recomputeTotal`'s goods sum.
 
 ## Closing an order
 

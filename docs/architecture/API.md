@@ -43,7 +43,7 @@ Authentication enforces one session per user account ([ADR 0017](../adr/0017-rec
 | GET | `/customers` | List. Query: `include_inactive`, `search`, `updated_since` (watermark sync filter, 035) |
 | POST | `/customers` | Create. `customer_type` ∈ `('regular','wholesaler','discounted','markup')` default `'regular'` (034). Descriptive label only; pricing is derived from saved prices (ADR 0009) |
 | GET | `/customers/:id` | One customer (with order history). |
-| PATCH | `/customers/:id` | Update. Logs diffs to `activity_logs`. |
+| PATCH | `/customers/:id` | Update. Logs diffs to `activity_logs`. Accepts `delivery_fee` (nullable, `>= 0`; standing per-customer delivery charge, 049 — see [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal)). |
 | DELETE | `/customers/:id` | Deactivate (`is_active=false`) if customer has orders; hard-delete (cascades custom prices) if 0 orders |
 | POST | `/customers/:id/merge` | Merge source into target customer. Body: `{ target_customer_id }`. Reassigns orders and logs activity |
 | GET | `/customers/:id/prices` | Active custom prices. Query: `order_type` (`delivery`/`pickup`, default `delivery`). Returns `DISTINCT ON (cpp.product_id)` most recent price per product |
@@ -71,15 +71,17 @@ See [Order Lifecycle](order-lifecycle.md) for status rules and stock/deposit beh
 |---|---|---|
 | GET | `/orders` | List. Query: `status`, `customer_id`, `from_date`, `to_date`, `search` / `q`, `page`, `limit`. Drafts excluded unless `status=draft`. Supports bare-digit sequence search `42` matching `receipt_sequence` across all prefixes or legacy `id` (ADR 0017 #11). Returns `sold_by_name` (042) |
 | GET | `/orders/sync` | Keyset-pagination sync endpoint for offline tablets (ADR 0015 §4, Slice 3.2). Query: `cursor` (`<updated_at>|<id>`), `direction` (`back` [newest→oldest] or `forward` [oldest→newest]), `limit` (1..200, default 100). Returns `{ records: [...], first_cursor, next_cursor, has_more }` with complete snapshots (line items, personnel, returned bottles, `sold_by_name`). Drafts included |
-| POST | `/orders` | Create. Body: `customer_id`, `items[]`, `personnel[]`, `order_type`, optional `status:'draft'`. Optional `receipt_number` (`'1A-00042'`, device-issued), `request_key` (migration 039 retry key), `created_at` (device sale time). Idempotent on `request_key` and `receipt_number`: a duplicate returns the stored order with `200` ([ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md), ADR 0017 #9) |
+| POST | `/orders` | Create. Body: `customer_id`, `items[]`, `personnel[]`, `order_type`, optional `status:'draft'`. Optional `receipt_number` (`'1A-00042'`, device-issued), `request_key` (migration 039 retry key), `created_at` (device sale time). Idempotent on `request_key` and `receipt_number`: a duplicate returns the stored order with `200` ([ADR 0006](../adr/0006-receipt-number-as-idempotency-key.md), ADR 0017 #9). Optional `delivery_fee_charged` (nullable, `>= 0`) — snapshots the customer's current `delivery_fee` itself when omitted, always forced `NULL` for `order_type !== 'delivery'` (049) |
 | GET | `/orders/:id` | One order with items + personnel + `sold_by_name`. Resolves by row id or receipt number (`resolveOrderId`) |
-| PATCH | `/orders/:id` | Edit items/notes/personnel (drafts may also change customer/order_type). Reconciles stock + recomputes total |
+| PATCH | `/orders/:id` | Edit items/notes/personnel (drafts may also change customer/order_type). Reconciles stock + recomputes total. Same `delivery_fee_charged` handling as create (049) |
 | POST | `/orders/:id/finalize` | Draft → `pending` (writes the "created" activity log). |
 | DELETE | `/orders/:id` | Discard draft (only allowed for drafts). |
 | PATCH | `/orders/:id/adjustment` | Set `adjustment` + `adjustment_reason`. |
-| POST | `/orders/:id/receipt-printed` | Record a confirmed receipt print (pending vs delivered phase). |
+| POST | `/orders/:id/receipt-printed` | Record a confirmed receipt print (pending vs delivered phase). Additive — exempt from ADR 0019's revision guard, but it still bumps `updated_at`/`revision`. Answers with the **full order row**, which is what lets the outbox drain adopt it (`ORDER_SNAPSHOT_ENTITY_TYPES`, [ADR 0019](../adr/0019-order-revision-and-delta-sync.md)); don't narrow the response to a partial |
 | POST | `/orders/:id/status` | Transition status; validated by `getAllowedTransitions`. Deducts/restores stock at dispatch boundary (`in_transit` delivery / `completed` pickup) |
 | POST | `/orders/:id/close` | Record `bottles_returned` per item and move to `done`; folds deposit into total |
+
+`PATCH /orders/:id`, `PATCH /orders/:id/adjustment` and `POST /orders/:id/{status,close,finalize,receipt-printed}` accept an optional `request_key` (migration 050). A key already spent on the same order returns the stored order with `200` and writes nothing; a key spent on a different order is `409 request_key_reused`. The key is checked before the revision and status checks. `DELETE /orders/:id` does not take one. See [DATABASE.md §18](DATABASE.md#18-request_keys-050).
 
 ---
 

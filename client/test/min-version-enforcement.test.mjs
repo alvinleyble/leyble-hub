@@ -205,6 +205,84 @@ describe('Client minimum version enforcement', () => {
 
       screen.unmount();
     });
+
+    // Regression coverage for the staging false "Update Required" defect: a cold-start
+    // request can go out before appVersion.js's cache holds the real native build (it
+    // reports the pre-init fallback build '4' instead of the true installed code), so
+    // the very first check can wrongly latch `blocked`. A later, correctly-initialized
+    // check (e.g. on foreground/focus) must be able to recover from that false block —
+    // and must never falsely recover a build that is genuinely below minimum.
+    it('recovers from a false block once a later confirmed check proves the install (code 21) meets the minimum', async () => {
+      setMockAppInfo({ version: '1.2.1', build: '4', id: 'com.leyble.hub' }); // simulates pre-init fallback
+      api.get = async (path) => {
+        if (path === '/version') return { min_version: '21' };
+        return {};
+      };
+
+      const screen = render(
+        React.createElement(
+          VersionGate,
+          null,
+          React.createElement('div', { id: 'child-app' }, 'Normal App Content')
+        )
+      );
+
+      await React.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+
+      // The initial (falsely fallback-headered) check latches the block.
+      assert.match(screen.text(), /Update Required/i);
+      assert.equal(screen.all('#child-app').length, 0);
+
+      // appVersion.js's cache finishes initializing with the true installed code (21).
+      setMockAppInfo({ version: '1.5.0', build: '21', id: 'com.leyble.hub' });
+
+      // VersionGate's existing foreground listener re-runs the check.
+      await React.act(async () => {
+        window.dispatchEvent(new window.Event('focus'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+
+      assert.match(screen.text(), /Normal App Content/, 'a confirmed code 21 must recover from the false block');
+      assert.equal(screen.all('#child-app').length, 1);
+
+      screen.unmount();
+    });
+
+    it('keeps blocking across repeated checks when the confirmed install (code 20) is genuinely below minimum (21)', async () => {
+      setMockAppInfo({ version: '1.4.0', build: '20', id: 'com.leyble.hub' });
+      api.get = async (path) => {
+        if (path === '/version') return { min_version: '21' };
+        return {};
+      };
+
+      const screen = render(
+        React.createElement(
+          VersionGate,
+          null,
+          React.createElement('div', { id: 'child-app' }, 'Normal App Content')
+        )
+      );
+
+      await React.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+
+      assert.match(screen.text(), /Update Required/i);
+
+      // A later foreground re-check with the SAME genuinely below-minimum build must
+      // never falsely recover.
+      await React.act(async () => {
+        window.dispatchEvent(new window.Event('focus'));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+
+      assert.match(screen.text(), /Update Required/i, 'code 20 against min_version 21 must remain blocked');
+      assert.equal(screen.all('#child-app').length, 0);
+
+      screen.unmount();
+    });
   });
 
   describe('api/client request headers', () => {

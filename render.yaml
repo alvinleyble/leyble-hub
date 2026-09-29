@@ -19,6 +19,8 @@ projects:
             # API-only service for the Android APK — the server no longer builds or
             # serves the web client, so only the server package is installed. The APK's
             # own web assets are built locally via `cap sync`, not here.
+            # Deploys are triggered via GitHub Actions (.github/workflows/deploy-render-staging.yml)
+            # using Render's deploy hook secret (RENDER_STAGING_DEPLOY_HOOK_URL) on push to staging.
             buildCommand: >
               npm --prefix server install &&
               node server/db/migrate.js

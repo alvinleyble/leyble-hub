@@ -4,18 +4,84 @@ PostgreSQL is the authority for every non-draft order change. Each command carri
 
 Connected foreground tablets keep their local order copies current with a bounded cursor-based delta pull every 5 seconds, with catch-up after reconnect. This rollout starts with orders only; inventory and all other app areas remain later slices. Supabase Realtime is not used: the existing authenticated Express delta endpoint provides complete, ordered recovery without a second client credential or authorization path. Awareness never decides whether a write is valid; the database does.
 
-## Implementation status (as of 2026-09-09)
+## Implementation status (as of 2026-09-25)
 
 - **First-setup full-history gate** — **Done.** Merged via PR #117 on `dev`
   (`useSyncGate().blocking` / `isFirstSetupPending` in `client/src/offline/sync.js`,
   `FirstSetupGateScreen.jsx`). A brand-new tablet now stays blocked until
-  `orders_backfill_complete` is true, not just `setup_complete`. See `AGENTS.md`'s
-  "Full-app offline sync (Slice 3.2, ADR 0015)" section for the mechanism.
+  `orders_backfill_complete` is true, not just `setup_complete`. The gate reopens on a
+  later login or resume only if that backfill never finished, and otherwise never
+  re-engages once a device has completed its one first setup; the screen shows two
+  truthful phases — actively downloading, and waiting-for-connection with a Retry action
+  that fires a plain, never-throttled sync.
 - **Server-authoritative order-revision stale-write guard + the 5-second foreground
   delta sync** (including bulk-action independent commit/outcome reporting and the
   connection-check backoff/app-wide scope) — **Done.** Migration 048 adds the revision;
   `server/src/routes/orders.js` enforces it; `client/src/offline/foregroundOrderSync.js`
-  owns the app-wide foreground cadence and backoff.
+  owns the app-wide foreground cadence and backoff. The delta has no self-origination
+  filter and every write path here adopts the server's response, so an id match alone is
+  this device's own echo as often as another device's edit: `orderChangedInEvent()` routes
+  every match through `isNewerRevision(held, incoming)` (strictly greater, compared as
+  `BigInt` via `comparableRevision` — `revision` is a `BIGINT` returned as a string and
+  must never become a `Number`; argument order matters, since reversing it inverts the
+  check silently). Equal means this device's own echo (e.g. the false "changed on
+  another device" warning right after saving an adjustment); older means a delta page
+  fetched before a save that has since landed, and must be ignored rather than adopted
+  backwards over the newer value. `OrderDetailPage` asks again with the same predicate
+  before it adopts a copy it parked behind an open edit — a write that is not
+  banner-gated, such as a receipt print, can move the screen past what is parked.
+- **A drained write is adopted, never left to the poll** — **Done.** A receipt print is
+  the only such write for an order a screen is already holding from the server
+  (`queueReceiptPrinted` under `V25_OFFLINE_CORE`), so the revision bump it causes used to
+  reach the screen as an unexplained delta and warn about the operator's own print.
+  (`transitionLocalOrder`'s `order_status` record also POSTs inside the drain and also
+  answers with the full order, but only ever for an order this device created and has not
+  synced, so it is deliberately left out of the allowlist.) The drain now writes the
+  route's answer to local history and publishes it on `leyble:drain-complete` as
+  `detail.orders` — only records this device sent — and `ReviewQueueModal` adopts it. A
+  genuine remote change is still unseen, still arrives via `leyble:orders-changed`, and
+  still warns. `isNewerRevision()` in `client/src/pages/orders/orderConcurrency.js` is the
+  shared newer/not-newer comparison; an echo of a held revision is not a change. The drain
+  path adds `isOneRevisionAhead()`: migration 048 advances the revision by exactly one per
+  UPDATE and the print is one UPDATE, so only a row exactly one ahead of what the screen
+  holds is the print and nothing else. A row further ahead carries another device's write
+  in the same window and takes the ordinary stale-warning path instead of being adopted
+  silently — it never clears a warning it cannot explain. An entity type is added to
+  `ORDER_SNAPSHOT_ENTITY_TYPES` in `client/src/offline/outbox.js` only when its route
+  answers with the full order row. Regression coverage:
+  `client/test/review-queue-receipt-print-sync.test.mjs`.
+- **A silent background re-read must not clobber an unsaved adjustment edit** — **Done.**
+  `leyble:drain-complete` fires on any outbox drain, and `OrderDetailPage`'s handler
+  (`adoptAuthoritativeOrder`) rewrites the adjustment fields from the server row. The
+  re-read is gated on `adjDirty`, never `adjExpanded` (display-only state), and is
+  deferred while the operator has unsaved edits, flushing once idle rather than being
+  dropped. Whatever clears `adjDirty` must also restore `adjValue`/`adjReason` from
+  `order` — clearing the flag alone left a discarded edit reading back as saved on the
+  next open.
+- **Request-key idempotency on order mutations** — **Done (adjacent work, not a
+  decision of this ADR).** Migration 050 plus `claimRequestKey` in
+  `server/src/lib/idempotency.js`. It sits IN FRONT of the revision guard: a mutating
+  order write may carry the same device-minted `request_key` a create does, and the
+  route answers a key it already holds with the stored order before the revision is
+  compared. It exists because `client/src/api/client.js` aborts every request after 5
+  seconds without cancelling the handler, so a committed save is reported as a failure
+  and the retry became either a second edit or a `409 stale_write` describing a conflict
+  with itself. The compare-and-swap semantics in the Decisions below are unchanged for
+  every request that carries no key. See `AGENTS.md`'s "The same key covers order
+  MUTATIONS" bullet for the mechanism.
+- **A timed-out save's own echo is not another device** — **Done.** A save the client
+  gave up on at 5s while the server committed it leaves the screen at R while the
+  server is at R+1, so the next delta was announced in the Edit Order modal as "changed
+  on another device". Revision arithmetic alone cannot settle it (R+1 is also what one
+  remote edit looks like while this device's never landed), so the host asks the
+  server: `confirmOwnWrite()` in `client/src/pages/orders/orderConcurrency.js` resends
+  the held, unanswered attempt under its own `request_key`. A spent key is replayed
+  (ours); an unspent one is refused `409` against the newer revision (not ours); neither
+  writes. Only a row exactly one ahead of both the screen and the attempt's own revision
+  is a candidate, and anything unproven keeps the warning. Known residue: a host's own
+  two-request save (edit, then adjustment) whose SECOND request times out is not
+  provable this way, since the screen never learned the first request's revision, so it
+  still warns. Coverage: `client/test/edit-modal-own-timeout-warning.test.mjs`.
 - App-wide skeletal loaders are a related but **separate** slice, not part of this
   ADR's own decisions (see the "App-wide skeletal loaders are a separate later slice"
   line under Decisions below).
@@ -28,7 +94,7 @@ Connected foreground tablets keep their local order copies current with a bounde
 - The current cache is store-wide device state shared by every authorized account on a tablet. Before any role gains restricted data visibility, cache ownership and access must be redesigned around the actual permission boundaries; no role-specific cache model is assumed today. No additional device-lock or app-level encryption requirement is introduced in this scope. The current native storage remains the permanent full-history store without a required sizing gate or SQLite migration.
 - The existing single header sync status communicates connectivity, outgoing unsent changes, and incoming updates. It can show `Updating · N waiting`; a noticeable check says `Checking for updates…`, while `Updated just now` appears only after data actually changed.
 - An order changed while an operator is editing remains editable with a stale-edit warning; the app never replaces the form or merges remote changes mid-edit. A non-editing order view updates immediately without a spinner, with the header sync status providing the acknowledgement. A filtered order list also updates immediately, removing a row that no longer matches and briefly stating where it moved.
-- If the server rejects the later save as stale, the app shows the authoritative current order and explains that the local change was not saved. The operator deliberately re-enters any still-valid change; there is no automatic retry or merge. A bulk selection that changes elsewhere remains visibly selected and blocks confirmation until the operator reviews the changed order and deliberately removes it; the action then names the reduced selection exactly.
+- If the server rejects the later save as stale, the app shows the authoritative current order and explains that the local change was not saved. The operator deliberately re-enters any still-valid change; there is no automatic retry or merge. A bulk selection that changes elsewhere remains visibly selected and blocks confirmation until the operator reviews the changed order and deliberately removes it; the action then names the reduced selection exactly. Handing a selection to the review queue consumes it: the operator's own work inside the queue is not a change made elsewhere, so the queue opens on the chosen orders and the list returns with nothing selected rather than frozen on revisions the operator just moved.
 - A bulk order action commits per order, not as one all-or-nothing transaction: an order that goes stale in the final moment before submission fails on its own, while the rest of the already-reviewed batch still commits. The result names exactly what happened — how many committed and which order was skipped — and the operator can open a skipped order to see its current state, the same treatment as any other stale-write rejection.
 - The foreground order-change check backs off when the server is unreachable rather than continuing to poll every five seconds through a known outage, and returns to the five-second cadence immediately once connectivity is confirmed again. It runs for as long as the app is open, on every screen, not only while an orders screen is visible.
 

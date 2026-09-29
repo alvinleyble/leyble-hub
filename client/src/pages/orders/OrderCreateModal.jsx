@@ -2,12 +2,13 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import NavIcon from '../../components/layout/NavIcon';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import Combobox from '../../components/ui/Combobox';
 import Modal from '../../components/ui/Modal';
 import { orderRef } from '../../utils/orderRef';
-import { handleStaleOrderWrite } from './orderConcurrency.js';
+import { handleStaleOrderWrite, isNewerRevision } from './orderConcurrency.js';
 import { customerTypeBadge, customerTypeLabel, hasCustomPricing } from '../../utils/customerTypes';
 import POSProductGrid from '../../components/pos/POSProductGrid';
 import CaseStepper from '../../components/pos/CaseStepper';
@@ -18,9 +19,10 @@ import {
   enqueue, drainOutbox, loadCustomerPrices, loadCatalogue, queuedCustomersFromOutbox,
   checkIsOnline, ref,
 } from '../../offline/index.js';
+import { formatPeso } from '../../utils/money';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 const INPUT = `w-full h-11 px-3 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -47,7 +49,7 @@ function CustomerAndOrderTypeFields({
   return (
     <>
       <div>
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Customer</p>
+        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1.5">Customer</p>
         <Combobox
           items={activeCustomers}
           match={customerMatches}
@@ -72,11 +74,11 @@ function CustomerAndOrderTypeFields({
               <span className="min-w-0 truncate">
                 <span className="font-medium text-slate-800">{c.name}</span>
                 {c.address && (
-                  <span className="italic text-slate-400"> - {c.address}</span>
+                  <span className="italic text-slate-500"> - {c.address}</span>
                 )}
               </span>
               {c.customer_type && c.customer_type !== 'regular' && (
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
+                <span className={`text-sm font-semibold px-2 py-0.5 rounded-full border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
                   {customerTypeLabel(c.customer_type)}
                 </span>
               )}
@@ -84,7 +86,7 @@ function CustomerAndOrderTypeFields({
           )}
         />
         {selectedCustomer && (
-          <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1">
+          <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-sm space-y-1">
             <div className="flex items-center justify-between gap-1.5 flex-wrap">
               <span className="font-bold text-slate-900">{selectedCustomer.name}</span>
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-semibold border ${customerTypeBadge(selectedCustomer.customer_type)}`}>
@@ -105,12 +107,12 @@ function CustomerAndOrderTypeFields({
             )}
           </div>
         )}
-        {customerError && <p className="text-xs text-red-600 mt-1 font-medium">{customerError}</p>}
+        {customerError && <p className="text-sm text-red-700 mt-1 font-medium">{customerError}</p>}
       </div>
 
       {!isEdit && (
         <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Order Type</p>
+          <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-1.5">Order Type</p>
           <div className="flex gap-2" role="group" aria-label="Order type">
             {['delivery', 'pickup'].map((type) => (
               <button
@@ -118,14 +120,15 @@ function CustomerAndOrderTypeFields({
                 type="button"
                 onClick={() => setOrderType(type)}
                 aria-pressed={orderType === type}
-                className={`flex-1 h-10 rounded-xl text-sm font-semibold border transition-colors
+                className={`flex-1 h-12 inline-flex items-center justify-center gap-2 rounded-xl text-base font-semibold border transition-colors
                   ${orderType === type
                     ? type === 'delivery'
                       ? 'bg-slate-800 text-white border-slate-800 shadow-sm'
                       : 'bg-blue-700 text-white border-blue-700 shadow-sm'
                     : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
               >
-                {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                <NavIcon name={type === 'delivery' ? 'truck' : 'store'} className="w-5 h-5" />
+                {type === 'delivery' ? 'Delivery' : 'Pickup'}
               </button>
             ))}
           </div>
@@ -137,6 +140,7 @@ function CustomerAndOrderTypeFields({
 
 export default function OrderCreateModal({
   onClose, onSaved, onStale, editOrder = null, offlineUnsynced = false, staleWarning = false,
+  ownWriteRevision = null,
 }) {
   const { addToast } = useToast();
   const isEdit = Boolean(editOrder);
@@ -197,6 +201,15 @@ export default function OrderCreateModal({
   const [adjValue, setAdjValue]       = useState(isRealEdit && Number(editOrder?.adjustment) ? String(editOrder.adjustment) : '');
   const [adjReason, setAdjReason]     = useState(isRealEdit ? (editOrder?.adjustment_reason ?? '') : '');
 
+  // ── Delivery Fee (persistent-delivery-fee.md) ──────────────────────────────
+  // A resumed edit/draft that already carries a charged fee starts "edited" — same
+  // convention as items always starting `_priceEdited: true` on resume (below): a
+  // value the order already snapshotted is treated as decided, not re-derived.
+  const initialDeliveryFee = isEdit && editOrder?.delivery_fee_charged !== null && editOrder?.delivery_fee_charged !== undefined
+    ? String(editOrder.delivery_fee_charged) : '';
+  const [deliveryFeeValue, setDeliveryFeeValue]   = useState(initialDeliveryFee);
+  const [deliveryFeeEdited, setDeliveryFeeEdited] = useState(initialDeliveryFee !== '');
+
   // ── Draft auto-save state ──────────────────────────────────────────────────
   // A draft's reference is either a server row id (the ordinary online early POST) or a
   // device-issued receipt number (a draft parked locally because the line was down).
@@ -215,16 +228,37 @@ export default function OrderCreateModal({
   // Captured exactly once when the form opens. A background delta may warn the
   // operator, but must never silently replace the precondition under their typing.
   const editRevisionRef    = useRef(editOrder?.revision ?? null);
+  // The one exception: the host has PROVEN (orderConcurrency.js `confirmOwnWrite`) that
+  // the newer revision is this form's own save — one the client timed out on while the
+  // server committed it. The server then holds exactly the opening revision plus this
+  // operator's own attempt, so there is nothing for the precondition to protect them
+  // from. Keeping the opening revision instead would get a save of anything they typed
+  // since refused as "changed on another device" — the very false alarm this proof
+  // suppresses. An unchanged retry is unaffected either way: it still carries the held
+  // request key and is answered as a replay. Only ever moves forward.
+  useEffect(() => {
+    if (ownWriteRevision === null || ownWriteRevision === undefined) return;
+    if (isNewerRevision({ revision: editRevisionRef.current }, { revision: ownWriteRevision })) {
+      editRevisionRef.current = ownWriteRevision;
+    }
+  }, [ownWriteRevision]);
 
-  // ── Save-custom-price prompt ───────────────────────────────────────────────
-  const [priceSavePrompt, setPriceSavePrompt] = useState(null);
+  // ── Save-customer-defaults prompt (combined custom price + delivery fee) ───
+  // One combined confirmation surface, shown at most once per save, for whichever of
+  // "a typed price differs from what would otherwise apply" and "the delivery fee
+  // differs from the customer's saved default" are true this time — never sequential
+  // prompts for the two. Each kind lists independently and starts selected; the
+  // operator can deselect either kind without affecting the other, and only the
+  // selected kind(s) actually queue a write. See docs/product/proposals/
+  // combined-customer-defaults-prompt.md for the settled design.
+  const [defaultsPrompt, setDefaultsPrompt] = useState(null);
 
   // ── Mis-tagged-customer nudge ──────────────────────────────────────────────
   // A `regular` customer holding saved prices is a contradiction the owners want to see and
   // resolve: under ADR 0009 those prices are live either way, so the tag is simply lying about
   // the account. This prompt fires on selection, before the order is built — distinct from the
-  // "Save Custom Price?" prompt above, which fires at save time about a price typed in THIS
-  // order. Both can appear in one order session; they are independent.
+  // combined "Save as Customer Defaults?" prompt above, which fires at save time about values
+  // typed in THIS order. Both can appear in one order session; they are independent.
   //
   // Deliberately has no dismissal memory (captain's explicit instruction): Skip drops it for
   // this selection only, and picking the same customer again asks again. It stops when the tag
@@ -406,6 +440,23 @@ export default function OrderCreateModal({
     }));
   }, [customPrices, orderType, products]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Decisions 3/6/11 — auto-fill from the selected customer's standing fee, following
+  // both the customer and the order-type toggle, exactly like item pricing above
+  // (same `isRealEdit` skip: order type/customer are effectively fixed there). Never
+  // runs once the operator has hand-edited the amount on this order (`deliveryFeeEdited`),
+  // so a deliberate edit is never silently clobbered by a toggle flip or reselect.
+  useEffect(() => {
+    if (isRealEdit || deliveryFeeEdited) return;
+    if (orderType !== 'delivery') { setDeliveryFeeValue(''); return; }
+    const fee = selectedCustomer?.delivery_fee;
+    setDeliveryFeeValue(fee !== null && fee !== undefined ? String(fee) : '');
+  }, [orderType, selectedCustomer, isRealEdit, deliveryFeeEdited]);
+
+  const handleDeliveryFeeChange = (e) => {
+    setDeliveryFeeValue(e.target.value);
+    setDeliveryFeeEdited(true);
+  };
+
   // Map of quantities in order per product id
   const orderQty = useMemo(() => {
     const map = {};
@@ -462,6 +513,12 @@ export default function OrderCreateModal({
 
   const removeItem = (key) => setItems((prev) => prev.filter((i) => i._key !== key));
 
+  // Decision 7: delivery orders only — null on every other order type regardless of
+  // whatever the field last held (the server enforces this too, defensively).
+  const deliveryFeeCharged = () => (
+    orderType === 'delivery' && deliveryFeeValue !== '' ? Number(deliveryFeeValue) : null
+  );
+
   // ── Draft auto-save ────────────────────────────────────────────────────────
   const draftBody = () => {
     const body = {
@@ -478,6 +535,7 @@ export default function OrderCreateModal({
           is_price_overridden: false,
         })),
       personnel: assignedPersonnel,
+      delivery_fee_charged: deliveryFeeCharged(),
     };
     if (customerId) body.customer_id = Number(customerId);
     return body;
@@ -516,6 +574,7 @@ export default function OrderCreateModal({
       orderType,
       notes,
       adjustment: draftAdjustment(),
+      deliveryFeeCharged: deliveryFeeCharged(),
       items: items.filter((i) => i.product_id),
       display: draftDisplay(),
     });
@@ -583,6 +642,7 @@ export default function OrderCreateModal({
               notes,
               items: items.filter((i) => i.product_id),
               adjustment: draftAdjustment(),
+              deliveryFeeCharged: deliveryFeeCharged(),
               display: draftDisplay(),
             });
           } catch {
@@ -603,7 +663,7 @@ export default function OrderCreateModal({
     }, 800);
     autoSaveTimerRef.current = t;
     return () => { clearTimeout(t); if (autoSaveTimerRef.current === t) autoSaveTimerRef.current = null; };
-  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel, adjValue, adjReason]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isDraftMode, draftId, saving, customerId, orderType, notes, items, assignedPersonnel, adjValue, adjReason, deliveryFeeValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reset Button Handler (decisions.md G10) ────────────────────────────────
   // Clears order lines, adjustment, and notes. Keeps customer, orderType, and draft alive.
@@ -637,6 +697,11 @@ export default function OrderCreateModal({
     if (items.some((i) => i.unit_price === '' || Number.isNaN(Number(i.unit_price)))) e.items = 'All items must have a price.';
     if (items.some((i) => Number(i.unit_price) < 0)) e.items = 'Item prices cannot be negative.';
     if (Number(adjValue) !== 0 && !adjReason.trim()) e.adjustment = 'Adjustment reason is required.';
+    // Decision 14: charge-only.
+    if (orderType === 'delivery' && deliveryFeeValue !== ''
+        && (Number.isNaN(Number(deliveryFeeValue)) || Number(deliveryFeeValue) < 0)) {
+      e.deliveryFee = 'Delivery fee cannot be negative.';
+    }
     return e;
   };
 
@@ -708,6 +773,7 @@ export default function OrderCreateModal({
               items,
               notes,
               adjustment: { value: adjNum, reason: adjReasonTrimmed },
+              deliveryFeeCharged: deliveryFeeCharged(),
               personnel: personnelWithNames,
             });
             orderId = editOrder.receipt_number;
@@ -731,6 +797,7 @@ export default function OrderCreateModal({
               is_price_overridden: false,
             })),
             personnel: assignedPersonnel,
+            delivery_fee_charged: deliveryFeeCharged(),
             revision: editRevisionRef.current,
           };
           const targetId = editOrder.id ?? editOrder.receipt_number;
@@ -759,6 +826,7 @@ export default function OrderCreateModal({
           orderType,
           notes,
           adjustment: { value: adjNum, reason: adjReasonTrimmed },
+          deliveryFeeCharged: deliveryFeeCharged(),
           items,
           personnel: personnelWithNames,
         });
@@ -781,15 +849,35 @@ export default function OrderCreateModal({
       // customer/product would both land with no signal to either operator. The line-item
       // override this order actually charges is unaffected — only remembering it as the
       // customer's new standing price waits for a connection. Skips silently; no toast.
+      // The delivery fee has no such hazard (a plain mutable column, last-write-wins,
+      // already offline-capable via updateCustomerLocalFirst elsewhere) so it is eligible
+      // regardless of connectivity — the two kinds are gated independently, then merged
+      // into one combined prompt below.
       //
       // A customer created moments ago in this same order (isLocalCustomer(customerId))
-      // is not excluded: she deserves the prompt exactly as much as an existing customer
-      // does, and persistPriceSave below queues her price behind a $ref on her own
-      // outbox record rather than needing her real id already.
-      if (dirtyItems.length && selectedCustomer && checkIsOnline()) {
-        setPriceSavePrompt({
-          step: 'first', orderId, customer: selectedCustomer, orderType,
-          dirty: dirtyItems, busy: false,
+      // is not excluded from either kind: she deserves the prompt exactly as much as an
+      // existing customer does, and persistDefaultsSave below queues her writes behind a
+      // $ref on her own outbox record rather than needing her real id already.
+      const priceDirty = checkIsOnline() ? dirtyItems : [];
+
+      const currentDeliveryFee = selectedCustomer?.delivery_fee !== null
+        && selectedCustomer?.delivery_fee !== undefined
+        ? Number(selectedCustomer.delivery_fee) : null;
+      const nextDeliveryFee = deliveryFeeCharged();
+      // Eligible only when the operator actually touched the field this session
+      // (deliveryFeeEdited) and the final value disagrees with the customer's current
+      // saved default — an untouched, auto-filled value is by definition unchanged.
+      const deliveryFeeDirty = deliveryFeeEdited && nextDeliveryFee !== currentDeliveryFee
+        ? { previous: currentDeliveryFee, next: nextDeliveryFee }
+        : null;
+
+      if (selectedCustomer && (priceDirty.length || deliveryFeeDirty)) {
+        setDefaultsPrompt({
+          orderId, customer: selectedCustomer, orderType,
+          priceDirty, deliveryFeeDirty,
+          savePrices: priceDirty.length > 0,
+          saveDeliveryFee: Boolean(deliveryFeeDirty),
+          busy: false,
         });
       } else {
         onSaved(orderId);
@@ -805,52 +893,87 @@ export default function OrderCreateModal({
     }
   };
 
-  // ── Save custom price prompt handlers ──────────────────────────────────────
-  const declinePriceSave = () => {
-    setPriceSavePrompt(null);
-    onSaved(priceSavePrompt?.orderId);
+  // ── Save-customer-defaults prompt handlers ─────────────────────────────────
+  const declineDefaultsSave = () => {
+    setDefaultsPrompt(null);
+    onSaved(defaultsPrompt?.orderId);
+  };
+
+  // Independent per-kind toggle — deselecting one kind never touches the other's
+  // selection, which is the whole point of the combined surface over two sequential
+  // prompts (the operator could always "No" one and "Yes" the other, just not in one
+  // screen).
+  const toggleDefaultsKind = (kind) => {
+    setDefaultsPrompt((p) => (p ? { ...p, [kind]: !p[kind] } : p));
   };
 
   // ADR 0009: saving a price is a pricing action, not a re-tagging action. It writes to
   // customer_product_prices and touches nothing else — the second "pick a customer type"
   // step V1 forced on the operator is gone with the coupling that needed it.
   //
-  // Routed through the outbox (matching handleCreateCustomer above) rather than a bare
-  // api.post — this prompt fires from inside saveOrderLocalFirst's otherwise fully
-  // offline-safe save flow, so a price agreed during an outage used to vanish silently
-  // instead of queuing like the rest of the order. priceSavePrompt.customer may still be
-  // local (isLocalCustomer) when she was quick-created earlier in this same order — her
-  // real id doesn't exist yet, so the record's endpoint carries a `:customerId`
-  // placeholder resolved from her own outbox record (see `endpointParams` on enqueue)
-  // once her POST /customers drains, same pass or a later one.
-  const persistPriceSave = async () => {
-    setPriceSavePrompt((p) => ({ ...p, busy: true }));
+  // Both writes are routed through the outbox (matching handleCreateCustomer above)
+  // rather than a bare api.post/api.patch — this prompt fires from inside
+  // saveOrderLocalFirst's otherwise fully offline-safe save flow, so a value agreed
+  // during an outage would otherwise vanish silently instead of queuing like the rest
+  // of the order — which is exactly how the delivery fee half stays eligible offline.
+  // defaultsPrompt.customer may still be local (isLocalCustomer) when she was
+  // quick-created earlier in this same order — her real id doesn't exist yet, so each
+  // record's endpoint carries a `:customerId` placeholder resolved from her own outbox
+  // record (see `endpointParams` on enqueue) once her POST /customers drains, same pass
+  // or a later one.
+  const persistDefaultsSave = async () => {
+    setDefaultsPrompt((p) => ({ ...p, busy: true }));
+    const { customer, orderType: promptOrderType, priceDirty, deliveryFeeDirty,
+            savePrices, saveDeliveryFee } = defaultsPrompt;
     try {
       const profileKey = await api.getActiveProfile();
-      const customer = priceSavePrompt.customer;
       const local = isLocalCustomer(customer.id);
-      await Promise.all(priceSavePrompt.dirty.map((d) =>
-        enqueue({
+      const endpointParams = local ? { customerId: ref(customer._outboxId, 'id') } : null;
+      const dependsOn = local ? [customer._outboxId] : [];
+
+      const writes = [];
+      if (savePrices && priceDirty.length) {
+        writes.push(...priceDirty.map((d) => enqueue({
           entityType: 'customer_price',
           endpoint:   local ? '/customers/:customerId/prices' : `/customers/${customer.id}/prices`,
-          endpointParams: local ? { customerId: ref(customer._outboxId, 'id') } : null,
+          endpointParams,
           method:     'POST',
           payload: {
             product_id:        d.product_id,
             custom_unit_price: d.unit_price,
-            order_type:        priceSavePrompt.orderType,
+            order_type:        promptOrderType,
           },
           profileKey,
-          dependsOn: local ? [customer._outboxId] : [],
-        })
-      ));
-      addToast('Custom price saved.', 'success');
-      drainOutbox().catch(() => {});
+          dependsOn,
+        })));
+      }
+      if (saveDeliveryFee && deliveryFeeDirty) {
+        writes.push(enqueue({
+          entityType: 'customer_update',
+          endpoint:   local ? '/customers/:customerId' : `/customers/${customer.id}`,
+          endpointParams,
+          method:     'PATCH',
+          payload:    { delivery_fee: deliveryFeeDirty.next },
+          profileKey,
+          dependsOn,
+        }));
+      }
+      await Promise.all(writes);
+
+      const savedKinds = [
+        savePrices && priceDirty.length ? `custom price${priceDirty.length > 1 ? 's' : ''}` : null,
+        saveDeliveryFee && deliveryFeeDirty ? 'delivery fee' : null,
+      ].filter(Boolean);
+      if (savedKinds.length) {
+        const msg = `${savedKinds.join(' and ')} saved.`;
+        addToast(msg.charAt(0).toUpperCase() + msg.slice(1), 'success');
+        drainOutbox().catch(() => {});
+      }
     } catch (err) {
-      addToast(err.message || 'Failed to save custom price.', 'error');
+      addToast(err.message || 'Failed to save customer defaults.', 'error');
     } finally {
-      setPriceSavePrompt(null);
-      onSaved(priceSavePrompt?.orderId);
+      setDefaultsPrompt(null);
+      onSaved(defaultsPrompt?.orderId);
     }
   };
 
@@ -900,6 +1023,10 @@ export default function OrderCreateModal({
   };
 
   const totals = orderTotals(items, Number(adjValue) || 0);
+  // Decision 12: delivery fee joins the grand total ahead of the adjustment term,
+  // without touching posMath's shared (V2-POS-facing) goods+adjustment total.
+  const deliveryFeeNum = deliveryFeeCharged() ?? 0;
+  const grandTotal = totals.goods + deliveryFeeNum + totals.adjustment;
 
   return (
     <>
@@ -921,7 +1048,7 @@ export default function OrderCreateModal({
                 <span>{isRealEdit ? `Edit Order ${orderRef(editOrder)}` : isDraftResume ? (editOrder?.receipt_number ? `Draft ${editOrder.receipt_number}` : 'Draft') : 'New Order'}</span>
               </h2>
               {isDraftMode && draftId && (
-                <p className="text-xs font-medium mt-0.5 text-slate-500">
+                <p className="text-sm font-medium mt-0.5 text-slate-600">
                   {draftStatus === 'saving' ? '● Saving draft…' : '✓ Draft saved automatically'}
                 </p>
               )}
@@ -929,17 +1056,17 @@ export default function OrderCreateModal({
             <button
               onClick={onClose}
               aria-label="Close"
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-400
-                         hover:text-slate-700 hover:bg-slate-100 transition-colors
+              className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-600
+                         hover:text-slate-900 hover:bg-slate-100 transition-colors
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
-              ✕
+              <NavIcon name="close" className="w-6 h-6" />
             </button>
           </div>
 
           {staleWarning && isRealEdit && (
             <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-6 py-3 text-sm font-semibold text-amber-900" role="status">
-              ⚠️ This order changed on another device. Your form is unchanged; saving it may be refused. Review the current order and re-enter any still-valid change.
+              This order changed on another device. Your form is unchanged; saving it may be refused. Review the current order and re-enter any still-valid change.
             </div>
           )}
 
@@ -978,14 +1105,16 @@ export default function OrderCreateModal({
                       type="button"
                       onClick={() => setCustomerHeaderPinnedOpen(true)}
                       className="flex h-12 w-full items-center justify-between gap-2 rounded-xl
-                                 border border-slate-200 bg-white px-3.5 text-sm font-semibold
+                                 border border-slate-200 bg-white px-3.5 text-base font-semibold
                                  text-slate-900 shadow-sm focus-visible:outline-none
                                  focus-visible:ring-2 focus-visible:ring-blue-600"
                     >
                       <span className="truncate">
                         {selectedCustomer?.name} · {orderType === 'delivery' ? 'Delivery' : 'Pickup'}
                       </span>
-                      <span aria-hidden="true" className="shrink-0 text-slate-500">✎ Change</span>
+                      <span aria-hidden="true" className="shrink-0 inline-flex items-center gap-1 text-blue-700">
+                        <NavIcon name="edit" className="w-4 h-4" />Change
+                      </span>
                     </button>
                   )}
                 </div>
@@ -1024,9 +1153,9 @@ export default function OrderCreateModal({
                              focus-visible:ring-inset focus-visible:ring-blue-600"
                 >
                   <span aria-hidden="true" className="h-1 w-10 rounded-full bg-slate-300" />
-                  <span className="flex w-full items-center justify-between gap-2 text-sm">
+                  <span className="flex w-full items-center justify-between gap-2 text-base">
                     <span className="font-bold text-slate-900 tabular-nums truncate">
-                      {totalCases(items)} cs · {PHP(totals.total)}
+                      {totalCases(items)} cs · {PHP(grandTotal)}
                     </span>
                     <span className="flex items-center gap-1 font-semibold text-blue-700 shrink-0">
                       {sheetExpanded ? 'Hide cart' : 'View cart'}
@@ -1062,18 +1191,19 @@ export default function OrderCreateModal({
                 {/* Scrollable Order Items & Sections */}
                 <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
                   {isEdit && ['in_transit', 'completed', 'done'].includes(editOrder?.status) && (
-                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800">
-                      ⚠ This order has been dispatched — changing items will automatically adjust inventory.
+                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-900">
+                      This order has been dispatched — changing items will automatically adjust inventory.
                     </div>
                   )}
 
                   {/* Line Items List */}
                   <div>
-                    {errors.items && <p className="text-xs text-red-600 mb-2 font-medium">{errors.items}</p>}
+                    {errors.items && <p className="text-sm text-red-700 mb-2 font-medium">{errors.items}</p>}
 
                     {items.length === 0 ? (
-                      <div className="py-12 text-center text-sm text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                        Tap a product on the left to start the order.
+                      <div className="py-12 text-center text-base text-slate-600 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                        {/* No "on the left": on a phone the products are above (UI audit F20). */}
+                        Tap a product to start the order.
                       </div>
                     ) : (
                       <ul className="space-y-2.5">
@@ -1088,17 +1218,17 @@ export default function OrderCreateModal({
                                   {item.sku || item.product_name}
                                 </p>
                                 {item.sku && (
-                                  <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
+                                  <p className="text-sm text-slate-500 truncate">{item.product_name}</p>
                                 )}
                               </div>
                               <button
                                 type="button"
                                 onClick={() => removeItem(item._key)}
                                 aria-label={`Remove ${item.product_name}`}
-                                className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400
+                                className="w-12 h-12 -m-2 flex items-center justify-center rounded-lg text-slate-500
                                            hover:text-red-600 hover:bg-red-50 shrink-0 transition-colors"
                               >
-                                ✕
+                                <NavIcon name="close" className="w-5 h-5" />
                               </button>
                             </div>
 
@@ -1112,9 +1242,9 @@ export default function OrderCreateModal({
                               <div className="w-28">
                                 <label
                                   htmlFor={`price-${item._key}`}
-                                  className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1"
+                                  className="block text-sm font-semibold text-slate-600 mb-1"
                                 >
-                                  Price /cs
+                                  Price / case
                                 </label>
                                 <input
                                   id={`price-${item._key}`}
@@ -1123,12 +1253,12 @@ export default function OrderCreateModal({
                                   step="0.01"
                                   value={item.unit_price}
                                   onChange={(e) => updateItemPrice(item._key, e.target.value)}
-                                  className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-right text-sm font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                  className="h-12 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-right text-base font-semibold tabular-nums text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
                                 />
                               </div>
 
                               <div className="text-right">
-                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Total</p>
+                                <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">Total</p>
                                 <p className="text-base font-bold text-slate-900 tabular-nums">
                                   {PHP(lineTotal(item))}
                                 </p>
@@ -1140,13 +1270,36 @@ export default function OrderCreateModal({
                     )}
                   </div>
 
+                  {/* Delivery Fee Section (persistent-delivery-fee.md decision 5: sits
+                      above Adjustment wherever both appear; decision 7: delivery
+                      orders only) */}
+                  {orderType === 'delivery' && (
+                    <div className="pt-2 border-t border-slate-200" data-testid="order-delivery-fee-section">
+                      <FormField
+                        label="Delivery Fee (₱)"
+                        hint={deliveryFeeValue === '' ? 'Not set for this customer' : undefined}
+                      >
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={deliveryFeeValue}
+                          onChange={handleDeliveryFeeChange}
+                          className={INPUT}
+                          placeholder="0.00"
+                        />
+                      </FormField>
+                      {errors.deliveryFee && <p className="text-sm text-red-600">{errors.deliveryFee}</p>}
+                    </div>
+                  )}
+
                   {/* Adjustment Section */}
                   <div className="pt-2 border-t border-slate-200">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Adjustment</p>
+                        <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Adjustment</p>
                         {!adjExpanded && Number(adjValue) !== 0 && (
-                          <p className="text-xs font-semibold text-blue-800 mt-0.5">
+                          <p className="text-sm font-semibold text-blue-800 mt-0.5">
                             {Number(adjValue) > 0 ? '+' : ''}{PHP(adjValue)}
                             {adjReason && ` — ${adjReason}`}
                           </p>
@@ -1155,7 +1308,7 @@ export default function OrderCreateModal({
                       <button
                         type="button"
                         onClick={() => setAdjExpanded((v) => !v)}
-                        className="text-xs text-blue-700 hover:text-blue-900 font-semibold focus-visible:outline-none"
+                        className="min-h-[48px] px-2 -mr-2 rounded-lg text-sm text-blue-700 hover:text-blue-900 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                       >
                         {adjExpanded ? 'Close' : Number(adjValue) !== 0 ? 'Edit' : '+ Add Adjustment'}
                       </button>
@@ -1182,7 +1335,7 @@ export default function OrderCreateModal({
                             placeholder="e.g. Suki discount"
                           />
                         </FormField>
-                        {errors.adjustment && <p className="text-xs text-red-600">{errors.adjustment}</p>}
+                        {errors.adjustment && <p className="text-sm text-red-600">{errors.adjustment}</p>}
                       </div>
                     )}
                   </div>
@@ -1209,8 +1362,16 @@ export default function OrderCreateModal({
                       <span>Items ({totalCases(items)} cs)</span>
                       <span className="tabular-nums font-medium text-slate-900">{PHP(totals.goods)}</span>
                     </div>
+                    {deliveryFeeCharged() !== null && (
+                      <div className="flex justify-between text-slate-600 text-sm">
+                        <span>Delivery Fee</span>
+                        <span className="tabular-nums font-semibold text-slate-900">
+                          {PHP(deliveryFeeNum)}
+                        </span>
+                      </div>
+                    )}
                     {totals.adjustment !== 0 && (
-                      <div className="flex justify-between text-slate-600 text-xs">
+                      <div className="flex justify-between text-slate-600 text-sm">
                         <span>Adjustment{adjReason ? ` (${adjReason})` : ''}</span>
                         <span className={`tabular-nums font-semibold ${totals.adjustment > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
                           {totals.adjustment > 0 ? '+' : ''}{PHP(totals.adjustment)}
@@ -1219,13 +1380,13 @@ export default function OrderCreateModal({
                     )}
                     <div className="flex items-baseline justify-between pt-1 border-t border-slate-200">
                       <span className="text-base font-bold uppercase tracking-wider text-slate-900">Total Due</span>
-                      <span className="text-2xl font-black tabular-nums text-slate-900">{PHP(totals.total)}</span>
+                      <span className="text-2xl font-black tabular-nums text-slate-900">{PHP(grandTotal)}</span>
                     </div>
                   </div>
 
                   {confirmingDiscard ? (
                     <div className="flex items-center justify-between gap-2 p-2 bg-red-50 border border-red-200 rounded-xl">
-                      <span className="text-xs font-medium text-red-800">Discard draft?</span>
+                      <span className="text-sm font-medium text-red-800">Discard draft?</span>
                       <div className="flex gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setConfirmingDiscard(false)} disabled={saving}>Keep</Button>
                         <Button size="sm" variant="danger" onClick={handleDiscard} loading={saving}>Discard</Button>
@@ -1239,10 +1400,12 @@ export default function OrderCreateModal({
                         variant="secondary"
                         onClick={handleReset}
                         disabled={saving || (items.length === 0 && !adjValue && !notes)}
-                        className="text-slate-700"
+                        className="text-slate-700 px-3 sm:px-5"
                         title="Reset order items and notes while keeping customer"
                       >
-                        🔄 Reset
+                        <NavIcon name="refresh" className="w-5 h-5" />
+                        {/* Icon-only on a narrow phone so the row never wraps; still named. */}
+                        <span className="sr-only sm:not-sr-only">Reset</span>
                       </Button>
 
                       {isDraftMode && draftId && (
@@ -1250,7 +1413,7 @@ export default function OrderCreateModal({
                           type="button"
                           onClick={() => setConfirmingDiscard(true)}
                           disabled={saving}
-                          className="text-xs font-semibold text-red-600 hover:text-red-700 hover:underline px-2 py-1 disabled:opacity-50"
+                          className="min-h-[48px] text-sm font-semibold text-red-700 hover:text-red-800 hover:underline px-2 disabled:opacity-50"
                         >
                           Discard
                         </button>
@@ -1270,9 +1433,10 @@ export default function OrderCreateModal({
                         data-testid="order-edit-save"
                         onClick={handleSubmit}
                         loading={saving}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                        className="whitespace-nowrap font-bold"
                       >
-                        {isRealEdit ? 'Save Changes' : '💾 Create Order'}
+                        {/* Blue like every main action (design standard Q14). */}
+                        {isRealEdit ? 'Save Changes' : 'Create Order'}
                       </Button>
                     </div>
                   )}
@@ -1301,29 +1465,66 @@ export default function OrderCreateModal({
         </Modal>
       )}
 
-      {/* ── Save custom price? (step 1) ────────────────────────────────── */}
-      {priceSavePrompt?.step === 'first' && (
+      {/* ── Save as Customer Defaults? (combined custom price + delivery fee) ── */}
+      {defaultsPrompt && (
         <Modal
-          title="Save Custom Price?"
-          onClose={declinePriceSave}
-          onConfirm={persistPriceSave}
+          title="Save as Customer Defaults?"
+          onClose={declineDefaultsSave}
+          onConfirm={persistDefaultsSave}
           confirmLabel="Yes, Save"
           cancelLabel="No"
-          loading={priceSavePrompt.busy}
+          loading={defaultsPrompt.busy}
         >
           <p className="text-slate-700">
-            Save the custom price{priceSavePrompt.dirty.length > 1 ? 's' : ''} for{' '}
-            <strong>{priceSavePrompt.customer.name}</strong> on future{' '}
-            <strong>{priceSavePrompt.orderType}</strong> orders?
+            Save these for <strong>{defaultsPrompt.customer.name}</strong> as standing defaults?
+            Anything left unchecked stays specific to this order only.
           </p>
-          <ul className="mt-3 space-y-1.5 text-sm">
-            {priceSavePrompt.dirty.map((d) => (
-              <li key={d.product_id} className="flex items-center justify-between border-b border-slate-200 pb-1.5">
-                <span className="text-slate-700">{d.sku || d.product_name}</span>
-                <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
-              </li>
-            ))}
-          </ul>
+
+          {defaultsPrompt.priceDirty.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-slate-200">
+              <label className="flex items-start gap-3 min-h-[48px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={defaultsPrompt.savePrices}
+                  onChange={() => toggleDefaultsKind('savePrices')}
+                  className="mt-0.5 w-6 h-6 shrink-0 accent-blue-700"
+                />
+                <span className="text-sm font-semibold text-slate-800">
+                  Custom price{defaultsPrompt.priceDirty.length > 1 ? 's' : ''} on future{' '}
+                  <strong>{defaultsPrompt.orderType}</strong> orders
+                </span>
+              </label>
+              <ul className={`mt-2 ml-9 space-y-1.5 text-sm ${defaultsPrompt.savePrices ? '' : 'opacity-40'}`}>
+                {defaultsPrompt.priceDirty.map((d) => (
+                  <li key={d.product_id} className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                    <span className="text-slate-700">{d.sku || d.product_name}</span>
+                    <span className="font-semibold text-slate-900 tabular-nums">{PHP(d.unit_price)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {defaultsPrompt.deliveryFeeDirty && (
+            <div className="mt-4 pt-3 border-t border-slate-200">
+              <label className="flex items-start gap-3 min-h-[48px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={defaultsPrompt.saveDeliveryFee}
+                  onChange={() => toggleDefaultsKind('saveDeliveryFee')}
+                  className="mt-0.5 w-6 h-6 shrink-0 accent-blue-700"
+                />
+                <span className="text-sm font-semibold text-slate-800">Delivery fee</span>
+              </label>
+              <div className={`mt-2 ml-9 text-sm text-slate-700 ${defaultsPrompt.saveDeliveryFee ? '' : 'opacity-40'}`}>
+                {defaultsPrompt.deliveryFeeDirty.previous === null ? 'Not set' : PHP(defaultsPrompt.deliveryFeeDirty.previous)}
+                {' → '}
+                <span className="font-semibold text-slate-900">
+                  {defaultsPrompt.deliveryFeeDirty.next === null ? 'Not set' : PHP(defaultsPrompt.deliveryFeeDirty.next)}
+                </span>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 
@@ -1359,7 +1560,7 @@ export default function OrderCreateModal({
                            focus-visible:ring-2 focus-visible:ring-blue-600 disabled:opacity-50"
               >
                 <span className="text-base font-semibold text-slate-800">{opt.label}</span>
-                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-sm font-semibold
                                   ${customerTypeBadge(opt.value)}`}>
                   {opt.desc}
                 </span>

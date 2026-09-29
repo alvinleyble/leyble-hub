@@ -1,7 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import Page, { SECTION_GAP } from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import { ChipRow, Chip } from '../../components/ui/ChipRow';
+import SearchFilterBar from '../../components/ui/SearchFilterBar';
+import ListCard, { CardCheckbox } from '../../components/ui/ListCard';
+import { StockBadge, TagBadge } from '../../components/ui/Badge';
+import { stockState } from '../../utils/statusBadges';
+import { PHP } from '../../utils/money';
 import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import ProductFormModal from './ProductFormModal';
 import ProductDetailPanel from './ProductDetailPanel';
@@ -13,14 +22,12 @@ import { productListEscPos } from '../shared/listEscPos';
 import { productMatches } from '../../utils/productSearch';
 import { getCachedProducts, getCachedEntity } from '../../offline/catalogue.js';
 import OfflineBanner from '../../components/ui/OfflineBanner';
+import NavIcon from '../../components/layout/NavIcon';
 import StockReconcileModal from './StockReconcileModal';
 import { listConflicts, subscribeConflicts } from '../../offline/reconcile.js';
 import { queuedProductsFromOutbox, pendingProductEditIds } from '../../offline/productMutations.js';
 import { subscribeOutbox } from '../../offline/outbox.js';
 import { checkIsOnline } from '../../offline/status.js';
-
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Reserves the same vertical space the category-chip row and the stock-filter
 // segmented control occupy once categories are known, so their appearance after load
@@ -28,12 +35,12 @@ const PHP = (n) =>
 function InventoryFiltersSkeleton() {
   return (
     <SkeletonGroup label="Loading filters" className="mb-3">
-      <div className="flex gap-1.5 mb-3">
-        <Skeleton className="h-8 w-24 rounded-full" />
-        <Skeleton className="h-8 w-20 rounded-full" />
-        <Skeleton className="h-8 w-28 rounded-full" />
+      <div className="flex gap-2 mb-3">
+        <Skeleton className="h-12 w-32 rounded-full" />
+        <Skeleton className="h-12 w-20 rounded-full" />
+        <Skeleton className="h-12 w-36 rounded-full" />
       </div>
-      <Skeleton className="h-9 w-64 rounded-lg" />
+      <Skeleton className="h-12 w-72 rounded-full" />
     </SkeletonGroup>
   );
 }
@@ -65,8 +72,8 @@ function InventoryTableSkeleton() {
             <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
             <th className="px-5 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-10" /></th>
             <th className="px-5 py-3"><Skeleton className="h-3 w-16 ml-auto" /></th>
-            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-16 ml-auto" /></th>
-            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-16 ml-auto" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-12 ml-auto" /></th>
             <th className="px-5 py-3"><Skeleton className="h-3 w-12 ml-auto" /></th>
             <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-12" /></th>
           </tr>
@@ -77,8 +84,8 @@ function InventoryTableSkeleton() {
               <td className="px-5 py-4"><Skeleton className="h-4 w-36" /></td>
               <td className="px-5 py-4 hidden sm:table-cell"><Skeleton className="h-4 w-14" /></td>
               <td className="px-5 py-4"><Skeleton className="h-4 w-16 ml-auto" /></td>
-              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-12 ml-auto" /></td>
-              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-12 ml-auto" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-8 ml-auto" /></td>
               <td className="px-5 py-4"><Skeleton className="h-4 w-10 ml-auto" /></td>
               <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-5 w-16 rounded-full" /></td>
             </tr>
@@ -100,7 +107,6 @@ export default function InventoryPage() {
   const [stockFilter, setStockFilter]   = useState('all');
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
-  const [menuOpen, setMenuOpen]         = useState(false);
 
   // Batch price edit
   const [batchMode, setBatchMode]         = useState(false);
@@ -118,7 +124,7 @@ export default function InventoryPage() {
   // from; this page just never asked for it, so a blind tablet showed a blank grid.
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
-    api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
+    return api.get(`/products${showInactive ? '?include_inactive=true' : ''}`)
       .then((rows) => { setProducts(rows); setFromCache(false); })
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('products') : await getCachedProducts();
@@ -187,6 +193,10 @@ export default function InventoryPage() {
     return subscribeConflicts(() => refreshConflicts());
   }, [refreshConflicts]);
 
+  // Pull-down / re-tapping the menu item — silent for the same reason as the
+  // reconnect reload above.
+  useRefreshListener(() => Promise.all([load(true), loadQueued(), refreshConflicts()]));
+
   const {
     printList, printing,
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
@@ -209,8 +219,7 @@ export default function InventoryPage() {
       categoryFilter === 'all' || (p.category ?? 'Uncategorised') === categoryFilter;
     const matchStock =
       stockFilter === 'all' ||
-      (stockFilter === 'out'  && p.current_stock <= 0) ||
-      (stockFilter === 'low'  && p.current_stock > 0 && p.current_stock <= 10);
+      stockState(p.current_stock) === stockFilter;
     return matchSearch && matchCategory && matchStock;
   });
 
@@ -245,83 +254,48 @@ export default function InventoryPage() {
 
   const conflictCount = conflicts.length;
 
+  const openProduct = (p) => {
+    // A still-queued product has no server row yet, so the detail panel would have
+    // nothing to GET. Say so, rather than swallowing the tap — the same answer the
+    // customer directory gives for a queued customer.
+    if (p._unsynced) {
+      addToast('Product is queued for sync — details and editing will be available once connected.', 'info');
+      return;
+    }
+    setSelectedId(p.id);
+  };
+
+  const STOCK_CHIPS = [
+    { value: 'all', label: 'All stock' },
+    { value: 'low', label: 'Low stock', tone: 'amber' },
+    { value: 'out', label: 'Out of stock', tone: 'red' },
+  ];
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* ── Header ───────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
-        <div className="flex gap-2">
-          {/* Phone width: Print List + Batch Edit Prices collapse into a "⋮" overflow menu. */}
-          <div className="relative lg:hidden">
-            <button
-              type="button"
-              aria-label="More actions"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((v) => !v)}
-              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
-              className="flex items-center justify-center w-12 h-12 rounded-lg border border-slate-300
-                         bg-white text-xl text-slate-700
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              ⋮
-            </button>
-            {menuOpen && (
-              <div role="menu" className="absolute left-0 z-30 mt-1 w-56 rounded-lg border border-slate-200
-                                          bg-white shadow-lg py-1">
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={displayProducts.length === 0}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { setMenuOpen(false); handlePrintList(); }}
-                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
-                             disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  🖶 Print List
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={!batchMode && products.length === 0}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { setMenuOpen(false); batchMode ? exitBatchMode() : setBatchMode(true); }}
-                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
-                             disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {batchMode ? 'Cancel Batch Edit' : 'Batch Edit Prices'}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Tablet: full buttons, unchanged. */}
-          <Button
-            variant="secondary" onClick={handlePrintList} loading={printing} disabled={displayProducts.length === 0}
-            className="hidden lg:inline-flex"
-          >
-            🖶 Print List
-          </Button>
-          {batchMode ? (
-            <Button variant="secondary" onClick={exitBatchMode} className="hidden lg:inline-flex">Cancel Batch Edit</Button>
-          ) : (
-            <Button variant="secondary" onClick={() => setBatchMode(true)} disabled={products.length === 0} className="hidden lg:inline-flex">
-              Batch Edit Prices
-            </Button>
-          )}
-
-          <Button onClick={() => setCreating(true)}>+ Add Product</Button>
-        </div>
-      </div>
+    <Page>
+      {/* ── Header (design standard Q2/Q9): Print List and Batch Edit Prices are in
+          the ⋮ menu on phones and upright tablets, plain buttons on a landscape one. */}
+      <PageHeader
+        title="Inventory"
+        primary={{ label: '+ Add Product', onClick: () => setCreating(true) }}
+        actions={[
+          { label: 'Print List', icon: 'printer', onClick: handlePrintList, loading: printing,
+            disabled: displayProducts.length === 0 },
+          batchMode
+            ? { label: 'Cancel Batch Edit', icon: 'close', onClick: exitBatchMode }
+            : { label: 'Batch Edit Prices', icon: 'edit', onClick: () => setBatchMode(true),
+                disabled: products.length === 0 },
+        ]}
+      />
 
       {/* ── Stock/price reconciliation (ADR 0015 §6) ─────────────── */}
       {conflictCount > 0 && (
         <div
           role="status"
-          className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border-2 border-amber-500
-                     bg-amber-50 px-5 py-4 mb-6"
+          className={`${SECTION_GAP} flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border-2 border-amber-500
+                     bg-amber-50 px-4 py-3 md:px-5 md:py-4`}
         >
-          <span className="text-2xl leading-none shrink-0" aria-hidden="true">⚖️</span>
+          <NavIcon name="scale" className="w-7 h-7 shrink-0 text-amber-800" />
           <div className="min-w-0 flex-1">
             <p className="text-base font-bold text-amber-900">
               {conflictCount} stock or price {conflictCount === 1 ? 'change needs' : 'changes need'} your confirmation
@@ -339,105 +313,63 @@ export default function InventoryPage() {
 
       {fromCache && <OfflineBanner />}
 
-      {/* ── Filters ──────────────────────────────────────────────── */}
-      <div className="flex flex-row gap-3 mb-6">
-        <input
-          type="search"
-          placeholder="Search by name, category, or SKU…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
-                     focus:outline-none focus:ring-2 focus:ring-blue-600"
-          aria-label="Search products"
-          data-testid="inventory-search-input"
-        />
-        {/* Phone width: compact inline switch beside the search bar. */}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={showInactive}
-          onClick={() => setShowInactive((v) => !v)}
-          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
-                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-        >
-          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
-          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
-                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
-            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
-                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
-          </span>
-        </button>
-        {/* Tablet: original box, unchanged. */}
-        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
-                          bg-white cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-            className="w-6 h-6 accent-blue-700"
-          />
-          <span className="text-base text-slate-700 font-medium whitespace-nowrap">Show inactive</span>
-        </label>
-      </div>
+      {/* ── Search + Filters (Q3): search gets the whole row; "Show inactive" lives in
+          the Filters panel instead of squeezing it (UI audit F6). */}
+      <SearchFilterBar
+        className="mb-3"
+        value={search}
+        onChange={setSearch}
+        placeholder="Name or SKU"
+        ariaLabel="Search products"
+        testId="inventory-search-input"
+        active={showInactive ? [{ key: 'inactive', label: 'Showing inactive', onRemove: () => setShowInactive(false) }] : []}
+        panel={(
+          <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="w-6 h-6 accent-blue-700"
+            />
+            <span className="text-base text-slate-800 font-medium">Show inactive products</span>
+          </label>
+        )}
+      />
 
       {loading ? (
         <InventoryFiltersSkeleton />
       ) : (
         <>
-          {/* ── Category chips ───────────────────────────────────────── */}
-          {/* D4-style: below `lg` this scrolls as a single row instead of wrapping —
-              every category stays one tap. Wraps unchanged at `lg`+ (tablet). */}
+          {/* ── Category chips (Q4): one row that scrolls, with a faded edge while
+              more categories sit off-screen. */}
           {allCategories.length > 1 && (
-            <div className="flex flex-nowrap gap-1.5 overflow-x-auto -mx-0.5 px-0.5 pb-0.5 mb-3
-                            lg:flex-wrap lg:overflow-visible lg:mx-0 lg:px-0 lg:pb-0">
+            <ChipRow label="Category" className="mb-3">
               {['all', ...allCategories].map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setCategoryFilter(cat)}
-                  className={`shrink-0 lg:shrink px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
-                    ${categoryFilter === cat
-                      ? 'bg-blue-700 text-white border-blue-700'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-                >
+                <Chip key={cat} selected={categoryFilter === cat} onClick={() => setCategoryFilter(cat)}>
                   {cat === 'all' ? 'All Categories' : cat}
-                </button>
+                </Chip>
               ))}
-            </div>
+            </ChipRow>
           )}
 
-          {/* ── Stock status filter ───────────────────────────────────── */}
-          {/* Segmented control (distinct from the category pill row above) — same
-              style at phone and tablet width. */}
-          <div className="inline-flex mb-5 rounded-lg border border-slate-300 bg-white p-0.5">
-            {[
-              { value: 'all', label: 'All Stock' },
-              { value: 'low', label: 'Low Stock' },
-              { value: 'out', label: 'Out of Stock' },
-            ].map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setStockFilter(opt.value)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition-colors
-                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
-                  ${stockFilter === opt.value
-                    ? opt.value === 'out' ? 'bg-red-600 text-white'
-                      : opt.value === 'low' ? 'bg-amber-500 text-white'
-                      : 'bg-slate-700 text-white'
-                    : 'text-slate-600 hover:bg-slate-50'}`}
-              >
+          {/* ── Stock chips — the same chip as the row above, so it reads as one kind
+              of control; Low/Out turn amber/red when chosen, with the word on them. */}
+          <ChipRow label="Stock" className={SECTION_GAP}>
+            {STOCK_CHIPS.map((opt) => (
+              <Chip key={opt.value} tone={opt.tone} selected={stockFilter === opt.value}
+                    onClick={() => setStockFilter(opt.value)}>
                 {opt.label}
-              </button>
+              </Chip>
             ))}
-          </div>
+          </ChipRow>
         </>
       )}
 
       {/* ── Bulk action bar ─────────────────────────────────────── */}
       {batchMode && selectedIds.size > 0 && (
-        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 mb-4
+        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-4
                         flex items-center justify-between flex-wrap gap-3">
-          <p className="text-sm font-semibold text-blue-900">
+          <p className="text-base font-semibold text-blue-900">
             {selectedIds.size} product{selectedIds.size === 1 ? '' : 's'} selected
           </p>
           <div className="flex gap-2 shrink-0">
@@ -451,76 +383,47 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* ── Table ────────────────────────────────────────────────── */}
+      {/* ── List ─────────────────────────────────────────────────── */}
       {loading ? (
         <InventoryTableSkeleton />
       ) : filtered.length === 0 ? (
-        <p className="text-center text-slate-400 text-base py-20">
+        <p className="text-center text-slate-500 text-base py-20">
           {search ? 'No products match your search.' : 'No products yet. Add one to get started.'}
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="inventory-list">
-          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          {/* Phone + upright-tablet cards (D5; tables from 1024px, Q1) — same rows/testids as
+              the table below. Price and stock are both labelled (UI audit F4), and a
+              stock state is a worded badge, never just a coloured number. */}
           <div className="lg:hidden divide-y divide-slate-200">
             {categories.map((cat) => (
               <React.Fragment key={cat}>
-                <div className="bg-slate-100 border-y border-slate-300 px-4 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <div className="bg-slate-100 border-y border-slate-300 px-4 py-2 text-sm font-bold text-slate-600 uppercase tracking-wide">
                   {cat}
                 </div>
                 {grouped[cat].map((p) => (
-                  <div
+                  <ListCard
                     key={p.id}
-                    onClick={() => {
-                      if (p._unsynced) {
-                        addToast('Product is queued for sync — details and editing will be available once connected.', 'info');
-                        return;
-                      }
-                      setSelectedId(p.id);
-                    }}
+                    onClick={() => openProduct(p)}
                     data-testid="inventory-row"
-                    className="p-4 active:bg-blue-50 cursor-pointer flex items-start justify-between gap-3"
-                  >
-                    <div className="min-w-0 flex items-start gap-2">
-                      {batchMode && (
-                        <label
-                          className="flex items-center justify-center w-8 h-8 -m-1 shrink-0 cursor-pointer"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(p.id)}
-                            disabled={p._unsynced}
-                            onChange={() => toggleSelected(p.id)}
-                            className="w-5 h-5 rounded border-slate-300 text-blue-700
-                                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-                            aria-label={`Select ${p.name}`}
-                          />
-                        </label>
-                      )}
-                      <div className="min-w-0">
-                        <p className={`font-semibold truncate ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
-                          {p.name}
-                        </p>
-                        <p className="text-xs text-slate-400 mt-0.5">{p.sku ?? p.unit}</p>
-                        {(p._unsynced || pendingEditIds.has(String(p.id))) && (
-                          <span className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs
-                                           font-semibold border bg-amber-100 text-amber-800 border-amber-300">
-                            ⏳ Waiting to sync
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-semibold text-slate-900 tabular-nums">{PHP(p.base_wholesale_price)}</p>
-                      <p className={`font-bold text-base tabular-nums ${
-                        p.current_stock <= 0   ? 'text-red-600'   :
-                        p.current_stock <= 10  ? 'text-amber-600' :
-                                                 'text-slate-900'
-                      }`}>
-                        {p.current_stock}<span className="text-xs text-slate-400 font-normal ml-1">{p.unit}</span>
-                      </p>
-                    </div>
-                  </div>
+                    leading={batchMode && (
+                      <CardCheckbox
+                        checked={selectedIds.has(p.id)}
+                        disabled={p._unsynced}
+                        onChange={() => toggleSelected(p.id)}
+                        label={`Select ${p.name}`}
+                      />
+                    )}
+                    title={<span className={p.is_active ? '' : 'text-slate-500 line-through'}>{p.name}</span>}
+                    titleRight={<>{PHP(p.base_wholesale_price)}<span className="text-sm font-normal text-slate-600"> / {p.unit || 'case'}</span></>}
+                    meta={<span className="font-mono">{p.sku ?? p.unit}</span>}
+                    metaRight={<>In stock: <b className="text-base text-slate-900 tabular-nums">{p.current_stock}</b> {p.unit}</>}
+                    badges={[
+                      !p.is_active && <TagBadge key="inactive" kind="inactive" />,
+                      stockState(p.current_stock) && <StockBadge key="stock" stock={p.current_stock} />,
+                      (p._unsynced || pendingEditIds.has(String(p.id))) && <TagBadge key="sync" kind="unsynced" />,
+                    ]}
+                  />
                 ))}
               </React.Fragment>
             ))}
@@ -528,9 +431,9 @@ export default function InventoryPage() {
 
           <table className="hidden lg:table w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
+              <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
                 {batchMode && (
-                  <th className="px-5 py-3 w-12">
+                  <th className="px-4 lg:px-5 py-3 w-12">
                     <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                       <input
                         type="checkbox"
@@ -543,13 +446,13 @@ export default function InventoryPage() {
                     </label>
                   </th>
                 )}
-                <th className="text-left px-5 py-3 font-semibold">Product</th>
-                <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">SKU</th>
-                <th className="text-right px-5 py-3 font-semibold">Price / Case</th>
-                <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Deposit / Bottle</th>
-                <th className="text-right px-5 py-3 font-semibold hidden md:table-cell">Btl / Case</th>
-                <th className="text-right px-5 py-3 font-semibold">Stock</th>
-                <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Status</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Product</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">SKU</th>
+                <th className="text-right px-4 lg:px-5 py-3 font-semibold">Price / Case</th>
+                <th className="text-right px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Deposit / Bottle</th>
+                <th className="text-right px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Btl / Case</th>
+                <th className="text-right px-4 lg:px-5 py-3 font-semibold">Stock</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -558,7 +461,7 @@ export default function InventoryPage() {
                   <tr className="bg-slate-100 border-y border-slate-300">
                     <td
                       colSpan={batchMode ? 8 : 7}
-                      className="px-5 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest"
+                      className="px-4 lg:px-5 py-2 text-sm font-bold text-slate-600 uppercase tracking-wide"
                     >
                       {cat}
                     </td>
@@ -567,22 +470,12 @@ export default function InventoryPage() {
                   {grouped[cat].map((p) => (
                     <tr
                       key={p.id}
-                      onClick={() => {
-                        // A still-queued product has no server row yet, so the detail
-                        // panel would have nothing to GET. Say so, rather than
-                        // swallowing the tap — the same answer the customer directory
-                        // gives for a queued customer.
-                        if (p._unsynced) {
-                          addToast('Product is queued for sync — details and editing will be available once connected.', 'info');
-                          return;
-                        }
-                        setSelectedId(p.id);
-                      }}
+                      onClick={() => openProduct(p)}
                       data-testid="inventory-row"
                       className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                     >
                       {batchMode && (
-                        <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
+                        <td className="px-4 lg:px-5 py-4" onClick={(e) => e.stopPropagation()}>
                           <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                             <input
                               type="checkbox"
@@ -596,50 +489,39 @@ export default function InventoryPage() {
                           </label>
                         </td>
                       )}
-                      <td className="px-5 py-4">
-                        <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                      <td className="px-4 lg:px-5 py-4">
+                        <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-500 line-through'}`}>
                           {p.name}
                           {(p._unsynced || pendingEditIds.has(String(p.id))) && (
-                            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs
-                                             font-semibold border bg-amber-100 text-amber-800 border-amber-300">
-                              ⏳ Waiting to sync
-                            </span>
+                            <TagBadge kind="unsynced" className="ml-2 align-middle" />
                           )}
                         </p>
-                        <p className="text-xs text-slate-400 mt-0.5">{p.unit}</p>
+                        <p className="text-sm text-slate-600 mt-0.5">
+                          <span className="lg:hidden font-mono">{p.sku ?? '—'} · </span>{p.unit}
+                        </p>
                       </td>
-                      <td className="px-5 py-4 text-slate-500 font-mono text-sm hidden sm:table-cell">
+                      <td className="px-4 lg:px-5 py-4 text-slate-600 font-mono text-sm hidden lg:table-cell">
                         {p.sku ?? '—'}
                       </td>
-                      <td className="px-5 py-4 text-right font-semibold text-slate-900 tabular-nums">
+                      <td className="px-4 lg:px-5 py-4 text-right font-semibold text-slate-900 tabular-nums whitespace-nowrap">
                         {PHP(p.base_wholesale_price)}
                       </td>
-                      <td className="px-5 py-4 text-right text-slate-500 tabular-nums hidden md:table-cell">
+                      <td className="px-4 lg:px-5 py-4 text-right text-slate-600 tabular-nums hidden lg:table-cell">
                         {Number(p.deposit_fee) > 0 ? PHP(p.deposit_fee) : '—'}
                       </td>
-                      <td className="px-5 py-4 text-right text-slate-500 tabular-nums hidden md:table-cell">
+                      <td className="px-4 lg:px-5 py-4 text-right text-slate-600 tabular-nums hidden lg:table-cell">
                         {p.units_per_case}
                       </td>
-                      <td className="px-5 py-4 text-right tabular-nums">
-                        <span className={`font-bold text-base ${
-                          p.current_stock <= 0   ? 'text-red-600'   :
-                          p.current_stock <= 10  ? 'text-amber-600' :
-                                                   'text-slate-900'
-                        }`}>
-                          {p.current_stock}
-                        </span>
-                        <span className="text-xs text-slate-400 ml-1">{p.unit}</span>
+                      <td className="px-4 lg:px-5 py-4 text-right tabular-nums whitespace-nowrap">
+                        <span className="font-bold text-base text-slate-900">{p.current_stock}</span>
+                        <span className="text-sm text-slate-600 ml-1">{p.unit}</span>
                       </td>
-                      <td className="px-5 py-4 hidden lg:table-cell">
-                        {p.is_active ? (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
-                            Active
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500 border border-slate-200">
-                            Inactive
-                          </span>
-                        )}
+                      <td className="px-4 lg:px-5 py-4">
+                        {/* Status + stock state as words (Q5): Inactive, Low stock, Out of stock. */}
+                        <div className="flex flex-wrap gap-1.5">
+                          {p.is_active ? <TagBadge kind="active" /> : <TagBadge kind="inactive" />}
+                          <StockBadge stock={p.current_stock} />
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -695,6 +577,6 @@ export default function InventoryPage() {
           onClose={closePicker}
         />
       )}
-    </div>
+    </Page>
   );
 }

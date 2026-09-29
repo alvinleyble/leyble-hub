@@ -1,6 +1,6 @@
 # Database Reference
 
-PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–048` have
+PostgreSQL 15+. This is the **current** shape of the schema after all migrations `001–049` have
 been applied — reconstructed from `server/db/migrations/` (not from the archived spec, which is
 stale). When in doubt, the migration files are the source of truth.
 
@@ -62,11 +62,16 @@ its historical `activity_logs.performed_by` references always still resolve. The
 | `is_active` | BOOLEAN | soft-delete flag |
 | `updated_at` | TIMESTAMPTZ | Watermark index `idx_products_updated_at` (035) for keyset delta sync |
 
-### 3. `customers` (003, altered by 015, 025, 031, 032, 034, 035)
+### 3. `customers` (003, altered by 015, 025, 031, 032, 034, 035, 049)
 `customer_type` ∈ **`('regular','wholesaler','discounted','markup')`** default `'regular'`.
 History: started as `retail/wholesale/suki` → `wholesale/suki` (015) → `regular/wholesaler` (025) → +`discounted`/`unassigned` (031) → +`markup` (032) → `unassigned` collapsed into `regular` (034).
 In V3.0 ([ADR 0009](../adr/0009-custom-pricing-derived-from-saved-prices.md)), `customer_type` is a purely descriptive tag carrying zero pricing logic; custom pricing is derived dynamically from `customer_product_prices`.
 Fields: `name`, `address`, `phone`, `notes`, `is_active`, `updated_at` (watermark index `idx_customers_updated_at`, 035).
+`delivery_fee` NUMERIC(10,2), nullable, `CHECK (delivery_fee IS NULL OR delivery_fee >= 0)` (049)
+— the standing per-customer delivery charge, set from `CustomerDetailPanel.jsx` or from the
+order form's combined "Save as Customer Defaults?" prompt;
+`NULL` means "not configured." Snapshotted onto `orders.delivery_fee_charged` at order creation —
+see [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal).
 
 ### 4. `customer_product_prices` (004, altered by 020, 026) — **append-only**
 Custom price history. Every save inserts a new row. The **most recent row** per
@@ -85,7 +90,7 @@ Field workers (drivers/helpers). `full_name`, `remarks` (TEXT — renamed from `
 `phone`, `license_number`, `id_image_base64` + `id_image_mime_type` (ID photo stored inline as
 Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 035).
 
-### 6. `orders` (006, altered by 016, 018, 019, 027, 028, 033, 035, 039, 040, 042, 048)
+### 6. `orders` (006, altered by 016, 018, 019, 027, 028, 033, 035, 039, 040, 042, 048, 049)
 | Column | Notes |
 |---|---|
 | `customer_id` | FK |
@@ -93,6 +98,7 @@ Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 
 | `order_type` | `('delivery','pickup')` default `'delivery'` (018) |
 | `total_amount` | NUMERIC — **goods-only while open**; deposit folded in only when `done` (see [order-lifecycle](order-lifecycle.md)) |
 | `adjustment`, `adjustment_reason` | manual ± price adjustment (019) |
+| `delivery_fee_charged` | NUMERIC(10,2), nullable, `CHECK (>= 0)` (049) — snapshotted from `customers.delivery_fee` at creation, editable per order, always forced `NULL` when `order_type !== 'delivery'`. Client-side total only (like `adjustment`); `total_amount` excludes it. See [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal) |
 | `notes` | text |
 | `dispatched_at`, `delivered_at`, `closed_at` | status timestamps |
 | `pending_receipt_printed_at/by`, `delivered_receipt_printed_at/by` | receipt print tracking (027) |
@@ -215,11 +221,22 @@ System configuration key-value store. Primary use: minimum Android app version e
 
 Seeded dormant with `('min_version', NULL)`. The captain can raise or adjust the required version directly in the Supabase SQL Editor (`UPDATE app_settings SET value = '1.3.0' WHERE key = 'min_version';` or `UPDATE app_settings SET value = '14' WHERE key = 'min_version';`) without publishing another build. RLS is enabled with zero public policies.
 
+### 18. `request_keys` (050)
+Retry keys for order **mutations**. Migration 039's `orders.request_key` covers creates, where the key can ride the row the request made; an UPDATE has no such row, so the key is claimed here inside the same transaction as the write it guards.
+| Column | Type | Notes |
+|---|---|---|
+| `request_key` | VARCHAR(64) PRIMARY KEY | The device-minted key, same shape and same `normalizeRequestKey` validation as `orders.request_key` |
+| `entity_type` | VARCHAR(32) NOT NULL | Closed set in `server/src/lib/idempotency.js` (`MUTATION_ENTITIES`), never taken from a request body. `'order'` is the only member today |
+| `entity_id` | BIGINT NOT NULL | The row the key was spent on. Returned rather than assumed, so a key replayed against a *different* order is answered `409 request_key_reused` instead of with the wrong order |
+| `created_at` | TIMESTAMPTZ NOT NULL DEFAULT NOW() | |
+
+Index `request_keys_entity_idx (entity_type, entity_id, created_at DESC)`; RLS enabled with zero policies, per [ADR 0018](../adr/0018-supabase-rls-lockdown.md). The row commits and rolls back with the write it guards, so a refused or stale write releases its key. Nothing prunes the table yet — a retention sweep is a later migration's job.
+
 ---
 
 ## Row Level Security (RLS) Posture
 
-Per migrations `045_enable_rls.sql` and `047_app_settings_min_version.sql` and [ADR 0018](../adr/0018-supabase-rls-lockdown.md), Row Level Security (RLS) is enabled across all 17 tables in the schema with **zero public policies**.
+Per migrations `045_enable_rls.sql` and `047_app_settings_min_version.sql` and [ADR 0018](../adr/0018-supabase-rls-lockdown.md), Row Level Security (RLS) is enabled across all 17 tables in the schema (plus `request_keys`, which migration 050 enables in the same posture — a new table has to opt in explicitly or it is the one gap in an otherwise closed schema) with **zero public policies**.
 
 - **Express backend:** Connects via `DATABASE_URL` as user `postgres`. In PostgreSQL and Supabase, `postgres` has `BYPASSRLS = true`. All backend application queries, sync jobs, and migrations bypass RLS unconditionally and execute with native performance.
 - **External / direct PostgREST / GraphQL:** Supabase's HTTP endpoints operate as non-superusers (`anon`, `authenticated`). With RLS enabled and no policies granted, any direct external attempt to read, enumerate, or mutate data fails closed (returns empty sets or 401/403).
@@ -233,6 +250,15 @@ Until migration 039, the receipt number served as the anti-duplicate key for res
 - `receipt_number` / `delivery_ref` labels the **sale or delivery itself**.
 - Both `orders` and `supplier_deliveries` carry `request_key` with partial unique indexes (`orders_request_key_uniq`, `supplier_deliveries_request_key_uniq`).
 - `server/src/lib/idempotency.js` checks `request_key` first; a repeat of a known request key returns the stored record with `200` without creating a duplicate.
+
+### Extended to order mutations (050)
+
+A create can store its key on the row it made. An **update** has no such row — the order already exists and is edited many times — so migration 050 adds `request_keys` (section 18 above) and `claimRequestKey` in the same module.
+
+- Why it is needed: `client/src/api/client.js` aborts every request after 5s. The abort reaches the socket, not Express, so the handler commits while the operator is told the save failed. The retry then either commits a second edit or is refused with [ADR 0019](../adr/0019-order-revision-and-delta-sync.md)'s `409 stale_write` against a revision its own unreported write superseded.
+- Covered routes: `PATCH /orders/:id`, `PATCH /orders/:id/adjustment`, `POST /orders/:id/status`, `/close`, `/finalize`, `/receipt-printed`. `DELETE /orders/:id` is excluded (a replayed delete 404s, which the outbox already reads as success).
+- The key is claimed **before** the revision compare-and-swap and before the status/state-machine checks: a replay is stale and out-of-state *because of its own first attempt*, so asking those questions first would answer it with a 409 or 422 describing a conflict with itself.
+- The claim is one `INSERT … ON CONFLICT DO NOTHING` inside the caller's transaction — one extra round trip, flat, and only when a key is sent. A request carrying no key behaves exactly as it did before.
 
 ---
 

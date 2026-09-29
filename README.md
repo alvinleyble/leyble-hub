@@ -36,10 +36,10 @@ All docs live in **[`docs/`](docs/README.md)**. Start with the
 | Product requirements | [docs/product/PRD.md](docs/product/PRD.md) |
 | Glossary | [docs/product/glossary.md](docs/product/glossary.md) |
 | Architecture & 3-Tier Model | [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) |
-| Database reference (001–045) | [docs/architecture/DATABASE.md](docs/architecture/DATABASE.md) |
+| Database reference | [docs/architecture/DATABASE.md](docs/architecture/DATABASE.md) |
 | API reference | [docs/architecture/API.md](docs/architecture/API.md) |
 | Order lifecycle | [docs/architecture/order-lifecycle.md](docs/architecture/order-lifecycle.md) |
-| Architectural Decision Records | [docs/adr/](docs/adr/) (ADR 0001–0018) |
+| Architectural Decision Records | [docs/adr/](docs/adr/) |
 | Local dev | [docs/operations/local-development.md](docs/operations/local-development.md) |
 | Development & Staging DB | [docs/operations/development-database.md](docs/operations/development-database.md) |
 | Android build / deploy | [docs/operations/android.md](docs/operations/android.md) |

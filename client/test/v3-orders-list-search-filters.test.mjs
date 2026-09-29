@@ -152,8 +152,10 @@ test('G21: Possible duplicates toggle pill filters to duplicate group and displa
   await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
 
   // Check that row badge exists on 201 and 202
-  const badges = r.all('span').filter((s) => s.textContent.includes('possible duplicates'));
-  assert.equal(badges.length, 2, 'Should display 2 possible duplicates badges in rows');
+  // The shared badge (components/ui/Badge.jsx) says "Possible duplicate"; the table's
+  // copy is a <span>, the phone card's a <div>, so this counts one per row.
+  const badges = r.all('tbody span').filter((s) => s.textContent.includes('Possible duplicate'));
+  assert.equal(badges.length, 2, 'Should display 2 possible duplicate badges in rows');
 
   // Toggle "Possible Duplicates"
   const doublePill = r.all('button').find((b) => b.textContent.includes('Possible Duplicates'));

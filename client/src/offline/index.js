@@ -1,7 +1,6 @@
 import { ensureStationRegistered, getReceiptIdentity } from './station.js';
 import { drainOutbox, waitingCount } from './outbox.js';
 import { resetOfflineAdvisory } from './advisory.js';
-import { handleDrainCompletion } from './drainNotifier.js';
 import { nativeStore } from './nativeStore.js';
 import { runSync } from './sync.js';
 import { screenProductMutations } from './productMutations.js';
@@ -98,10 +97,7 @@ export async function startOfflineCore({ label } = {}) {
       // simply stays queued.
       await screenProductMutations().catch(() => {});
       const res = await drainOutbox();
-      if (res && res.sent > 0) {
-        resetOfflineAdvisory();
-        handleDrainCompletion(res).catch(() => {});
-      }
+      if (res && res.sent > 0) resetOfflineAdvisory();
     } catch {}
   }
 

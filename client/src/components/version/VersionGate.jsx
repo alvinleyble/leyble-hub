@@ -22,11 +22,12 @@ export default function VersionGate({ children }) {
       if (info?.id) setAppId(info.id);
 
       const res = await api.get('/version', { retry: false });
-      if (res?.min_version) {
-        if (isBelowMinVersion(info, res.min_version)) {
-          setBlocked(true);
-        }
-      }
+      // A confirmed check is authoritative in both directions: block a genuinely
+      // below-minimum install, but also clear a previously-latched block once this
+      // (now correctly-initialized) install proves it meets the minimum. Without the
+      // `else`, a stale/false block from an earlier request (e.g. one issued before
+      // native app info finished loading) would never un-latch.
+      setBlocked(Boolean(res?.min_version) && isBelowMinVersion(info, res.min_version));
     } catch (err) {
       if (err?.status === 426 || err?.data?.code === 'update_required') {
         setBlocked(true);

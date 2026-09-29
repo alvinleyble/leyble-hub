@@ -43,8 +43,9 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
 Every screen's list container, filter/search control, list item, and detail-view root carry a
 `data-testid` (e.g. `orders-list`, `orders-search-input`, `orders-row`, `order-detail`) so tests
 don't depend on visible copy or DOM structure — grep the relevant `client/src/pages/**` file for
-`data-testid` to see a screen's hooks. Navigation carries them too: `nav-menu-button` (the
-hamburger) and `nav-link-<path>` (e.g. `nav-link-orders`) on each drawer link.
+`data-testid` to see a screen's hooks. Navigation carries them too: `nav-link-<path>` (e.g. `nav-link-orders`) on each
+top tab and each menu link, and `nav-menu-button` on the hamburger that opens the menu
+(Tickets, Audit Log, Settings).
 
 Nothing here touches `client/` or `server/`'s own build or test setup. The one thing it does
 depend on outside this directory is a debug-build-only Android networking override — see

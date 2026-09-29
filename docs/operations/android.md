@@ -61,6 +61,8 @@ Android APK (Capacitor WebView)  ──HTTPS──►  Express backend (Northfla
 This is the **staging** service — production runs on Northflank (see
 [`docs/architecture/ARCHITECTURE.md`](../architecture/ARCHITECTURE.md)); Render's free tier
 spin-down is acceptable for internal staging validation, which is why it was reassigned here.
+Deploys from `staging` are triggered by GitHub Actions ([`.github/workflows/deploy-render-staging.yml`](../../.github/workflows/deploy-render-staging.yml))
+via Render's deploy hook secret (`RENDER_STAGING_DEPLOY_HOOK_URL`).
 1. Create a **Web Service** at https://render.com from this GitHub repo. **Root Directory:
    leave blank** (repo root).
    - Build command: `npm --prefix server install && node server/db/migrate.js`
@@ -152,6 +154,7 @@ The comparator supports two types of values in `app_settings.min_version`:
 - **Client App:** On launch and whenever returned to the foreground, the app calls `GET /api/v1/version` when online. If the installed build is strictly below `min_version`, normal app use is immediately blocked with a `<RequiredUpdateScreen>` containing an **Update** button that directs the user to the app's Google Play listing (`market://details?id=<package>` / `https://play.google.com/store/apps/details?id=<package>`).
 - **Offline Resilience:** If the device is offline or the version check fails due to a network error, existing offline operation (local-first order taking, cached catalogue) is fully preserved until connectivity returns.
 - **Server API:** Protected endpoints (`requireAuth`) and `POST /api/v1/auth/login` inspect `X-App-Version` and `X-App-Build` headers and reject sub-minimum clients with HTTP `426 Upgrade Required` (`code: 'update_required'`). The outbox drain halts cleanly without marking records as failed or corrupted.
+- **Cold-start ordering:** `client/src/version/appVersion.js`'s in-memory build/version cache starts at a fallback (`DEFAULT_BUILD`) until Capacitor's async `App.getInfo()` resolves. `client/src/components/version/AppInfoGate.jsx` withholds mounting `AuthProvider` (and everything else in `App.jsx`) until that resolves, so no request — starting with `AuthProvider`'s own cold-start `/auth/me` — can go out carrying the fallback header. `VersionGate`'s own confirmed `/version` check is authoritative in both directions (it can also clear a previously-set `blocked`), so a stale/false block from any other path still self-corrects on the next foreground check. Don't remove either half without keeping the other — they cover different failure paths.
 
 #### Safe Rollout Procedure
 To ensure store operations are never locked out accidentally:

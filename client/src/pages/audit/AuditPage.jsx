@@ -1,8 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
+import Page, { SECTION_GAP } from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import { ChipRow, Chip } from '../../components/ui/ChipRow';
+import SearchFilterBar, { FilterField, FILTER_INPUT } from '../../components/ui/SearchFilterBar';
+import ListCard from '../../components/ui/ListCard';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import { orderRefFromId } from '../../utils/orderRef';
 import { getCachedEntity } from '../../offline/catalogue.js';
@@ -68,16 +74,16 @@ const ACTIVITY_ACTION_COLORS = {
   price_set:      'bg-blue-100   text-blue-800   border-blue-300',
 };
 
-const SELECT = `h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900 bg-white
-                focus:outline-none focus:ring-2 focus:ring-blue-600`;
+function fmtFilterDate(v) {
+  const [y, m, d] = String(v).split('-').map(Number);
+  return y && m && d
+    ? new Date(y, m - 1, d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+    : v;
+}
 
-const DATE_INPUT = `h-12 px-3 border border-slate-300 rounded-lg text-base text-slate-900
-                    focus:outline-none focus:ring-2 focus:ring-blue-600`;
-
-const TAB_BUTTON = (active) => `px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
-  ${active
-    ? 'bg-slate-800 text-white border-slate-800'
-    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`;
+const fmtCardDateTime = (value) => new Date(value).toLocaleString('en-PH', {
+  month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+});
 
 // Renders an "Order 1-00042" / "Customer: Name" style reference for an activity entry,
 // linking through to the relevant detail page where one exists. Orders are named by their
@@ -164,8 +170,8 @@ export default function AuditPage() {
 
   const hasFilters = Boolean(productId || actionType || fromDate || toDate);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  const load = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     const params = new URLSearchParams();
     if (productId)  params.set('product_id',  productId);
     if (actionType) params.set('action_type', actionType);
@@ -181,7 +187,7 @@ export default function AuditPage() {
     // quietly-refreshed window rather than a mirror of an append-only table that grows
     // forever. When the live call fails, the held copy is filtered here instead, so
     // the same filter controls keep working on the copy.
-    loadWithCache(AUDIT_INVENTORY_CACHE, () => api.get(`/audit?${qs}`), { cacheable: !hasFilters })
+    return loadWithCache(AUDIT_INVENTORY_CACHE, () => api.get(`/audit?${qs}`), { cacheable: !hasFilters })
       .then(({ data, fromCache: cached, cachedAt: at }) => {
         const rows = Array.isArray(data) ? data : [];
         setEntries(cached ? filterInventoryRows(rows, { productId, actionType, fromDate, toDate }) : rows);
@@ -189,17 +195,10 @@ export default function AuditPage() {
         setCachedAt(at);
       })
       .catch(() => addToast('Offline and this device has no audit log saved yet — connect once to set it up.', 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, [productId, actionType, fromDate, toDate, hasFilters, addToast]);
 
   useEffect(() => { if (tab === 'inventory') load(); }, [tab, load]);
-
-  const clearFilters = () => {
-    setProductId('');
-    setActionType('');
-    setFromDate('');
-    setToDate('');
-  };
 
   // ── Activity tab state ──────────────────────────────────────────────────
   const [activityEntries, setActivityEntries]   = useState([]);
@@ -211,8 +210,8 @@ export default function AuditPage() {
 
   const hasActivityFilters = Boolean(entityType || activityFromDate || activityToDate);
 
-  const loadActivity = useCallback(() => {
-    setActivityLoading(true);
+  const loadActivity = useCallback(({ silent = false } = {}) => {
+    if (!silent) setActivityLoading(true);
     const params = new URLSearchParams();
     if (entityType)       params.set('entity_type', entityType);
     if (activityFromDate) params.set('from_date',   activityFromDate);
@@ -220,7 +219,7 @@ export default function AuditPage() {
     params.set('limit', '500');
     const qs = params.toString();
 
-    loadWithCache(AUDIT_ACTIVITY_CACHE, () => api.get(`/audit/activity?${qs}`), { cacheable: !hasActivityFilters })
+    return loadWithCache(AUDIT_ACTIVITY_CACHE, () => api.get(`/audit/activity?${qs}`), { cacheable: !hasActivityFilters })
       .then(({ data, fromCache: cached, cachedAt: at }) => {
         const rows = Array.isArray(data) ? data : [];
         setActivityEntries(cached
@@ -230,23 +229,20 @@ export default function AuditPage() {
         setCachedAt(at);
       })
       .catch(() => addToast('Offline and this device has no activity log saved yet — connect once to set it up.', 'error'))
-      .finally(() => setActivityLoading(false));
+      .finally(() => { if (!silent) setActivityLoading(false); });
   }, [entityType, activityFromDate, activityToDate, hasActivityFilters, addToast]);
 
   useEffect(() => { if (tab === 'activity') loadActivity(); }, [tab, loadActivity]);
 
-  const clearActivityFilters = () => {
-    setEntityType('');
-    setActivityFromDate('');
-    setActivityToDate('');
-  };
+  // Pull-down / re-tapping the menu item reloads whichever tab is open, quietly.
+  useRefreshListener(() => (tab === 'activity' ? loadActivity({ silent: true }) : load({ silent: true })));
 
   const formatDateTime = (value) => (
     <>
       {new Date(value).toLocaleDateString('en-PH', {
         month: 'short', day: 'numeric', year: 'numeric',
       })}
-      <span className="block text-xs">
+      <span className="block text-sm">
         {new Date(value).toLocaleTimeString('en-PH', {
           hour: '2-digit', minute: '2-digit',
         })}
@@ -254,93 +250,90 @@ export default function AuditPage() {
     </>
   );
 
+  const productLabel = (id) => {
+    const p = products.find((x) => String(x.id) === String(id));
+    return p ? (p.sku || p.name) : `Product #${id}`;
+  };
+  const inventoryActive = [
+    productId && { key: 'product', label: productLabel(productId), onRemove: () => setProductId('') },
+    actionType && { key: 'action', label: ACTION_LABELS[actionType] ?? actionType, onRemove: () => setActionType('') },
+    fromDate && { key: 'from', label: `From ${fmtFilterDate(fromDate)}`, onRemove: () => setFromDate('') },
+    toDate && { key: 'to', label: `To ${fmtFilterDate(toDate)}`, onRemove: () => setToDate('') },
+  ].filter(Boolean);
+  const activityActive = [
+    entityType && { key: 'entity', label: ENTITY_LABELS[entityType] ?? entityType, onRemove: () => setEntityType('') },
+    activityFromDate && { key: 'from', label: `From ${fmtFilterDate(activityFromDate)}`, onRemove: () => setActivityFromDate('') },
+    activityToDate && { key: 'to', label: `To ${fmtFilterDate(activityToDate)}`, onRemove: () => setActivityToDate('') },
+  ].filter(Boolean);
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <Page>
 
       {/* ── Header ───────────────────────────────────────────────── */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Audit Log</h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Read-only record of everything that happens in the system — inventory and
-          pricing history, plus orders, customers, products, personnel, and tickets.
-        </p>
-      </div>
+      <PageHeader
+        title="Audit Log"
+        subtitle={(
+          <>
+            <span className="md:hidden">Read-only record of every change.</span>
+            <span className="hidden md:inline">
+              Read-only record of everything that happens in the system — inventory and
+              pricing history, plus orders, customers, products, personnel, and tickets.
+            </span>
+          </>
+        )}
+      />
 
-      {/* ── Tab switcher ─────────────────────────────────────────── */}
-      <div className="flex gap-1.5 mb-6">
-        <button type="button" onClick={() => setTab('inventory')} data-testid="audit-tab-inventory" className={TAB_BUTTON(tab === 'inventory')}>
+      {/* ── Tab switcher — the same chips as every list (design standard Q4) ── */}
+      <ChipRow label="Audit log" className="mb-3">
+        <Chip selected={tab === 'inventory'} onClick={() => setTab('inventory')} data-testid="audit-tab-inventory">
           Inventory
-        </button>
-        <button type="button" onClick={() => setTab('activity')} data-testid="audit-tab-activity" className={TAB_BUTTON(tab === 'activity')}>
+        </Chip>
+        <Chip selected={tab === 'activity'} onClick={() => setTab('activity')} data-testid="audit-tab-activity">
           Activity
-        </button>
-      </div>
+        </Chip>
+      </ChipRow>
 
       {fromCache && <OfflineBanner cachedAt={cachedAt} />}
 
       {tab === 'inventory' ? (
         <>
-          {/* ── Filters ──────────────────────────────────────────────── */}
-          <div className="flex flex-wrap gap-3 mb-6">
-            <select
-              value={productId}
-              onChange={(e) => setProductId(e.target.value)}
-              className={SELECT}
-              aria-label="Filter by product"
-            >
-              <option value="">All Products</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.sku || p.name}{!p.is_active ? ' (inactive)' : ''}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={actionType}
-              onChange={(e) => setActionType(e.target.value)}
-              className={SELECT}
-              aria-label="Filter by action type"
-              data-testid="audit-filter-action"
-            >
-              <option value="">All Actions</option>
-              {ACTION_TYPES.map((a) => (
-                <option key={a} value={a}>{ACTION_LABELS[a]}</option>
-              ))}
-            </select>
-
-            <div className="flex gap-2 items-center">
-              <label className="text-sm text-slate-500 font-medium whitespace-nowrap">From</label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className={DATE_INPUT}
-                aria-label="From date"
-              />
-            </div>
-            <div className="flex gap-2 items-center">
-              <label className="text-sm text-slate-500 font-medium whitespace-nowrap">To</label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className={DATE_INPUT}
-                aria-label="To date"
-              />
-            </div>
-
-            {hasFilters && (
-              <button
-                onClick={clearFilters}
-                className="h-12 px-4 text-sm font-medium text-slate-500 hover:text-slate-800
-                           border border-slate-300 rounded-lg bg-white hover:bg-slate-50
-                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap"
-              >
-                Clear filters
-              </button>
+          {/* ── Filters (Q3): one Filters button; each filter that is on shows as a chip ── */}
+          <SearchFilterBar
+            className={SECTION_GAP}
+            active={inventoryActive}
+            panel={(
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <FilterField label="Product">
+                  <select value={productId} onChange={(e) => setProductId(e.target.value)}
+                          className={FILTER_INPUT} aria-label="Filter by product">
+                    <option value="">All Products</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.sku || p.name}{!p.is_active ? ' (inactive)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </FilterField>
+                <FilterField label="Action">
+                  <select value={actionType} onChange={(e) => setActionType(e.target.value)}
+                          className={FILTER_INPUT} aria-label="Filter by action type" data-testid="audit-filter-action">
+                    <option value="">All Actions</option>
+                    {ACTION_TYPES.map((a) => (
+                      <option key={a} value={a}>{ACTION_LABELS[a]}</option>
+                    ))}
+                  </select>
+                </FilterField>
+                <FilterField label="From">
+                  <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+                         className={FILTER_INPUT} aria-label="From date" />
+                </FilterField>
+                <FilterField label="To">
+                  <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+                         className={FILTER_INPUT} aria-label="To date" />
+                </FilterField>
+              </div>
             )}
-          </div>
+          />
 
           {/* ── Table ────────────────────────────────────────────────── */}
           {loading ? (
@@ -348,7 +341,7 @@ export default function AuditPage() {
               <Spinner size="lg" />
             </div>
           ) : entries.length === 0 ? (
-            <p className="text-center text-slate-400 text-base py-20">
+            <p className="text-center text-slate-500 text-base py-20">
               {hasFilters ? 'No entries match your filters.' : 'No audit entries yet.'}
             </p>
           ) : (
@@ -360,37 +353,29 @@ export default function AuditPage() {
                     text with getText(), which returns "" for a display:none element. */}
                 <div className="lg:hidden divide-y divide-slate-200">
                   {entries.map((e) => (
-                    <div key={e.id} data-testid="audit-row" className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-medium text-slate-900">{e.sku || e.product_name}</p>
-                          <p className="text-xs text-slate-400 tabular-nums mt-0.5">
-                            {new Date(e.created_at).toLocaleString('en-PH', {
-                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
-                            })}
-                          </p>
-                        </div>
-                        {e.delta != null ? (
-                          <span className={`font-bold tabular-nums shrink-0 ${Number(e.delta) >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                            {Number(e.delta) >= 0 ? '+' : ''}{e.delta}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 font-normal shrink-0">—</span>
-                        )}
-                      </div>
-                      <div className="mt-2">
+                    <ListCard
+                      key={e.id}
+                      data-testid="audit-row"
+                      title={e.sku || e.product_name}
+                      titleRight={e.delta != null ? (
+                        <span className={Number(e.delta) >= 0 ? 'text-green-800' : 'text-red-700'}>
+                          {Number(e.delta) >= 0 ? '+' : '\u2212'}{Math.abs(Number(e.delta))}
+                        </span>
+                      ) : <span className="text-slate-500 font-normal">—</span>}
+                      meta={<span className="tabular-nums">{fmtCardDateTime(e.created_at)}</span>}
+                      badges={(
                         <span
                           data-testid="audit-action-badge"
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
-                          ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
+                          ${ACTION_COLORS[e.action_type] ?? 'bg-slate-100 text-slate-700 border-slate-300'}`}>
                           {ACTION_LABELS[e.action_type] ?? e.action_type}
                         </span>
-                      </div>
-                    </div>
+                      )}
+                    />
                   ))}
                 </div>
 
-                <table className="hidden lg:table w-full text-sm min-w-[640px]">
+                <table className="hidden lg:table w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
@@ -398,14 +383,14 @@ export default function AuditPage() {
                       <th className="text-left px-5 py-3 font-semibold">Action</th>
                       <th className="text-right px-5 py-3 font-semibold">Change</th>
                       <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Prev → New</th>
-                      <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Reason / Reference</th>
+                      <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Reason / Reference</th>
                       <th className="text-left px-5 py-3 font-semibold hidden xl:table-cell">By</th>
                     </tr>
                   </thead>
                   <tbody>
                     {entries.map((e) => (
                       <tr key={e.id} data-testid="audit-row" className="border-t border-slate-300 hover:bg-slate-50">
-                        <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
+                        <td className="px-5 py-3 text-slate-500 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>
                         <td className="px-5 py-3 font-medium text-slate-900">
@@ -424,7 +409,7 @@ export default function AuditPage() {
                               {Number(e.delta) >= 0 ? '+' : ''}{e.delta}
                             </span>
                           ) : (
-                            <span className="text-slate-300 font-normal">—</span>
+                            <span className="text-slate-500 font-normal">—</span>
                           )}
                         </td>
                         <td className="px-5 py-3 text-slate-500 tabular-nums hidden lg:table-cell whitespace-nowrap">
@@ -432,7 +417,7 @@ export default function AuditPage() {
                             ? `${e.previous_value} → ${e.new_value}`
                             : '—'}
                         </td>
-                        <td className="px-5 py-3 text-slate-500 hidden md:table-cell max-w-xs">
+                        <td className="px-5 py-3 text-slate-500 hidden lg:table-cell max-w-xs">
                           <span className="block truncate">
                             {e.reason ?? (
                               e.related_order_id
@@ -459,7 +444,7 @@ export default function AuditPage() {
                 </table>
               </div>
 
-              <p className="text-xs text-slate-400 mt-3 text-right">
+              <p className="text-sm text-slate-600 mt-3 text-right">
                 {entries.length} {entries.length === 1 ? 'entry' : 'entries'} shown
                 {entries.length === 500 && ' (limit reached — refine filters to see more)'}
               </p>
@@ -468,53 +453,32 @@ export default function AuditPage() {
         </>
       ) : (
         <>
-          {/* ── Activity filters ─────────────────────────────────────── */}
-          <div className="flex flex-wrap gap-3 mb-6">
-            <select
-              value={entityType}
-              onChange={(e) => setEntityType(e.target.value)}
-              className={SELECT}
-              aria-label="Filter by entity type"
-              data-testid="audit-filter-entity"
-            >
-              <option value="">All Types</option>
-              {ENTITY_TYPES.map((t) => (
-                <option key={t} value={t}>{ENTITY_LABELS[t]}</option>
-              ))}
-            </select>
-
-            <div className="flex gap-2 items-center">
-              <label className="text-sm text-slate-500 font-medium whitespace-nowrap">From</label>
-              <input
-                type="date"
-                value={activityFromDate}
-                onChange={(e) => setActivityFromDate(e.target.value)}
-                className={DATE_INPUT}
-                aria-label="From date"
-              />
-            </div>
-            <div className="flex gap-2 items-center">
-              <label className="text-sm text-slate-500 font-medium whitespace-nowrap">To</label>
-              <input
-                type="date"
-                value={activityToDate}
-                onChange={(e) => setActivityToDate(e.target.value)}
-                className={DATE_INPUT}
-                aria-label="To date"
-              />
-            </div>
-
-            {hasActivityFilters && (
-              <button
-                onClick={clearActivityFilters}
-                className="h-12 px-4 text-sm font-medium text-slate-500 hover:text-slate-800
-                           border border-slate-300 rounded-lg bg-white hover:bg-slate-50
-                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap"
-              >
-                Clear filters
-              </button>
+          {/* ── Activity filters (Q3) ─────────────────────────────────── */}
+          <SearchFilterBar
+            className={SECTION_GAP}
+            active={activityActive}
+            panel={(
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <FilterField label="Type">
+                  <select value={entityType} onChange={(e) => setEntityType(e.target.value)}
+                          className={FILTER_INPUT} aria-label="Filter by entity type" data-testid="audit-filter-entity">
+                    <option value="">All Types</option>
+                    {ENTITY_TYPES.map((t) => (
+                      <option key={t} value={t}>{ENTITY_LABELS[t]}</option>
+                    ))}
+                  </select>
+                </FilterField>
+                <FilterField label="From">
+                  <input type="date" value={activityFromDate} onChange={(e) => setActivityFromDate(e.target.value)}
+                         className={FILTER_INPUT} aria-label="From date" />
+                </FilterField>
+                <FilterField label="To">
+                  <input type="date" value={activityToDate} onChange={(e) => setActivityToDate(e.target.value)}
+                         className={FILTER_INPUT} aria-label="To date" />
+                </FilterField>
+              </div>
             )}
-          </div>
+          />
 
           {/* ── Activity table ───────────────────────────────────────── */}
           {activityLoading ? (
@@ -522,7 +486,7 @@ export default function AuditPage() {
               <Spinner size="lg" />
             </div>
           ) : activityEntries.length === 0 ? (
-            <p className="text-center text-slate-400 text-base py-20">
+            <p className="text-center text-slate-500 text-base py-20">
               {hasActivityFilters ? 'No entries match your filters.' : 'No activity recorded yet.'}
             </p>
           ) : (
@@ -531,27 +495,24 @@ export default function AuditPage() {
                 {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
                 <div className="lg:hidden divide-y divide-slate-200">
                   {activityEntries.map((e) => (
-                    <div key={e.id} data-testid="audit-row" className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <EntityRef entry={e} />
-                          <p className="text-xs text-slate-400 tabular-nums mt-0.5">
-                            {new Date(e.created_at).toLocaleString('en-PH', {
-                              month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
-                            })}
-                          </p>
-                        </div>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap shrink-0
-                          ${ACTIVITY_ACTION_COLORS[e.action] ?? 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                    <ListCard
+                      key={e.id}
+                      data-testid="audit-row"
+                      title={<EntityRef entry={e} />}
+                      titleRight={(
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap
+                          ${ACTIVITY_ACTION_COLORS[e.action] ?? 'bg-slate-100 text-slate-700 border-slate-300'}`}>
                           {ACTIVITY_ACTION_LABELS[e.action] ?? e.action}
                         </span>
-                      </div>
-                      <p className="text-slate-600 text-sm mt-2">{e.summary}</p>
-                    </div>
+                      )}
+                      meta={<span className="tabular-nums">{fmtCardDateTime(e.created_at)}</span>}
+                    >
+                      <p className="text-slate-700 text-sm mt-1.5">{e.summary}</p>
+                    </ListCard>
                   ))}
                 </div>
 
-                <table className="hidden lg:table w-full text-sm min-w-[640px]">
+                <table className="hidden lg:table w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
                       <th className="text-left px-5 py-3 font-semibold whitespace-nowrap">Date / Time</th>
@@ -564,7 +525,7 @@ export default function AuditPage() {
                   <tbody>
                     {activityEntries.map((e) => (
                       <tr key={e.id} data-testid="audit-row" className="border-t border-slate-300 hover:bg-slate-50">
-                        <td className="px-5 py-3 text-slate-400 tabular-nums whitespace-nowrap">
+                        <td className="px-5 py-3 text-slate-500 tabular-nums whitespace-nowrap">
                           {formatDateTime(e.created_at)}
                         </td>
                         <td className="px-5 py-3 whitespace-nowrap">
@@ -588,7 +549,7 @@ export default function AuditPage() {
                 </table>
               </div>
 
-              <p className="text-xs text-slate-400 mt-3 text-right">
+              <p className="text-sm text-slate-600 mt-3 text-right">
                 {activityEntries.length} {activityEntries.length === 1 ? 'entry' : 'entries'} shown
                 {activityEntries.length === 500 && ' (limit reached — refine filters to see more)'}
               </p>
@@ -596,6 +557,6 @@ export default function AuditPage() {
           )}
         </>
       )}
-    </div>
+    </Page>
   );
 }

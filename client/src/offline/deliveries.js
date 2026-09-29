@@ -1,5 +1,4 @@
 import { enqueue, drainOutbox, listRecords, QUEUED } from './outbox.js';
-import { handleDrainCompletion } from './drainNotifier.js';
 import { issueDeliveryRef } from './station.js';
 import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 
@@ -48,8 +47,7 @@ export async function logDeliveryLocalFirst(payload, { profileKey }) {
 
   await applyLocalRestock(payload.items);
 
-  const res = await drainOutbox().catch(() => null);
-  if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {});
+  await drainOutbox().catch(() => null);
   const synced = !(await listRecords().catch(() => []))
     .some((r) => r.id === record.id);
 

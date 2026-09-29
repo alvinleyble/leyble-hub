@@ -1,6 +1,9 @@
 # Proposal: "Save custom price?" prompt on New Order
 
-**Status:** grilled, decisions locked — not built yet.
+**Status:** Superseded 2026-09-12 by
+[combined-customer-defaults-prompt.md](./combined-customer-defaults-prompt.md) — the shipped
+surface is the combined *"Save as Customer Defaults?"* prompt, which owns the as-built design.
+Kept for the decisions grilled below.
 **Origin:** Alvin, verbal description, 2026-07-02. Grilled 2026-07-02 (see Decisions below).
 **See also:** [ADR 0001 — Wholesaler status gates custom pricing](../../adr/0001-wholesaler-status-gates-custom-pricing.md).
 

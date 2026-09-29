@@ -6,7 +6,7 @@ const { applyDeltaMap, isStockOut } = require('../lib/inventory');
 const { parseReceiptNumber, parseBareSequence } = require('../lib/receiptNumbers');
 const { assertIssuableStation } = require('../lib/personNumbers');
 const {
-  normalizeRequestKey, findByRequestKey, findByReceiptNumber,
+  normalizeRequestKey, claimRequestKey, findByRequestKey, findByReceiptNumber,
   isDuplicateRequestKey, isDuplicateReceiptNumber,
 } = require('../lib/idempotency');
 
@@ -66,6 +66,59 @@ function expectedRevision(value) {
 
 function revisionMatches(order, revision) {
   return revision === null || String(order.revision) === revision;
+}
+
+// ── The retry key on a MUTATION (migration 050) ─────────────────────────────
+//
+// client/src/api/client.js gives every request 5 seconds and then aborts it. The abort
+// reaches the socket, not this process: the handler runs on and the transaction commits,
+// so the operator is told the save failed while it actually landed. Whatever they do
+// next is the damage — retry and the order is edited twice, or hold the revision their
+// own unreported write superseded and be refused with ADR 0019's 409.
+//
+// So a mutating order write may carry the same device-minted `request_key` a create
+// does, and the two helpers below are how a route spends it: read it once up front (a
+// malformed one is a 400, exactly as on POST /orders — silently ignoring it would
+// silently remove the protection), then claim it inside the transaction, before the
+// revision is compared.
+//
+// Before, deliberately. A retry of an aborted save holds a revision that is now stale
+// BECAUSE OF ITS OWN first attempt; checking the revision first would answer it with a
+// 409 that describes a conflict with itself. The key is the more specific question —
+// "has this exact attempt already happened?" — and it is asked first. A genuinely
+// different write, carrying its own key, falls through to the revision check unchanged.
+function orderRequestKey(req) {
+  return normalizeRequestKey(req.body?.request_key);
+}
+
+// Answers the request and returns true when this attempt has already been made, so the
+// caller stops. Returns false when the key is fresh (or absent) and the write should go
+// ahead. Always called with an open transaction; it rolls back before answering, since
+// a replay must change nothing.
+async function requestKeyAlreadySpent(client, res, requestKey, orderId) {
+  if (!requestKey) return false;
+  const claim = await claimRequestKey(client, {
+    key: requestKey, entityType: 'order', entityId: orderId,
+  });
+  if (claim.claimed) return false;
+
+  await client.query('ROLLBACK');
+  if (claim.entityType !== 'order' || claim.entityId !== orderId) {
+    // The same key spent on something else. Not a retry of this write, so answering it
+    // with this order would be a lie and repeating the write would be a duplicate. 409
+    // lands it in the device's needs-attention list, where a human decides — the same
+    // treatment a receipt-number collision gets on POST / for the same reason.
+    res.status(409).json({
+      code: 'request_key_reused',
+      error: 'This request key was already used for a different write. Re-issue the request.',
+    });
+    return true;
+  }
+  // The stored order, not a replayed response body: it is the authoritative current
+  // state, revision included, which is what the client needs to carry on from. Same
+  // answer POST / gives a resent create.
+  res.json(await getFullOrder(claim.entityId));
+  return true;
 }
 
 async function sendStaleWrite(client, res, orderId, revision) {
@@ -290,7 +343,11 @@ async function insertItems(client, orderId, items, draft = false) {
 // COALESCE keeps customer/order type unchanged when the caller passes null (only a parked
 // draft may change them at all).
 async function replaceItemsAndSettleOrder(
-  client, orderId, rows, { notes, customerId = null, orderType = null, revision = null }
+  client, orderId, rows,
+  {
+    notes, customerId = null, orderType = null, revision = null,
+    deliveryFeeTouched = false, deliveryFeeValue = null,
+  }
 ) {
   const cols = itemColumnArrays(rows);
   return client.query(
@@ -312,6 +369,9 @@ async function replaceItemsAndSettleOrder(
         SET notes        = $2,
             customer_id  = COALESCE($3::int, o.customer_id),
             order_type   = COALESCE($4::text, o.order_type),
+            delivery_fee_charged = CASE WHEN $13::boolean
+                                        THEN $14::numeric
+                                        ELSE o.delivery_fee_charged END,
             total_amount = (
               SELECT COALESCE(SUM(CASE WHEN o.status = 'done'
                                        THEN i.line_total
@@ -320,7 +380,7 @@ async function replaceItemsAndSettleOrder(
             updated_at   = NOW()
       WHERE o.id = $1
         AND ($12::bigint IS NULL OR o.revision = $12::bigint)`,
-    [orderId, notes, customerId, orderType, ...cols, revision]
+    [orderId, notes, customerId, orderType, ...cols, revision, deliveryFeeTouched, deliveryFeeValue]
   );
 }
 
@@ -752,6 +812,7 @@ router.post('/', async (req, res, next) => {
   const {
     customer_id, notes, items = [], personnel = [], order_type = 'delivery', status,
     receipt_number, request_key, created_at, adjustment = 0, adjustment_reason,
+    delivery_fee_charged,
   } = req.body;
   const isDraft = status === 'draft';
 
@@ -760,6 +821,23 @@ router.post('/', async (req, res, next) => {
   if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
   // A finalized order needs at least one item; a draft may be parked while still empty.
   if (!isDraft && !items?.length) return res.status(400).json({ error: 'At least one item is required' });
+
+  // Persistent delivery fee (proposal decision 14: charge-only). `undefined` means the
+  // client sent no override, so the snapshot below falls back to the customer's
+  // current standing fee (decision 6); explicit null/'' waives it for this order alone
+  // (decision 8) without touching that standing fee.
+  let deliveryFeeOverride;
+  if (delivery_fee_charged !== undefined) {
+    if (delivery_fee_charged === null || delivery_fee_charged === '') {
+      deliveryFeeOverride = null;
+    } else {
+      const n = Number(delivery_fee_charged);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: 'delivery_fee_charged must be a non-negative number' });
+      }
+      deliveryFeeOverride = n;
+    }
+  }
 
   let requestKey = null;
   try {
@@ -812,7 +890,7 @@ router.post('/', async (req, res, next) => {
     await client.query('BEGIN');
 
     const { rows: [customer] } = await client.query(
-      'SELECT id, name FROM customers WHERE id = $1 AND is_active = TRUE',
+      'SELECT id, name, delivery_fee FROM customers WHERE id = $1 AND is_active = TRUE',
       [customer_id]
     );
     if (!customer) {
@@ -823,15 +901,27 @@ router.post('/', async (req, res, next) => {
     const adjNum = Number(adjustment) || 0;
     const adjReason = adjNum !== 0 && adjustment_reason ? adjustment_reason.trim() : null;
 
+    // Decisions 6/7: snapshotted from the customer's current standing fee at creation,
+    // delivery orders only — never looked up live again after this. An explicit
+    // override (deliveryFeeOverride !== undefined) wins over the customer's fee, and a
+    // non-delivery order never carries one regardless of what was sent.
+    const deliveryFeeCharged = order_type === 'delivery'
+      ? (deliveryFeeOverride !== undefined
+          ? deliveryFeeOverride
+          : (customer.delivery_fee !== null && customer.delivery_fee !== undefined
+              ? Number(customer.delivery_fee) : null))
+      : null;
+
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_id, notes, total_amount, order_type, status,
                            receipt_station, receipt_device, receipt_sequence, request_key,
-                           created_at, adjustment, adjustment_reason, created_by)
-       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11, $12)
+                           created_at, adjustment, adjustment_reason, delivery_fee_charged,
+                           created_by)
+       VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()), $10, $11, $12, $13)
        RETURNING *`,
       [customer_id, notes || null, order_type, isDraft ? 'draft' : 'pending',
        receipt?.station ?? null, receipt?.device ?? null, receipt?.sequence ?? null,
-       requestKey, created_at || null, adjNum, adjReason,
+       requestKey, created_at || null, adjNum, adjReason, deliveryFeeCharged,
        // ADR 0017 #10 — who sold it, for the receipt's `Sold by:` line. The JWT is the
        // whole identity since ADR 0017 §5, so this is whoever is signed in on the
        // device that sent it — including a drain hours later, which replays under the
@@ -914,6 +1004,14 @@ router.get('/:id', async (req, res, next) => {
 
 // PATCH /api/v1/orders/:id — edit metadata and/or line items (all statuses)
 router.patch('/:id', async (req, res, next) => {
+  // Before the connection: a malformed key is a 400 and never opens a transaction.
+  let requestKey;
+  try {
+    requestKey = orderRequestKey(req);
+  } catch (err) {
+    return next(err);
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -933,7 +1031,10 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const { notes, items, personnel, customer_id, order_type } = req.body;
+    // The 5s-abort replay, answered with the order this same attempt already wrote.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
+
+    const { notes, items, personnel, customer_id, order_type, delivery_fee_charged } = req.body;
     const isDraft = order.status === 'draft';
     let revision = null;
     try {
@@ -959,6 +1060,43 @@ router.patch('/:id', async (req, res, next) => {
     const nextCustomerId = isDraft ? (customer_id ?? null) : null;
     const nextOrderType  = isDraft ? (order_type ?? null) : null;
 
+    // Decision 8: overridable per order, same spirit as `adjustment` — `undefined`
+    // means this edit didn't touch it, so the stored value is left alone; explicit
+    // null/'' waives it. `deliveryFeeTouched` is what distinguishes "leave unchanged"
+    // from "set to NULL" once this reaches the CASE expression below (COALESCE alone
+    // cannot express an explicit clear). Decision 7 wins regardless of what was sent:
+    // an order that is not `delivery` after this edit never carries a charged fee.
+    let deliveryFeeTouched = delivery_fee_charged !== undefined;
+    let deliveryFeeValue = null;
+    if (deliveryFeeTouched) {
+      if (delivery_fee_charged === null || delivery_fee_charged === '') {
+        deliveryFeeValue = null;
+      } else {
+        const n = Number(delivery_fee_charged);
+        if (!Number.isFinite(n) || n < 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'delivery_fee_charged must be a non-negative number' });
+        }
+        deliveryFeeValue = n;
+      }
+    }
+    const effectiveOrderType = nextOrderType || order.order_type;
+    if (effectiveOrderType !== 'delivery') {
+      deliveryFeeTouched = true;
+      deliveryFeeValue = null;
+    }
+
+    if (deliveryFeeTouched) {
+      const prevFee = order.delivery_fee_charged === null ? null : Number(order.delivery_fee_charged);
+      if (prevFee !== deliveryFeeValue) {
+        changeNotes.push(
+          deliveryFeeValue === null
+            ? 'Delivery fee waived'
+            : `Delivery fee set to ₱${deliveryFeeValue.toFixed(2)}`
+        );
+      }
+    }
+
     let orderUpdate;
     if (items === undefined) {
       orderUpdate = await client.query(
@@ -966,10 +1104,14 @@ router.patch('/:id', async (req, res, next) => {
             SET notes       = $1,
                 customer_id = COALESCE($2::int, customer_id),
                 order_type  = COALESCE($3::text, order_type),
+                delivery_fee_charged = CASE WHEN $6::boolean
+                                            THEN $7::numeric
+                                            ELSE delivery_fee_charged END,
                 updated_at  = NOW()
           WHERE id = $4
             AND ($5::bigint IS NULL OR revision = $5::bigint)`,
-        [nextNotes, nextCustomerId, nextOrderType, order.id, revision]
+        [nextNotes, nextCustomerId, nextOrderType, order.id, revision,
+         deliveryFeeTouched, deliveryFeeValue]
       );
     } else {
       // ONE read for the three things replacing the lines needs: the items being
@@ -1018,6 +1160,8 @@ router.patch('/:id', async (req, res, next) => {
         customerId: nextCustomerId,
         orderType:  nextOrderType,
         revision,
+        deliveryFeeTouched,
+        deliveryFeeValue,
       });
 
       changeNotes.push(`Items replaced (${items.length} item${items.length === 1 ? '' : 's'})`);
@@ -1065,6 +1209,13 @@ router.patch('/:id', async (req, res, next) => {
 
 // POST /api/v1/orders/:id/finalize — turn a draft into a real Pending order
 router.post('/:id/finalize', async (req, res, next) => {
+  let requestKey;
+  try {
+    requestKey = orderRequestKey(req);
+  } catch (err) {
+    return next(err);
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
@@ -1083,6 +1234,9 @@ router.post('/:id/finalize', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
+    // Ahead of the draft check: a replay of a finalize that already committed finds a
+    // 'pending' order and would otherwise be refused for not being a draft any more.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (order.status !== 'draft') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Only draft orders can be finalized' });
@@ -1179,8 +1333,10 @@ router.patch('/:id/adjustment', async (req, res, next) => {
   }
 
   let revision;
+  let requestKey;
   try {
     revision = expectedRevision(req.body.revision);
+    requestKey = orderRequestKey(req);
   } catch (err) {
     return res.status(err.status).json({ error: err.message });
   }
@@ -1201,6 +1357,7 @@ router.patch('/:id/adjustment', async (req, res, next) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Order not found' });
     }
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (!revisionMatches(order, revision)) {
       return sendStaleWrite(client, res, order.id, revision);
     }
@@ -1239,27 +1396,50 @@ router.patch('/:id/adjustment', async (req, res, next) => {
 // POST /api/v1/orders/:id/receipt-printed — tag that a receipt was printed and
 // confirmed by the user, for either the 'pending' or 'delivered' phase
 router.post('/:id/receipt-printed', async (req, res, next) => {
+  const { phase } = req.body;
+  if (!['pending', 'delivered'].includes(phase)) {
+    return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
+  }
+
+  let requestKey;
   try {
-    const { phase } = req.body;
-    if (!['pending', 'delivered'].includes(phase)) {
-      return res.status(400).json({ error: "phase must be 'pending' or 'delivered'" });
+    requestKey = orderRequestKey(req);
+  } catch (err) {
+    return next(err);
+  }
+
+  // This route used to run on the pool with no transaction, which was fine while
+  // re-sending it was merely wasteful (a re-stamped timestamp, a second activity-log
+  // row, two revision bumps for one print). Claiming a retry key has to be atomic with
+  // the write it guards, so the whole thing is one transaction now. It stays
+  // deliberately unguarded by ADR 0019's revision: recording a print is additive.
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const orderId = await resolveOrderId(client, req.params.id);
+    if (!orderId) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
     }
 
-    const orderId = await resolveOrderId(db, req.params.id);
-    if (!orderId) return res.status(404).json({ error: 'Order not found' });
-
-    const { rows: [order] } = await db.query(
-      'SELECT id, receipt_number FROM orders WHERE id = $1', [orderId]
+    const { rows: [order] } = await client.query(
+      'SELECT id, receipt_number FROM orders WHERE id = $1 FOR UPDATE', [orderId]
     );
-    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!order) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
 
     const column = phase === 'pending' ? 'pending_receipt_printed' : 'delivered_receipt_printed';
-    await db.query(
+    await client.query(
       `UPDATE orders SET ${column}_at = NOW(), ${column}_by = $1, updated_at = NOW() WHERE id = $2`,
       [req.user.id, order.id]
     );
 
-    await logActivity(db, {
+    await logActivity(client, {
       entityType: 'order',
       entityId:   order.id,
       action:     'receipt_printed',
@@ -1267,9 +1447,13 @@ router.post('/:id/receipt-printed', async (req, res, next) => {
       performedBy: req.user.id,
     });
 
+    await client.query('COMMIT');
     res.json(await getFullOrder(order.id));
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 });
 
@@ -1296,12 +1480,18 @@ router.post('/:id/status', async (req, res, next) => {
 
     const { status: newStatus, expected_status: expectedStatus } = req.body;
     let revision;
+    let requestKey;
     try {
       revision = expectedRevision(req.body.revision);
+      requestKey = orderRequestKey(req);
     } catch (err) {
       await client.query('ROLLBACK');
       return res.status(err.status).json({ error: err.message });
     }
+    // Ahead of both guards. A replayed transition has already moved the order (and
+    // already moved the stock, ADR 0012), so the state machine would refuse it with a
+    // 422 and strand the outbox record — the very thing the key exists to prevent.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (!revisionMatches(order, revision)
         || (expectedStatus !== undefined && expectedStatus !== order.status)) {
       return sendStaleWrite(client, res, order.id, revision);
@@ -1422,12 +1612,17 @@ router.post('/:id/close', async (req, res, next) => {
       return res.status(404).json({ error: 'Order not found' });
     }
     let revision;
+    let requestKey;
     try {
       revision = expectedRevision(req.body.revision);
+      requestKey = orderRequestKey(req);
     } catch (err) {
       await client.query('ROLLBACK');
       return res.status(err.status).json({ error: err.message });
     }
+    // Ahead of the status check for the same reason finalize is: a replayed close finds
+    // an order that is already 'done'.
+    if (await requestKeyAlreadySpent(client, res, requestKey, order.id)) return;
     if (!revisionMatches(order, revision)) {
       return sendStaleWrite(client, res, order.id, revision);
     }

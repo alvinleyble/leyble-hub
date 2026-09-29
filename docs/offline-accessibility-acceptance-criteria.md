@@ -161,6 +161,9 @@ order that has already synced requires an online connection to edit its content.
 5.13 New Order Modal is fully functional for both online and offline: see all products, search all customers, both order types, all categories, select products, adjust quantities, change prices, add adjustment, optional notes, reset/clear, cancel, create, X-to-exit, save as draft, apply a regular customer's custom prices (discounted/wholesale/markup); the in-sale price override always works offline, but "save new custom prices for a customer" is online-only by design.
 
 > **Corrected 2026-09-02 — the "save new custom prices" clause is online-only, everywhere.**
+> (2026-09-12: this prompt is now the combined *"Save as Customer Defaults?"* surface —
+> see [combined-customer-defaults-prompt.md](product/proposals/combined-customer-defaults-prompt.md)
+> — but the price kind's own gating described below is unchanged.)
 > The *"Save Custom Price?"* prompt is gated on connectivity in addition to its existing
 > "customer already exists on the server" check, and silently never opens offline (no toast,
 > no explanation needed — captain confirmed this UX choice 2026-08-31). This closes a
@@ -263,8 +266,9 @@ Discarding is likewise online-only for a synced/historical draft; only a draft c
 > "won." The panel's *Add Custom Price* action (including its price list and product picker)
 > is disabled with an explanatory message while offline, matching the disabled+message
 > pattern already used in this panel for the active/inactive toggle, merge, and delete.
-> `OrderCreateModal.jsx`'s *"Save Custom Price?"* prompt (5.13) is gated the same way —
-> it silently never opens offline, even for a customer who already exists on the server.
+> `OrderCreateModal.jsx`'s price-save prompt (5.13; since 2026-09-12 folded into the combined
+> *"Save as Customer Defaults?"* surface) is gated the same way for its price kind — it never
+> offers to save a price offline, even for a customer who already exists on the server.
 > A cashier can still override a line-item price for that one sale while offline; only
 > *remembering* it as the customer's new standing price waits for a connection. Known Gaps
 > G1 is closed.

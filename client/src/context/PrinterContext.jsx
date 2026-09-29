@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { registerPlugin } from '@capacitor/core';
 import { useToast } from '../components/ui/Toast';
 import PrinterPicker from '../pages/orders/PrinterPicker';
+import { printerTestPageEscPos } from '../pages/shared/listEscPos';
 
 const Printer = registerPlugin('Printer');
 
@@ -103,6 +104,27 @@ export function PrinterProvider({ children }) {
     }
   }, [addToast]);
 
+  // Settings' "Test print": a short test page to the SAVED printer, over the same
+  // printBytes path a receipt takes, so it proves what a real print would do.
+  const printTestPage = useCallback(async ({ deviceSeries } = {}) => {
+    const current = await refreshSavedPrinter();
+    if (!current) {
+      addToast('Choose a printer first.', 'error');
+      return false;
+    }
+    const bytes = printerTestPageEscPos({ printerName: current.name, deviceSeries });
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    try {
+      await Printer.printBytes({ data: btoa(bin) });
+      addToast('Test page sent to the printer.', 'success');
+      return true;
+    } catch (e) {
+      addToast(`Test print failed: ${e.message || 'unknown error'}`, 'error');
+      return false;
+    }
+  }, [refreshSavedPrinter, addToast]);
+
   return (
     <PrinterContext.Provider
       value={{
@@ -114,6 +136,7 @@ export function PrinterProvider({ children }) {
         savePrinter,
         scanWifi,
         testPrint,
+        printTestPage,
         devices,
         loading,
       }}

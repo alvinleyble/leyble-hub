@@ -1,5 +1,4 @@
 import { listRecords, enqueue, drainOutbox } from './outbox.js';
-import { handleDrainCompletion } from './drainNotifier.js';
 import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 
 // G29 / ADR 0015 §7 — customers created while blind live in the outbox until their
@@ -69,8 +68,7 @@ export async function updateCustomerLocalFirst(customerId, patch, { profileKey }
     // Convenience only — never fail the save over the cached copy.
   }
 
-  const res = await drainOutbox().catch(() => null);
-  if (res && res.sent > 0) handleDrainCompletion(res).catch(() => {});
+  await drainOutbox().catch(() => null);
   const synced = !(await listRecords().catch(() => [])).some((r) => r.id === record.id);
   return { record, synced };
 }

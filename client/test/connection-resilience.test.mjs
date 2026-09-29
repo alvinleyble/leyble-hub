@@ -8,7 +8,6 @@ import { Route, Routes } from 'react-router-dom';
 import { formatConnectionError } from '../src/utils/errors.js';
 import { api } from '../src/api/client.js';
 import { ToastProvider, useToast } from '../src/components/ui/Toast.jsx';
-import RefreshButton from '../src/components/layout/RefreshButton.jsx';
 import OrderDetailPage from '../src/pages/orders/OrderDetailPage.jsx';
 
 async function flush() {
@@ -297,45 +296,5 @@ test('OrderDetailPage: renders friendly recovery card on network failure with Tr
     assert.ok(getCalls >= 2, 'Try Again button triggered reload');
   } finally {
     api.get = originalGet;
-  }
-});
-
-// ── 5. Header Refresh Button ──────────────────────────────────────────────────
-
-test('RefreshButton: dispatches leyble:refresh and shows toast when clicked', async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    return { ok: true, json: async () => ({ status: 'ok' }) };
-  };
-
-  let sawRefreshEvent = false;
-  const onRefresh = () => { sawRefreshEvent = true; };
-  window.addEventListener('leyble:refresh', onRefresh);
-
-  try {
-    const r = render(
-      React.createElement(
-        ToastProvider,
-        null,
-        React.createElement(RefreshButton, { variant: 'v1' })
-      )
-    );
-
-    const btn = r.byLabel('Refresh connection and sync');
-    assert.ok(btn, 'Refresh button rendered with aria-label');
-
-    r.click(btn);
-    await flush();
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await flush();
-
-    assert.equal(sawRefreshEvent, true, 'dispatched leyble:refresh event');
-    assert.ok(
-      r.text().includes('Connection refreshed') || r.text().includes('Refreshed'),
-      'toast message rendered'
-    );
-  } finally {
-    window.removeEventListener('leyble:refresh', onRefresh);
-    globalThis.fetch = originalFetch;
   }
 });

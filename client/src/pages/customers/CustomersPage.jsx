@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
-import Button from '../../components/ui/Button';
+import Page from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import SearchFilterBar from '../../components/ui/SearchFilterBar';
+import ListCard from '../../components/ui/ListCard';
+import { TagBadge } from '../../components/ui/Badge';
 import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import CustomerFormModal from './CustomerFormModal';
 import CustomerDetailPanel from './CustomerDetailPanel';
@@ -41,7 +46,7 @@ function CustomersTableSkeleton() {
           <tr className="bg-slate-50 border-b border-slate-400">
             <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
             <th className="px-5 py-3 hidden sm:table-cell"><Skeleton className="h-3 w-10" /></th>
-            <th className="px-5 py-3 hidden md:table-cell"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-14" /></th>
             <th className="px-5 py-3 hidden lg:table-cell"><Skeleton className="h-3 w-16" /></th>
             <th className="px-5 py-3"><Skeleton className="h-3 w-12" /></th>
           </tr>
@@ -51,7 +56,7 @@ function CustomersTableSkeleton() {
             <tr key={i} className="border-t border-slate-300">
               <td className="px-5 py-4"><Skeleton className="h-4 w-36" /></td>
               <td className="px-5 py-4 hidden sm:table-cell"><Skeleton className="h-5 w-16 rounded-full" /></td>
-              <td className="px-5 py-4 hidden md:table-cell"><Skeleton className="h-4 w-24" /></td>
+              <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-24" /></td>
               <td className="px-5 py-4 hidden lg:table-cell"><Skeleton className="h-4 w-40" /></td>
               <td className="px-5 py-4"><Skeleton className="h-5 w-16 rounded-full" /></td>
             </tr>
@@ -72,7 +77,6 @@ export default function CustomersPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
-  const [menuOpen, setMenuOpen]         = useState(false);
   // G29 — customers quick-created offline (OrderCreateModal), still queued in the
   // outbox and not yet visible to the server's own /customers list.
   const [queuedCustomers, setQueuedCustomers] = useState([]);
@@ -95,7 +99,7 @@ export default function CustomersPage() {
     if (showInactive) params.set('include_inactive', 'true');
     if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
 
-    api.get(`/customers?${params}`)
+    return api.get(`/customers?${params}`)
       .then(setCustomers)
       .catch(async () => {
         const cached = showInactive ? await getCachedEntity('customers') : await getCachedCustomers();
@@ -132,6 +136,9 @@ export default function CustomersPage() {
     return subscribeOutbox(() => loadQueuedCustomers());
   }, [loadQueuedCustomers]);
 
+  // Pull-down / re-tapping the menu item: reload quietly behind the rows on screen.
+  useRefreshListener(() => Promise.all([load(true), loadQueuedCustomers()]));
+
   const searchLower = debouncedSearch.trim().toLowerCase();
   const visibleQueuedCustomers = searchLower
     ? queuedCustomers.filter((c) => c.name.toLowerCase().includes(searchLower))
@@ -146,207 +153,125 @@ export default function CustomersPage() {
 
   const handlePrintList = () => printList(customerListHtml(customers), customerListEscPos(customers));
 
+  const openCustomer = (c) => {
+    // G29 — a still-queued customer has no server row yet: opening the edit drawer
+    // would 404/500 against a `local-` id, so tell the operator why instead of trying.
+    if (c._unsynced) {
+      addToast('Customer is queued for sync — details and editing will be available once connected.', 'info');
+      return;
+    }
+    setSelectedId(c.id);
+  };
+
+  // Customers badges every row Active or Inactive (round-8 grill, the captain's call
+  // over Q6's "only when unusual"); a queued edit adds Waiting to sync beside it.
+  const activeBadge = (c) => <TagBadge kind={c.is_active ? 'active' : 'inactive'} />;
+  const syncBadge = (c) => (c._unsynced || pendingEditIds.has(String(c.id))) && <TagBadge key="sync" kind="unsynced" />;
+  const orDash = (v) => (v == null || String(v).trim() === '' ? '—' : v);
+
+  const typeBadge = (c) => (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap ${customerTypeBadge(c.customer_type)}`}>
+      {customerTypeLabel(c.customer_type)}
+    </span>
+  );
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
-        <div className="flex gap-2">
-          {/* Phone width: Print List collapses into a "⋮" overflow menu. */}
-          <div className="relative lg:hidden">
-            <button
-              type="button"
-              aria-label="More actions"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((v) => !v)}
-              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
-              className="flex items-center justify-center w-12 h-12 rounded-lg border border-slate-300
-                         bg-white text-xl text-slate-700
-                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              ⋮
-            </button>
-            {menuOpen && (
-              <div role="menu" className="absolute left-0 z-30 mt-1 w-56 rounded-lg border border-slate-200
-                                          bg-white shadow-lg py-1">
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={customers.length === 0}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { setMenuOpen(false); handlePrintList(); }}
-                  className="w-full text-left px-4 py-3 text-sm min-h-[48px] hover:bg-blue-50
-                             disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  🖶 Print List
-                </button>
-              </div>
-            )}
-          </div>
+    <Page>
+      <PageHeader
+        title="Customers"
+        primary={{ label: '+ Add Customer', shortLabel: '+ Add', onClick: () => setCreating(true) }}
+        actions={[{
+          label: 'Print List', icon: 'printer', onClick: handlePrintList, loading: printing,
+          disabled: customers.length === 0,
+        }]}
+      />
 
-          {/* Tablet: full button, unchanged. */}
-          <Button
-            variant="secondary" onClick={handlePrintList} loading={printing} disabled={customers.length === 0}
-            className="hidden lg:inline-flex"
-          >
-            🖶 Print List
-          </Button>
-
-          <Button onClick={() => setCreating(true)}>+ Add Customer</Button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-row gap-3 mb-6">
-        <input
-          type="search"
-          placeholder="Search by name or phone…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
-                     focus:outline-none focus:ring-2 focus:ring-blue-600"
-          aria-label="Search customers"
-          data-testid="customers-search-input"
-        />
-        {/* Phone width: compact inline switch beside the search bar. */}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={showInactive}
-          onClick={() => setShowInactive((v) => !v)}
-          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
-                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-        >
-          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
-          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
-                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
-            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
-                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
-          </span>
-        </button>
-        {/* Tablet: original box, unchanged. */}
-        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
-                          bg-white cursor-pointer select-none">
-          <input
-            type="checkbox" checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-            className="w-6 h-6 accent-blue-700"
-          />
-          <span className="text-base text-slate-700 font-medium whitespace-nowrap">Show inactive</span>
-        </label>
-      </div>
+      {/* Search + Filters (Q3): "Show inactive" is in the Filters panel, not beside
+          the search box where it was pushed off a 360px screen (UI audit F6). */}
+      <SearchFilterBar
+        className="mb-4 md:mb-6"
+        value={search}
+        onChange={setSearch}
+        placeholder="Name or phone"
+        ariaLabel="Search customers"
+        testId="customers-search-input"
+        active={showInactive ? [{ key: 'inactive', label: 'Showing inactive', onRemove: () => setShowInactive(false) }] : []}
+        panel={(
+          <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+            <input
+              type="checkbox" checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="w-6 h-6 accent-blue-700"
+            />
+            <span className="text-base text-slate-800 font-medium">Show inactive customers</span>
+          </label>
+        )}
+      />
 
       {/* Table */}
       {loading ? (
         <CustomersTableSkeleton />
       ) : displayCustomers.length === 0 ? (
-        <p className="text-center text-slate-400 text-base py-20">
+        <p className="text-center text-slate-500 text-base py-20">
           {search ? 'No customers match your search.' : 'No customers yet. Add one to get started.'}
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="customers-list">
-          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          {/* Phone + upright-tablet rows (D5; tables from 1024px), round-8 grill:
+              line 1 name + type, line 2 mobile · address (an em dash for each blank)
+              with the Active/Inactive badge. Same testids as the table. */}
           <div className="lg:hidden divide-y divide-slate-200">
             {displayCustomers.map((c) => (
-              <div
+              <ListCard
                 key={c.id}
-                onClick={() => {
-                  if (c._unsynced) {
-                    addToast('Customer is queued for sync — details and editing will be available once connected.', 'info');
-                    return;
-                  }
-                  setSelectedId(c.id);
-                }}
+                onClick={() => openCustomer(c)}
                 data-testid="customers-row"
-                className="p-4 active:bg-blue-50 cursor-pointer"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className={`font-semibold truncate ${c.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
-                      {c.name}
-                    </p>
-                    <p className="text-sm text-slate-500 mt-0.5">{c.phone ?? '—'}</p>
-                  </div>
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border shrink-0 ${customerTypeBadge(c.customer_type)}`}>
-                    {customerTypeLabel(c.customer_type)}
-                  </span>
-                </div>
-                <div className="mt-2">
-                  {(c._unsynced || pendingEditIds.has(String(c.id))) ? (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                      ⏳ Waiting to sync
-                    </span>
-                  ) : c.is_active ? (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
-                      Active
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500 border border-slate-200">
-                      Inactive
-                    </span>
-                  )}
-                </div>
-              </div>
+                title={<span className={c.is_active ? '' : 'text-slate-500 line-through'}>{c.name}</span>}
+                titleRight={typeBadge(c)}
+                meta={`${orDash(c.phone)} · ${orDash(c.address)}`}
+                metaRight={activeBadge(c)}
+                badges={[syncBadge(c)]}
+              />
             ))}
           </div>
 
           <table className="hidden lg:table w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
-                <th className="text-left px-5 py-3 font-semibold">Name</th>
-                <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">Type</th>
-                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Phone</th>
-                <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Address</th>
-                <th className="text-left px-5 py-3 font-semibold">Status</th>
+              <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Name</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Type</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Phone</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Address</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
               {displayCustomers.map((c) => (
                 <tr
                   key={c.id}
-                  onClick={() => {
-                    // G29 — a still-queued customer has no server row yet: opening the
-                    // edit drawer would 404/500 against a `local-` id, so tell the
-                    // operator why instead of trying.
-                    if (c._unsynced) {
-                      addToast('Customer is queued for sync — details and editing will be available once connected.', 'info');
-                      return;
-                    }
-                    setSelectedId(c.id);
-                  }}
+                  onClick={() => openCustomer(c)}
                   data-testid="customers-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
-                  <td className="px-5 py-4">
-                    <p className={`font-semibold ${c.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                  <td className="px-4 lg:px-5 py-4">
+                    <p className={`font-semibold ${c.is_active ? 'text-slate-900' : 'text-slate-500 line-through'}`}>
                       {c.name}
                     </p>
                   </td>
-                  <td className="px-5 py-4 hidden sm:table-cell">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(c.customer_type)}`}>
-                      {customerTypeLabel(c.customer_type)}
-                    </span>
+                  <td className="px-4 lg:px-5 py-4">{typeBadge(c)}</td>
+                  <td className="px-4 lg:px-5 py-4 text-slate-600 whitespace-nowrap">
+                    {orDash(c.phone)}
                   </td>
-                  <td className="px-5 py-4 text-slate-500 hidden md:table-cell">
-                    {c.phone ?? '—'}
+                  <td className="px-4 lg:px-5 py-4 text-slate-600 text-sm hidden lg:table-cell">
+                    <span className="block max-w-[220px] truncate">{orDash(c.address)}</span>
                   </td>
-                  <td className="px-5 py-4 text-slate-500 text-sm hidden lg:table-cell">
-                    <span className="block max-w-[220px] truncate">{c.address ?? '—'}</span>
-                  </td>
-                  <td className="px-5 py-4">
+                  <td className="px-4 lg:px-5 py-4">
                     {(c._unsynced || pendingEditIds.has(String(c.id))) ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                        ⏳ Waiting to sync
-                      </span>
+                      <TagBadge kind="unsynced" />
                     ) : c.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-800 border border-green-300">
-                        Active
-                      </span>
+                      <TagBadge kind="active" />
                     ) : (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-500 border border-slate-200">
-                        Inactive
-                      </span>
+                      <TagBadge kind="inactive" />
                     )}
                   </td>
                 </tr>
@@ -383,6 +308,6 @@ export default function CustomersPage() {
           onClose={closePicker}
         />
       )}
-    </div>
+    </Page>
   );
 }

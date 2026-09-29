@@ -15,8 +15,10 @@ import OrderDetailPage from './pages/orders/OrderDetailPage';
 import IncomingPage from './pages/incoming/IncomingPage';
 import TicketsPage from './pages/tickets/TicketsPage';
 import AuditPage from './pages/audit/AuditPage';
+import SettingsPage from './pages/SettingsPage';
 import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 import VersionGate from './components/version/VersionGate';
+import AppInfoGate from './components/version/AppInfoGate';
 import FirstSetupGateScreen from './components/setup/FirstSetupGateScreen';
 
 // Layout route: guards all children behind auth check.
@@ -77,6 +79,8 @@ function AppRoutes() {
           <Route path="/personnel/*"  element={<PersonnelPage />} />
           <Route path="/tickets"      element={<TicketsPage />} />
           <Route path="/audit"        element={<AuditPage />} />
+          <Route path="/settings"     element={<SettingsPage />} />
+          <Route path="/settings/:section" element={<SettingsPage />} />
           <Route path="*"             element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Route>
@@ -86,14 +90,16 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <PrinterProvider>
-          <VersionGate>
-            <AppRoutes />
-          </VersionGate>
-        </PrinterProvider>
-      </ToastProvider>
-    </AuthProvider>
+    <AppInfoGate>
+      <AuthProvider>
+        <ToastProvider>
+          <PrinterProvider>
+            <VersionGate>
+              <AppRoutes />
+            </VersionGate>
+          </PrinterProvider>
+        </ToastProvider>
+      </AuthProvider>
+    </AppInfoGate>
   );
 }

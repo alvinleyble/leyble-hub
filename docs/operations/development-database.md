@@ -60,7 +60,7 @@ Leyble Hub operates across a strict 3-tier architecture separating local develop
 - Developers must execute and verify new migrations against the development database via `node server/db/migrate.js` prior to scheduling production rollout.
 
 ### 5. Staging Deployment (Render)
-- Staging compute runs on **Render** (`leyble-hub-api`), auto-deploying from the `staging` git branch as specified in [`render.yaml`](../../render.yaml).
+- Staging compute runs on **Render** (`leyble-hub-api`), building from the `staging` git branch as specified in [`render.yaml`](../../render.yaml). Deploys are triggered on push to `staging` (and via `workflow_dispatch`) by GitHub Actions ([`.github/workflows/deploy-render-staging.yml`](../../.github/workflows/deploy-render-staging.yml)) calling Render's deploy hook (`RENDER_STAGING_DEPLOY_HOOK_URL` secret).
 - Staging auto-migrates during Render's build step via `node server/db/migrate.js`.
 
 ### 6. Production Deployment (Northflank)

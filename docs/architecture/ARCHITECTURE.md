@@ -100,9 +100,9 @@ client/src/
 
 **Conventions to follow** (also in [CLAUDE.md](../../CLAUDE.md)): searchable combobox for every
 product picker (`productMatches`), side-panel for detail views, modal for create/edit forms,
-a locally-defined `PHP()` formatter per file, toasts via `useToast()`. The permanent sidebar
-renders only on the custom `desktop:` breakpoint (`min-width:1024px` **and** `pointer:fine`);
-phones/tablets get a hamburger drawer.
+a locally-defined `PHP()` formatter per file, toasts via `useToast()`. Every screen size
+navigates with one top tab bar; Tickets, Audit Log, Settings and Log out sit behind its
+hamburger menu.
 
 ---
 

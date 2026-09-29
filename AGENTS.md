@@ -128,11 +128,27 @@ in a new screen — the old per-screen type lists are exactly how agreed prices 
 live accounts. Saving a price never re-tags the customer.
 
 **Only the explicit prompt writes a saved price.** `POST /customers/:id/prices`, from the
-"Save Custom Price?" dialog, is the sole writer; `insertItems` deliberately writes none.
-`order_items.is_price_overridden` means "hand-typed on this order", not "this is their standing
-rate" — order-save used to write a `customer_product_prices` row on that flag alone, before the
-operator was asked, so answering **No** changed nothing and a one-off price became permanent with
-no way back (the table is append-only and has no delete endpoint).
+combined "Save as Customer Defaults?" dialog (see below), is the sole writer; `insertItems`
+deliberately writes none. `order_items.is_price_overridden` means "hand-typed on this order", not
+"this is their standing rate" — order-save used to write a `customer_product_prices` row on that
+flag alone, before the operator was asked, so answering **No** changed nothing and a one-off
+price became permanent with no way back (the table is append-only and has no delete endpoint).
+
+**The custom-price prompt and the delivery-fee-default prompt are ONE combined surface, not
+two** (see [proposal](docs/product/proposals/combined-customer-defaults-prompt.md)). If an order
+save has a dirty custom price and/or a delivery fee that disagrees with the customer's saved
+`delivery_fee`, `OrderCreateModal.jsx`'s `defaultsPrompt` lists whichever kinds are eligible in
+one "Save as Customer Defaults?" modal, each with its own checkbox (selected by default,
+independently deselectable) — never sequential prompts. Only a selected kind's write
+(`persistDefaultsSave`) is enqueued; declining or deselecting a kind never touches the order,
+which already saved before this prompt appears. The price half keeps its existing
+`checkIsOnline()` gate (no unique constraint on `customer_product_prices`); the delivery-fee half
+has no such hazard and is eligible offline too, via the same `customer_update` outbox entity
+`CustomerDetailPanel.jsx` already uses. **`enqueue()`'s own id counter (`nextRecordId` in
+outbox.js) is now serialised through an in-flight promise chain** — firing two enqueue() calls
+without an await between them (exactly what this combined save does for a price + a fee write)
+used to let both read the same counter value before either write landed, mint the same id, and
+silently overwrite one record with the other at that outbox key.
 
 One nudge sits on top of that rule, not against it: picking a **`regular` customer who holds
 saved prices** in the New Order modal prompts to retag them (Markup / Discounted / Wholesale /
@@ -145,6 +161,24 @@ it asks again until someone fixes the tag.
 and draining an order move nothing, which is what keeps inventory out of the offline path. Every
 stock decision is gated on `isStockOut()` (net audit-log delta), not on the status name — see
 [docs/architecture/order-lifecycle.md](docs/architecture/order-lifecycle.md#stock-movement).
+
+### Persistent delivery fee (see [proposal](docs/product/proposals/persistent-delivery-fee.md))
+
+Same "snapshot a standing value onto the order" shape as custom pricing (ADR 0009), for a
+different field: `customers.delivery_fee` (nullable, `>= 0`) is a plain mutable scalar — not a
+history table — configured on the Customer edit form (`CustomerDetailPanel.jsx`) or, since the
+combined customer-defaults prompt above, from the order form itself when a typed fee disagrees
+with the saved default.
+`orders.delivery_fee_charged` (nullable, `>= 0`) is copied from it **client-side** at order
+creation (`OrderCreateModal.jsx` auto-fills from the customer's cached `delivery_fee`, the same
+offline-safe pattern `customer_product_prices` already uses) and is editable per order before
+save — the server (`POST/PATCH /orders`) accepts an explicit override or snapshots the
+customer's current fee itself when the client sends none, and always forces it back to `NULL`
+when `order_type !== 'delivery'`, regardless of what was sent. `NULL` means "not configured, no
+row shown anywhere"; a deliberate `₱0.00` still prints its own line. It joins the client-computed
+grand total (`itemsSubtotal + depositTotal + delivery_fee_charged + adjustment`) ahead of
+`adjustment`, in `OrderCreateModal.jsx`, `OrderDetailPage.jsx`, `receiptTemplate.js` and
+`escposReceipt.js` — `total_amount` itself stays goods+deposit only, same as `adjustment` today.
 
 ### Frontend patterns (follow these exactly — consistency matters)
 
@@ -179,20 +213,20 @@ pre-existing design — see `backOfficeCache.js`'s own comment block, and ADR 00
 "live first" reasoning), so their skeleton only shows on a genuinely cold, nothing-held
 first load.
 
-**PHP formatter** (defined locally in each file — do not centralize):
+**PHP formatter** (on screen, use the shared one — design standard Q15; printed receipts keep their own):
 ```js
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+import { PHP } from '../../utils/money'; // formatPeso: ₱1,234.50, −₱135.00; formatSignedPeso: +₱120.00
 ```
 
 **API calls**: `api.get/post/patch/del` from `client/src/api/client.js`, always with `credentials: 'include'` (already set in the client).
 
 **Toasts**: `const { addToast } = useToast()` → `addToast(msg, 'success' | 'error')`.
 
-**Responsive layout**: the permanent sidebar only renders on the custom `desktop:` screen
-(`min-width: 1024px` **and** `pointer: fine`, see `client/tailwind.config.js`); phones/tablets
-get the hamburger drawer in both portrait and landscape. Width-based `sm:`/`md:`/`lg:` are
-still used for everything else (table columns etc.).
+**Navigation**: every screen size uses one top tab bar (`TopTabBar.jsx`, items in
+`client/src/components/layout/navigation.js`) — six tabs, icons only below `sm:`, with the
+status light (`StatusLight.jsx`) and the hamburger menu (`MenuDrawer.jsx`: Tickets, Audit Log,
+Settings, Log out) at the far right. There is no sidebar. Width-based `sm:`/`md:`/`lg:` are
+used for everything responsive (table columns etc.).
 
 ### V2 tablet shell (in progress — see [docs/product/proposals/v2-tablet-pos-overhaul.md](docs/product/proposals/v2-tablet-pos-overhaul.md))
 
@@ -278,19 +312,26 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   PR #41's exact bug (a throwaway delete stuck ahead of/behind real order POSTs,
   wedging "Offline · N waiting" for minutes).
 - **Silent background sync** — `drainNotifier.js` dispatches a
-  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting } })`
+  `window` `CustomEvent('leyble:drain-complete', { detail: { sent, waiting, orders } })`
   whenever a drain sends something, independent of both the `V25_OFFLINE_CORE` flag
   (this is a sync signal, not a display concern) and the once-per-outage toast latch.
+  `detail.orders` carries the order rows the drain itself just got back — see the
+  drained-write adoption bullet under "Order concurrency & delta sync" below.
   `OrderDetailPage.jsx` listens for it and re-reads with `silent: true`, which never
   touches `loading` — that's what keeps the swap from a local "Waiting to sync" row to
-  the synced server row spinner-free. **Every caller of `drainOutbox()` that can fire
-  outside the 30s periodic loop must route its result through `handleDrainCompletion`
-  itself** (Round 2 Fix 1) — `posSave.js`'s three background drains (the immediate
-  post-save drain in `saveOrderLocalFirst`, `queueReceiptPrinted`, and
-  `updateLocalOrder`) are what actually land an order on the server in practice, ~1s
-  after Save, not the periodic loop; calling the bare `drainOutbox()` from
-  `outbox.js` without also calling `handleDrainCompletion(res)` on a successful send
-  is silently correct in every way except that no screen ever hears about it.
+  the synced server row spinner-free; that re-read is deferred while the operator has
+  unsaved edits, per the silent-re-read bullet in that same section.
+  **`runDrainPass` in `outbox.js` is the single
+  place that notifies, and callers must not notify again** — it routes any pass that
+  sent something through `handleDrainCompletion` from its own `finally`, after the
+  `draining` mutex clears and without awaiting it. This used to be each caller's
+  duty (Round 2 Fix 1), which only held for the callers that remembered: the ones
+  that wanted the send and nothing else — `status.js`'s reachability recovery,
+  `refreshApp` (`offline/refresh.js`), `OrderCreateModal`, `parkedOrders` — called the bare
+  `drainOutbox()` and dropped the signal, so whichever caller happened to win the
+  mutex decided whether any screen heard about the drain at all. A bare
+  `drainOutbox().catch(() => {})` is now the correct shape everywhere; adding a
+  `handleDrainCompletion(res)` on top of it double-fires the event.
 - **`drainOutbox()` self-reruns instead of stranding a skipped call** (Round 3 Fix 5).
   A `drainOutbox()` call while another pass is already in flight returns
   `{skipped:true}` immediately (`draining` mutex) — but the record it just enqueued
@@ -298,10 +339,24 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   START of that pass), so without a follow-up it would sit `QUEUED` until whatever
   unrelated thing next calls `drainOutbox()` (the 30s periodic loop, an `online`
   event, another save). `outbox.js` now schedules an immediate follow-up pass itself
-  the moment the in-flight one finishes, and routes a successful rerun through
-  `handleDrainCompletion` exactly like every other drain path — this is what the
-  chrome-wide `OfflineMarker` showing "N waiting" for minutes after an unrelated
+  the moment the in-flight one finishes, and that rerun notifies from its own
+  `finally` exactly like every other pass — this is what the
+  chrome-wide connection marker (now `StatusLight`) showing "N waiting" for minutes after an unrelated
   order's own banner had already cleared turned out to be.
+- **A failed send's retry bookkeeping writes onto the CURRENT stored record, never the
+  pass-start snapshot** (`saveDrainOutcome` in `outbox.js`). `runDrainPass` reads
+  `records` once via `listRecords()` at the top of the pass; a record's own send can
+  take an await (network, `resolvePayload`) long enough for something else — most
+  concretely `updateLocalOrder`'s own unconditional background `drainOutbox()` call
+  racing a slightly earlier one from `saveOrderLocalFirst` — to rewrite that same
+  record in native storage before this pass gets around to recording `attempts`/
+  `last_error`/`status` on its failure. Writing the stale in-memory `record` back
+  (the old `saveRecord(record)` calls) silently reverted that concurrent edit;
+  `saveDrainOutcome` re-reads the record immediately before writing and merges only
+  the bookkeeping fields onto whatever is there now (or skips the write entirely if
+  the record is gone — already discarded — rather than resurrecting it). Found via
+  `client/test/v3-s3-offline-rehost.test.mjs`'s G27 `cleanupOrphanedDraftDirect` test
+  going flaky the moment `posSave.js` grew one more field on the enqueued payload.
 - **G28's real-time offline editing also covers the adjustment** (Round 3 Fix 4) —
   `OrderDetailPage.jsx`'s `saveAdjustment` writes through `updateLocalOrder()` while
   `unsynced`, same as the rest of an offline edit, and falls back to the ordinary
@@ -489,6 +544,43 @@ etc.) still exist and still use the same engine underneath, unrelated to the V1 
   record, ADR 0014's mixed-fleet window) and must never be removed.** Mechanism is
   table-agnostic in `server/src/lib/idempotency.js` — `orders` and `supplier_deliveries`
   carry the same column shape, so a third table is one allowlist entry.
+- **The same key covers order MUTATIONS, and it is checked BEFORE ADR 0019's revision**
+  (migration 050, `claimRequestKey` in `server/src/lib/idempotency.js`). `api/client.js`
+  aborts every request after 5s; the abort reaches the socket, not Express, so the
+  handler commits while the operator is told the save failed. The retry then either
+  edits the order twice (staging order 2218 — one edit 14s after another) or is refused
+  with `409 stale_write` against a revision its own unreported write superseded. So
+  `PATCH /orders/:id`, `PATCH /orders/:id/adjustment`, `POST /orders/:id/status`,
+  `/close`, `/finalize` and `/receipt-printed` all accept `request_key`, claim it inside
+  their own transaction, and answer a key already stored with the order as stored.
+  **Claim before the revision check and before the status/state-machine checks** — a
+  replay is stale and out-of-state *because of its own first attempt*, so asking those
+  questions first answers it with a 409 or a 422 describing a conflict with itself. It
+  is the 039 mechanism, not a second one: same device-minted key, same
+  `normalizeRequestKey`, same "a conflict means this already happened". Only the storage
+  site differs (`request_keys`, since an UPDATE has no row of its own to carry the key).
+  Costs exactly one extra round trip, flat, and only when a key is sent — pinned by
+  `server/test/orders-edit-batching.test.js`. `DELETE /orders/:id` is deliberately
+  excluded: a replayed delete 404s and the outbox already reads that as success.
+  **`POST /orders` is excluded from the client-side derivation too** — a create already
+  has its own wire identity (the outbox record's key, the receipt number as the pre-039
+  fallback), and deriving one from the body would let two separate sales of the same
+  goods collapse into one.
+- **Where the key comes from on a LIVE screen: `client/src/offline/intentKeys.js`.** The
+  outbox keeps a key per durable record; a screen has no record, just an operator who
+  tapped Save, saw it fail and tapped again. So `api/client.js` derives the key from the
+  *intent* — method, path, and the body **with `revision` removed** — and holds it only
+  while that attempt's outcome is UNKNOWN (a network failure or its own timeout abort).
+  Dropping `revision` is load-bearing: `foregroundOrderSync` refreshes every 5s, so the
+  retry usually carries the revision the failed-but-committed write itself produced, and
+  keying on the body verbatim would mint a new key and commit twice. Any answer from the
+  server — success, 409, 400 — forgets the key immediately, so re-typing identical
+  values after a *successful* save is a new write and is never deduplicated. Forgetting is
+  scoped to the **order**: an answer to any mutation of `/orders/<id>` or
+  `/orders/<id>/<action>` drops every key held for that order, so an earlier unknown
+  attempt is never replayed against a later deliberate write (dispatch times out, revert
+  answers, dispatch again is a real transition). A body that
+  already carries a `request_key` (the outbox's own) is passed through untouched.
 - **Device state lives in native storage only** — `@capacitor/preferences`, **one key per
   record**, all under the `v25.` prefix, via `client/src/offline/nativeStore.js`. Never
   `localStorage`, never IndexedDB (Android evicts them; "clear data" wipes them). It must
@@ -614,19 +706,11 @@ settled rules. What a future session most needs to know:
   device's own server-issued watermarks. Never add a code path that re-pulls everything
   on an already-set-up device.
 - **The app-wide first-setup gate is a separate, broader question from `setup_complete`**
-  ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md), `isFirstSetup()` /
-  `useSyncGate().blocking` in `sync.js`). Slice 3.2 originally unlocked the app the
-  moment `setup_complete` went true and let the order-history backfill stream in behind
-  an already-open app; ADR 0019 reversed that after field review — a tablet that can
-  take an order against a history it does not yet hold is exactly the "required data
-  missing" state ADR 0015 §5 exists to prevent everywhere else. The gate
-  (`isFirstSetupPending` in `sync.js`) now stays up until `orders_backfill_complete` is
-  ALSO true, reopens on a later login/resume only if that backfill never finished, and
-  otherwise never re-engages once a device has finished its one first setup. It shows
-  one screen, `FirstSetupGateScreen.jsx`, with two truthful sub-states driven by
-  `phase`: actively downloading, and — `phase` back to `'idle'` while still blocking —
-  waiting for connection, with a Retry action that fires a plain `trigger: 'login'` sync
-  (never throttled).
+  ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md) — see its Implementation
+  status for the mechanism). Invariant: the app must stay unavailable until
+  `orders_backfill_complete` is true, not just `setup_complete` — a tablet that can take
+  an order against a history it does not yet hold is exactly the "required data missing"
+  state ADR 0015 §5 exists to prevent everywhere else.
 - **`GET /orders/sync`** (registered above `GET /:id` — Express would read "sync" as an id)
   serves COMPLETE snapshots, keyset-paginated on `(updated_at, id)`: `direction=back`
   backfills newest-first and resumably, `direction=forward` is the delta. `/products`,
@@ -678,7 +762,7 @@ Every V1 screen now works blind. What a future session most needs to know:
   app. Answering one ENQUEUES a fresh ordinary write; it never patches a half-sent
   record. `StockReconcileModal.jsx` offers mine / theirs / **a third value I just
   counted**, and the prompt lives on the Inventory page (flag-independent) rather than
-  in `OfflineMarker` (which returns null without `V25_OFFLINE_CORE`).
+  in `StatusLight` (which returns null without `V25_OFFLINE_CORE`).
 - **A conflict is another HUMAN's edit, not the server's number moving.** Stock moves
   all day on its own — every dispatch deducts, every delivery adds. `findCompetingEdit`
   in `productMutations.js` looks for an `inventory_audit_logs` row with `action_type`
@@ -727,8 +811,8 @@ Every V1 screen now works blind. What a future session most needs to know:
   (`queuedProductsFromOutbox`) and deliveries (`queuedDeliveriesFromOutbox` +
   `mergeDeliveries`, deduped by delivery ref). A merged row is excluded from anything
   needing a server id — batch price selection, opening a detail panel.
-- **Saving a custom price is offline-capable in ONE of its two entry points.** The
-  *"Save Custom Price?"* prompt at the end of a sale (`persistPriceSave` in
+- **Saving a custom price is offline-capable in ONE of its two entry points.** The combined
+  "Save as Customer Defaults?" prompt at the end of a sale (`persistDefaultsSave` in
   `OrderCreateModal.jsx`) enqueues; the Customers module's standalone *Add Custom Price*
   (`handleSetPrice` in `CustomerDetailPanel.jsx`) is a bare `api.post` and fails blind, as
   do that panel's price list and its product picker. Do not read ADR 0015 §7 as covering
@@ -793,24 +877,28 @@ Every V1 screen now works blind. What a future session most needs to know:
 
 ### Order concurrency & delta sync ([ADR 0019](docs/adr/0019-order-revision-and-delta-sync.md))
 
-Update this section's status line in place as each slice below lands — never delete it, and
-never let it drift from the ADR's own "Implementation status" section (keep the two in step).
+The ADR is the single source of truth for this mechanism — its decisions, implementation
+status, and code pointers. Update the ADR's own status section as slices land; do not
+re-describe the mechanism here. Invariants an agent must not break:
 
-- **Built:** the first-setup full-history gate — a brand-new tablet stays blocked until the
-  complete order-history backfill finishes, not just once reference data lands. Merged via
-  PR #117 on `dev`. Mechanism is documented under "Full-app offline sync (Slice 3.2, ADR
-  0015)" above (`useSyncGate().blocking`/`isFirstSetupPending` in `client/src/offline/
-  sync.js`, `FirstSetupGateScreen.jsx`) rather than repeated here.
-- **Built:** the server-authoritative order revision guard (migration 048 and
-  `server/src/routes/orders.js`) rejects a stale non-draft mutation with `409 stale_write`
-  plus the current full order. The client always adopts that order and never retries or
-  merges the rejected intent; draft autosaves and receipt-print records remain unguarded.
-  `client/src/offline/foregroundOrderSync.js` runs the orders-only cursor delta every five
-  seconds across the signed-in app, pauses in the background, backs off while unreachable
-  and wakes immediately on confirmed recovery. `leyble:orders-changed` drives spinner-free
-  detail/list updates and stale-edit/selection warnings; bulk transitions remain per-order.
-- App-wide skeletal loaders are a related but **separate** slice — the ADR text says so
-  explicitly under first-setup — not part of this ADR's own scope.
+- Every non-draft order mutation carries the revision the operator saw; the server alone
+  decides staleness. Draft autosaves and receipt-print records are the only exemptions.
+- A delta/echo counts as "another device" only when its revision is **strictly greater**
+  than what the screen holds, via `isNewerRevision(held, incoming)` — argument order
+  matters, and revisions must compare as `BigInt`, never `Number`.
+- Re-run that same check at the point a parked delta is actually *applied*, not only where
+  it arrives — a non-banner-gated write (e.g. a receipt print) can move the screen past a
+  parked copy in the meantime.
+- Only add an entity type to `ORDER_SNAPSHOT_ENTITY_TYPES` in `client/src/offline/outbox.js`
+  if its route answers with the full order row.
+- A silent background re-read must gate on `adjDirty` (the adjustment's real dirty flag),
+  never `adjExpanded` (display-only), and whatever clears `adjDirty` must also restore
+  `adjValue`/`adjReason` from `order` — otherwise a discarded edit reads back as saved.
+- A parked delta exactly one revision past a still-unanswered own save must be confirmed
+  via `confirmOwnWrite()`/`useParkedOrderOwnership()` before treating it as another
+  device's change, not assumed to be someone else's edit.
+- Bulk order actions commit per order, never as one all-or-nothing transaction.
+- App-wide skeletal loaders are a separate, later slice — not part of this ADR's scope.
 
 ### V3.5 Pocket — phone-responsive layout (see [docs/product/proposals/phone-responsive-layout.md](docs/product/proposals/phone-responsive-layout.md))
 
@@ -852,7 +940,7 @@ into the bundle — documented in `e2e/appium/README.md`.
 
 ### Accessibility (non-negotiable)
 - Minimum 48×48px touch targets
-- 16px+ fonts
+- 16px for decision-making text; 14px floor for secondary details; no grey lighter than slate-500
 - Visible labels above inputs — no placeholder-as-label
 - `:focus-visible` ring on all interactive elements
 - Status always conveyed with text + color, never color alone
@@ -902,6 +990,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | no device/person identity behind a receipt number | `users.receipt_person` (the permanent person number) and the `user_devices` table (one row per person-and-device pair, holding that pair's `device_letter`) added (migration 043) |
 | no session concept on `users` | `session_id` / `session_device` / `session_started_at` added (migration 044) — ADR 0017 #8's one session per account; all nullable, and a token with no `sid` claim is still accepted |
 | receipt number has no device letter | `orders.receipt_device` + `supplier_deliveries.receipt_device` added and both `GENERATED` display columns rebuilt over them (migration 040) — ADR 0017's `1A-00042`. Both partial unique indexes rebuilt with the letter `COALESCE`d **inside the index expression**, which is what keeps them protecting pre-letter rows |
+| no store of retry keys for order UPDATES | `request_keys` table added (migration 050) — `(request_key PK, entity_type, entity_id, created_at)`. Migration 039's `orders.request_key` covers CREATES, where the key can ride the row the request made; an UPDATE has no such row, so a mutating order write claims its key here inside the same transaction. Nothing prunes it yet |
 | `stations` has no slot concept | `slot_number` (CHECK 1–3, partial UNIQUE), `slot_assigned_at`, `slot_assigned_by` added (migration 037) — ADR 0016's three fixed slots, now **dead columns**: [ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) removed the slot concept and nothing reads or writes them. `activity_logs.entity_type` widened to accept `'station'` in the same migration, which is still live — that is where a device-letter allocation is recorded |
 | `supplier_deliveries` has no device identity | Same `receipt_station`/`receipt_device`/`receipt_sequence` triple + partial unique index, and a `GENERATED` `delivery_ref` (`1A-DEL-00007`) added (migrations 036, 040) — deliberately the same column names so `server/src/lib/idempotency.js` covers both tables (ADR 0015 §8, ADR 0017 #14) |
 
@@ -1013,6 +1102,14 @@ returns a 404 JSON. The Android APK is the only way in.
   - Always present completed work and ask *"ready to commit and push to main?"* — wait for a direct *"yes"* or *"okay, commit and push."*
 - **Working branches (`dev`, `staging`, feature/task branches, worktrees):**
   - **Autonomous commit & push permitted:** Agents and Firstmate orchestration are free to commit, create branches, and push to non-`main` branches as needed for PRs, CI, and slice development without halting for confirmation.
+- **A `dev → staging` promotion PR must merge with a merge commit, never squash.** A squash merge
+  (PR #125, 2026-09-12) rewrites `dev`'s commits into one new commit on `staging`, so the two
+  branches no longer share that history even though their trees briefly matched — GitHub then
+  refuses a later `dev → staging` PR a clean merge commit (PR #127) because it has to
+  three-way-merge against a stale common ancestor instead of fast-forwarding. The fix each time
+  this recurs is the same: branch from `dev`, merge `staging` into it with an ordinary merge
+  commit, resolve conflicts by preferring `dev`'s content (it is normally the side that has moved
+  forward), and open that branch as the replacement promotion PR — never squash a promotion PR.
 
 ## Security rules
 - **Native Android (production):** the Capacitor app stores the JWT in `@capacitor/preferences`

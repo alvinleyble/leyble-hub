@@ -23,7 +23,7 @@ export default function FormField({ label, error, hint, required, children, clas
       </label>
 
       {hint && (
-        <p id={`${inputId}-hint`} className="text-xs text-slate-500 -mt-1">{hint}</p>
+        <p id={`${inputId}-hint`} className="text-sm text-slate-500 -mt-1">{hint}</p>
       )}
 
       {enriched}

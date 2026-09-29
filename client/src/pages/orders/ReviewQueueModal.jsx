@@ -10,12 +10,15 @@ import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
-import { handleStaleOrderWrite } from './orderConcurrency.js';
+import {
+  handleStaleOrderWrite, isNewerRevision, isOneRevisionAhead, useParkedOrderOwnership,
+} from './orderConcurrency.js';
+import { formatPeso } from '../../utils/money';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
@@ -95,11 +98,18 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const order = orders[activeId];
+  // Same rule as OrderDetailPage: the Edit modal's warning waits for the server to rule
+  // out this device's own timed-out save before it calls the change another device's.
+  const pendingRemoteOwnership = useParkedOrderOwnership(order, pendingRemoteOrder);
 
   useEffect(() => {
     const onOrdersChanged = (event) => {
       for (const current of event.detail?.orders || []) {
         if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        // A delta carrying a revision this modal already holds is an echo, not news —
+        // typically this device's own receipt print, adopted by the drain listener
+        // below before the poll caught up with it.
+        if (!isNewerRevision(orders[current.id], current)) continue;
         if (String(current.id) === String(activeId)
             && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
           setPendingRemoteOrder(current);
@@ -110,7 +120,49 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     };
     window.addEventListener('leyble:orders-changed', onOrdersChanged);
     return () => window.removeEventListener('leyble:orders-changed', onOrdersChanged);
-  }, [orderIds, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+  }, [orderIds, orders, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
+
+  // Printing a receipt is an order write this screen never sees the answer to: under
+  // V25_OFFLINE_CORE `usePrintReceipt` tags the print through the outbox, so the POST
+  // that bumps ADR 0019's `revision` happens inside a later drain. Adopt what that
+  // drain got back — otherwise the very next foreground delta looks like another
+  // device's edit and raises the amber banner over the operator's own print, right
+  // while their unsaved adjustment entry is holding it on screen.
+  //
+  // Only the RECORDS on this event are this device's own; the ROW each one carries is
+  // whatever `getFullOrder()` saw at the moment the POST ran, so it can also contain
+  // another device's edit that landed just before the print. `isOneRevisionAhead` is
+  // what separates the two: the print is a single UPDATE, so a row exactly one revision
+  // past what this modal holds is the print and nothing else, and only that is adopted
+  // silently. A row further ahead carries somebody else's write too and goes down the
+  // same path as a `leyble:orders-changed` delta — held back behind the amber banner
+  // while the operator is mid-entry — and never clears a warning it cannot explain.
+  useEffect(() => {
+    const onDrainComplete = (event) => {
+      for (const current of event.detail?.orders || []) {
+        if (!orderIds.some((id) => String(id) === String(current.id))) continue;
+        const held = orders[current.id];
+        if (isOneRevisionAhead(held, current)) {
+          setOrders((prev) => ({ ...prev, [current.id]: current }));
+          setPendingRemoteOrder((pending) => (
+            pending && String(pending.id) === String(current.id) && !isNewerRevision(current, pending)
+              ? null
+              : pending
+          ));
+          continue;
+        }
+        if (!isNewerRevision(held, current)) continue;
+        if (String(current.id) === String(activeId)
+            && (editing || reviewDirty || closing || confirmingCancel || cancelling)) {
+          setPendingRemoteOrder(current);
+        } else {
+          setOrders((prev) => ({ ...prev, [current.id]: current }));
+        }
+      }
+    };
+    window.addEventListener('leyble:drain-complete', onDrainComplete);
+    return () => window.removeEventListener('leyble:drain-complete', onDrainComplete);
+  }, [orderIds, orders, activeId, editing, reviewDirty, closing, confirmingCancel, cancelling]);
 
   useEffect(() => {
     if (!pendingRemoteOrder || editing || reviewDirty || closing || confirmingCancel || cancelling) return;
@@ -316,7 +368,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                     ${isActive
                       ? 'bg-blue-700 text-white border-blue-700'
                       : isDone
-                        ? 'bg-slate-100 text-slate-400 border-slate-200'
+                        ? 'bg-slate-100 text-slate-500 border-slate-200'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
                 >
                   Order {orderRefFromId(orderId, o?.receipt_number)}{isDone ? ' ✓' : ''}
@@ -327,18 +379,20 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
           <div className="flex-1 overflow-y-auto p-6">
             {!order ? (
-              <p className="text-slate-400 text-center py-20">Order not found.</p>
+              <p className="text-slate-500 text-center py-20">Order not found.</p>
             ) : (
               <div className="max-w-2xl mx-auto">
-                {pendingRemoteOrder && (
+                {/* While the Edit modal is open it carries its own copy of this warning,
+                    judged by useParkedOrderOwnership — same split as OrderDetailPage. */}
+                {pendingRemoteOrder && !editing && (
                   <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
-                    ⚠️ This order changed on another device. Your entries are unchanged; submitting them may be refused.
+                    This order changed on another device. Your entries are unchanged; submitting them may be refused.
                   </div>
                 )}
                 <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order {orderRef(order)}</p>
+                      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Order {orderRef(order)}</p>
                       <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
                       {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
                     </div>
@@ -354,7 +408,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                       {cfg.showPrint && IS_NATIVE && (
                         <button
                           onClick={handleChangePrinter}
-                          className="text-xs text-slate-400 hover:text-slate-600 underline
+                          className="text-sm text-slate-500 hover:text-slate-600 underline
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
                         >
                           Change printer
@@ -410,7 +464,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                             </span>
                           </div>
                           {cfg.showDeposit && b.hasDeposit && (
-                            <p className="text-xs text-slate-500 tabular-nums">
+                            <p className="text-sm text-slate-500 tabular-nums">
                               {b.unreturned > 0
                                 ? <>{PHP(b.basePrice)} + {PHP(b.depositOwed)} deposit ({b.unreturned} unreturned)</>
                                 : <>{PHP(b.basePrice)} — no deposit, all bottles returned</>}
@@ -477,7 +531,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
                 {cfg.showAdjustment && !cfg.isProcessed(order) && (
                   <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Adjustment</p>
+                    <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">Adjustment</p>
                     <div className="space-y-3">
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -588,7 +642,8 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
       {editing && order && (
         <OrderCreateModal
           editOrder={order}
-          staleWarning={Boolean(pendingRemoteOrder)}
+          staleWarning={pendingRemoteOwnership === 'foreign'}
+          ownWriteRevision={pendingRemoteOwnership === 'own' ? pendingRemoteOrder.revision : null}
           onStale={(current) => {
             setPendingRemoteOrder(null);
             setReviewDirty(false);

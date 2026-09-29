@@ -108,6 +108,23 @@ router.patch('/:id', async (req, res, next) => {
 
     const { name, customer_type, address, phone, notes, is_active, conversion_note } = req.body;
 
+    // Persistent delivery fee (decision 14): charge-only, nullable. `undefined` means
+    // the operator didn't touch the field this save — keep the existing value, same
+    // as every other optional field below. An explicit null/'' waives it back to
+    // "not configured" (decision 3).
+    let deliveryFee = existing.delivery_fee;
+    if (req.body.delivery_fee !== undefined) {
+      if (req.body.delivery_fee === null || req.body.delivery_fee === '') {
+        deliveryFee = null;
+      } else {
+        const n = Number(req.body.delivery_fee);
+        if (!Number.isFinite(n) || n < 0) {
+          return res.status(400).json({ error: 'delivery_fee must be a non-negative number' });
+        }
+        deliveryFee = n;
+      }
+    }
+
     const changes = diffFields(existing, req.body, [
       ['name', 'Name'],
       ['customer_type', 'Type'],
@@ -115,6 +132,7 @@ router.patch('/:id', async (req, res, next) => {
       ['phone', 'Phone'],
       ['notes', 'Notes'],
       ['is_active', 'Active status'],
+      ['delivery_fee', 'Delivery fee'],
     ]);
 
     // ADR 0009 superseded ADR 0001: saving a custom price no longer converts the customer
@@ -136,8 +154,9 @@ router.patch('/:id', async (req, res, next) => {
          phone         = $4,
          notes         = $5,
          is_active     = $6,
+         delivery_fee  = $7,
          updated_at    = NOW()
-       WHERE id = $7
+       WHERE id = $8
        RETURNING *`,
       [
         name          ?? existing.name,
@@ -146,6 +165,7 @@ router.patch('/:id', async (req, res, next) => {
         phone         !== undefined ? phone      : existing.phone,
         notes         !== undefined ? notes      : existing.notes,
         is_active     !== undefined ? is_active  : existing.is_active,
+        deliveryFee,
         req.params.id,
       ]
     );

@@ -201,7 +201,7 @@ test('G27: notifyDrainCompleteWith dispatches leyble:drain-complete only when a 
 
   notifyDrainCompleteWith({ sent: 3, waiting: 1 }, true);
   assert.equal(events.length, 1);
-  assert.deepEqual(events[0], { sent: 3, waiting: 1 });
+  assert.deepEqual(events[0], { sent: 3, waiting: 1, orders: [] });
 
   // The toast advisory only fires once per outage (drainToastFired latch), but the
   // sync signal is a different concern and must not be blocked by that latch.
@@ -227,7 +227,7 @@ test('Round 2 Fix 1: handleDrainCompletionWith (the function the real drain path
   const result1 = await handleDrainCompletionWith({ sent: 2, waiting: 0 }, false);
   assert.equal(result1, false, 'the duplicate-detection toast stays flag-gated');
   assert.equal(events.length, 1, 'but the sync signal must fire regardless of the flag');
-  assert.deepEqual(events[0], { sent: 2, waiting: 0 });
+  assert.deepEqual(events[0], { sent: 2, waiting: 0, orders: [] });
 
   // A second, later drain (as if the toast latch were already set from an earlier
   // outage) must still dispatch — OrderDetailPage needs every drain that might
@@ -235,7 +235,7 @@ test('Round 2 Fix 1: handleDrainCompletionWith (the function the real drain path
   const result2 = await handleDrainCompletionWith({ sent: 1, waiting: 3 }, false);
   assert.equal(result2, false);
   assert.equal(events.length, 2, 'must fire on every drain that sent something, not once per outage');
-  assert.deepEqual(events[1], { sent: 1, waiting: 3 });
+  assert.deepEqual(events[1], { sent: 1, waiting: 3, orders: [] });
 
   window.removeEventListener('leyble:drain-complete', handler);
 });
