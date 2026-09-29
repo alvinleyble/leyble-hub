@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import NavIcon from '../../components/layout/NavIcon';
 import Button from '../../components/ui/Button';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
@@ -7,9 +8,10 @@ import {
   listConflicts, subscribeConflicts, STOCK_FIELD, CAUSE_UNEXPLAINED_MOVEMENT,
 } from '../../offline/reconcile.js';
 import { resolveConflict, keepServerValue } from '../../offline/productMutations.js';
+import { formatPeso } from '../../utils/money';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
@@ -103,7 +105,7 @@ function ConflictCard({ conflict, onResolved }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 py-4">
         <div className="rounded-lg border border-slate-300 p-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">
             This tablet
           </p>
           <p className="text-3xl font-bold tabular-nums text-slate-900">
@@ -113,7 +115,7 @@ function ConflictCard({ conflict, onResolved }) {
             <p className="text-sm text-slate-500 mt-1 italic">"{conflict.reason}"</p>
           )}
           {formatWhen(conflict.queued_at) && (
-            <p className="text-xs text-slate-400 mt-1">Entered {formatWhen(conflict.queued_at)}</p>
+            <p className="text-sm text-slate-500 mt-1">Entered {formatWhen(conflict.queued_at)}</p>
           )}
           <Button
             className="mt-3 w-full"
@@ -125,7 +127,7 @@ function ConflictCard({ conflict, onResolved }) {
         </div>
 
         <div className="rounded-lg border border-slate-300 p-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">
             {unexplained ? 'Now on the server' : 'Another tablet (now on the server)'}
           </p>
           <p className="text-3xl font-bold tabular-nums text-slate-900">
@@ -135,7 +137,7 @@ function ConflictCard({ conflict, onResolved }) {
             <p className="text-sm text-slate-500 mt-1 italic">"{conflict.their_reason}"</p>
           )}
           {formatWhen(conflict.their_at) && (
-            <p className="text-xs text-slate-400 mt-1">Entered {formatWhen(conflict.their_at)}</p>
+            <p className="text-sm text-slate-500 mt-1">Entered {formatWhen(conflict.their_at)}</p>
           )}
           <Button
             className="mt-3 w-full"
@@ -215,11 +217,11 @@ export default function StockReconcileModal({ onClose, onResolvedAll }) {
           <button
             onClick={onClose}
             aria-label="Close"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-500
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 

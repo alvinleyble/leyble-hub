@@ -62,9 +62,9 @@ export default function ProductSearchBar({
             <>
               <span className="font-medium text-slate-800 shrink-0">{p.sku || p.name}</span>
               <span className="flex items-center gap-2 min-w-0 ml-auto">
-                {p.sku && <span className="text-xs text-slate-500 truncate">{p.name}</span>}
+                {p.sku && <span className="text-sm text-slate-500 truncate">{p.name}</span>}
                 {renderMeta && (
-                  <span className="text-sm text-slate-400 shrink-0 tabular-nums">{renderMeta(p)}</span>
+                  <span className="text-sm text-slate-500 shrink-0 tabular-nums">{renderMeta(p)}</span>
                 )}
               </span>
             </>

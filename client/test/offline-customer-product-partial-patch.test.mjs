@@ -24,6 +24,18 @@ import { __clearOutbox, drainOutbox } from '../src/offline/outbox.js';
 import { __clearConflicts } from '../src/offline/reconcile.js';
 import { applyCatalogueDelta } from '../src/offline/catalogue.js';
 
+// Detail panels open read-only (design standard Q13, UI audit F17); the edit form is
+// behind the "Edit details" button, so a test that edits a field opens it first.
+async function openEditForm(view) {
+  const edit = view.container.querySelector('[data-testid$="-edit-details"]');
+  if (!edit) return;
+  await act(async () => {
+    edit.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 10));
+  });
+}
+
+
 const CustomerDetailPanel = (await import('../src/pages/customers/CustomerDetailPanel.jsx')).default;
 const ProductDetailPanel  = (await import('../src/pages/inventory/ProductDetailPanel.jsx')).default;
 
@@ -90,6 +102,7 @@ test('two tablets editing different customer fields, one offline then syncing, b
     customerId: 4, onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(a);
   await act(() => {
     changeInput(a.container.querySelector(`input[value="${server.customer.address}"]`), 'New Address, Antipolo');
   });
@@ -109,6 +122,7 @@ test('two tablets editing different customer fields, one offline then syncing, b
     customerId: 4, onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(b);
   const phoneInput = b.container.querySelector('input[value="09998887777"]');
   assert.ok(phoneInput, "tablet B is rendering its stale cached copy (pre-A's address change)");
   await act(() => { changeInput(phoneInput, '09991234567'); });
@@ -157,6 +171,7 @@ test('two tablets editing different product fields, one offline then syncing, bo
     productId: 7, onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(a);
   await act(() => {
     changeInput(a.container.querySelector(`input[value="${server.product.category}"]`), 'Beer & Malt');
   });
@@ -179,6 +194,7 @@ test('two tablets editing different product fields, one offline then syncing, bo
     onClose: () => {}, onSaved: () => {},
   })));
   await settle();
+  await openEditForm(b);
   const skuInput = b.container.querySelector('input[value="RH-5"]');
   assert.ok(skuInput, "tablet B is rendering its stale cached copy (pre-A's category change)");
   await act(() => { changeInput(skuInput, 'RH-5-NEW'); });

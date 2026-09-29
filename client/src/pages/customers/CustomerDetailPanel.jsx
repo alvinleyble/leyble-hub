@@ -1,4 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { DetailList, SectionHeading } from '../../components/ui/DetailList';
+import { StatusBadge, TagBadge } from '../../components/ui/Badge';
+import NavIcon from '../../components/layout/NavIcon';
+import { formatPeso } from '../../utils/money';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
@@ -15,19 +19,10 @@ import { getCachedEntity } from '../../offline/catalogue.js';
 import { updateCustomerLocalFirst } from '../../offline/queuedCustomers.js';
 import { checkIsOnline } from '../../offline/status.js';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const PHP = formatPeso;
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
-
-const ORDER_STATUS = {
-  pending:    { label: 'Pending',    color: 'bg-blue-100 text-blue-800 border-blue-300' },
-  in_transit: { label: 'In Transit', color: 'bg-amber-100 text-amber-800 border-amber-300' },
-  completed:  { label: 'Delivered',  color: 'bg-green-100 text-green-800 border-green-300' },
-  done:       { label: 'Closed',     color: 'bg-slate-100 text-slate-600 border-slate-200' },
-  cancelled:  { label: 'Cancelled',  color: 'bg-red-100 text-red-700 border-red-300' },
-};
 
 const DEFAULT_PRICE_FORM = {
   product_id: '', custom_unit_price: '', notes: '',
@@ -46,6 +41,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
   // touched (item 4, offline-multi-device clobber audit).
   const [snapshot, setSnapshot]     = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  // Read first, edit on request (design standard Q13, UI audit F17).
+  const [editing, setEditing]       = useState(false);
   const [saving, setSaving]         = useState(false);
   const [mergeOpen, setMergeOpen]   = useState(false);
   const [fromCache, setFromCache]   = useState(false);
@@ -191,6 +188,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
         'success'
       );
       onSaved?.();
+      setEditing(false);
       await load(true);
     } catch (err) {
       addToast(err.message || 'Failed to update customer.', 'error');
@@ -267,11 +265,11 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                       hover:text-slate-700 hover:bg-slate-100
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-600
+                       hover:text-slate-900 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -301,20 +299,33 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${customerTypeBadge(customer?.customer_type)}`}>
                 {customerTypeLabel(customer?.customer_type)}
               </span>
-              {customer?.is_active === false && (
-                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-700 border border-red-300">
-                  Inactive
-                </span>
-              )}
-              <span className="text-sm text-slate-400 ml-auto">
+              {customer?.is_active === false && <TagBadge kind="inactive" />}
+              <span className="text-sm text-slate-600 ml-auto">
                 {(orders || []).length} order{(orders || []).length !== 1 ? 's' : ''}
               </span>
             </div>
 
-            {/* ── Edit form ─────────────────────────────────────── */}
+            {/* ── Details: read first, Edit to change (design standard Q13) ── */}
+            {!editing ? (
+              <div className="px-6 py-5 border-b border-slate-400" data-testid="customer-details-summary">
+                <SectionHeading title="Details" onEdit={() => setEditing(true)} editLabel="Edit details"
+                                testId="customer-edit-details" />
+                <DetailList items={[
+                  { label: 'Customer Name', value: customer.name, wide: true },
+                  { label: 'Customer Type', value: customerTypeLabel(customer.customer_type) },
+                  { label: 'Delivery Fee', value: customer.delivery_fee !== null && customer.delivery_fee !== undefined
+                    ? <span className="tabular-nums">{PHP(customer.delivery_fee)}</span> : 'Not set' },
+                  { label: 'Phone', value: customer.phone },
+                  { label: 'Address', value: customer.address },
+                  { label: 'Notes', value: customer.notes, wide: true },
+                  { label: 'Status', value: customer.is_active === false
+                    ? <TagBadge kind="inactive" /> : <TagBadge kind="active" /> },
+                ]} />
+              </div>
+            ) : (
             <form onSubmit={handleSave} noValidate>
               <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
+                <SectionHeading title="Details" />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
                   <FormField label="Customer Name" required error={formErrors.name} className="sm:col-span-2">
@@ -367,7 +378,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                       <label
                         htmlFor="cust_active"
                         className={`text-base font-medium ${sharedMutationsBlocked
-                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                          ? 'text-slate-500 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
                       >
                         Active
                       </label>
@@ -382,15 +393,20 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                 </div>
               </div>
 
-              <div className="px-6 py-4 flex justify-end border-b border-slate-400">
+              <div className="px-6 py-4 flex justify-end gap-2 border-b border-slate-400">
+                <Button variant="secondary" disabled={saving}
+                  onClick={() => { setForm(snapshot); setFormErrors({}); setEditing(false); }}>
+                  Cancel
+                </Button>
                 <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
+            )}
 
             {/* ── Custom Pricing ────────────────────────────────── */}
             <div className="px-6 py-5 border-b border-slate-400">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Custom Prices</p>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wide">Custom Prices</p>
                 {!pricingOpen && (
                   <Button
                     size="sm"
@@ -412,7 +428,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               )}
 
               {/* Delivery / Pickup tab switcher */}
-              <div className="flex gap-1.5 mb-4">
+              <div className="flex gap-2 mb-4">
                 {['delivery', 'pickup'].map((type) => (
                   <button
                     key={type}
@@ -422,14 +438,15 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                       setPricingOpen(false);
                       loadCustomPrices(type);
                     }}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors
+                    aria-pressed={priceTab === type}
+                    className={`inline-flex items-center gap-1.5 min-h-[48px] px-4 rounded-full text-base font-semibold border transition-colors
+                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
                       ${priceTab === type
-                        ? type === 'delivery'
-                          ? 'bg-slate-800 text-white border-slate-800'
-                          : 'bg-blue-700 text-white border-blue-700'
-                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                        ? 'bg-blue-700 text-white border-blue-700'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
                   >
-                    {type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}
+                    <NavIcon name={type === 'delivery' ? 'truck' : 'store'} className="w-5 h-5" />
+                    {type === 'delivery' ? 'Delivery' : 'Pickup'}
                   </button>
                 ))}
               </div>
@@ -452,7 +469,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                         renderRow={(p) => (
                           <>
                             <span className="font-medium text-slate-800">{p.sku || p.name}</span>
-                            <span className="text-sm text-slate-400 shrink-0 tabular-nums">
+                            <span className="text-sm text-slate-500 shrink-0 tabular-nums">
                               std {PHP(p.base_wholesale_price)}
                             </span>
                           </>
@@ -490,12 +507,12 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
               )}
 
               {customPrices.length === 0 ? (
-                <p className="text-sm text-slate-400">No custom prices set yet.</p>
+                <p className="text-sm text-slate-500">No custom prices set yet.</p>
               ) : (
                 <div className="overflow-x-auto rounded-lg border border-slate-200">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-400">
+                      <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wide border-b border-slate-400">
                         <th className="text-left px-4 py-2 font-semibold">Product</th>
                         <th className="text-right px-4 py-2 font-semibold">Price / Case</th>
                         <th className="text-right px-4 py-2 font-semibold hidden sm:table-cell">Set</th>
@@ -507,13 +524,13 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                           <td className="px-4 py-3 font-medium text-slate-800">
                             {sp.sku || sp.product_name}
                             {sp.notes && (
-                              <span className="block text-xs text-slate-400 italic">{sp.notes}</span>
+                              <span className="block text-sm text-slate-500 italic">{sp.notes}</span>
                             )}
                           </td>
                           <td className="px-4 py-3 text-right font-semibold tabular-nums text-slate-900">
                             {PHP(sp.custom_unit_price)}
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-400 text-xs hidden sm:table-cell">
+                          <td className="px-4 py-3 text-right text-slate-500 text-sm hidden sm:table-cell">
                             {new Date(sp.created_at).toLocaleDateString('en-PH', {
                               month: 'short', day: 'numeric', year: 'numeric',
                             })}
@@ -528,18 +545,14 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
             {/* ── Order history ─────────────────────────────────── */}
             <div className="px-6 py-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+              <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">
                 Order History ({(orders || []).length})
               </p>
               {(orders || []).length === 0 ? (
-                <p className="text-sm text-slate-400">No orders yet.</p>
+                <p className="text-sm text-slate-500">No orders yet.</p>
               ) : (
                 <ol className="space-y-3">
                   {(orders || []).map((o) => {
-                    const st = ORDER_STATUS[o.status] ?? {
-                      label: o.status,
-                      color: 'bg-slate-100 text-slate-600 border-slate-200',
-                    };
                     return (
                       <li key={o.id}
                         onClick={() => navigate(`/orders/${o.id}`)}
@@ -550,16 +563,14 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                                    cursor-pointer hover:bg-slate-50 transition-colors
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
                         <div>
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${st.color}`}>
-                            {st.label}
-                          </span>
-                          <p className="text-sm text-slate-500 mt-1">
+                          <StatusBadge status={o.status} />
+                          <p className="text-sm text-slate-600 mt-1">
                             {new Date(o.created_at).toLocaleDateString('en-PH', {
                               month: 'short', day: 'numeric', year: 'numeric',
                             })}
                           </p>
                         </div>
-                        <p className="font-bold text-slate-900 tabular-nums text-base">
+                        <p className="font-bold text-slate-900 tabular-nums text-base whitespace-nowrap">
                           {PHP(o.total_amount)}
                         </p>
                       </li>
@@ -571,7 +582,7 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
 
             {/* ── Merge Customer (Housekeeping) ─────────────────── */}
             <div className="px-6 py-5 border-t border-slate-400">
-              <p className="text-xs font-bold text-amber-600 uppercase tracking-widest mb-3">Merge & Housekeeping</p>
+              <p className="text-sm font-bold text-amber-800 uppercase tracking-wide mb-3">Merge & Housekeeping</p>
               <Button
                 variant="secondary"
                 onClick={() => setMergeOpen(true)}
@@ -579,7 +590,8 @@ export default function CustomerDetailPanel({ customerId, onClose, onSaved }) {
                 disabled={sharedMutationsBlocked}
                 title={sharedMutationsBlocked ? 'Needs a connection' : undefined}
               >
-                🔀 Merge customer
+                <NavIcon name="merge" className="w-5 h-5" />
+                Merge customer
               </Button>
               {sharedMutationsBlocked && (
                 <p className="text-sm text-slate-500 mt-2">

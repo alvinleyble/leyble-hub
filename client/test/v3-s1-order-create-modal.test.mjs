@@ -166,7 +166,7 @@ test('OrderCreateModal: tapping a product tile adds a 0.5cs line to the order pa
 
   await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
 
-  assert.match(r.text(), /Tap a product on the left to start the order/);
+  assert.match(r.text(), /Tap a product to start the order/);
 
   // Find Coke button (₱300 / cs)
   const cokeBtn = r.all('button').find((b) => b.getAttribute('aria-label')?.includes('Coke Sakto'));
@@ -218,7 +218,7 @@ test('OrderCreateModal G10 Reset: with lines present, prompts confirmation; conf
   await act(async () => { await new Promise((res) => setTimeout(res, 10)); });
 
   // Lines should be cleared, but customer kept
-  assert.match(r.text(), /Tap a product on the left to start the order/);
+  assert.match(r.text(), /Tap a product to start the order/);
   assert.match(r.text(), /Buddy Wholesaler/);
 
   r.unmount();
@@ -238,7 +238,7 @@ test('OrderCreateModal G10 Reset: with 0 lines, resets instantly with NO confirm
   assert.match(r.text(), /Buddy Wholesaler/);
 
   // Zero lines: items is empty
-  assert.match(r.text(), /Tap a product on the left to start the order/);
+  assert.match(r.text(), /Tap a product to start the order/);
 
   const resetBtn = r.all('button').find((b) => b.textContent.includes('Reset'));
   assert.ok(resetBtn, 'Reset button should exist');

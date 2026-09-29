@@ -4,6 +4,14 @@ import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import Page, { SECTION_GAP } from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import { ChipRow, Chip } from '../../components/ui/ChipRow';
+import SearchFilterBar, { FilterField, FILTER_INPUT } from '../../components/ui/SearchFilterBar';
+import ListCard, { CardCheckbox } from '../../components/ui/ListCard';
+import { StatusBadge, TagBadge } from '../../components/ui/Badge';
+import NavIcon from '../../components/layout/NavIcon';
+import { PHP } from '../../utils/money';
 import { Skeleton, SkeletonGroup } from '../../components/ui/Skeleton';
 import OrderCreateModal from './OrderCreateModal';
 import ReviewQueueModal from './ReviewQueueModal';
@@ -19,9 +27,6 @@ import {
   loadParkedOrders, discardLocalDraft,
 } from '../../offline/index.js';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 const STATUS_TABS = [
   { value: 'all',        label: 'All' },
   { value: 'draft',      label: 'Drafts' },
@@ -32,27 +37,46 @@ const STATUS_TABS = [
   { value: 'cancelled',  label: 'Cancelled' },
 ];
 
-const STATUS_BADGE = {
-  draft:      'bg-violet-100 text-violet-800 border-violet-300',
-  pending:    'bg-blue-100 text-blue-800 border-blue-300',
-  in_transit: 'bg-amber-100 text-amber-800 border-amber-300',
-  completed:  'bg-green-100 text-green-800 border-green-300',
-  done:       'bg-slate-100 text-slate-500 border-slate-200',
-  cancelled:  'bg-red-100 text-red-700 border-red-300',
-};
-
-const STATUS_LABEL = {
-  draft:      'Draft',
-  pending:    'Pending',
-  in_transit: 'In Transit',
-  completed:  'Delivered',
-  done:       'Closed',
-  cancelled:  'Cancelled',
-};
+// A YYYY-MM-DD filter value, as an active-filter chip says it: "Sep 1, 2026".
+function fmtFilterDate(value) {
+  const [y, m, d] = String(value).split('-').map(Number);
+  if (!y || !m || !d) return value;
+  return new Date(y, m - 1, d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 // Matches the table's own column widths/padding (px-5 py-4 cells, w-28/w-36/w-64
 // column widths) and the phone-card rows below it, so the real content lands in the
 // same footprint once it arrives.
+const isOrderPrinted = (o) => Boolean(
+  (o.status === 'pending' && o.pending_receipt_printed_at) ||
+  (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)
+);
+
+// The tablet table's Print Status column: "Printed" or "Not Printed", always a word
+// (Q5). A draft has no receipt to print, so it reads as a dash.
+function PrintStatus({ order }) {
+  if (order.status === 'draft') return <span className="text-slate-500">—</span>;
+  return <TagBadge kind={isOrderPrinted(order) ? 'printed' : 'notPrinted'} />;
+}
+
+// "Sep 5, 2026, 8:05 PM" for the tablet table's Date column (round-8 grill: date + time).
+function formatTableDateTime(value) {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-PH', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+// The date and time on the right of an order card's badge line, under Sold by.
+function CardDateTime({ value }) {
+  return (
+    <span className="block text-right text-sm text-slate-600 tabular-nums whitespace-nowrap">
+      {formatCardDateTime(value)}
+    </span>
+  );
+}
+
 function OrdersTableSkeleton() {
   const rows = [0, 1, 2, 3, 4, 5];
   return (
@@ -79,23 +103,25 @@ function OrdersTableSkeleton() {
       <table className="hidden lg:table w-full text-base">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-400">
-            <th className="px-5 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
-            <th className="px-5 py-3"><Skeleton className="h-3 w-16" /></th>
-            <th className="px-5 py-3 w-36"><Skeleton className="h-3 w-14" /></th>
-            <th className="px-5 py-3 w-36"><Skeleton className="h-3 w-12 ml-auto" /></th>
-            <th className="px-5 py-3 w-36 hidden md:table-cell"><Skeleton className="h-3 w-12" /></th>
-            <th className="px-5 py-3 w-64"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3"><Skeleton className="h-3 w-16" /></th>
+            <th className="px-4 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-32"><Skeleton className="h-3 w-12 ml-auto" /></th>
+            <th className="px-4 py-3 w-48"><Skeleton className="h-3 w-12" /></th>
+            <th className="px-4 py-3 w-36"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-44"><Skeleton className="h-3 w-14" /></th>
           </tr>
         </thead>
         <tbody>
           {rows.map((i) => (
             <tr key={i} className="border-t border-slate-300">
-              <td className="px-5 py-4 w-28"><Skeleton className="h-4 w-16" /></td>
-              <td className="px-5 py-4"><Skeleton className="h-4 w-40" /></td>
-              <td className="px-5 py-4 w-36"><Skeleton className="h-4 w-24" /></td>
-              <td className="px-5 py-4 w-36"><Skeleton className="h-4 w-20 ml-auto" /></td>
-              <td className="px-5 py-4 w-36 hidden md:table-cell"><Skeleton className="h-4 w-20" /></td>
-              <td className="px-5 py-4 w-64"><Skeleton className="h-5 w-24 rounded-full" /></td>
+              <td className="px-4 py-4 w-28"><Skeleton className="h-4 w-16" /></td>
+              <td className="px-4 py-4"><Skeleton className="h-4 w-32" /></td>
+              <td className="px-4 py-4 w-28"><Skeleton className="h-4 w-20" /></td>
+              <td className="px-4 py-4 w-32"><Skeleton className="h-4 w-20 ml-auto" /></td>
+              <td className="px-4 py-4 w-48"><Skeleton className="h-4 w-36" /></td>
+              <td className="px-4 py-4 w-36"><Skeleton className="h-5 w-24 rounded-full" /></td>
+              <td className="px-4 py-4 w-44"><Skeleton className="h-5 w-24 rounded-full" /></td>
             </tr>
           ))}
         </tbody>
@@ -365,11 +391,6 @@ export default function OrdersPage() {
     [orders]
   );
 
-  const isOrderPrinted = (o) => Boolean(
-    (o.status === 'pending' && o.pending_receipt_printed_at) ||
-    (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)
-  );
-
   // Instant client-side search & filtering (G20, G21)
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim();
@@ -630,20 +651,28 @@ export default function OrdersPage() {
   const selectionHasPickups    = selectedOrders.some((o) => o.order_type === 'pickup');
   const selectionIsMixed       = selectionHasDeliveries && selectionHasPickups;
 
+  // Design standard Q3: the dates and the print state live in the Filters panel, and
+  // every one that is on shows under the search box as a chip with its own ✕.
+  const activeFilters = [
+    fromDate && { key: 'from', label: `From ${fmtFilterDate(fromDate)}`, onRemove: () => setFromDate('') },
+    toDate && { key: 'to', label: `To ${fmtFilterDate(toDate)}`, onRemove: () => setToDate('') },
+    printFilter !== 'all' && {
+      key: 'print',
+      label: printFilter === 'printed' ? 'Printed' : 'Not Printed',
+      onRemove: () => setPrintFilter('all'),
+    },
+  ].filter(Boolean);
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Outgoing Orders</h1>
-        <Button onClick={() => setCreating(true)}>+ New Order</Button>
-      </div>
+    <Page>
+      <PageHeader title="Outgoing Orders" primary={{ label: '+ New Order', onClick: () => setCreating(true) }} />
 
       {/* Slice 3.2 — calm, factual, and never a blocker: the table below IS the real
           directory, just served from this device (ADR 0015 §9's banner tone). */}
       {fromLocalHistory && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-5 py-3
-                        text-sm font-medium text-amber-800">
-          <span aria-hidden="true">⏳</span>
+        <div className={`${SECTION_GAP} flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3
+                        text-base font-medium text-amber-900`}>
+          <NavIcon name="clock" className="w-5 h-5 shrink-0" />
           <span>
             {statusTab === 'draft'
               ? "Offline — showing the drafts this device holds. Only drafts started here can be opened or edited."
@@ -652,112 +681,83 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {/* Parked-drafts banner — visible from any tab so an in-progress order is never lost */}
+      {/* Parked-drafts banner — visible from any tab so an in-progress order is never
+          lost. One line (UI audit F14): the count and the way in; the names are on the
+          Drafts tab itself, and ride along here only where there is room. */}
       {drafts.length > 0 && statusTab !== 'draft' && (
-        <div className="mb-4 rounded-xl border border-violet-300 bg-violet-50 px-5 py-3
-                        flex items-center justify-between gap-3 flex-wrap">
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-violet-900">
-              📝 {drafts.length} parked draft{drafts.length === 1 ? '' : 's'}
-            </p>
-            <p className="text-sm text-violet-700 truncate">
-              For: {drafts.map((d) => d.customer_name).join(', ')}
-            </p>
-          </div>
+        <div className={`${SECTION_GAP} flex items-center justify-between gap-3 rounded-xl border border-violet-300
+                        bg-violet-50 py-1.5 pl-4 pr-1.5`}>
+          <p className="min-w-0 flex items-center gap-2 text-base font-semibold text-violet-900">
+            <NavIcon name="draft" className="w-5 h-5 shrink-0" />
+            <span className="truncate">
+              {drafts.length} parked draft{drafts.length === 1 ? '' : 's'}
+              <span className="hidden md:inline font-normal text-violet-800">
+                {' '}· For: {drafts.map((d) => d.customer_name).join(', ')}
+              </span>
+            </span>
+          </p>
           <Button size="sm" variant="secondary" onClick={() => setStatusTab('draft')} className="shrink-0">
             View drafts →
           </Button>
         </div>
       )}
 
-      {/* Status tabs */}
-      <div className="flex flex-wrap gap-1.5 mb-4">
+      {/* Status chips (design standard Q4): one row that scrolls, never wraps. Possible
+          Duplicates is the last chip, so it is always one tap away. */}
+      <ChipRow label="Order status" className="mb-3">
         {STATUS_TABS.map((tab) => (
-          <button
+          <Chip
             key={tab.value}
+            selected={statusTab === tab.value}
             onClick={() => setStatusTab(tab.value)}
             data-testid={`orders-tab-${tab.value}`}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors
-              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600
-              ${statusTab === tab.value
-                ? 'bg-blue-700 text-white border-blue-700'
-                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
           >
             {tab.label}
-          </button>
+          </Chip>
         ))}
-      </div>
-
-      {/* Search, Filter controls, and Date range (G20, G21) */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        {/* Page-wide instant search (G20) */}
-        <div className="relative flex-1 min-w-[220px] max-w-sm">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by customer or number (e.g. 42)"
-            className="w-full h-10 pl-9 pr-8 border border-slate-300 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 bg-white"
-            aria-label="Search orders"
-            data-testid="orders-search-input"
-          />
-          <span className="absolute left-3 top-2.5 text-slate-400 text-sm select-none pointer-events-none">🔍</span>
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 p-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 text-xs font-bold"
-              aria-label="Clear search"
-            >
-              ✕
-            </button>
+        <span aria-hidden="true" className="shrink-0 w-px my-2 bg-slate-300" />
+        <Chip tone="amber" selected={doubleOnly} onClick={() => setDoubleOnly((v) => !v)}>
+          <NavIcon name="warning" className="w-5 h-5" />
+          Possible Duplicates
+          {possibleDoubleIds.size > 0 && (
+            <b className="ml-0.5 inline-flex min-w-[24px] h-6 items-center justify-center rounded-full bg-amber-200 px-1.5 text-sm text-amber-950">
+              {possibleDoubleIds.size}
+            </b>
           )}
-        </div>
+        </Chip>
+      </ChipRow>
 
-        {/* Possible duplicates filter toggle pill (G21) */}
-        <button
-          type="button"
-          onClick={() => setDoubleOnly((v) => !v)}
-          aria-pressed={doubleOnly}
-          className={`h-10 px-3.5 rounded-lg text-sm font-semibold border transition-colors flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap ${
-            doubleOnly
-              ? 'bg-amber-500 text-amber-950 border-amber-600 font-bold shadow-sm'
-              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-          }`}
-        >
-          <span>⚠️</span> Possible Duplicates
-        </button>
-
-        {/* Date range filters */}
-        <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">From</label>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="h-10 px-3 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
-            aria-label="From date"
-          />
-        </div>
-        <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">To</label>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="h-10 px-3 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
-            aria-label="To date"
-          />
-        </div>
-        {(fromDate || toDate) && (
-          <button
-            onClick={() => { setFromDate(''); setToDate(''); }}
-            className="h-10 px-4 text-sm font-medium text-slate-500 hover:text-slate-800 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap"
-          >
-            Clear dates
-          </button>
+      {/* Page-wide instant search (G20) — full width; dates and print state in Filters. */}
+      <SearchFilterBar
+        className={SECTION_GAP}
+        inputType="text"
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Name or #"
+        ariaLabel="Search orders"
+        testId="orders-search-input"
+        active={activeFilters}
+        panel={(
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <FilterField label="From">
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+                     className={FILTER_INPUT} aria-label="From date" />
+            </FilterField>
+            <FilterField label="To">
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+                     className={FILTER_INPUT} aria-label="To date" />
+            </FilterField>
+            <FilterField label="Print Status">
+              <select value={printFilter} onChange={(e) => setPrintFilter(e.target.value)}
+                      className={FILTER_INPUT} aria-label="Filter status by print state">
+                <option value="all">All</option>
+                <option value="printed">Printed</option>
+                <option value="unprinted">Not Printed</option>
+              </select>
+            </FilterField>
+          </div>
         )}
-      </div>
+      />
 
       {/* Bulk action bar */}
       {showCheckboxes && selectedIds.size > 0 && (
@@ -900,9 +900,9 @@ export default function OrdersPage() {
       {loading ? (
         <OrdersTableSkeleton />
       ) : filteredOrders.length === 0 && visibleLocalUnsyncedOrders.length === 0 ? (
-        <p className="text-center text-slate-400 text-base py-20">
+        <p className="text-center text-slate-500 text-base py-20">
           {orders.length === 0
-            ? (statusTab === 'all' ? 'No orders yet.' : `No ${STATUS_LABEL[statusTab]?.toLowerCase()} orders.`)
+            ? (statusTab === 'all' ? 'No orders yet.' : `No ${orderStatusLabel(statusTab)?.toLowerCase()} orders.`)
             : 'No orders match the search and filter criteria.'}
         </p>
       ) : (
@@ -918,149 +918,77 @@ export default function OrdersPage() {
           </p>
         )}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden overflow-x-auto" data-testid="orders-list">
-          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          {/* Phone and upright-tablet cards (D5; tables from 1024px, design standard Q1) —
+              same rows/testids as the table below. Round-8 grill line order: left is
+              customer, receipt number, badges; right is total, Sold by, date and time. */}
           <div className="lg:hidden divide-y divide-slate-200">
             {visibleLocalUnsyncedOrders.map((o) => (
-              <div
+              <ListCard
                 key={o.id}
                 onClick={() => navigate(`/orders/${o.receipt_number}`)}
-                className="p-4 active:bg-blue-50 cursor-pointer"
-              >
-                {/* Row 1: Receipt reference & Total */}
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-mono text-sm text-slate-500">{orderRef(o)}</p>
-                  <p className="font-bold text-slate-900 tabular-nums shrink-0">
-                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
-                  </p>
-                </div>
-
-                {/* Row 2: Customer Name & Date/Time */}
-                <div className="flex justify-between items-baseline gap-2 mt-1">
-                  <p className="font-semibold text-slate-900 min-w-0 truncate">{o.customer_name}</p>
-                  <span className="shrink-0 text-xs text-slate-500">
-                    {formatCardDateTime(o.created_at)}
-                  </span>
-                </div>
-
-                {/* Row 3: Status pills & Sold by */}
-                <div className="flex justify-between items-center gap-2 mt-2">
-                  <div className="flex flex-wrap gap-1.5 items-center shrink-0">
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                      ⏳ Waiting to sync
-                    </span>
-                    {o.order_type === 'pickup' && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
-                        Pickup
-                      </span>
-                    )}
-                  </div>
-                  <span className="min-w-0 truncate text-xs text-slate-500 text-right">
-                    Sold by: {o.sold_by_name?.trim() || '—'}
-                  </span>
-                </div>
-              </div>
+                title={o.customer_name}
+                titleRight={PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                meta={<span className="font-mono">{orderRef(o)}</span>}
+                metaRight={`Sold by: ${o.sold_by_name?.trim() || '—'}`}
+                badges={[
+                  <TagBadge key="sync" kind="unsynced" />,
+                  o.order_type === 'pickup' && <TagBadge key="pickup" kind="pickup" />,
+                ]}
+                badgesRight={<CardDateTime value={o.created_at} />}
+              />
             ))}
             {filteredOrders.map((o) => (
-              <div
+              <ListCard
                 key={o.id ?? `local-draft-${o._outboxId}`}
                 onClick={() => o.status === 'draft'
                   ? openDraft(o)
                   : navigate(`/orders/${localOrderRoute(o)}`)}
                 data-testid="orders-row"
-                className="p-4 active:bg-blue-50 cursor-pointer"
-              >
-                {/* Row 1: Receipt reference & Total */}
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex items-center gap-2">
-                    {showCheckboxes && !o._local && (
-                      <label
-                        className="flex items-center justify-center w-8 h-8 -m-1 shrink-0 cursor-pointer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(o.id)}
-                          onChange={() => toggleSelected(o.id)}
-                          className="w-5 h-5 rounded border-slate-300 text-blue-700
-                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-                          aria-label={`Select order #${o.id}`}
-                        />
-                      </label>
-                    )}
-                    {/* orderRef() names a draft 'Draft' — a parked one by its own
-                        device-issued number — so neither kind can show a row id. */}
-                    <p className="font-mono text-sm text-slate-500">
-                      {orderRef(o)}
-                    </p>
-                  </div>
-                  <p className="font-bold text-slate-900 tabular-nums shrink-0">
-                    {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
-                  </p>
-                </div>
-
-                {/* Row 2: Customer Name & Date/Time */}
-                <div className="flex justify-between items-baseline gap-2 mt-1">
-                  <p className="font-semibold text-slate-900 min-w-0 truncate">{o.customer_name}</p>
-                  <span className="shrink-0 text-xs text-slate-500">
-                    {formatCardDateTime(o.created_at)}
-                  </span>
-                </div>
-
-                {/* Row 3: Status pills & Sold by */}
-                <div className="flex justify-between items-center gap-2 mt-2">
-                  <div className="flex flex-wrap gap-1.5 items-center shrink-0">
-                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                      {STATUS_LABEL[o.status] ?? o.status}
-                    </span>
-                    {o._local && (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                        ⏳ Waiting to sync
-                      </span>
-                    )}
-                    {o.order_type === 'pickup' && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
-                        Pickup
-                      </span>
-                    )}
-                    {((o.status === 'pending' && o.pending_receipt_printed_at)
-                      || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
-                        🖶 Printed
-                      </span>
-                    )}
-                    {possibleDoubleIds.has(o.id) && (
-                      // A <div>, not <span>, on purpose: client/test/v3-orders-list-search-filters.test.mjs
-                      // counts `r.all('span')` matching this text to verify duplicate-flagged
-                      // row count — reusing <span> here would double that count against the
-                      // table's own badge below.
-                      <div className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold">
-                        ⚠️ possible duplicates
-                      </div>
-                    )}
+                leading={showCheckboxes && !o._local && (
+                  <CardCheckbox
+                    checked={selectedIds.has(o.id)}
+                    onChange={() => toggleSelected(o.id)}
+                    label={`Select order #${o.id}`}
+                  />
+                )}
+                title={o.customer_name}
+                titleRight={PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
+                // orderRef() names a draft 'Draft' — a parked one by its own
+                // device-issued number — so neither kind can show a row id.
+                meta={<span className="font-mono">{orderRef(o)}</span>}
+                metaRight={`Sold by: ${o.sold_by_name?.trim() || '—'}`}
+                badges={[
+                  <StatusBadge key="status" status={o.status} />,
+                  o._local && <TagBadge key="sync" kind="unsynced" />,
+                  o.order_type === 'pickup' && <TagBadge key="pickup" kind="pickup" />,
+                  isOrderPrinted(o) && <TagBadge key="printed" kind="printed" />,
+                  // A <div>, not <span>: the list-filters test counts the table's
+                  // <span> badges, and this card copy must not double that count.
+                  possibleDoubleIds.has(o.id) && <TagBadge key="dup" kind="duplicate" as="div" />,
+                ]}
+                badgesRight={(
+                  <div className="flex flex-col items-end gap-2">
+                    <CardDateTime value={o.created_at} />
                     {statusTab === 'draft' && (
                       <Button
                         size="sm"
                         variant="secondary"
-                        className="ml-auto"
                         onClick={(e) => { e.stopPropagation(); setDiscardConfirm(o); }}
                       >
                         Discard
                       </Button>
                     )}
                   </div>
-                  <span className="min-w-0 truncate text-xs text-slate-500 text-right">
-                    Sold by: {o.sold_by_name?.trim() || '—'}
-                  </span>
-                </div>
-              </div>
+                )}
+              />
             ))}
           </div>
 
           <table className="hidden lg:table w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
+              <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400 whitespace-nowrap">
                 {showCheckboxes && (
-                  <th className="px-5 py-3 w-12">
+                  <th className="px-4 py-3 w-12">
                     <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                       <input
                         type="checkbox"
@@ -1073,28 +1001,16 @@ export default function OrdersPage() {
                     </label>
                   </th>
                 )}
-                <th className="text-left px-5 py-3 font-semibold w-28">Receipt</th>
-                <th className="text-left px-5 py-3 font-semibold">Customer</th>
-                <th className="text-left px-5 py-3 font-semibold w-36">Sold by</th>
-                <th className="text-right px-5 py-3 font-semibold w-36">Total</th>
-                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell w-36">Date</th>
-                <th className="text-left px-5 py-3 font-semibold w-64">
-                  <div className="flex items-center justify-between gap-2">
-                    <span>Status</span>
-                    <select
-                      value={printFilter}
-                      onChange={(e) => setPrintFilter(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-xs font-medium border border-slate-300 rounded-md px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer shadow-sm"
-                      aria-label="Filter status by print state"
-                    >
-                      <option value="all">All</option>
-                      <option value="printed">🖶 Printed</option>
-                      <option value="unprinted">⚠️ Not Printed</option>
-                    </select>
-                  </div>
-                </th>
-                {statusTab === 'draft' && <th className="px-5 py-3 w-28" />}
+                <th className="text-left px-4 py-3 font-semibold w-28">Receipt</th>
+                <th className="text-left px-4 py-3 font-semibold">Customer</th>
+                <th className="text-left px-4 py-3 font-semibold w-28">Sold by</th>
+                <th className="text-right px-4 py-3 font-semibold w-32">Total</th>
+                <th className="text-left px-4 py-3 font-semibold w-48">Date</th>
+                {/* Round-8 grill: print status is its own column. Its filter stays in
+                    the Filters panel (design standard Q3), never in this header. */}
+                <th className="text-left px-4 py-3 font-semibold w-36">Print Status</th>
+                <th className="text-left px-4 py-3 font-semibold w-44">Status</th>
+                {statusTab === 'draft' && <th className="px-4 py-3 w-28" />}
               </tr>
             </thead>
             <tbody>
@@ -1108,31 +1024,24 @@ export default function OrdersPage() {
                     // Not selectable for bulk actions — there is no server row yet to
                     // act on (Dispatch/Cancel are disabled on its own detail page for
                     // exactly the same reason, G28).
-                    <td className="px-5 py-4 w-12" />
+                    <td className="px-4 py-4 w-12" />
                   )}
-                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">{orderRef(o)}</td>
-                  <td className="px-5 py-4">
-                    <p className="font-semibold text-slate-900">{o.customer_name}</p>
+                  <td className="px-4 py-4 font-mono text-slate-600 text-sm whitespace-nowrap w-28">{orderRef(o)}</td>
+                  <td className="px-4 py-4">
+                    <p className="font-semibold text-slate-900 break-words">{o.customer_name}</p>
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-600 w-36">{o.sold_by_name?.trim() || '—'}</td>
-                  <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
+                  <td className="px-4 py-4 text-sm text-slate-600 w-28">{o.sold_by_name?.trim() || '—'}</td>
+                  <td className="px-4 py-4 text-right font-bold text-slate-900 tabular-nums whitespace-nowrap w-32">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell w-36">
-                    {new Date(o.created_at).toLocaleDateString('en-PH', {
-                      month: 'short', day: 'numeric', year: 'numeric',
-                    })}
+                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums whitespace-nowrap w-48">
+                    {formatTableDateTime(o.created_at)}
                   </td>
-                  <td className="px-5 py-4 w-64">
+                  <td className="px-4 py-4 w-36"><PrintStatus order={o} /></td>
+                  <td className="px-4 py-4 w-44">
                     <div className="flex flex-wrap gap-1.5 items-center">
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                        ⏳ Waiting to sync
-                      </span>
-                      {o.order_type === 'pickup' && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
-                          Pickup
-                        </span>
-                      )}
+                      <TagBadge kind="unsynced" />
+                      {o.order_type === 'pickup' && <TagBadge kind="pickup" />}
                     </div>
                   </td>
                 </tr>
@@ -1148,10 +1057,10 @@ export default function OrdersPage() {
                 >
                   {showCheckboxes && o._local && (
                     // Nothing to bulk-act on yet — this draft has no server row.
-                    <td className="px-5 py-4 w-12" />
+                    <td className="px-4 py-4 w-12" />
                   )}
                   {showCheckboxes && !o._local && (
-                    <td className="px-5 py-4 w-12" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-4 w-12" onClick={(e) => e.stopPropagation()}>
                       <label className="flex items-center justify-center w-12 h-12 -m-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -1168,54 +1077,35 @@ export default function OrdersPage() {
                       its name here — never `#` from an id that does not exist. A server
                       draft has no number either (none is burned until it is finalized),
                       and orderRef() names that one 'Draft' rather than leaking `#<id>`. */}
-                  <td className="px-5 py-4 font-mono text-slate-500 text-sm w-28">
+                  <td className="px-4 py-4 font-mono text-slate-600 text-sm whitespace-nowrap w-28">
                     {orderRef(o)}
                   </td>
-                  <td className="px-5 py-4">
-                    <p className="font-semibold text-slate-900">{o.customer_name}</p>
+                  <td className="px-4 py-4">
+                    <p className="font-semibold text-slate-900 break-words">{o.customer_name}</p>
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-600 w-36">{o.sold_by_name?.trim() || '—'}</td>
-                  <td className="px-5 py-4 text-right font-bold text-slate-900 tabular-nums w-36">
+                  <td className="px-4 py-4 text-sm text-slate-600 w-28">{o.sold_by_name?.trim() || '—'}</td>
+                  <td className="px-4 py-4 text-right font-bold text-slate-900 tabular-nums whitespace-nowrap w-32">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-500 hidden md:table-cell w-36">
-                    {new Date(o.created_at).toLocaleDateString('en-PH', {
-                      month: 'short', day: 'numeric', year: 'numeric',
-                    })}
+                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums whitespace-nowrap w-48">
+                    {formatTableDateTime(o.created_at)}
                   </td>
-                  <td className="px-5 py-4 w-64">
+                  <td className="px-4 py-4 w-36"><PrintStatus order={o} /></td>
+                  <td className="px-4 py-4 w-44">
                     <div className="flex flex-wrap gap-1.5 items-center">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold border ${STATUS_BADGE[o.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                        {STATUS_LABEL[o.status] ?? o.status}
-                      </span>
-                      {o._local && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                          ⏳ Waiting to sync
-                        </span>
-                      )}
-                      {o.order_type === 'pickup' && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-blue-100 text-blue-800 border-blue-300">
-                          Pickup
-                        </span>
-                      )}
-                      {((o.status === 'pending' && o.pending_receipt_printed_at)
-                        || (['completed', 'done'].includes(o.status) && o.delivered_receipt_printed_at)) && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border bg-slate-100 text-slate-600 border-slate-300">
-                          🖶 Printed
-                        </span>
-                      )}
+                      <StatusBadge status={o.status} />
+                      {o._local && <TagBadge kind="unsynced" />}
+                      {o.order_type === 'pickup' && <TagBadge kind="pickup" />}
                       {possibleDoubleIds.has(o.id) && (
-                        <span
-                          className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-100 text-amber-900 px-2.5 py-0.5 text-xs font-bold"
+                        <TagBadge
+                          kind="duplicate"
                           title="Same customer, channel and total as another order — possibly the same sale printed twice."
-                        >
-                          ⚠️ possible duplicates
-                        </span>
+                        />
                       )}
                     </div>
                   </td>
                   {statusTab === 'draft' && (
-                    <td className="px-5 py-4 text-right w-28" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-4 text-right w-28" onClick={(e) => e.stopPropagation()}>
                       <Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(o)}>
                         Discard
                       </Button>
@@ -1230,7 +1120,7 @@ export default function OrdersPage() {
       )}
 
       {/* Bottom Pagination Bar */}
-      <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 md:p-4 rounded-xl border border-slate-200 shadow-sm">
         <div className="text-sm font-medium text-slate-600">
           Showing {totalOrders === 0 ? 0 : (page - 1) * pageSize + 1}–{totalOrders === 0 ? 0 : Math.min(page * pageSize, totalOrders)} of {totalOrders} orders
         </div>
@@ -1247,7 +1137,7 @@ export default function OrdersPage() {
                 setPageSize(Number(e.target.value));
                 setPage(1);
               }}
-              className="h-10 min-h-[40px] px-3 py-1.5 border border-slate-300 rounded-lg text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer shadow-sm"
+              className="h-12 px-3 border border-slate-300 rounded-lg text-base text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer shadow-sm"
               aria-label="Orders per page"
             >
               <option value={25}>25 per page</option>
@@ -1352,7 +1242,7 @@ export default function OrdersPage() {
           onClose={() => { setReviewQueue(null); clearSelection(); load(); }}
         />
       )}
-    </div>
+    </Page>
   );
 }
 

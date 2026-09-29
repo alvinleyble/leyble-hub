@@ -2,7 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
-import Button from '../../components/ui/Button';
+import Page, { SECTION_GAP } from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import SearchFilterBar, { FilterField, FILTER_INPUT } from '../../components/ui/SearchFilterBar';
+import ListCard from '../../components/ui/ListCard';
+import { TagBadge } from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import DeliveryFormModal from './DeliveryFormModal';
@@ -90,114 +94,114 @@ export default function IncomingPage() {
   const visibleQueued = filterDeliveries(queuedDeliveries, { supplierFilter, fromDate, toDate });
   const displayDeliveries = mergeDeliveries(deliveries, visibleQueued);
 
-  return (
-    <div className="p-6 max-w-7xl mx-auto">
+  const fmtReceived = (d) => new Date(d.received_at).toLocaleDateString('en-PH', {
+    year: 'numeric', month: 'short', day: 'numeric',
+  });
+  const fmtFilterDate = (v) => {
+    const [y, m, d] = String(v).split('-').map(Number);
+    return y && m && d
+      ? new Date(y, m - 1, d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+      : v;
+  };
+  const activeFilters = [
+    fromDate && { key: 'from', label: `From ${fmtFilterDate(fromDate)}`, onRemove: () => setFromDate('') },
+    toDate && { key: 'to', label: `To ${fmtFilterDate(toDate)}`, onRemove: () => setToDate('') },
+  ].filter(Boolean);
+  const openDelivery = (d) => { if (!d._unsynced) setSelectedId(d.id); };
 
-      {/* ── Header ───────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Incoming Supplies</h1>
-        {/* ADR 0015 §8 — logging a truck is additive and conflict-free, so it works
-            blind. Editing and voiding an already-logged delivery do not. */}
-        <Button onClick={() => setCreating(true)}>+ Log Delivery</Button>
-      </div>
+  return (
+    <Page>
+      {/* ADR 0015 §8 — logging a truck is additive and conflict-free, so it works
+          blind. Editing and voiding an already-logged delivery do not. */}
+      <PageHeader title="Incoming Supplies" primary={{ label: '+ Log Delivery', onClick: () => setCreating(true) }} />
 
       {fromCache && <OfflineBanner cachedAt={cachedAt} />}
 
-      {/* ── Filters ──────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <input
-          type="search"
-          placeholder="Filter by supplier…"
-          value={supplierFilter}
-          onChange={(e) => setSupplierFilter(e.target.value)}
-          className="w-full sm:w-auto sm:flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
-                     focus:outline-none focus:ring-2 focus:ring-blue-600"
-          aria-label="Filter by supplier"
-        />
-        <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">From</label>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="h-12 px-3 border border-slate-300 rounded-lg text-base text-slate-900
-                       focus:outline-none focus:ring-2 focus:ring-blue-600"
-            aria-label="From date"
-          />
-        </div>
-        <div className="flex gap-2 items-center">
-          <label className="text-sm text-slate-500 font-medium whitespace-nowrap">To</label>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="h-12 px-3 border border-slate-300 rounded-lg text-base text-slate-900
-                       focus:outline-none focus:ring-2 focus:ring-blue-600"
-            aria-label="To date"
-          />
-        </div>
-        {(supplierFilter || fromDate || toDate) && (
-          <button
-            onClick={() => { setSupplierFilter(''); setFromDate(''); setToDate(''); }}
-            className="h-12 px-4 text-sm font-medium text-slate-500 hover:text-slate-800
-                       border border-slate-300 rounded-lg bg-white hover:bg-slate-50
-                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 whitespace-nowrap"
-          >
-            Clear filters
-          </button>
+      {/* ── Search + Filters (design standard Q3) ────────────────── */}
+      <SearchFilterBar
+        className={SECTION_GAP}
+        value={supplierFilter}
+        onChange={setSupplierFilter}
+        placeholder="Supplier"
+        ariaLabel="Filter by supplier"
+        active={activeFilters}
+        panel={(
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FilterField label="From">
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+                     className={FILTER_INPUT} aria-label="From date" />
+            </FilterField>
+            <FilterField label="To">
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+                     className={FILTER_INPUT} aria-label="To date" />
+            </FilterField>
+          </div>
         )}
-      </div>
+      />
 
-      {/* ── Table ────────────────────────────────────────────────── */}
+      {/* ── List ─────────────────────────────────────────────────── */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
           <Spinner size="lg" />
         </div>
       ) : displayDeliveries.length === 0 ? (
-        <p className="text-center text-slate-400 text-base py-20">
+        <p className="text-center text-slate-500 text-base py-20">
           {(supplierFilter || fromDate || toDate)
             ? 'No deliveries match your filters.'
             : 'No deliveries logged yet. Log one to get started.'}
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-base">
+          {/* Phone + upright-tablet cards (UI audit F7: this was the one list with no
+              card view, and it silently dropped # Items and Logged By on phones). */}
+          <div className="lg:hidden divide-y divide-slate-200">
+            {displayDeliveries.map((d) => (
+              <ListCard
+                key={d.id}
+                onClick={() => openDelivery(d)}
+                data-testid="incoming-row"
+                title={d.supplier_name}
+                titleRight={<span className="text-sm font-semibold text-slate-700">{d.item_count ?? 0} item{Number(d.item_count) === 1 ? '' : 's'}</span>}
+                meta={fmtReceived(d)}
+                metaRight={`Logged by: ${d.created_by_name ?? '—'}`}
+                badges={[d._unsynced && <TagBadge key="sync" kind="unsynced" />]}
+              >
+                {d.notes && <p className="mt-1 text-sm text-slate-600 line-clamp-2">{d.notes}</p>}
+              </ListCard>
+            ))}
+          </div>
+
+          <table className="hidden lg:table w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
-                <th className="text-left px-5 py-3 font-semibold">Date Received</th>
-                <th className="text-left px-5 py-3 font-semibold">Supplier</th>
-                <th className="text-right px-5 py-3 font-semibold hidden sm:table-cell"># Items</th>
-                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Logged By</th>
+              <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Date Received</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Supplier</th>
+                <th className="text-right px-4 lg:px-5 py-3 font-semibold"># Items</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Logged By</th>
               </tr>
             </thead>
             <tbody>
               {displayDeliveries.map((d) => (
                 <tr
                   key={d.id}
-                  onClick={() => { if (!d._unsynced) setSelectedId(d.id); }}
+                  onClick={() => openDelivery(d)}
+                  data-testid="incoming-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
-                  <td className="px-5 py-4 text-slate-700 tabular-nums">
-                    {new Date(d.received_at).toLocaleDateString('en-PH', {
-                      year: 'numeric', month: 'short', day: 'numeric',
-                    })}
+                  <td className="px-4 lg:px-5 py-4 text-slate-700 tabular-nums whitespace-nowrap">
+                    {fmtReceived(d)}
                   </td>
-                  <td className="px-5 py-4 font-semibold text-slate-900">
+                  <td className="px-4 lg:px-5 py-4 font-semibold text-slate-900">
                     {d.supplier_name}
-                    {d._unsynced && (
-                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs
-                                       font-semibold border bg-amber-100 text-amber-800 border-amber-300">
-                        Waiting to sync
-                      </span>
-                    )}
+                    {d._unsynced && <TagBadge kind="unsynced" className="ml-2 align-middle" />}
                     {d.notes && (
-                      <p className="text-xs text-slate-400 font-normal mt-0.5 truncate max-w-xs">{d.notes}</p>
+                      <p className="text-sm text-slate-600 font-normal mt-0.5 truncate max-w-xs">{d.notes}</p>
                     )}
                   </td>
-                  <td className="px-5 py-4 text-right tabular-nums text-slate-700 hidden sm:table-cell">
+                  <td className="px-4 lg:px-5 py-4 text-right tabular-nums text-slate-700">
                     {d.item_count}
                   </td>
-                  <td className="px-5 py-4 text-slate-500 hidden md:table-cell">
+                  <td className="px-4 lg:px-5 py-4 text-slate-600">
                     {d.created_by_name ?? '—'}
                   </td>
                 </tr>
@@ -232,6 +236,6 @@ export default function IncomingPage() {
           onDeleted={() => { setSelectedId(null); load(); }}
         />
       )}
-    </div>
+    </Page>
   );
 }

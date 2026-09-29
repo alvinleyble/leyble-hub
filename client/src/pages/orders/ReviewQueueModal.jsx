@@ -13,11 +13,12 @@ import { orderRef, orderRefFromId } from '../../utils/orderRef';
 import {
   handleStaleOrderWrite, isNewerRevision, isOneRevisionAhead, useParkedOrderOwnership,
 } from './orderConcurrency.js';
+import { formatPeso } from '../../utils/money';
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : null;
@@ -367,7 +368,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                     ${isActive
                       ? 'bg-blue-700 text-white border-blue-700'
                       : isDone
-                        ? 'bg-slate-100 text-slate-400 border-slate-200'
+                        ? 'bg-slate-100 text-slate-500 border-slate-200'
                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
                 >
                   Order {orderRefFromId(orderId, o?.receipt_number)}{isDone ? ' ✓' : ''}
@@ -378,20 +379,20 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
           <div className="flex-1 overflow-y-auto p-6">
             {!order ? (
-              <p className="text-slate-400 text-center py-20">Order not found.</p>
+              <p className="text-slate-500 text-center py-20">Order not found.</p>
             ) : (
               <div className="max-w-2xl mx-auto">
                 {/* While the Edit modal is open it carries its own copy of this warning,
                     judged by useParkedOrderOwnership — same split as OrderDetailPage. */}
                 {pendingRemoteOrder && !editing && (
                   <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="status">
-                    ⚠️ This order changed on another device. Your entries are unchanged; submitting them may be refused.
+                    This order changed on another device. Your entries are unchanged; submitting them may be refused.
                   </div>
                 )}
                 <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Order {orderRef(order)}</p>
+                      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Order {orderRef(order)}</p>
                       <p className="text-base font-semibold text-slate-800">{order.customer_name}</p>
                       {order.customer_address && <p className="text-sm text-slate-500">{order.customer_address}</p>}
                     </div>
@@ -407,7 +408,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                       {cfg.showPrint && IS_NATIVE && (
                         <button
                           onClick={handleChangePrinter}
-                          className="text-xs text-slate-400 hover:text-slate-600 underline
+                          className="text-sm text-slate-500 hover:text-slate-600 underline
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded"
                         >
                           Change printer
@@ -463,7 +464,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                             </span>
                           </div>
                           {cfg.showDeposit && b.hasDeposit && (
-                            <p className="text-xs text-slate-500 tabular-nums">
+                            <p className="text-sm text-slate-500 tabular-nums">
                               {b.unreturned > 0
                                 ? <>{PHP(b.basePrice)} + {PHP(b.depositOwed)} deposit ({b.unreturned} unreturned)</>
                                 : <>{PHP(b.basePrice)} — no deposit, all bottles returned</>}
@@ -530,7 +531,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
                 {cfg.showAdjustment && !cfg.isProcessed(order) && (
                   <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Adjustment</p>
+                    <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-3">Adjustment</p>
                     <div className="space-y-3">
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">

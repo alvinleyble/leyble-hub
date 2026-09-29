@@ -1,4 +1,5 @@
 import React from 'react';
+import NavIcon from '../layout/NavIcon';
 
 // ADR 0015 §9 — the calm amber banner every read-only-offline screen wears.
 //
@@ -32,9 +33,9 @@ export default function OfflineBanner({ message, cachedAt, children, className =
     <div
       role="status"
       className={`flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300
-                  bg-amber-50 px-5 py-4 mb-6 ${className}`}
+                  bg-amber-50 px-4 py-3 md:px-5 md:py-4 mb-4 md:mb-6 ${className}`}
     >
-      <span className="text-2xl leading-none shrink-0" aria-hidden="true">📴</span>
+      <NavIcon name="offline" className="w-7 h-7 shrink-0 text-amber-800" />
       <div className="min-w-0 flex-1">
         <p className="text-base font-semibold text-amber-900">
           {message || 'Viewing offline data · Changes sync when connected'}

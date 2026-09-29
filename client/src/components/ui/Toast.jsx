@@ -49,7 +49,7 @@ export function ToastProvider({ children }) {
                   toast.action.onClick?.();
                   dismiss(toast.id);
                 }}
-                className="shrink-0 px-2.5 py-1 text-xs font-semibold rounded border border-current opacity-90 hover:opacity-100 hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+                className="shrink-0 px-2.5 py-1 text-sm font-semibold rounded border border-current opacity-90 hover:opacity-100 hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
               >
                 {toast.action.label}
               </button>

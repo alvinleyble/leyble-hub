@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import NavIcon from '../../components/layout/NavIcon';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -183,11 +184,11 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
           <button
             onClick={onClose}
             aria-label="Close"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-500
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -199,7 +200,7 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
 
               {/* ── Delivery header fields ───────────────────────────── */}
               <div className="px-6 py-5 border-b border-slate-400 space-y-4">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Delivery Info</p>
+                <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Delivery Info</p>
 
                 <FormField label="Supplier Name" error={errors.supplierName}>
                   <input
@@ -236,7 +237,7 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
               {/* ── Line items ──────────────────────────────────────── */}
               <div className="px-6 py-5">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products Received</p>
+                  <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Products Received</p>
                   {items.length > 0 && (
                     <p className="text-sm text-slate-500">
                       {items.length} {items.length === 1 ? 'product' : 'products'}
@@ -260,7 +261,7 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
                 )}
 
                 {items.length === 0 ? (
-                  <p className="mt-4 text-sm text-slate-400 text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                  <p className="mt-4 text-sm text-slate-500 text-center py-6 bg-slate-50 rounded-lg border border-dashed border-slate-200">
                     Search above and tap products to add them to this delivery.
                   </p>
                 ) : (
@@ -278,17 +279,17 @@ export default function DeliveryFormModal({ onClose, onSaved, delivery = null })
                               {item.sku || item.product_name}
                             </p>
                             {item.sku && (
-                              <p className="text-xs text-slate-500 truncate">{item.product_name}</p>
+                              <p className="text-sm text-slate-500 truncate">{item.product_name}</p>
                             )}
                           </div>
                           <button
                             type="button"
                             onClick={() => removeItem(item._key)}
                             aria-label={`Remove ${item.sku || item.product_name}`}
-                            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+                            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-500
                                        hover:text-red-600 hover:bg-red-50 shrink-0"
                           >
-                            ✕
+                            <NavIcon name="close" className="w-6 h-6" />
                           </button>
                         </div>
 

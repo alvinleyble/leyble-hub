@@ -4,9 +4,10 @@ import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
 import Stepper from '../../components/ui/Stepper';
 import { handleStaleOrderWrite } from './orderConcurrency.js';
+import { formatPeso } from '../../utils/money';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
+const PHP = formatPeso;
 
 // Mirrors the order_items.line_total GENERATED column (migration 023) exactly:
 // quantity * unit_price + (quantity * units_per_case - bottles_returned) * unit_deposit_fee
@@ -72,7 +73,7 @@ export default function OrderCloseForm({
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Bottle Returns</p>
+      <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">Bottle Returns</p>
       <p className="text-sm text-slate-500 mb-4">
         Enter how many empty bottles were returned for each product. Enter 0 if none.
       </p>
@@ -83,7 +84,7 @@ export default function OrderCloseForm({
           return (
             <div key={item.id}>
               <p className="text-sm font-semibold text-slate-800">{item.sku || item.product_name}</p>
-              <p className="text-xs text-slate-500 mb-2">
+              <p className="text-sm text-slate-500 mb-2">
                 {b.totalBottles} total bottles ({item.quantity} cases × {item.units_per_case || 1})
               </p>
               <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -97,7 +98,7 @@ export default function OrderCloseForm({
                 label={`Bottles returned for ${item.sku || item.product_name}`}
               />
               {returnCounts[item.id] !== '' && (
-                <p className={`text-xs mt-1 tabular-nums ${b.depositOwed < 0 ? 'text-green-700' : 'text-slate-500'}`}>
+                <p className={`text-sm mt-1 tabular-nums ${b.depositOwed < 0 ? 'text-green-700' : 'text-slate-500'}`}>
                   {b.depositOwed < 0
                     ? `Credit: ${Math.abs(b.unreturned)} btls × ${PHP(Number(item.unit_deposit_fee))} = −${PHP(Math.abs(b.depositOwed))}`
                     : `Net deposit: ${b.unreturned} btls × ${PHP(Number(item.unit_deposit_fee))} = ${PHP(b.depositOwed)}`}

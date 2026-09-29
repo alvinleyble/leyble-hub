@@ -9,7 +9,9 @@ const VARIANTS = {
 };
 
 const SIZES = {
-  sm: 'min-h-[40px] px-4 text-sm',
+  // Every size is at least 48px tall (docs/design/design-standard.md, Q8); `sm` is
+  // only narrower padding, for rows of several actions.
+  sm: 'min-h-[48px] px-4 text-base',
   md: 'min-h-[48px] px-5 text-base',
   lg: 'min-h-[56px] px-6 text-lg',
 };

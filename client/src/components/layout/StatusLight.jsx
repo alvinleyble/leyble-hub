@@ -5,10 +5,11 @@ import { useOfflineStatus } from '../../offline/status.js';
 import { useSyncActivity } from '../../offline/sync.js';
 import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
 
-// D7 — the standing connection marker, now a text-less light beside the menu button.
-//
-// It used to be a pill that spelled its state out; the top tab bar has no room for
-// words, so the colour carries the state at a glance and a tap spells it out:
+// D7 — the standing connection marker: a light and one short word beside the menu
+// button. (It was text-less for a while; the UI audit, F23, flagged a colour-only
+// state, and the title row above the tabs has room for one word — the design
+// standard's "a status is never colour alone".) The colour carries the state at a
+// glance, the word names it, and a tap spells out the detail:
 //   green  — online, everything saved
 //   blue   — checking for updates, or still sending what is waiting
 //   orange — offline (receipts keep saving on the tablet)
@@ -18,6 +19,9 @@ import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
 // light's accessible name), so no state the old marker distinguished is lost.
 //
 // When V25_OFFLINE_CORE is off, renders null.
+
+// The one word shown beside the light, per colour.
+export const TONE_WORDS = { green: 'Online', blue: 'Syncing', orange: 'Offline', red: 'Attention' };
 
 const TONES = {
   green:  { dot: 'bg-emerald-400 ring-emerald-400/30', pulse: 'motion-safe:animate-status-pulse' },
@@ -96,12 +100,15 @@ export function StatusLightButton() {
         title={label}
         data-testid="status-light"
         data-tone={tone}
-        className="flex h-12 w-10 items-center justify-center rounded-lg hover:bg-slate-800
+        className="flex h-12 min-w-[48px] items-center justify-center gap-2 rounded-lg px-2 hover:bg-slate-800
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
       >
-        <span className={`block h-3.5 w-3.5 rounded-full ring-4 ${dot} ${pulse}`} aria-hidden="true" />
+        <span className={`block h-3.5 w-3.5 shrink-0 rounded-full ring-4 ${dot} ${pulse}`} aria-hidden="true" />
+        <span className="text-sm font-semibold text-slate-200" aria-hidden="true" data-testid="status-light-word">
+          {TONE_WORDS[tone]}
+        </span>
       </button>
-      {/* The light itself has no words, so its changes are announced from here. */}
+      {/* The full wording changes are announced from here. */}
       <span className="sr-only" role="status" aria-live="polite">{label}</span>
 
       {popupOpen && !hasAttention && (

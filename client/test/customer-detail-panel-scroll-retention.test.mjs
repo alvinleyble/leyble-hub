@@ -6,6 +6,18 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import { __clearOutbox } from '../src/offline/outbox.js';
 
+// Detail panels open read-only (design standard Q13, UI audit F17); the edit form is
+// behind the "Edit details" button, so a test that edits a field opens it first.
+async function openEditForm(view) {
+  const edit = view.container.querySelector('[data-testid$="-edit-details"]');
+  if (!edit) return;
+  await act(async () => {
+    edit.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 10));
+  });
+}
+
+
 const CustomerDetailPanel = (await import('../src/pages/customers/CustomerDetailPanel.jsx')).default;
 
 let originalApiGet, originalApiPatch, originalApiPost, originalApiDel, originalApiRequest;
@@ -92,6 +104,7 @@ test('CustomerDetailPanel (V1): saving customer edits refreshes silently without
   );
 
   await act(async () => { await new Promise((res) => setTimeout(res, 30)); });
+  await openEditForm(r);
 
   const scrollContainer = r.container.querySelector('.overflow-y-auto');
   assert.ok(scrollContainer, 'Scrollable container exists');

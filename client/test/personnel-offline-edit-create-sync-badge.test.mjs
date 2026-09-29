@@ -20,6 +20,18 @@ import {
 } from '../src/offline/queuedPersonnel.js';
 import { applyCatalogueDelta } from '../src/offline/catalogue.js';
 
+// Detail panels open read-only (design standard Q13, UI audit F17); the edit form is
+// behind the "Edit details" button, so a test that edits a field opens it first.
+async function openEditForm(view) {
+  const edit = view.container.querySelector('[data-testid$="-edit-details"]');
+  if (!edit) return;
+  await act(async () => {
+    edit.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await new Promise((res) => setTimeout(res, 10));
+  });
+}
+
+
 const PersonnelPage        = (await import('../src/pages/personnel/PersonnelPage.jsx')).default;
 const PersonnelFormModal   = (await import('../src/pages/personnel/PersonnelFormModal.jsx')).default;
 const PersonnelDetailPanel = (await import('../src/pages/personnel/PersonnelDetailPanel.jsx')).default;
@@ -195,6 +207,7 @@ test('PersonnelDetailPanel: editing the phone/remarks offline queues via the out
     personnelId: PERSON.id, onClose() {}, onSaved() {}, cachedPerson: PERSON,
   })));
   await settle(20);
+  await openEditForm(r);
 
   const phoneInput = r.all('input[type="tel"]')[0];
   act(() => { changeInput(phoneInput, '09990001111'); });
@@ -222,6 +235,7 @@ test('PersonnelDetailPanel: the active toggle and photo upload stay disabled off
     personnelId: PERSON.id, onClose() {}, onSaved() {}, cachedPerson: PERSON,
   })));
   await settle(20);
+  await openEditForm(r);
 
   const toggle = r.container.querySelector('#pers_active');
   assert.equal(toggle.disabled, true, 'rule 9.2 — deactivating needs a connection');
