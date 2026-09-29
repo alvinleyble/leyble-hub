@@ -107,9 +107,9 @@ function OrdersTableSkeleton() {
             <th className="px-4 py-3"><Skeleton className="h-3 w-16" /></th>
             <th className="px-4 py-3 w-28"><Skeleton className="h-3 w-14" /></th>
             <th className="px-4 py-3 w-32"><Skeleton className="h-3 w-12 ml-auto" /></th>
-            <th className="px-4 py-3 w-40"><Skeleton className="h-3 w-12" /></th>
+            <th className="px-4 py-3 w-48"><Skeleton className="h-3 w-12" /></th>
             <th className="px-4 py-3 w-36"><Skeleton className="h-3 w-14" /></th>
-            <th className="px-4 py-3 w-48"><Skeleton className="h-3 w-14" /></th>
+            <th className="px-4 py-3 w-44"><Skeleton className="h-3 w-14" /></th>
           </tr>
         </thead>
         <tbody>
@@ -119,9 +119,9 @@ function OrdersTableSkeleton() {
               <td className="px-4 py-4"><Skeleton className="h-4 w-32" /></td>
               <td className="px-4 py-4 w-28"><Skeleton className="h-4 w-20" /></td>
               <td className="px-4 py-4 w-32"><Skeleton className="h-4 w-20 ml-auto" /></td>
-              <td className="px-4 py-4 w-40"><Skeleton className="h-4 w-28" /></td>
+              <td className="px-4 py-4 w-48"><Skeleton className="h-4 w-36" /></td>
               <td className="px-4 py-4 w-36"><Skeleton className="h-5 w-24 rounded-full" /></td>
-              <td className="px-4 py-4 w-48"><Skeleton className="h-5 w-24 rounded-full" /></td>
+              <td className="px-4 py-4 w-44"><Skeleton className="h-5 w-24 rounded-full" /></td>
             </tr>
           ))}
         </tbody>
@@ -1005,11 +1005,11 @@ export default function OrdersPage() {
                 <th className="text-left px-4 py-3 font-semibold">Customer</th>
                 <th className="text-left px-4 py-3 font-semibold w-28">Sold by</th>
                 <th className="text-right px-4 py-3 font-semibold w-32">Total</th>
-                <th className="text-left px-4 py-3 font-semibold w-40">Date</th>
+                <th className="text-left px-4 py-3 font-semibold w-48">Date</th>
                 {/* Round-8 grill: print status is its own column. Its filter stays in
                     the Filters panel (design standard Q3), never in this header. */}
                 <th className="text-left px-4 py-3 font-semibold w-36">Print Status</th>
-                <th className="text-left px-4 py-3 font-semibold w-48">Status</th>
+                <th className="text-left px-4 py-3 font-semibold w-44">Status</th>
                 {statusTab === 'draft' && <th className="px-4 py-3 w-28" />}
               </tr>
             </thead>
@@ -1034,11 +1034,11 @@ export default function OrdersPage() {
                   <td className="px-4 py-4 text-right font-bold text-slate-900 tabular-nums whitespace-nowrap w-32">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums w-40">
+                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums whitespace-nowrap w-48">
                     {formatTableDateTime(o.created_at)}
                   </td>
                   <td className="px-4 py-4 w-36"><PrintStatus order={o} /></td>
-                  <td className="px-4 py-4 w-48">
+                  <td className="px-4 py-4 w-44">
                     <div className="flex flex-wrap gap-1.5 items-center">
                       <TagBadge kind="unsynced" />
                       {o.order_type === 'pickup' && <TagBadge kind="pickup" />}
@@ -1087,11 +1087,11 @@ export default function OrdersPage() {
                   <td className="px-4 py-4 text-right font-bold text-slate-900 tabular-nums whitespace-nowrap w-32">
                     {PHP(Number(o.total_amount) + Number(o.adjustment || 0))}
                   </td>
-                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums w-40">
+                  <td className="px-4 py-4 text-sm text-slate-600 tabular-nums whitespace-nowrap w-48">
                     {formatTableDateTime(o.created_at)}
                   </td>
                   <td className="px-4 py-4 w-36"><PrintStatus order={o} /></td>
-                  <td className="px-4 py-4 w-48">
+                  <td className="px-4 py-4 w-44">
                     <div className="flex flex-wrap gap-1.5 items-center">
                       <StatusBadge status={o.status} />
                       {o._local && <TagBadge kind="unsynced" />}
