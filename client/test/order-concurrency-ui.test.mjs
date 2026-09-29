@@ -258,6 +258,16 @@ const settle = () => act(async () => { await new Promise((resolve) => setTimeout
 
 const adjustable = (overrides = {}) => order({ status: 'completed', ...overrides });
 
+// A saved adjustment now opens as a read-only line with an Edit button (design
+// standard Q13, UI audit F16), so an entry starts by opening the form.
+async function openAdjustment(r) {
+  if (r.container.querySelector('input[type="number"]')) return;
+  const open = [...r.container.querySelectorAll('button')]
+    .find((b) => ['Edit', '+ Add Adjustment'].includes(b.textContent.trim()));
+  r.click(open);
+  await settle();
+}
+
 function typeAdjustment(r, amount, reason) {
   act(() => changeInput(r.container.querySelector('input[type="number"]'), amount));
   if (reason !== undefined) act(() => changeInput(r.container.querySelector('textarea'), reason));
@@ -283,6 +293,7 @@ test('a saved adjustment echoed back by the delta is this device and raises no w
 
   // Begin a second edit before the poll catches up: the screen is now dirty, which is
   // the only state in which a matched delta is announced rather than quietly adopted.
+  await openAdjustment(r);
   typeAdjustment(r, '-60');
 
   // The next foreground poll returns the order this device just wrote, at the very
@@ -305,13 +316,15 @@ test('editing an existing adjustment takes the same path and is likewise silent'
 
   const r = renderDetail();
   await settle();
-  // A non-zero adjustment auto-expands the panel on load, so this is the same form.
-  assert.ok(r.container.querySelector('input[type="number"]'));
+  // A non-zero adjustment opens as a read-only line; Edit opens the same form.
+  assert.equal(r.container.querySelector('input[type="number"]'), null, 'closed by default');
+  await openAdjustment(r);
   typeAdjustment(r, '-75', 'Negotiated more');
   r.click(r.button('Save Adjustment'));
   await settle();
 
   // Dirty again before the echo lands, for the same reason as the case above.
+  await openAdjustment(r);
   typeAdjustment(r, '-80');
 
   act(() => window.dispatchEvent(new window.CustomEvent('leyble:orders-changed', {
@@ -330,6 +343,7 @@ test('a strictly newer revision from another device still raises the warning', a
   await settle();
   // The real case the warning exists for: an entry in progress, NOT yet saved, when
   // another tablet moves the same order underneath it.
+  await openAdjustment(r);
   typeAdjustment(r, '-75', 'More');
 
   // Another tablet dispatched it: 8 is newer than the 6 this device holds.
@@ -352,12 +366,14 @@ test('a delta page carrying an OLDER revision is ignored, never adopted backward
 
   const r = renderDetail();
   await settle();
+  await openAdjustment(r);
   typeAdjustment(r, '-75', 'More');
   r.click(r.button('Save Adjustment'));
   await settle();
 
   // Dirty again, so the stale page is weighed by the predicate rather than waved
   // through by an idle screen.
+  await openAdjustment(r);
   typeAdjustment(r, '-80');
 
   // A page fetched before the save landed. Warning on it would be false, and adopting
@@ -382,6 +398,7 @@ test('clearing an adjustment to zero collapses the panel and its own echo stays 
 
   const r = renderDetail();
   await settle();
+  await openAdjustment(r);
   typeAdjustment(r, '0');
   r.click(r.button('Save Adjustment'));
   await settle();
@@ -430,9 +447,10 @@ test('a background drain never discards the adjustment the operator is still typ
 });
 
 test('a drain re-read is not deferred merely because the order carries an adjustment', async () => {
-  // The panel auto-expands for any non-zero adjustment, with nobody having touched it.
-  // Gating the deferral on that display state stranded the silent sync forever on every
-  // such order — including the one thing it exists for, clearing "Waiting to sync".
+  // A non-zero adjustment on an order nobody has touched. (The panel used to open itself
+  // for one; gating the deferral on that display state stranded the silent sync forever
+  // on every such order — including the one thing it exists for, clearing "Waiting to
+  // sync". It now opens closed, and the re-read must still run immediately.)
   stubReads(adjustable({ revision: '6', adjustment: -50, adjustment_reason: 'Negotiated' }));
   let reads = 0;
   const get = api.get;
@@ -440,7 +458,7 @@ test('a drain re-read is not deferred merely because the order carries an adjust
 
   const r = renderDetail();
   await settle();
-  assert.ok(r.container.querySelector('input[type="number"]'), 'the panel auto-expanded');
+  assert.match(r.text(), /Negotiated/, 'the saved adjustment is on screen as a read-only line');
   assert.equal(reads, 1);
 
   act(() => window.dispatchEvent(new window.CustomEvent('leyble:drain-complete', {
@@ -464,7 +482,8 @@ test('cancelling an adjustment entry discards it instead of leaving it to be sav
 
   const r = renderDetail();
   await settle();
-  // The panel auto-expands for the saved -50; type over it, then change your mind.
+  // Open the saved -50 for editing; type over it, then change your mind.
+  await openAdjustment(r);
   typeAdjustment(r, '-75', 'Thrown away');
   r.click(r.button('Cancel'));
   await settle();

@@ -2,7 +2,11 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useRefreshListener } from '../../offline/refresh';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
-import Button from '../../components/ui/Button';
+import Page from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
+import SearchFilterBar from '../../components/ui/SearchFilterBar';
+import ListCard from '../../components/ui/ListCard';
+import { TagBadge } from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import OfflineBanner from '../../components/ui/OfflineBanner';
 import PersonnelFormModal from './PersonnelFormModal';
@@ -90,159 +94,98 @@ export default function PersonnelPage() {
     ),
   ];
 
+  const openPerson = (p) => {
+    // A still-queued personnel record has no server row yet: opening the edit panel
+    // would 404 against a `local-` id, so tell the operator why instead of trying
+    // (mirrors CustomersPage's G29).
+    if (p._unsynced) {
+      addToast('Personnel is queued for sync — details and editing will be available once connected.', 'info');
+      return;
+    }
+    setSelectedId(p.id);
+  };
+
+  const statusBadge = (p) => ((p._unsynced || pendingEditIds.has(String(p.id)))
+    ? <TagBadge kind="unsynced" />
+    : p.is_active ? <TagBadge kind="active" /> : <TagBadge kind="inactive" />);
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Personnel</h1>
-        <Button onClick={() => setCreating(true)}>
-          + Add Personnel
-        </Button>
-      </div>
+    <Page>
+      <PageHeader title="Personnel" primary={{ label: '+ Add Personnel', onClick: () => setCreating(true) }} />
 
       {fromCache && <OfflineBanner />}
 
-      {/* Filters */}
-      <div className="flex flex-row gap-3 mb-6">
-        <input
-          type="search"
-          placeholder="Search by name…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
-                     focus:outline-none focus:ring-2 focus:ring-blue-600"
-          aria-label="Search personnel"
-          data-testid="personnel-search-input"
-        />
-        {/* Phone width: compact inline switch beside the search bar. */}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={showInactive}
-          onClick={() => setShowInactive((v) => !v)}
-          className="lg:hidden flex items-center gap-2 h-12 px-3 shrink-0 rounded-lg border border-slate-300
-                     bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-        >
-          <span className="text-sm font-medium text-slate-700 whitespace-nowrap">Inactive</span>
-          <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors
-                            ${showInactive ? 'bg-blue-700' : 'bg-slate-300'}`}>
-            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform
-                              ${showInactive ? 'translate-x-5' : 'translate-x-0.5'}`} />
-          </span>
-        </button>
-        {/* Tablet: original box, unchanged. */}
-        <label className="hidden lg:flex items-center gap-3 h-12 px-4 border border-slate-300 rounded-lg
-                          bg-white cursor-pointer select-none">
-          <input
-            type="checkbox" checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-            className="w-6 h-6 accent-blue-700"
-          />
-          <span className="text-base text-slate-700 font-medium whitespace-nowrap">Show inactive</span>
-        </label>
-      </div>
+      {/* Search + Filters (Q3) — "Show inactive" in the panel (UI audit F6). */}
+      <SearchFilterBar
+        className="mb-4 md:mb-6"
+        value={search}
+        onChange={setSearch}
+        placeholder="Name"
+        ariaLabel="Search personnel"
+        testId="personnel-search-input"
+        active={showInactive ? [{ key: 'inactive', label: 'Showing inactive', onRemove: () => setShowInactive(false) }] : []}
+        panel={(
+          <label className="flex items-center gap-3 min-h-[48px] cursor-pointer select-none">
+            <input
+              type="checkbox" checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="w-6 h-6 accent-blue-700"
+            />
+            <span className="text-base text-slate-800 font-medium">Show inactive personnel</span>
+          </label>
+        )}
+      />
 
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center h-64"><Spinner size="lg" /></div>
       ) : filtered.length === 0 ? (
-        <p className="text-center text-slate-400 text-base py-20">
+        <p className="text-center text-slate-500 text-base py-20">
           {search ? 'No personnel match your search.' : 'No personnel yet. Add someone to get started.'}
         </p>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="personnel-list">
-          {/* Phone-width cards (D5) — same rows/testids as the table below, hidden at lg */}
+          {/* Phone + upright-tablet rows (D5; tables from 1024px). Personnel keeps its
+              previous row (round-8 grill): name, mobile or an em dash, and the one
+              status badge on the right — Waiting to sync, Active or Inactive. */}
           <div className="lg:hidden divide-y divide-slate-200">
             {filtered.map((p) => (
-              <div
+              <ListCard
                 key={p.id}
-                onClick={() => {
-                  if (p._unsynced) {
-                    addToast('Personnel is queued for sync — details and editing will be available once connected.', 'info');
-                    return;
-                  }
-                  setSelectedId(p.id);
-                }}
+                onClick={() => openPerson(p)}
                 data-testid="personnel-row"
-                className="p-4 active:bg-blue-50 cursor-pointer flex items-center justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <p className={`font-semibold truncate ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
-                    {p.full_name}
-                  </p>
-                  <p className="text-sm text-slate-500 mt-0.5">{p.phone ?? '—'}</p>
-                </div>
-                {(p._unsynced || pendingEditIds.has(String(p.id))) ? (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
-                                    bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
-                    ⏳ Waiting to sync
-                  </span>
-                ) : p.is_active ? (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
-                                    bg-green-100 text-green-800 border border-green-300 shrink-0">
-                    Active
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
-                                    bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
-                    Inactive
-                  </span>
-                )}
-              </div>
+                title={<span className={p.is_active ? '' : 'text-slate-500 line-through'}>{p.full_name}</span>}
+                meta={p.phone || '—'}
+                aside={statusBadge(p)}
+              />
             ))}
           </div>
 
           <table className="hidden lg:table w-full text-base">
             <thead>
-              <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider border-b border-slate-400">
-                <th className="text-left px-5 py-3 font-semibold">Name</th>
-                <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Phone</th>
-                <th className="text-left px-5 py-3 font-semibold">Status</th>
+              <tr className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider border-b border-slate-400">
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Name</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Phone</th>
+                <th className="text-left px-4 lg:px-5 py-3 font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((p) => (
                 <tr
                   key={p.id}
-                  onClick={() => {
-                    // A still-queued personnel record has no server row yet: opening
-                    // the edit panel would 404 against a `local-` id, so tell the
-                    // operator why instead of trying (mirrors CustomersPage's G29).
-                    if (p._unsynced) {
-                      addToast('Personnel is queued for sync — details and editing will be available once connected.', 'info');
-                      return;
-                    }
-                    setSelectedId(p.id);
-                  }}
+                  onClick={() => openPerson(p)}
                   data-testid="personnel-row"
                   className="border-t border-slate-300 hover:bg-blue-50 cursor-pointer transition-colors"
                 >
-                  <td className="px-5 py-4">
-                    <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                  <td className="px-4 lg:px-5 py-4">
+                    <p className={`font-semibold ${p.is_active ? 'text-slate-900' : 'text-slate-500 line-through'}`}>
                       {p.full_name}
                     </p>
                   </td>
-                  <td className="px-5 py-4 text-slate-500 hidden md:table-cell">
-                    {p.phone ?? '—'}
+                  <td className="px-4 lg:px-5 py-4 text-slate-600">
+                    {p.phone || '—'}
                   </td>
-                  <td className="px-5 py-4">
-                    {(p._unsynced || pendingEditIds.has(String(p.id))) ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
-                                        bg-amber-100 text-amber-800 border border-amber-300">
-                        ⏳ Waiting to sync
-                      </span>
-                    ) : p.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
-                                        bg-green-100 text-green-800 border border-green-300">
-                        Active
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold
-                                        bg-slate-100 text-slate-500 border border-slate-200">
-                        Inactive
-                      </span>
-                    )}
-                  </td>
+                  <td className="px-4 lg:px-5 py-4">{statusBadge(p)}</td>
                 </tr>
               ))}
             </tbody>
@@ -265,6 +208,6 @@ export default function PersonnelPage() {
           cachedPerson={personnel.find((p) => String(p.id) === String(selectedId)) || null}
         />
       )}
-    </div>
+    </Page>
   );
 }

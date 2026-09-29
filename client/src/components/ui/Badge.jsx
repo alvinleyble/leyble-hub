@@ -1,43 +1,62 @@
 import React from 'react';
+import NavIcon from '../layout/NavIcon';
+import {
+  orderStatusBadge, ticketStatusBadge, stockBadge, tagBadge, toneClass,
+} from '../../utils/statusBadges';
 
-// Status badges: always pair color WITH text — never color alone.
-const STATUS_STYLES = {
-  pending:    'bg-amber-100 text-amber-800 border border-amber-300',
-  in_transit: 'bg-blue-100  text-blue-800  border border-blue-300',
-  completed:  'bg-green-100 text-green-800 border border-green-300',
-  done:       'bg-slate-100 text-slate-600 border border-slate-300',
-  cancelled:  'bg-red-100   text-red-800   border border-red-300',
+// Every badge in the app is one of these (docs/design/design-standard.md, Q5): a
+// pill with a colour AND a word, 14px text, never wrapping. The colour/word pairs
+// live in utils/statusBadges.js so no screen keeps its own copy.
+const PILL = 'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-sm font-semibold border whitespace-nowrap';
+
+const TAG_ICONS = {
+  pickup: 'store',
+  delivery: 'truck',
+  printed: 'printer',
+  notPrinted: 'printer',
+  unsynced: 'clock',
+  duplicate: 'warning',
 };
 
-const STATUS_LABELS = {
-  pending:    'Pending',
-  in_transit: 'In Transit',
-  completed:  'Completed',
-  done:       'Done',
-  cancelled:  'Cancelled',
-};
+export function StatusBadge({ status, className = '', ...props }) {
+  const { label, className: tone } = orderStatusBadge(status);
+  return <span className={`${PILL} ${tone} ${className}`} {...props}>{label}</span>;
+}
 
-export function StatusBadge({ status }) {
-  const style = STATUS_STYLES[status] ?? 'bg-slate-100 text-slate-600 border border-slate-200';
-  const label = STATUS_LABELS[status] ?? status;
+export function TicketStatusBadge({ status, className = '', ...props }) {
+  const { label, className: tone } = ticketStatusBadge(status);
+  return <span className={`${PILL} ${tone} ${className}`} {...props}>{label}</span>;
+}
+
+// Nothing for ordinary stock: a badge is only shown when something is unusual (Q6).
+export function StockBadge({ stock, className = '' }) {
+  const b = stockBadge(stock);
+  if (!b) return null;
+  return <span className={`${PILL} ${b.className} ${className}`}>{b.label}</span>;
+}
+
+export function TagBadge({ kind, children, className = '', as: As = 'span', ...props }) {
+  const { label, className: tone } = tagBadge(kind);
+  const icon = TAG_ICONS[kind];
   return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold whitespace-nowrap ${style}`}>
-      {label}
-    </span>
+    <As className={`${PILL} ${tone} ${className}`} {...props}>
+      {icon && <NavIcon name={icon} className="w-4 h-4 shrink-0" />}
+      {children ?? label}
+    </As>
   );
 }
 
-const BADGE_STYLES = {
-  default: 'bg-slate-100 text-slate-700 border border-slate-200',
-  info:    'bg-blue-100  text-blue-800  border border-blue-300',
-  success: 'bg-green-100 text-green-800 border border-green-300',
-  warning: 'bg-amber-100 text-amber-800 border border-amber-300',
-  danger:  'bg-red-100   text-red-800   border border-red-300',
+const BADGE_TONES = {
+  default: 'slate',
+  info:    'blue',
+  success: 'green',
+  warning: 'amber',
+  danger:  'red',
 };
 
 export function Badge({ children, variant = 'default', className = '' }) {
   return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold ${BADGE_STYLES[variant] ?? BADGE_STYLES.default} ${className}`}>
+    <span className={`${PILL} ${toneClass(BADGE_TONES[variant] ?? 'slate')} ${className}`}>
       {children}
     </span>
   );

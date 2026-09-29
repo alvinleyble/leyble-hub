@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import NavIcon from '../components/layout/NavIcon';
+import Page from '../components/ui/Page';
 import SettingsList, { SETTINGS_SCREENS } from './settings/SettingsList';
 import ProfileSection from './settings/ProfileSection';
 import PrinterSection from './settings/PrinterSection';
@@ -32,7 +33,8 @@ export default function SettingsPage() {
   if (!screen) return <Navigate to="/settings" replace />;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <Page>
+      <div className="max-w-3xl">
       <Link
         to="/settings"
         className="-ml-2 inline-flex min-h-[48px] items-center gap-1 rounded-lg px-2 text-base font-semibold text-blue-700
@@ -42,13 +44,14 @@ export default function SettingsPage() {
         <NavIcon name="chevronLeft" className="h-5 w-5" />
         Settings
       </Link>
-      <h1 id="settings-screen-title" className="mt-1 mb-6 text-2xl font-bold text-slate-900">
+      <h1 id="settings-screen-title" className="mt-1 mb-4 md:mb-6 text-xl md:text-2xl font-bold text-slate-900">
         {screen.title}
       </h1>
       {section === 'profile' && <ProfileSection />}
       {section === 'printer' && <PrinterSection deviceSeries={receiptSummary?.series || null} />}
       {section === 'device' && <DeviceSection summary={receiptSummary} />}
       {section === 'about' && <AboutSection />}
-    </div>
+      </div>
+    </Page>
   );
 }

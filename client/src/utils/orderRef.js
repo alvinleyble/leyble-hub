@@ -38,3 +38,14 @@ export function orderRefWith(order, offlineCoreEnabled) {
 export function orderRefFromId(id, receiptNumber) {
   return orderRef({ id, receipt_number: receiptNumber });
 }
+
+// Receipt numbers written inside free text (a ticket title such as "Short payment —
+// Order 2A-00002") must not break across lines at their hyphen: "Order 2A-" on one
+// line and "00002" on the next reads as two numbers (UI audit F19). Swapping the
+// hyphen for a non-breaking one (U+2011) keeps each reference whole; the text still
+// reads, copies and searches the same to a person.
+const REF_IN_TEXT = /\b(\d+[A-Z]{0,2})-((?:DEL-)?\d{3,})\b/g;
+export function keepRefsWhole(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(REF_IN_TEXT, (_, prefix, seq) => `${prefix}‑${seq.replace('-', '‑')}`);
+}

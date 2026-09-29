@@ -227,7 +227,7 @@ export default function Combobox({
             )
           ))}
           {matches.length === 0 && !canCreate && (
-            <li className="px-4 py-3 text-sm text-slate-400">{emptyText}</li>
+            <li className="px-4 py-3 text-sm text-slate-500">{emptyText}</li>
           )}
           {canCreate && (
             <li role="option" aria-selected={false}>

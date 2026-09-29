@@ -41,7 +41,7 @@ export default function DangerZoneDelete({ endpoint, entityLabel, onDeleted, dis
 
   return (
     <div className="px-6 py-5 border-t border-slate-400">
-      <p className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</p>
+      <p className="text-sm font-bold text-red-400 uppercase tracking-widest mb-3">Danger Zone</p>
 
       {!confirming ? (
         <>

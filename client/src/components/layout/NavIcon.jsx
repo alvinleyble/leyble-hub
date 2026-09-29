@@ -106,6 +106,96 @@ const PATHS = {
   chevronLeft: <path d="M15 5l-7 7 7 7" />,
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  // Buttons and badges (docs/design/design-standard.md, Q10: one drawn icon set, no
+  // emoji as icons). `printer` above doubles as the print action and the Printed badge.
+  more: (
+    <>
+      <circle cx="12" cy="5" r="1.2" />
+      <circle cx="12" cy="12" r="1.2" />
+      <circle cx="12" cy="19" r="1.2" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5" />
+    </>
+  ),
+  filter: <path d="M3.5 5.5h17M7 12h10M10.5 18.5h3" />,
+  warning: (
+    <>
+      <path d="M12 3.5l9.5 16.5h-19z" />
+      <path d="M12 10v4.5" />
+      <path d="M12 17.5h.01" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </>
+  ),
+  draft: (
+    <>
+      <path d="M14.5 3.5h-8a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-10z" />
+      <path d="M14.5 3.5v5h5" />
+      <path d="M8.5 13.5h7M8.5 17h4" />
+    </>
+  ),
+  truck: (
+    <>
+      <path d="M2.5 6.5h11v10h-11z" />
+      <path d="M13.5 9.5h4l3 3.5v3.5h-7" />
+      <circle cx="6.5" cy="17.5" r="2" />
+      <circle cx="17" cy="17.5" r="2" />
+    </>
+  ),
+  store: (
+    <>
+      <path d="M3.5 9.5l1.5-5h14l1.5 5" />
+      <path d="M3.5 9.5h17v2a3 3 0 0 1-5.7 1.3A3 3 0 0 1 12 14a3 3 0 0 1-2.8-1.2 3 3 0 0 1-5.7-1.3z" />
+      <path d="M5 14v6.5h14V14" />
+      <path d="M10 20.5v-4h4v4" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M20 11a8 8 0 0 0-14.3-4.9L3.5 8.5" />
+      <path d="M3.5 3.5v5h5" />
+      <path d="M4 13a8 8 0 0 0 14.3 4.9l2.2-2.4" />
+      <path d="M20.5 20.5v-5h-5" />
+    </>
+  ),
+  merge: (
+    <>
+      <path d="M6 3.5v4a4 4 0 0 0 4 4h4a4 4 0 0 1 4 4v5" />
+      <path d="M6 20.5v-9" />
+      <path d="M15 17.5l3 3 3-3" />
+    </>
+  ),
+  scale: (
+    <>
+      <path d="M12 3.5v17M7.5 20.5h9" />
+      <path d="M4.5 7.5h15" />
+      <path d="M4.5 7.5l-2.5 6a2.5 2.5 0 0 0 5 0z" />
+      <path d="M19.5 7.5l-2.5 6a2.5 2.5 0 0 0 5 0z" />
+    </>
+  ),
+  offline: (
+    <>
+      <path d="M3 3l18 18" />
+      <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+      <path d="M5 12.5a10 10 0 0 1 4-2.3M14.5 10.3A10 10 0 0 1 19 12.5" />
+      <path d="M12 20h.01" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M4 20h4L19 9l-4-4L4 16z" />
+      <path d="M13.5 6.5l4 4" />
+    </>
+  ),
+  check: <path d="M4.5 12.5l5 5 10-11" />,
 };
 
 export default function NavIcon({ name, className = 'w-6 h-6' }) {

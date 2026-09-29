@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import NavIcon from '../../components/layout/NavIcon';
+import Page from '../../components/ui/Page';
+import PageHeader from '../../components/ui/PageHeader';
 import { usePrinter } from '../../context/PrinterContext';
 import { getAppInfo } from '../../version/appVersion';
 
@@ -48,9 +50,11 @@ export default function SettingsList({
   };
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Settings</h1>
-      <nav aria-label="Settings">
+    // Same page frame and header as every other screen (UI audit F23: this was the
+    // one page drawn as a centred column); the list itself keeps a readable width.
+    <Page>
+      <PageHeader title="Settings" />
+      <nav aria-label="Settings" className="max-w-3xl">
         <ul className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           {SETTINGS_SCREENS.map(({ id, title, icon }) => (
             <li key={id}>
@@ -65,16 +69,16 @@ export default function SettingsList({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-lg font-semibold text-slate-900">{title}</span>
-                  <span className="block truncate text-base text-slate-600" data-testid={`settings-row-${id}-summary`}>
+                  <span className="block break-words text-base text-slate-600" data-testid={`settings-row-${id}-summary`}>
                     {summaries[id]}
                   </span>
                 </span>
-                <NavIcon name="chevronRight" className="h-5 w-5 shrink-0 text-slate-400" />
+                <NavIcon name="chevronRight" className="h-5 w-5 shrink-0 text-slate-500" />
               </Link>
             </li>
           ))}
         </ul>
       </nav>
-    </div>
+    </Page>
   );
 }

@@ -2,6 +2,10 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
+import { DetailList, SectionHeading } from '../../components/ui/DetailList';
+import { StatusBadge, TagBadge } from '../../components/ui/Badge';
+import NavIcon from '../../components/layout/NavIcon';
+import { formatPeso } from '../../utils/money';
 import FormField from '../../components/ui/FormField';
 import Spinner from '../../components/ui/Spinner';
 import DangerZoneDelete from '../../components/ui/DangerZoneDelete';
@@ -9,19 +13,10 @@ import OfflineBanner from '../../components/ui/OfflineBanner';
 import { checkIsOnline } from '../../offline/status.js';
 import { updatePersonnelLocalFirst } from '../../offline/queuedPersonnel.js';
 
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const PHP = formatPeso;
 
 const INPUT = `w-full h-12 px-4 border border-slate-300 rounded-lg text-base text-slate-900
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
-
-const ORDER_STATUS = {
-  pending:    { label: 'Pending',    color: 'bg-blue-100 text-blue-800 border-blue-300' },
-  in_transit: { label: 'In Transit', color: 'bg-amber-100 text-amber-800 border-amber-300' },
-  completed:  { label: 'Delivered',  color: 'bg-green-100 text-green-800 border-green-300' },
-  done:       { label: 'Closed',     color: 'bg-slate-100 text-slate-600 border-slate-200' },
-  cancelled:  { label: 'Cancelled',  color: 'bg-red-100 text-red-700 border-red-300' },
-};
 
 const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
 
@@ -35,6 +30,8 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
   const [form, setForm]               = useState(null);
   const [formErrors, setFormErrors]   = useState({});
   const [saving, setSaving]           = useState(false);
+  // Read first, edit on request (design standard Q13, UI audit F17).
+  const [editing, setEditing]         = useState(false);
 
   // Image upload state — separate from form so we only send if changed
   const [imageUpload, setImageUpload] = useState(null); // { b64, mime }
@@ -164,6 +161,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
         'success'
       );
       onSaved();
+      setEditing(false);
       load();
     } catch (err) {
       addToast(err.message || 'Failed to update.', 'error');
@@ -177,6 +175,21 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
     : null;
 
   const displayImageSrc = imagePreview ?? existingImageSrc;
+
+  // Leaving the form without saving puts back what the record holds, photo included.
+  const cancelEditing = () => {
+    setForm({
+      full_name:      person.full_name,
+      remarks:        person.remarks ?? '',
+      phone:          person.phone ?? '',
+      license_number: person.license_number ?? '',
+      is_active:      person.is_active,
+    });
+    setImageUpload(null);
+    setImagePreview(null);
+    setFormErrors({});
+    setEditing(false);
+  };
 
   return (
     <>
@@ -194,11 +207,11 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
           </h2>
           <button
             onClick={onClose} aria-label="Close panel"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
-                       hover:text-slate-700 hover:bg-slate-100
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-600
+                       hover:text-slate-900 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -225,21 +238,40 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
 
             {/* ── Summary bar ───────────────────────────────────── */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-400 flex items-center gap-3 flex-wrap">
-              {person.is_active === false && (
-                <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold
-                                  bg-red-100 text-red-700 border border-red-300">
-                  Inactive
-                </span>
-              )}
-              <span className="text-sm text-slate-400 ml-auto">
+              {person.is_active === false && <TagBadge kind="inactive" />}
+              <span className="text-sm text-slate-500 ml-auto">
                 {(orderHistory || []).length} order{(orderHistory || []).length !== 1 ? 's' : ''}
               </span>
             </div>
 
-            {/* ── Edit form ─────────────────────────────────────── */}
+            {/* ── Details: read first, Edit to change (design standard Q13) ── */}
+            {!editing ? (
+              <div className="px-6 py-5 border-b border-slate-400" data-testid="personnel-details-summary">
+                <SectionHeading title="Details" onEdit={() => setEditing(true)} editLabel="Edit details"
+                                testId="personnel-edit-details" />
+                <DetailList items={[
+                  { label: 'Full Name', value: person.full_name, wide: true },
+                  { label: 'Remarks', value: person.remarks },
+                  { label: 'Phone', value: person.phone },
+                  { label: 'License / ID Number', value: person.license_number },
+                  { label: 'Status', value: person.is_active === false
+                    ? <TagBadge kind="inactive" /> : <TagBadge kind="active" /> },
+                ]} />
+                <p className="mt-4 text-sm font-semibold text-slate-600">ID Photo</p>
+                {existingImageSrc ? (
+                  <img
+                    src={existingImageSrc}
+                    alt="ID document"
+                    className="mt-1 w-full max-h-64 object-contain rounded-lg border border-slate-200 bg-slate-50"
+                  />
+                ) : (
+                  <p className="mt-0.5 text-base text-slate-900">No ID photo uploaded yet.</p>
+                )}
+              </div>
+            ) : (
             <form onSubmit={handleSave} noValidate>
               <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Details</p>
+                <SectionHeading title="Details" />
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
                   <FormField label="Full Name" required error={formErrors.full_name} className="sm:col-span-2">
@@ -272,7 +304,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
                       <label
                         htmlFor="pers_active"
                         className={`text-base font-medium ${mutationsBlocked
-                          ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
+                          ? 'text-slate-500 cursor-not-allowed' : 'text-slate-700 cursor-pointer'}`}
                       >
                         Active (can be assigned to orders)
                       </label>
@@ -289,7 +321,7 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
 
               {/* ── ID Photo ──────────────────────────────────────── */}
               <div className="px-6 py-5 border-b border-slate-400">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">ID Photo</p>
+                <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">ID Photo</p>
 
                 {displayImageSrc ? (
                   <div className="mb-4">
@@ -299,13 +331,13 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
                       className="w-full max-h-64 object-contain rounded-lg border border-slate-200 bg-slate-50"
                     />
                     {imageUpload && (
-                      <p className="text-xs text-amber-700 mt-2 font-medium">
+                      <p className="text-sm text-amber-700 mt-2 font-medium">
                         New image ready — will be saved when you click Save Changes.
                       </p>
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-400 mb-4">No ID photo uploaded yet.</p>
+                  <p className="text-sm text-slate-500 mb-4">No ID photo uploaded yet.</p>
                 )}
 
                 <input
@@ -326,37 +358,33 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
                 >
                   {displayImageSrc ? 'Replace Photo' : 'Upload Photo'}
                 </Button>
-                <p className="text-xs text-slate-400 mt-2">JPEG, PNG, or WebP — max 2 MB</p>
+                <p className="text-sm text-slate-500 mt-2">JPEG, PNG, or WebP — max 2 MB</p>
               </div>
 
-              <div className="px-6 py-4 flex justify-end border-b border-slate-400">
+              <div className="px-6 py-4 flex justify-end gap-2 border-b border-slate-400">
+                <Button variant="secondary" onClick={cancelEditing} disabled={saving}>Cancel</Button>
                 <Button type="submit" loading={saving}>Save Changes</Button>
               </div>
             </form>
+            )}
 
             {/* ── Order History ─────────────────────────────────── */}
             <div className="px-6 py-5">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">
+              <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">
                 Order History ({(orderHistory || []).length})
               </p>
               {(orderHistory || []).length === 0 ? (
-                <p className="text-sm text-slate-400">No orders assigned yet.</p>
+                <p className="text-sm text-slate-500">No orders assigned yet.</p>
               ) : (
                 <ol className="space-y-3">
                   {(orderHistory || []).map((o) => {
-                    const st = ORDER_STATUS[o.status] ?? {
-                      label: o.status,
-                      color: 'bg-slate-100 text-slate-600 border-slate-200',
-                    };
                     return (
                       <li key={o.id}
                         className="flex items-start justify-between gap-4 p-3 rounded-lg border border-slate-200 bg-white">
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${st.color}`}>
-                              {st.label}
-                            </span>
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border
+                            <StatusBadge status={o.status} />
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-semibold border
                               ${o.role_on_order === 'Driver'
                                 ? 'bg-purple-100 text-purple-800 border-purple-300'
                                 : 'bg-teal-100 text-teal-800 border-teal-300'}`}>
@@ -364,13 +392,13 @@ export default function PersonnelDetailPanel({ personnelId, onClose, onSaved, ca
                             </span>
                           </div>
                           <p className="text-sm font-medium text-slate-700 mt-1">{o.customer_name}</p>
-                          <p className="text-xs text-slate-400">
+                          <p className="text-sm text-slate-500">
                             {new Date(o.created_at).toLocaleDateString('en-PH', {
                               month: 'short', day: 'numeric', year: 'numeric',
                             })}
                           </p>
                         </div>
-                        <p className="font-bold text-slate-900 tabular-nums text-base shrink-0">
+                        <p className="font-bold text-slate-900 tabular-nums text-base shrink-0 whitespace-nowrap">
                           {PHP(o.total_amount)}
                         </p>
                       </li>

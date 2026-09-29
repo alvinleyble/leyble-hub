@@ -199,11 +199,12 @@ test('lightStatus maps every state the old marker had onto four colours', () => 
     'attention outranks everything');
 });
 
-test('the light has no visible words, names its status, and a tap spells it out', async () => {
+test('the light shows one word, names its status, and a tap spells it out', async () => {
   const view = render(h(ToastProvider, null, h(StatusLightButton)));
   await flush();
   const light = view.container.querySelector('[data-testid="status-light"]');
-  assert.equal(light.textContent.trim(), '', 'text-less');
+  // Never colour alone (design standard, UI audit F23): one short word beside the light.
+  assert.equal(light.textContent.trim(), 'Online', 'the light carries one word naming its state');
   assert.equal(light.getAttribute('data-tone'), 'green');
   assert.equal(light.getAttribute('aria-label'), 'Connection status: Online · all saved');
   assert.equal(view.container.querySelector('[role="status"]').textContent, 'Online · all saved');

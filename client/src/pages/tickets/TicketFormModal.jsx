@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import NavIcon from '../../components/layout/NavIcon';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -95,11 +96,11 @@ export default function TicketFormModal({ onClose, onSaved }) {
           <button
             onClick={onClose}
             aria-label="Close"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-500
                        hover:text-slate-700 hover:bg-slate-100
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 

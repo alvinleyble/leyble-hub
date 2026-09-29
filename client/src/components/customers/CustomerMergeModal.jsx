@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
+import NavIcon from '../layout/NavIcon';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Spinner from '../../components/ui/Spinner';
@@ -104,7 +105,7 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-v2-border px-6 py-5">
           <div className="flex items-center gap-2">
-            <span className="text-xl">🔀</span>
+            <NavIcon name="merge" className="w-6 h-6 text-amber-700" />
             <h2 id="merge-customer-title" className="text-xl font-bold text-v2-text">
               Merge Customer
             </h2>
@@ -117,7 +118,7 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
                        hover:bg-v2-raised hover:text-v2-text disabled:opacity-40
                        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -137,20 +138,20 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-v2-text">{targetCustomer.name}</span>
-                    <span className="font-mono text-xs text-v2-muted">#{targetCustomer.id}</span>
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${customerTypeBadge(targetCustomer.customer_type, 'dark')}`}>
+                    <span className="font-mono text-sm text-v2-muted">#{targetCustomer.id}</span>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold ${customerTypeBadge(targetCustomer.customer_type, 'dark')}`}>
                       {customerTypeLabel(targetCustomer.customer_type)}
                     </span>
                   </div>
                   {targetCustomer.address && (
-                    <p className="mt-0.5 truncate text-xs text-v2-muted">{targetCustomer.address}</p>
+                    <p className="mt-0.5 truncate text-sm text-v2-muted">{targetCustomer.address}</p>
                   )}
                 </div>
                 <button
                   type="button"
                   onClick={() => setTargetCustomer(null)}
                   disabled={merging}
-                  className="flex h-9 items-center rounded-lg bg-v2-raised px-3 text-xs font-bold text-v2-text hover:bg-v2-border
+                  className="flex h-9 items-center rounded-lg bg-v2-raised px-3 text-sm font-bold text-v2-text hover:bg-v2-border
                              disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
                 >
                   Change
@@ -195,12 +196,12 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
                           >
                             <div className="min-w-0">
                               <span className="font-semibold text-v2-text">{c.name}</span>
-                              <span className="ml-1.5 font-mono text-xs text-v2-muted">#{c.id}</span>
+                              <span className="ml-1.5 font-mono text-sm text-v2-muted">#{c.id}</span>
                               {c.address && (
-                                <p className="truncate text-xs text-v2-muted">{c.address}</p>
+                                <p className="truncate text-sm text-v2-muted">{c.address}</p>
                               )}
                             </div>
-                            <span className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${customerTypeBadge(c.customer_type, 'dark')}`}>
+                            <span className={`shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-sm font-semibold ${customerTypeBadge(c.customer_type, 'dark')}`}>
                               {customerTypeLabel(c.customer_type)}
                             </span>
                           </button>
@@ -215,18 +216,18 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
 
           {/* Merge Summary Card */}
           <div className="rounded-xl border border-v2-border bg-v2-bg p-4 space-y-3">
-            <p className="text-xs font-bold uppercase tracking-widest text-v2-muted">Merge Summary</p>
+            <p className="text-sm font-bold uppercase tracking-widest text-v2-muted">Merge Summary</p>
 
             {/* FROM */}
             <div className="rounded-lg border border-red-500/30 bg-red-950/20 p-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wide text-red-400">
+                <span className="text-sm font-bold uppercase tracking-wide text-red-400">
                   Duplicate to remove (FROM)
                 </span>
-                <span className="font-mono text-xs text-red-300">#{customer?.id}</span>
+                <span className="font-mono text-sm text-red-300">#{customer?.id}</span>
               </div>
               <p className="mt-1 font-bold text-v2-text text-base">{customer?.name}</p>
-              <p className="mt-0.5 text-xs text-red-300">
+              <p className="mt-0.5 text-sm text-red-300">
                 {orderCount} {orderCount === 1 ? 'order' : 'orders'} will be transferred
               </p>
             </div>
@@ -243,19 +244,19 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
                 : 'border-dashed border-v2-border bg-v2-surface'
             }`}>
               <div className="flex items-center justify-between">
-                <span className={`text-xs font-bold uppercase tracking-wide ${
+                <span className={`text-sm font-bold uppercase tracking-wide ${
                   targetCustomer ? 'text-emerald-400' : 'text-v2-muted'
                 }`}>
                   Target customer to keep (TO)
                 </span>
                 {targetCustomer && (
-                  <span className="font-mono text-xs text-emerald-300">#{targetCustomer.id}</span>
+                  <span className="font-mono text-sm text-emerald-300">#{targetCustomer.id}</span>
                 )}
               </div>
               {targetCustomer ? (
                 <>
                   <p className="mt-1 font-bold text-v2-text text-base">{targetCustomer.name}</p>
-                  <p className="mt-0.5 text-xs text-emerald-300">
+                  <p className="mt-0.5 text-sm text-emerald-300">
                     Retains profile details, pricing matrix, and receives all transferred orders
                   </p>
                 </>
@@ -268,7 +269,7 @@ export default function CustomerMergeModal({ customer, initialTargetCustomer = n
           {/* Warning Banner */}
           <div className="rounded-xl border border-amber-500/30 bg-amber-950/30 p-4">
             <p className="text-sm font-semibold text-amber-200">
-              ⚠️ Warning: This action permanently removes the duplicate profile and moves all order history to{' '}
+              Warning: This action permanently removes the duplicate profile and moves all order history to{' '}
               <span className="font-bold text-amber-100">{targetCustomer?.name ?? 'the target customer'}</span>.
               It cannot be undone.
             </p>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import NavIcon from '../../components/layout/NavIcon';
 import { api } from '../../api/client';
 import { useToast } from '../../components/ui/Toast';
 import Button from '../../components/ui/Button';
@@ -96,10 +97,10 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
           <button
             onClick={onClose}
             aria-label="Close"
-            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700
+            className="w-12 h-12 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-700
                        hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
           >
-            ✕
+            <NavIcon name="close" className="w-6 h-6" />
           </button>
         </div>
 
@@ -149,7 +150,7 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
             </FormField>
 
             <div className="sm:col-span-2 border-t border-slate-300 pt-4">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Pricing (per case)</p>
+              <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">Pricing (per case)</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <FormField label="Wholesale Price (₱ / case)" required error={errors.base_wholesale_price}>
                   <input type="number" min="0" step="0.01" value={form.base_wholesale_price}
@@ -165,7 +166,7 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
             </div>
 
             <div className="sm:col-span-2 border-t border-slate-300 pt-4">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Returns</p>
+              <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">Returns</p>
               <label
                 className={`flex items-center gap-3 min-h-[48px] select-none
                             ${lockedOffline ? 'cursor-not-allowed' : 'cursor-pointer'}`}
@@ -182,9 +183,9 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
                   }))}
                   className="w-6 h-6 accent-blue-700 disabled:opacity-50"
                 />
-                <span className={`text-base ${lockedOffline ? 'text-slate-400' : 'text-slate-700'}`}>
+                <span className={`text-base ${lockedOffline ? 'text-slate-500' : 'text-slate-700'}`}>
                   Requires bottle return
-                  <span className="block text-sm text-slate-400">Off for plastic / non-returnable products</span>
+                  <span className="block text-sm text-slate-500">Off for plastic / non-returnable products</span>
                 </span>
               </label>
               {lockedOffline && (
