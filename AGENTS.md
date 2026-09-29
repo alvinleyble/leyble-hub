@@ -213,10 +213,9 @@ pre-existing design — see `backOfficeCache.js`'s own comment block, and ADR 00
 "live first" reasoning), so their skeleton only shows on a genuinely cold, nothing-held
 first load.
 
-**PHP formatter** (defined locally in each file — do not centralize):
+**PHP formatter** (on screen, use the shared one — design standard Q15; printed receipts keep their own):
 ```js
-const PHP = (n) =>
-  `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+import { PHP } from '../../utils/money'; // formatPeso: ₱1,234.50, −₱135.00; formatSignedPeso: +₱120.00
 ```
 
 **API calls**: `api.get/post/patch/del` from `client/src/api/client.js`, always with `credentials: 'include'` (already set in the client).
