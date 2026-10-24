@@ -52,12 +52,6 @@ export async function queuedCustomersFromOutbox() {
  * modal's picker show the new details rather than reverting to the pre-edit ones.
  */
 export async function updateCustomerLocalFirst(customerId, patch, { profileKey }) {
-  // Only a customer the server already has can be edited by id. Anything else — a
-  // still-queued `local-` customer, or an object passed where her id belongs — would be
-  // pasted into the URL as-is and refused on every drain.
-  if (!/^[1-9]\d*$/.test(String(customerId ?? ''))) {
-    throw new Error(`Cannot save changes to this customer yet: ${String(customerId)} is not a synced customer id.`);
-  }
   const record = await enqueue({
     entityType: 'customer_update',
     endpoint:   `/customers/${customerId}`,

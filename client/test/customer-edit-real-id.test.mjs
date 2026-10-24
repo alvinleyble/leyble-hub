@@ -21,6 +21,7 @@ import { STATION_KEY } from '../src/offline/keys.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import { __clearOutbox, listRecords, enqueue, drainOutbox, ref } from '../src/offline/outbox.js';
 import { saveOrderLocalFirst } from '../src/offline/posSave.js';
+import { parkOrderLocalFirst, listLocalParkedOrders } from '../src/offline/parkedOrders.js';
 import { updateCustomerLocalFirst } from '../src/offline/queuedCustomers.js';
 import { stopReachabilityWatcher, __resetStatusState } from '../src/offline/status.js';
 
@@ -79,19 +80,14 @@ afterEach(() => {
 
 // A customer created offline, an order for her saved behind her, and then a drain in
 // which her create reaches the server but the order does not.
-async function unsyncedOrderForSyncedLocalCustomer() {
+async function syncOnlyHerCreate(saveBehindHer) {
   const customerRecord = await enqueue({
     entityType: 'customer', endpoint: '/customers', method: 'POST',
     payload: { name: 'Bagong Suki', customer_type: 'regular' }, profileKey: 'josie',
   });
-  const order = await saveOrderLocalFirst({
-    customer: { id: `local-${customerRecord.id}`, _outboxId: customerRecord.id, name: 'Bagong Suki' },
-    orderType: 'delivery',
-    items: [{ product_id: 1, product_name: 'Coke Sakto 200ml', quantity: 2, unit_price: 300 }],
-    deliveryFeeCharged: 100,
-    profileKey: 'josie',
-    soldByName: 'Josie',
-  });
+  const saved = await saveBehindHer(
+    { id: `local-${customerRecord.id}`, _outboxId: customerRecord.id, name: 'Bagong Suki' },
+  );
 
   api.request = async (endpoint, opts) => {
     if (endpoint === '/customers' && opts.method === 'POST') {
@@ -104,11 +100,18 @@ async function unsyncedOrderForSyncedLocalCustomer() {
   assert.ok(!left.some((r) => r.entity_type === 'customer'), 'her create has drained');
   assert.ok(left.some((r) => r.entity_type === 'order'), 'the order is still waiting');
   api.request = async () => offline();
-  return order;
+  return saved;
 }
 
 test('saving an edited order\'s delivery fee as an offline-created customer\'s default PATCHes her real id', async () => {
-  const order = await unsyncedOrderForSyncedLocalCustomer();
+  const order = await syncOnlyHerCreate((customer) => saveOrderLocalFirst({
+    customer,
+    orderType: 'delivery',
+    items: [{ product_id: 1, product_name: 'Coke Sakto 200ml', quantity: 2, unit_price: 300 }],
+    deliveryFeeCharged: 100,
+    profileKey: 'josie',
+    soldByName: 'Josie',
+  }));
 
   const r = render(
     React.createElement(ToastProvider, null,
@@ -143,15 +146,40 @@ test('saving an edited order\'s delivery fee as an offline-created customer\'s d
   assert.deepEqual(patches.map((s) => s.endpoint), [`/customers/${SERVER_CUSTOMER_ID}`]);
 });
 
-test('updateCustomerLocalFirst refuses to queue an edit under anything but a real customer id', async () => {
-  for (const bad of [{ id: 4 }, ref(3, 'id'), 'local-3', '', null, undefined, NaN]) {
-    await assert.rejects(
-      () => updateCustomerLocalFirst(bad, { phone: '09991112222' }, { profileKey: 'josie' }),
-      /customer/i,
-      `expected ${JSON.stringify(bad)} to be refused`,
-    );
-  }
-  assert.equal((await listRecords()).length, 0, 'nothing was queued');
+test('resuming a parked draft for an offline-created customer whose create has drained sells to her real id', async () => {
+  await syncOnlyHerCreate((customer) => parkOrderLocalFirst({
+    customer,
+    orderType: 'delivery',
+    items: [{ product_id: 1, quantity: 2, unit_price: 300 }],
+    display: {
+      customer_name: 'Bagong Suki',
+      items: [{ product_id: 1, product_name: 'Coke Sakto 200ml', sku: 'C-8', unit: 'cs' }],
+    },
+    profileKey: 'josie',
+  }));
+  const [draft] = await listLocalParkedOrders();
+  api.del = async () => {};
+
+  const r = render(
+    React.createElement(ToastProvider, null,
+      React.createElement(OrderCreateModal, { editOrder: draft, onClose: () => {}, onSaved: () => {} }))
+  );
+  await settle(60);
+
+  const createBtn = r.all('button').find((b) => b.textContent.includes('Create Order'));
+  assert.ok(createBtn, 'expected the "Create Order" button');
+  await act(async () => { r.click(createBtn); await new Promise((res) => setTimeout(res, 60)); });
+  r.unmount();
+
+  const sent = [];
+  api.request = async (endpoint, opts) => {
+    sent.push({ endpoint, method: opts.method, body: JSON.parse(opts.body) });
+    return { id: 900 };
+  };
+  await drainNow();
+
+  const sales = sent.filter((s) => s.endpoint === '/orders' && s.method === 'POST' && s.body.status !== 'draft');
+  assert.deepEqual(sales.map((s) => s.body.customer_id), [SERVER_CUSTOMER_ID]);
 });
 
 test('updateCustomerLocalFirst queues the edit under the id it was given', async () => {

@@ -36,11 +36,6 @@ const customerMatches = (c, q) => {
 // /customers drains and its row exists server-side (D5). Any code path that would hit
 // GET/POST against that id must be skipped, not attempted and swallowed.
 const isLocalCustomer = (id) => typeof id === 'string' && id.startsWith('local-');
-// The outbox record behind a `local-<outboxId>` customer. The id itself carries it, so
-// this holds even for a row rebuilt from an order after her own queued create drained
-// (and so no longer comes back from queuedCustomersFromOutbox with `_outboxId` set).
-const localCustomerOutboxId = (customer) => customer?._outboxId
-  ?? (isLocalCustomer(customer?.id) ? Number(customer.id.slice('local-'.length)) : undefined);
 
 // D3.1 (phone-responsive-layout.md follow-up) — the customer picker + order type toggle
 // render in two places: their original spot in the order panel (tablet/lg+, untouched)
@@ -300,7 +295,7 @@ export default function OrderCreateModal({
             && !custs.some((c) => String(c.id) === String(editOrder.customer_id))) {
           custs = [...custs, {
             id: editOrder.customer_id,
-            _outboxId: localCustomerOutboxId({ id: editOrder.customer_id }),
+            _outboxId: Number(editOrder.customer_id.slice('local-'.length)),
             name: editOrder.customer_name,
             address: editOrder.customer_address,
             phone: editOrder.customer_phone,
@@ -934,9 +929,8 @@ export default function OrderCreateModal({
     try {
       const profileKey = await api.getActiveProfile();
       const local = isLocalCustomer(customer.id);
-      const outboxId = local ? localCustomerOutboxId(customer) : undefined;
-      const endpointParams = local ? { customerId: ref(outboxId, 'id') } : null;
-      const dependsOn = local ? [outboxId] : [];
+      const endpointParams = local ? { customerId: ref(customer._outboxId, 'id') } : null;
+      const dependsOn = local ? [customer._outboxId] : [];
 
       const writes = [];
       if (savePrices && priceDirty.length) {
