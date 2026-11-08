@@ -339,20 +339,40 @@ export function isParkedForServerError(record) {
 
 // Safety cap. A check that passes while the problem is really server-wide (a route
 // broken for every record, say) must not walk the whole queue into Needs attention one
-// record at a time. So at most this many records may be parked for a 5xx in a row with
-// no record accepted (2xx) in between; at the cap a record at the threshold stays
-// queued and the pass stops as before. The streak is device state — it survives a
-// reload — and any accepted record resets it.
+// record at a time. So at most this many DISTINCT records may be parked for a 5xx with
+// no record accepted (2xx) in between; at the cap a new record at the threshold stays
+// queued and the pass stops as before. A record already counted may always park again —
+// sending it again as is and seeing it fail again moves no more of the queue aside. The
+// set of ids is device state — it survives a reload — and any accepted record clears it.
 const MAX_CONSECUTIVE_SERVER_ERROR_PARKS = 2;
 const PARK_STREAK_KEY = `${NS}serverErrorParkStreak`;
 
-async function readParkStreak() {
+async function readParkedSinceAccepted() {
   const stored = await nativeStore.getJson(PARK_STREAK_KEY);
-  return Number.isInteger(stored?.count) ? stored.count : 0;
+  return new Set(Array.isArray(stored?.ids) ? stored.ids : []);
 }
 
-async function writeParkStreak(count) {
-  await nativeStore.setJson(PARK_STREAK_KEY, { count });
+async function writeParkedSinceAccepted(ids) {
+  await nativeStore.setJson(PARK_STREAK_KEY, { ids: [...ids] });
+}
+
+// A write addressed to an order (`/orders/<R>`, `/orders/<R>/…`) cannot land before the
+// create that makes R exist, whether or not it was queued with a `depends_on` link to it
+// — a print of an order read back from local history has none, nor does one queued by an
+// older build.
+const ORDER_TARGET = /^\/orders\/([^/]+)(?:\/|$)/;
+
+function orderCreatesByReceipt(records) {
+  return new Map(records
+    .filter((r) => r.entity_type === 'order' && r.receipt_number)
+    .map((r) => [r.receipt_number, r.id]));
+}
+
+function waitsOn(record, createsByReceipt) {
+  const target = ORDER_TARGET.exec(record.endpoint || '')?.[1];
+  const create = target === undefined ? undefined : createsByReceipt.get(target);
+  const deps = record.depends_on || [];
+  return create === undefined || create === record.id ? deps : [...deps, create];
 }
 
 // True only when the server answered the write check with a 2xx. Sent under the same
@@ -457,15 +477,16 @@ async function runDrainPass() {
     // dependants from the start — an order's queued status change must not go out
     // ahead of the order it changes just because that order was parked last pass.
     const blocked = new Set(records.filter((r) => r.status !== QUEUED).map((r) => r.id));
+    const createsByReceipt = orderCreatesByReceipt(records);
     // Records parked for a 5xx since the last accepted one (MAX_CONSECUTIVE_SERVER_ERROR_PARKS).
-    let parkStreak = await readParkStreak();
+    let parkedSinceAccepted = await readParkedSinceAccepted();
 
     for (const record of records) {
       if (record.status !== QUEUED) continue;
       // A dependency that has not synced blocks its dependants but not unrelated
       // receipts behind them. A skipped dependant blocks ITS dependants in turn, so a
       // chain (customer → order → status change) waits as a whole.
-      if ((record.depends_on || []).some((id) => blocked.has(id))) {
+      if (waitsOn(record, createsByReceipt).some((id) => blocked.has(id))) {
         blocked.add(record.id);
         continue;
       }
@@ -546,9 +567,9 @@ async function runDrainPass() {
         }
         await removeRecord(record.id);
         sent++;
-        if (parkStreak !== 0) {
-          parkStreak = 0;
-          await writeParkStreak(0);
+        if (parkedSinceAccepted.size !== 0) {
+          parkedSinceAccepted = new Set();
+          await writeParkedSinceAccepted(parkedSinceAccepted);
         }
       } catch (err) {
         // A 401 is the session ending underneath the drain — a takeover on another
@@ -585,7 +606,8 @@ async function runDrainPass() {
         if (err.status >= 500) {
           const strike = await serverAcceptsWrites(authorKey);
           const struckAt = Date.now();
-          const mayPark = parkStreak < MAX_CONSECUTIVE_SERVER_ERROR_PARKS;
+          const mayPark = parkedSinceAccepted.has(record.id)
+            || parkedSinceAccepted.size < MAX_CONSECUTIVE_SERVER_ERROR_PARKS;
           const saved = await saveDrainOutcome(record, (current) => {
             const lastStrikeAt = current.last_strike_at;
             const tooSoon = typeof lastStrikeAt === 'number'
@@ -599,8 +621,8 @@ async function runDrainPass() {
           });
           blocked.add(record.id);
           if (saved?.status === NEEDS_ATTENTION) {
-            parkStreak += 1;
-            await writeParkStreak(parkStreak);
+            parkedSinceAccepted.add(record.id);
+            await writeParkedSinceAccepted(parkedSinceAccepted);
             failed++;
             continue; // parked aside; its dependants wait, the rest of the queue goes on
           }

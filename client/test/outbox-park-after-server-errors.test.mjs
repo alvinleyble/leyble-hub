@@ -4,8 +4,8 @@
 // strictly in order; after a 5xx the device asks the server whether it can save data
 // (GET /health/write), and only a 2xx there counts the failure as a strike. At 5
 // strikes the record moves to Needs attention — never deleted, its dependants waiting
-// with it — and the queue continues. At most 2 records in a row are moved aside until
-// another record is accepted. A strike counts only when at least 60 seconds have passed
+// with it, linked or merely addressed to it — and the queue continues. At most 2
+// distinct records are moved aside until another record is accepted. A strike counts only when at least 60 seconds have passed
 // since that record's previous one, so a record keeps failing for about 5 minutes before
 // it moves; the attention list offers a record moved aside this way "Send again as is".
 import { test, beforeEach, afterEach } from 'node:test';
@@ -19,6 +19,8 @@ import {
   __clearOutbox, NEEDS_ATTENTION, QUEUED,
 } from '../src/offline/outbox.js';
 import { putReceipt } from '../src/offline/receiptHistory.js';
+import { queueReceiptPrinted } from '../src/offline/posSave.js';
+import { setSimulatedOffline } from '../src/config/features.js';
 import { markOnline, stopReachabilityWatcher, __resetStatusState } from '../src/offline/status.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 
@@ -27,7 +29,7 @@ const NeedsAttentionModal = (await import('../src/components/pos/NeedsAttentionM
 const STRIKES = 5;
 const STRIKE_SPACING_MS = 60_000;
 const WRITE_CHECK = '/health/write';
-// The device-state key the park streak persists under (survives a reload).
+// The device-state key the ids parked since the last accepted record persist under.
 const PARK_STREAK_KEY = 'v25.serverErrorParkStreak';
 
 const realNow = Date.now;
@@ -114,8 +116,8 @@ async function drainTimes(n) {
   for (let i = 0; i < n; i++) await drainLater();
 }
 
-async function parkStreak() {
-  return (await nativeStore.getJson(PARK_STREAK_KEY))?.count ?? 0;
+async function parkedIds() {
+  return (await nativeStore.getJson(PARK_STREAK_KEY))?.ids ?? [];
 }
 
 test('a record with repeated 5xx and a passing write check parks after 5 strikes, then the rest drains', async () => {
@@ -278,7 +280,7 @@ test('a later record is never sent in a pass after an earlier record got a 5xx',
   assert.equal((await stored(first.id)).status, QUEUED);
 });
 
-test('the cap: with 3 consecutive bad records only 2 park, until a record is accepted', async () => {
+test('the cap: with 3 distinct bad records only 2 park, until a record is accepted', async () => {
   const bad = new Set(['/bad/1', '/bad/2', '/bad/3', '/bad/4']);
   serve((path) => (bad.has(path) ? httpError(500) : null));
   const b1 = await queue('/bad/1');
@@ -296,33 +298,134 @@ test('the cap: with 3 consecutive bad records only 2 park, until a record is acc
   assert.equal(third.status, QUEUED, 'the third bad record in a row is not parked');
   assert.ok(third.server_strikes >= STRIKES, 'even though it has reached the threshold');
   assert.equal((await stored(good.id)).status, QUEUED, 'the pass stops at it, as before');
-  assert.equal(await parkStreak(), 2);
+  assert.deepEqual(await parkedIds(), [b1.id, b2.id]);
 
-  // A record is accepted (the server fix reaches /bad/3): the streak resets and the
-  // next bad record may park again.
+  // A record is accepted (the server fix reaches /bad/3): the set clears and the next
+  // bad record may park again.
   bad.delete('/bad/3');
   await drainOutbox();
   assert.equal(await stored(b3.id), undefined);
   assert.equal(await stored(good.id), undefined);
-  assert.equal(await parkStreak(), 0, 'an accepted record resets the streak');
+  assert.deepEqual(await parkedIds(), [], 'an accepted record clears the set');
   await drainTimes(STRIKES);
   assert.equal((await stored(b4.id)).status, NEEDS_ATTENTION);
-  assert.equal(await parkStreak(), 1);
+  assert.deepEqual(await parkedIds(), [b4.id]);
 });
 
-test('the park streak is device state and an accepted record resets it', async () => {
+test('the parked set is device state and an accepted record clears it', async () => {
   serve((path) => (path === '/bad' ? httpError(500) : null));
-  await queue('/bad');
+  const bad = await queue('/bad');
   await drainTimes(STRIKES);
-  assert.equal(await parkStreak(), 1, 'persisted on the device, so it survives a reload');
+  assert.deepEqual(await parkedIds(), [bad.id], 'persisted on the device, so it survives a reload');
 
-  // Still 1 with nothing accepted since.
+  // Unchanged with nothing accepted since.
   await drainOutbox();
-  assert.equal(await parkStreak(), 1);
+  assert.deepEqual(await parkedIds(), [bad.id]);
 
   await queue('/good');
   await drainOutbox();
-  assert.equal(await parkStreak(), 0);
+  assert.deepEqual(await parkedIds(), []);
+});
+
+test('a record sent again as is may park again with no other record ever accepted', async () => {
+  serve((path) => (path.startsWith('/bad') ? httpError(500) : null));
+  const bad = await queue('/bad');
+
+  for (let round = 1; round <= 3; round++) {
+    await drainTimes(STRIKES);
+    assert.equal((await stored(bad.id)).status, NEEDS_ATTENTION, `round ${round}: parked again, not jammed at the head`);
+    assert.deepEqual(await parkedIds(), [bad.id], `round ${round}: still one distinct record`);
+    await repointRecord(bad.id); // "Send again as is"
+    assert.deepEqual(await parkedIds(), [bad.id], 'sending it again leaves the set untouched');
+  }
+
+  // With one distinct record counted, one other record may still be moved aside.
+  const other = await queue('/bad/other');
+  await drainTimes(STRIKES * 2);
+  assert.equal((await stored(bad.id)).status, NEEDS_ATTENTION);
+  assert.equal((await stored(other.id)).status, NEEDS_ATTENTION);
+  assert.deepEqual(await parkedIds(), [bad.id, other.id]);
+});
+
+// queueReceiptPrinted starts its own drain; simulated offline keeps that one out of the
+// passes these tests drive.
+async function printFromOrderDetail(order) {
+  setSimulatedOffline(true);
+  try {
+    await queueReceiptPrinted({ order, profileKey: 'josie' });
+  } finally {
+    setSimulatedOffline(false);
+  }
+  return (await listRecords()).filter((r) => r.entity_type === 'receipt_printed').at(-1);
+}
+
+test('a print queued from Order Detail for an unsynced order waits with it when it parks', async () => {
+  serve((path) => (path === '/orders' ? httpError(500) : null));
+  const order = await queue('/orders', { receiptNumber: '1A-00001', payload: { receipt_number: '1A-00001' } });
+  // Read back from local history, so it carries no _outboxId.
+  const print = await printFromOrderDetail({ receipt_number: '1A-00001', status: 'pending' });
+  assert.deepEqual(print.depends_on, [order.id], 'linked to the queued order by its receipt number');
+  const behind = await queue('/good/behind');
+
+  await drainTimes(STRIKES + 2);
+
+  assert.equal((await stored(order.id)).status, NEEDS_ATTENTION);
+  const waiting = await stored(print.id);
+  assert.equal(waiting.status, QUEUED);
+  assert.equal(waiting.attempts, 0);
+  assert.equal(await stored(behind.id), undefined, 'the rest of the queue went');
+  assert.ok(!sent.includes('/orders/1A-00001/receipt-printed'));
+
+  serve(() => null);
+  await repointRecord(order.id);
+  sent = [];
+  await drainLater();
+  assert.deepEqual(sent, ['/orders', '/orders/1A-00001/receipt-printed']);
+});
+
+test('an unlinked print already in the queue waits while its order is parked or blocked', async () => {
+  serve((path) => (path === '/customers' || path === '/orders' ? httpError(500) : null));
+  // Blocked: the order waits on a customer that parks.
+  const customer = await enqueue({
+    entityType: 'customer', endpoint: '/customers', profileKey: 'josie', payload: { name: 'Aling Nena' },
+  });
+  const blockedOrder = await queue('/orders', {
+    receiptNumber: '1A-00002', payload: { customer_id: ref(customer.id) }, dependsOn: [customer.id],
+  });
+  const blockedPrint = await queue('/orders/1A-00002/receipt-printed', { entityType: 'receipt_printed' });
+  // Parked: the order itself is the bad record.
+  const parkedOrder = await queue('/orders', { receiptNumber: '1A-00003' });
+  const parkedPrint = await queue('/orders/1A-00003/receipt-printed', { entityType: 'receipt_printed' });
+  const behind = await queue('/good/behind');
+
+  await drainTimes(STRIKES * 2 + 2);
+
+  assert.equal((await stored(customer.id)).status, NEEDS_ATTENTION);
+  assert.equal((await stored(parkedOrder.id)).status, NEEDS_ATTENTION);
+  assert.equal((await stored(blockedOrder.id)).status, QUEUED);
+  for (const print of [blockedPrint, parkedPrint]) {
+    const record = await stored(print.id);
+    assert.equal(record.status, QUEUED, `${print.endpoint} waits for its order`);
+    assert.equal(record.attempts, 0, `${print.endpoint} was never tried`);
+  }
+  assert.deepEqual(sent.filter((p) => p.endsWith('/receipt-printed')), []);
+  assert.equal(await stored(behind.id), undefined, 'an unrelated record behind them still went');
+});
+
+test('prints for synced orders still send while another order is parked', async () => {
+  serve((path) => (path === '/orders' ? httpError(500) : null));
+  const parked = await queue('/orders', { receiptNumber: '1A-00001' });
+  await drainTimes(STRIKES);
+  assert.equal((await stored(parked.id)).status, NEEDS_ATTENTION);
+
+  const print = await printFromOrderDetail({ id: 1300, receipt_number: '1A-00009', status: 'pending' });
+  assert.deepEqual(print.depends_on, [], 'nothing queued for it to wait on');
+  await queue('/orders/1240/receipt-printed', { entityType: 'receipt_printed' });
+
+  sent = [];
+  await drainLater();
+  assert.deepEqual(sent, ['/orders/1A-00009/receipt-printed', '/orders/1240/receipt-printed']);
+  assert.deepEqual((await listRecords()).map((r) => r.id), [parked.id]);
 });
 
 test('repeated 5xx passes within 60 seconds add only one strike', async () => {
