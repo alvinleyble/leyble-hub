@@ -115,11 +115,12 @@ async function removeRecord(id) {
 // send was in flight (updateLocalOrder rewriting it mid-drain, for instance) would
 // otherwise be silently reverted the moment the pass gets around to recording that
 // send's outcome. Skips the write entirely if the record is gone by then (already
-// discarded concurrently) rather than resurrecting it.
+// discarded concurrently) rather than resurrecting it. `patch` may be a function of the
+// stored record, for a field that has to count up from what is stored now.
 async function saveDrainOutcome(record, patch) {
   const current = await nativeStore.getJson(outboxKey(record.id));
   if (!current) return null;
-  const merged = { ...current, ...patch };
+  const merged = { ...current, ...(typeof patch === 'function' ? patch(current) : patch) };
   await nativeStore.setJson(outboxKey(record.id), merged);
   return merged;
 }
@@ -301,6 +302,25 @@ function isNetworkFailure(err) {
   return !err?.status;
 }
 
+// A record the server keeps answering with a 5xx while it accepts the records around
+// it is not an outage, it is that one record: a server bug its payload trips, a row the
+// route cannot handle. Retrying it forever at the head of the queue is how three tablets
+// jammed in production (2026-10-23) — every later sale waited behind one bad record.
+//
+// So a 5xx no longer ends the pass. The record stays queued (its dependants wait with
+// it), the pass moves on, and the 5xx is held against the record — `server_errors` —
+// only when the SAME pass got at least one other record accepted (a 2xx). That is the
+// "otherwise reachable" proof: the server demonstrably did real work for this device
+// moments ago, which `/health` answering cannot show. A pass where every record gets a
+// 5xx accepted nothing, counts nothing and parks nothing — that is the server being
+// unwell, exactly as before. At the threshold the record moves to the attention list
+// (never deleted); `repointRecord` puts it back in the queue with a clean count.
+//
+// Network failures, the client's own timeout abort and a 401 never reach this counter:
+// they say nothing about the record and keep ending the pass as before. `attempts`
+// still counts every failure of any kind, as it always has.
+const SERVER_ERROR_PARK_THRESHOLD = 5;
+
 // Comfortably longer than the drain loop's own 30s period, so the loop's screen is
 // always fresh enough for the drain that immediately follows it.
 const SCREEN_FRESHNESS_MS = 90_000;
@@ -351,10 +371,17 @@ async function authorTokenKey(record) {
  * Outcomes per record:
  *   2xx            — done. Removed from the outbox; a 200 replay of an already-stored
  *                    receipt number counts exactly as much as a 201 (D13).
- *   network / 5xx  — left queued; the pass stops, since the next record would fail the
+ *   network        — left queued; the pass stops, since the next record would fail the
  *                    same way.
+ *   5xx            — left queued and the pass moves on; parked on the attention list
+ *                    once the server has failed it SERVER_ERROR_PARK_THRESHOLD times in
+ *                    passes that got some other record accepted (see that constant).
  *   other 4xx      — moved to the attention list with the server's reason (D8). Never
  *                    discarded, never guessed at.
+ *
+ * A record waits while anything it depends on is still on the device — queued, failed
+ * earlier in this pass, or on the attention list — and so does anything that depends on
+ * IT, however far down the chain.
  */
 export async function drainOutbox() {
   if (draining) {
@@ -377,13 +404,22 @@ async function runDrainPass() {
   const syncedOrders = [];
   try {
     const records = await listRecords();
-    const blocked = new Set();
+    // A record already on the attention list has not synced either, so it blocks its
+    // dependants from the start — an order's queued status change must not go out
+    // ahead of the order it changes just because that order was parked last pass.
+    const blocked = new Set(records.filter((r) => r.status !== QUEUED).map((r) => r.id));
+    // Records the server answered with a 5xx this pass; judged once the pass is over.
+    const serverErrored = [];
 
     for (const record of records) {
       if (record.status !== QUEUED) continue;
       // A dependency that has not synced blocks its dependants but not unrelated
-      // receipts behind them.
-      if ((record.depends_on || []).some((id) => blocked.has(id))) continue;
+      // receipts behind them. A skipped dependant blocks ITS dependants in turn, so a
+      // chain (customer → order → status change) waits as a whole.
+      if ((record.depends_on || []).some((id) => blocked.has(id))) {
+        blocked.add(record.id);
+        continue;
+      }
       // ADR 0015 §6 — a record carrying a `guard` holds a stock count or a price that
       // another tablet may have corrected in the meantime, and §6 forbids resolving
       // that silently. `screenProductMutations()` (productMutations.js) is what asks
@@ -483,11 +519,20 @@ async function runDrainPass() {
         const attempts = (record.attempts || 0) + 1;
         const last_error = err.message || String(err);
 
-        if (isNetworkFailure(err) || err.status >= 500) {
+        if (isNetworkFailure(err)) {
           await saveDrainOutcome(record, { attempts, last_error });
           blocked.add(record.id);
           markOffline();
-          break; // the line is down or the server is unwell; stop the pass
+          break; // the line is down; stop the pass
+        }
+
+        // See SERVER_ERROR_PARK_THRESHOLD: keep going, and decide after the pass
+        // whether this was the server or this record.
+        if (err.status >= 500) {
+          await saveDrainOutcome(record, { attempts, last_error });
+          blocked.add(record.id);
+          serverErrored.push(record);
+          continue;
         }
 
         // A retried DELETE for something already gone has already achieved its goal —
@@ -504,6 +549,24 @@ async function runDrainPass() {
         await saveDrainOutcome(record, { status: NEEDS_ATTENTION, attempts, last_error });
         blocked.add(record.id);
         failed++;
+      }
+    }
+
+    if (serverErrored.length > 0) {
+      if (sent > 0) {
+        // The server accepted other records this pass, so these 5xx answers were about
+        // the records themselves.
+        for (const record of serverErrored) {
+          const saved = await saveDrainOutcome(record, (current) => {
+            const server_errors = (current.server_errors || 0) + 1;
+            return server_errors >= SERVER_ERROR_PARK_THRESHOLD
+              ? { server_errors, status: NEEDS_ATTENTION }
+              : { server_errors };
+          });
+          if (saved?.status === NEEDS_ATTENTION) failed++;
+        }
+      } else {
+        markOffline(); // nothing got through: the server is unwell, as before
       }
     }
 
@@ -576,6 +639,7 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   record.status = QUEUED;
   record.last_error = null;
   record.attempts = 0;
+  record.server_errors = 0;
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
   return record;

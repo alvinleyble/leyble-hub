@@ -333,7 +333,7 @@ corner from D1 — a brand-new device installed mid-outage is covered by paper.
 | :--- | :--- |
 | Any 2xx | Done. Removed from the outbox. A `200` replay of an already-stored receipt number counts exactly as much as a `201` (D13). |
 | Network failure / timeout | Never reached the server. The record stays queued untouched and the pass stops — there is no point trying the next record down a dead line. Never read as an authentication failure (D15). |
-| 5xx | Same as a network failure. |
+| 5xx | Left queued, but the pass moves on to the records behind it. A 5xx counts against the record only when the same pass got another record accepted (proof the server is otherwise working); after 5 such failures the record moves to the attention list, and anything depending on it waits with it. A pass where every record gets a 5xx parks nothing and marks the server unreachable, as before. (Amended 2026-11-08 after three tablets jammed behind one record each.) |
 | Other 4xx | Moved to the attention list with the server's reason (D8). Never discarded, never guessed at. |
 
 ### Server-Side Schema and Routes
