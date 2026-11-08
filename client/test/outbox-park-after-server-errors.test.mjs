@@ -5,10 +5,12 @@
 // (GET /health/write), and only a 2xx there counts the failure as a strike. At 5
 // strikes the record moves to Needs attention — never deleted, its dependants waiting
 // with it — and the queue continues. At most 2 records in a row are moved aside until
-// another record is accepted.
+// another record is accepted. A strike counts only when at least 60 seconds have passed
+// since that record's previous one, so a record keeps failing for about 5 minutes before
+// it moves; the attention list offers a record moved aside this way "Send again as is".
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import './render.mjs'; // jsdom globals — api/client.js reads window/localStorage on import
+import { render, React, act } from './render.mjs'; // jsdom globals — api/client.js reads window/localStorage on import
 
 import { api } from '../src/api/client.js';
 import { nativeStore, __resetMemoryBackend } from '../src/offline/nativeStore.js';
@@ -16,14 +18,23 @@ import {
   enqueue, drainOutbox, listRecords, listNeedsAttention, ref, repointRecord,
   __clearOutbox, NEEDS_ATTENTION, QUEUED,
 } from '../src/offline/outbox.js';
+import { putReceipt } from '../src/offline/receiptHistory.js';
 import { markOnline, stopReachabilityWatcher, __resetStatusState } from '../src/offline/status.js';
+import { ToastProvider } from '../src/components/ui/Toast.jsx';
+
+const NeedsAttentionModal = (await import('../src/components/pos/NeedsAttentionModal.jsx')).default;
 
 const STRIKES = 5;
+const STRIKE_SPACING_MS = 60_000;
 const WRITE_CHECK = '/health/write';
 // The device-state key the park streak persists under (survives a reload).
 const PARK_STREAK_KEY = 'v25.serverErrorParkStreak';
 
+const realNow = Date.now;
+let clock; // the device clock the drain reads its strike times from
+
 let savedRequest;
+let savedGet;
 let sent; // every record endpoint the drain put on the wire, in order (checks excluded)
 let checks; // how many write checks were made
 
@@ -32,13 +43,18 @@ beforeEach(async () => {
   await __clearOutbox();
   __resetStatusState();
   markOnline();
+  clock = realNow();
+  Date.now = () => clock;
   savedRequest = api.request;
+  savedGet = api.get;
   sent = [];
   checks = 0;
 });
 
 afterEach(() => {
+  Date.now = realNow;
   api.request = savedRequest;
+  api.get = savedGet;
   stopReachabilityWatcher();
   __resetStatusState();
 });
@@ -88,8 +104,14 @@ async function stored(id) {
   return (await listRecords()).find((r) => r.id === id);
 }
 
+// One pass, a full strike spacing after the last, so every 5xx with a passing check counts.
+async function drainLater(ms = STRIKE_SPACING_MS) {
+  clock += ms;
+  return drainOutbox();
+}
+
 async function drainTimes(n) {
-  for (let i = 0; i < n; i++) await drainOutbox();
+  for (let i = 0; i < n; i++) await drainLater();
 }
 
 async function parkStreak() {
@@ -103,7 +125,7 @@ test('a record with repeated 5xx and a passing write check parks after 5 strikes
 
   for (let pass = 1; pass < STRIKES; pass++) {
     sent = [];
-    const result = await drainOutbox();
+    const result = await drainLater();
     assert.deepEqual(sent, ['/bad'], `pass ${pass}: nothing goes out behind the failing record`);
     assert.equal(result.sent, 0);
     const record = await stored(bad.id);
@@ -114,7 +136,7 @@ test('a record with repeated 5xx and a passing write check parks after 5 strikes
   }
 
   sent = [];
-  const result = await drainOutbox();
+  const result = await drainLater();
   assert.deepEqual(sent, ['/bad', '/good/1', '/good/2'], 'the pass that parks it carries on behind it');
   assert.equal(result.sent, 2);
   assert.equal(result.failed, 1);
@@ -163,6 +185,7 @@ test('records that depend on a parked record stay queued with it, however far do
   serve(() => null);
   const requeued = await repointRecord(customer.id);
   assert.equal(requeued.server_strikes, 0, 'a re-queued record starts a clean count');
+  assert.equal(requeued.last_strike_at, null);
   await drainOutbox();
   assert.deepEqual(await listRecords(), []);
 });
@@ -220,7 +243,7 @@ test('network failures, the client timeout and a 401 on the record never count a
     for (let i = 0; i < STRIKES; i++) {
       sent = [];
       const before = checks;
-      await drainOutbox();
+      await drainLater();
       assert.deepEqual(sent, ['/bad'], `${label}: the pass stops at the head record`);
       assert.equal(checks, before, `${label}: no write check is made`);
       const record = await stored(bad.id);
@@ -232,7 +255,7 @@ test('network failures, the client timeout and a 401 on the record never count a
 
   // The next genuine 5xx with a passing check is the one that parks it.
   failure = () => httpError(500);
-  await drainOutbox();
+  await drainLater();
   const parked = await stored(bad.id);
   assert.equal(parked.server_strikes, STRIKES);
   assert.equal(parked.status, NEEDS_ATTENTION);
@@ -247,7 +270,7 @@ test('a later record is never sent in a pass after an earlier record got a 5xx',
 
   for (let pass = 1; pass < STRIKES; pass++) {
     sent = [];
-    await drainOutbox();
+    await drainLater();
     assert.deepEqual(sent, ['/customers/42'], `pass ${pass}: only the failing head record is tried`);
   }
   assert.equal((await stored(correction.id)).attempts, 0);
@@ -300,4 +323,136 @@ test('the park streak is device state and an accepted record resets it', async (
   await queue('/good');
   await drainOutbox();
   assert.equal(await parkStreak(), 0);
+});
+
+test('repeated 5xx passes within 60 seconds add only one strike', async () => {
+  serve((path) => (path === '/bad' ? httpError(500) : null));
+  const bad = await queue('/bad');
+  await queue('/good/behind');
+
+  // A reconnect's double pass plus the drain loop: ten passes inside one minute.
+  await drainLater(0);
+  for (let i = 0; i < 9; i++) await drainLater(6_000);
+  let record = await stored(bad.id);
+  assert.equal(record.server_strikes, 1);
+  assert.equal(record.status, QUEUED);
+  assert.equal(record.attempts, 10, 'every failure is still recorded in attempts');
+  assert.equal(checks, 10, 'each 5xx still asks the write check');
+
+  await drainLater(STRIKE_SPACING_MS - 54_000); // exactly 60 seconds after the first strike
+  record = await stored(bad.id);
+  assert.equal(record.server_strikes, 2);
+});
+
+test('strikes spaced 60 seconds or more apart park the record at 5, about five minutes in', async () => {
+  serve((path) => (path === '/bad' ? httpError(500) : null));
+  const bad = await queue('/bad');
+  const behind = await queue('/good/behind');
+
+  // The 30-second drain loop: a strike lands on every other pass.
+  const firstStrikeAt = clock + 30_000;
+  for (let pass = 1; pass <= 8; pass++) {
+    await drainLater(30_000);
+    assert.equal((await stored(bad.id)).server_strikes, Math.ceil(pass / 2), `pass ${pass}`);
+  }
+  assert.equal((await stored(bad.id)).status, QUEUED, 'four strikes in, still queued');
+  assert.equal((await stored(behind.id)).status, QUEUED);
+
+  await drainLater(30_000);
+  const parked = await stored(bad.id);
+  assert.equal(parked.server_strikes, STRIKES);
+  assert.equal(parked.status, NEEDS_ATTENTION);
+  assert.equal(parked.last_strike_at - firstStrikeAt, 4 * STRIKE_SPACING_MS);
+  assert.equal(await stored(behind.id), undefined, 'the queue carried on behind it');
+});
+
+async function settle() {
+  for (let i = 0; i < 5; i++) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+}
+
+function buttonIn(card, label) {
+  return [...card.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
+}
+
+test('the attention list sends a server-error record again as is; a 4xx refusal still offers only re-point', async () => {
+  let refusal = httpError(500, 'Internal server error');
+  serve((path) => {
+    if (path === '/orders') return httpError(500, 'Internal server error');
+    if (path === '/refused') return refusal;
+    return null;
+  });
+
+  const refused = await queue('/refused', {
+    receiptNumber: '1A-00001',
+    payload: { customer_id: 7, items: [{ product_id: 3, quantity: 1, unit_price: 100 }] },
+  });
+  const sale = await queue('/orders', {
+    receiptNumber: '1A-00002',
+    payload: {
+      customer_id: 42,
+      order_type: 'delivery',
+      items: [{ product_id: 9, quantity: 2, unit_price: 155.5 }],
+      receipt_number: '1A-00002',
+    },
+  });
+  await putReceipt({ receipt_number: '1A-00002', customer_name: 'Aling Nena', items: [] });
+  const status = await queue('/orders/1A-00002/status', { dependsOn: [sale.id] });
+
+  // The refused record takes a server-error strike before the server refuses its data.
+  await drainLater();
+  refusal = httpError(422, 'Product is inactive');
+  await drainTimes(STRIKES);
+  assert.equal((await stored(refused.id)).status, NEEDS_ATTENTION);
+  assert.equal((await stored(refused.id)).server_strikes, 1);
+  const before = await stored(sale.id);
+  assert.equal(before.status, NEEDS_ATTENTION);
+  assert.equal(before.server_strikes, STRIKES);
+  assert.equal((await stored(status.id)).status, QUEUED);
+
+  api.get = async () => [{ id: 7, name: 'Mang Tonyo', is_active: true }];
+  const view = render(
+    React.createElement(ToastProvider, null, React.createElement(NeedsAttentionModal, { onClose: () => {} })),
+  );
+  await settle();
+
+  const saleCard = view.container.querySelector(`[data-testid="attention-record-${sale.id}"]`);
+  const refusedCard = view.container.querySelector(`[data-testid="attention-record-${refused.id}"]`);
+  assert.ok(saleCard && refusedCard, 'both records are listed');
+
+  assert.match(saleCard.textContent, /server/i);
+  assert.match(saleCard.textContent, /not a problem with the sale/);
+  assert.match(saleCard.textContent, /Customer: Aling Nena/, "the order's current customer is named");
+  assert.ok(buttonIn(saleCard, 'Send again as is'), 'a server-error record can be sent again as is');
+  assert.equal(buttonIn(saleCard, 'Confirm & Re-point'), undefined);
+  assert.equal(saleCard.querySelector('input'), null, 'no customer picker for a server error');
+
+  assert.ok(buttonIn(refusedCard, 'Confirm & Re-point'), 'a 4xx refusal keeps the re-point flow');
+  assert.ok(refusedCard.querySelector('input'), 'with its customer picker');
+  assert.equal(buttonIn(refusedCard, 'Send again as is'), undefined, 'and is never sent again as is');
+  assert.doesNotMatch(refusedCard.textContent, /not a problem with the sale/);
+
+  view.click(buttonIn(saleCard, 'Send again as is'));
+  await settle();
+
+  const after = await stored(sale.id);
+  assert.equal(after.status, QUEUED);
+  assert.equal(after.server_strikes, 0);
+  assert.equal(after.last_strike_at, null);
+  assert.equal(after.attempts, 0);
+  assert.equal(after.last_error, null);
+  assert.equal(JSON.stringify(after.payload), JSON.stringify(before.payload), 'the payload is untouched');
+  assert.equal(after.request_key, before.request_key);
+  assert.equal(view.container.querySelector(`[data-testid="attention-record-${sale.id}"]`), null);
+  assert.equal((await stored(refused.id)).status, NEEDS_ATTENTION, 'the 4xx refusal is left as it was');
+
+  // Back in the queue, it and the record waiting on it both go once the server is fixed.
+  serve(() => null);
+  sent = [];
+  await drainLater();
+  assert.deepEqual(sent, ['/orders', '/orders/1A-00002/status']);
+  assert.deepEqual((await listRecords()).map((r) => r.id), [refused.id]);
+
+  view.unmount();
 });

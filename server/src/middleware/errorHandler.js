@@ -3,7 +3,7 @@
 // often it is retried. Answer those as a 4xx, not a 500. The offline outbox
 // (client/src/offline/outbox.js) stops the drain on a 5xx and retries that record, so
 // every record queued behind it waits; it moves the record aside only after five 5xx
-// answers that the server's write check (GET /api/v1/health/write) confirmed were not a
+// answers, at least a minute apart, that the server's write check (GET /api/v1/health/write) confirmed were not a
 // server-wide problem. A 4xx parks just that record in Needs attention at once and lets
 // the rest of the queue sync. Class 40 (serialization failure, deadlock) stays a 500 on
 // purpose: it is transient, and a retry can succeed.

@@ -311,17 +311,31 @@ function isNetworkFailure(err) {
 // sent ahead of an earlier one that failed. What changes is that the device then asks
 // the server whether it can SAVE data right now (GET /health/write — a real write that
 // is always rolled back; `/health` never touches the database, so it cannot say). Only
-// a 2xx there holds the failure against the record as one strike (`server_strikes`). At
-// SERVER_ERROR_PARK_THRESHOLD strikes the record moves to the attention list — never
-// deleted, its dependants waiting with it — and the same pass carries on behind it.
+// a 2xx there holds the failure against the record as one strike (`server_strikes`), and
+// only if at least SERVER_STRIKE_SPACING_MS has passed since that record's previous
+// strike (`last_strike_at`). At SERVER_ERROR_PARK_THRESHOLD strikes the record moves to
+// the attention list — never deleted, its dependants waiting with it — and the same pass
+// carries on behind it. The spacing means a record must keep failing for about five
+// minutes before it parks: a reconnect alone runs two passes in a few seconds, so
+// without it a bad deploy rolled back within a minute would already have parked valid
+// sales.
 //
 // No strike, and today's behaviour, for everything that says nothing about the record:
 // the check failing, timing out, or answering anything but a 2xx (a 404 is a server
 // that predates the check, so an un-updated server never moves anything aside), a
 // network failure, the client's 5-second timeout, a 401. `attempts` still counts every
 // failure of any kind, as it always has; `repointRecord` puts a parked record back in
-// the queue with a clean count.
+// the queue with a clean count — with no updates it is the attention list's "Send again
+// as is" for a record parked this way (`isParkedForServerError`).
 const SERVER_ERROR_PARK_THRESHOLD = 5;
+const SERVER_STRIKE_SPACING_MS = 60_000;
+const PARKED_FOR_SERVER_ERROR = 'server_error';
+
+// Parked by server-error strikes, as opposed to refused by the server for its data (a
+// 4xx), which is what the attention list's customer re-point is for.
+export function isParkedForServerError(record) {
+  return record?.status === NEEDS_ATTENTION && record.parked_for === PARKED_FOR_SERVER_ERROR;
+}
 
 // Safety cap. A check that passes while the problem is really server-wide (a route
 // broken for every record, say) must not walk the whole queue into Needs attention one
@@ -570,13 +584,18 @@ async function runDrainPass() {
         // record, the pass stops here exactly as it always has.
         if (err.status >= 500) {
           const strike = await serverAcceptsWrites(authorKey);
+          const struckAt = Date.now();
           const mayPark = parkStreak < MAX_CONSECUTIVE_SERVER_ERROR_PARKS;
           const saved = await saveDrainOutcome(record, (current) => {
-            if (!strike) return { attempts, last_error };
+            const lastStrikeAt = current.last_strike_at;
+            const tooSoon = typeof lastStrikeAt === 'number'
+              && struckAt - lastStrikeAt < SERVER_STRIKE_SPACING_MS;
+            if (!strike || tooSoon) return { attempts, last_error };
             const server_strikes = (current.server_strikes || 0) + 1;
+            const counted = { attempts, last_error, server_strikes, last_strike_at: struckAt };
             return server_strikes >= SERVER_ERROR_PARK_THRESHOLD && mayPark
-              ? { attempts, last_error, server_strikes, status: NEEDS_ATTENTION }
-              : { attempts, last_error, server_strikes };
+              ? { ...counted, status: NEEDS_ATTENTION, parked_for: PARKED_FOR_SERVER_ERROR }
+              : counted;
           });
           blocked.add(record.id);
           if (saved?.status === NEEDS_ATTENTION) {
@@ -654,7 +673,8 @@ export function notifyOutboxListeners(event = {}) {
 
 /**
  * Re-points a refused outbox record (in the needs-attention list) to a new customer
- * (or applies payload fixes) and re-queues it for the next drain pass (D8).
+ * (or applies payload fixes) and re-queues it for the next drain pass (D8). With no
+ * updates it re-queues the record exactly as it is ("Send again as is").
  *
  * @param {number} id Record id
  * @param {object} [updates]
@@ -676,6 +696,8 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   record.last_error = null;
   record.attempts = 0;
   record.server_strikes = 0;
+  record.last_strike_at = null;
+  record.parked_for = null;
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
   return record;
