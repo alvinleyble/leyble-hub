@@ -176,7 +176,6 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   hr();
   b(ESC, 0x61, 0x01);   // centre
   ln('Thank you for your business!');
-  ln('Salamat po, suki!');
   b(ESC, 0x61, 0x00);   // back to left
 
   // ── Feed + partial cut ─────────────────────────────────────────────────────

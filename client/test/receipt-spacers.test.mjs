@@ -100,16 +100,18 @@ test('receipt footer: old terms, "Received..." and the "By:" signature are gone 
   assert.ok(pickup.includes('Received by:'), 'the pickup header customer line stays');
 });
 
-test('receipt footer: both receipts end with the two thank-you lines', () => {
+test('receipt footer: both receipts end with the single thank-you line', () => {
   const order = footerOrder();
   const html = generateReceiptHtml(order);
-  assert.ok(html.includes('Thank you for your business!<br>Salamat po, suki!'));
+  assert.ok(html.includes('Thank you for your business!'));
+  assert.ok(!html.includes('Salamat po'), 'HTML has no second footer line');
   assert.ok(html.indexOf('Thank you for your business!') < html.indexOf('</body>'));
 
   const bytes = generateEscPos(order);
   const text = new TextDecoder('latin1').decode(bytes);
-  // Centred (ESC a 1), the two lines, back to left (ESC a 0), then the unchanged feed + cut.
-  assert.ok(text.includes('\x1ba\x01Thank you for your business!\nSalamat po, suki!\n\x1ba\x00'), 'centred, then left restored');
+  // Centred (ESC a 1), the one line, back to left (ESC a 0), then the unchanged feed + cut.
+  assert.ok(text.includes('\x1ba\x01Thank you for your business!\n\x1ba\x00'), 'centred, then left restored, no blank line after');
+  assert.ok(!text.includes('Salamat po'), 'ESC/POS has no second footer line');
   assert.deepEqual(Array.from(bytes.slice(-7)), [0x1B, 0x64, 0x04, 0x1D, 0x56, 0x41, 0x03], 'final feed + partial cut unchanged');
 });
 

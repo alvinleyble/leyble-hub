@@ -204,7 +204,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   <div class="hr"></div>
 
   <div class="center thanks">
-    Thank you for your business!<br>Salamat po, suki!
+    Thank you for your business!
   </div>
 </body>
 </html>`;

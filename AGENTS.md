@@ -1020,7 +1020,7 @@ WHERE op.order_id = $1
 - Uses `@page { size: 80mm auto; margin: 0 }`, body width 72mm — no external CSS needed
 - Item layout: SKU on line 1 (with product name fallback), `qty unit × price → amount` on line 2
 - Shows **DELIVERY RECEIPT** or **PICKUP RECEIPT** depending on `order.order_type`
-- Footer: a divider, then two centred lines — "Thank you for your business!" / "Salamat po, suki!" (no terms text, no signature line)
+- Footer: a divider, then one centred line — "Thank you for your business!" (no terms text, no signature line)
 - Business name on receipt: **LEYBLE GENERAL MERCHANDISE** (not "Leyble Hub")
 - **Staff attribution (`Sold by: <name>`) displayed on-screen, omitted from paper receipts**
   ([ADR 0017](docs/adr/0017-receipt-numbers-keyed-to-user-accounts.md) #10), from `orders.created_by`
