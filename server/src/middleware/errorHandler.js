@@ -1,10 +1,11 @@
 // Postgres SQLSTATE classes 22 (data exception) and 23 (integrity constraint violation)
 // mean the request's own data is bad: the identical request can never succeed, however
 // often it is retried. Answer those as a 4xx, not a 500. The offline outbox
-// (client/src/offline/outbox.js) reads any 5xx as "server unwell", stops the whole drain
-// and retries the same head record forever, so one bad record jams every record queued
-// behind it on that device. A 4xx parks just that record in Needs attention and lets the
-// rest of the queue sync. Class 40 (serialization failure, deadlock) stays a 500 on
+// (client/src/offline/outbox.js) stops the drain on a 5xx and retries that record, so
+// every record queued behind it waits; it moves the record aside only after five 5xx
+// answers, at least a minute apart, that the server's write check (GET /api/v1/health/write) confirmed were not a
+// server-wide problem. A 4xx parks just that record in Needs attention at once and lets
+// the rest of the queue sync. Class 40 (serialization failure, deadlock) stays a 500 on
 // purpose: it is transient, and a retry can succeed.
 const PG_BAD_DATA = /^2[23][0-9A-Z]{3}$/;
 const PG_UNIQUE_VIOLATION = '23505';
