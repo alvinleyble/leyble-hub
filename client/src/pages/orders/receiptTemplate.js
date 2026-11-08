@@ -153,6 +153,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
     color: #000;
   }
   .center { text-align: center; }
+  .thanks { margin-top: 2px; }
   .hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
   .row-between { display: flex; justify-content: space-between; }
   .biz-name { font-size: 15px; font-weight: bold; text-align: center; line-height: 1.3; }
@@ -202,16 +203,9 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
 
   <div class="hr"></div>
 
-  <div style="font-size:8px;line-height:1.2;margin-top:2px">
-    <strong>TERMS:</strong> 18% interest per annum will be charged to vendee on all overdue
-    accounts plus 25% of the amount due as attorney&#39;s fee in case of legal action that may arise
-    out of the transaction and the venue shall be in Antipolo City
+  <div class="center thanks">
+    Thank you for your business!
   </div>
-
-  <div class="center" style="font-size:10px;margin-top:10px">
-    Received the above merchandise<br>in good order and condition
-  </div>
-  <div style="border-top:1px solid #000;margin-top:24px;padding-top:2px;font-size:10px">By:</div>
 </body>
 </html>`;
 }
