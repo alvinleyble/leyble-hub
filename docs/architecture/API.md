@@ -152,3 +152,9 @@ Minimum version enforcement for Android tablets (migration 047). The client send
 ## Health
 
 `GET /health` → `{ "status": "ok" }` (unauthenticated; used by Render and Northflank health checks).
+
+`GET /health/write` (`health.js`, auth required, `/api/v1` only) → `200 { "status": "ok", "writable": true }` when the
+database accepts writes right now, `503` with `code: 'db_not_writable'` when it does not. Changes no data — the probe
+is a temp-table insert that is always rolled back ([`writeCheck.js`](../../server/src/lib/writeCheck.js)). The offline
+outbox asks it after a queued record gets a 5xx; see the drain outcome table in
+[v2-5-offline-accessibility.md](../product/proposals/v2-5-offline-accessibility.md).
