@@ -302,24 +302,58 @@ function isNetworkFailure(err) {
   return !err?.status;
 }
 
-// A record the server keeps answering with a 5xx while it accepts the records around
-// it is not an outage, it is that one record: a server bug its payload trips, a row the
-// route cannot handle. Retrying it forever at the head of the queue is how three tablets
-// jammed in production (2026-10-23) — every later sale waited behind one bad record.
+// A record the server keeps answering with a 5xx while it is otherwise fine is not an
+// outage, it is that one record: a server bug its payload trips, a row the route cannot
+// handle. Retrying it forever at the head of the queue is how three tablets jammed in
+// production (2026-10-23) — every later sale waited behind one bad record.
 //
-// So a 5xx no longer ends the pass. The record stays queued (its dependants wait with
-// it), the pass moves on, and the 5xx is held against the record — `server_errors` —
-// only when the SAME pass got at least one other record accepted (a 2xx). That is the
-// "otherwise reachable" proof: the server demonstrably did real work for this device
-// moments ago, which `/health` answering cannot show. A pass where every record gets a
-// 5xx accepted nothing, counts nothing and parks nothing — that is the server being
-// unwell, exactly as before. At the threshold the record moves to the attention list
-// (never deleted); `repointRecord` puts it back in the queue with a clean count.
+// The queue stays strictly in order: a 5xx still ends the pass, so no record is ever
+// sent ahead of an earlier one that failed. What changes is that the device then asks
+// the server whether it can SAVE data right now (GET /health/write — a real write that
+// is always rolled back; `/health` never touches the database, so it cannot say). Only
+// a 2xx there holds the failure against the record as one strike (`server_strikes`). At
+// SERVER_ERROR_PARK_THRESHOLD strikes the record moves to the attention list — never
+// deleted, its dependants waiting with it — and the same pass carries on behind it.
 //
-// Network failures, the client's own timeout abort and a 401 never reach this counter:
-// they say nothing about the record and keep ending the pass as before. `attempts`
-// still counts every failure of any kind, as it always has.
+// No strike, and today's behaviour, for everything that says nothing about the record:
+// the check failing, timing out, or answering anything but a 2xx (a 404 is a server
+// that predates the check, so an un-updated server never moves anything aside), a
+// network failure, the client's 5-second timeout, a 401. `attempts` still counts every
+// failure of any kind, as it always has; `repointRecord` puts a parked record back in
+// the queue with a clean count.
 const SERVER_ERROR_PARK_THRESHOLD = 5;
+
+// Safety cap. A check that passes while the problem is really server-wide (a route
+// broken for every record, say) must not walk the whole queue into Needs attention one
+// record at a time. So at most this many records may be parked for a 5xx in a row with
+// no record accepted (2xx) in between; at the cap a record at the threshold stays
+// queued and the pass stops as before. The streak is device state — it survives a
+// reload — and any accepted record resets it.
+const MAX_CONSECUTIVE_SERVER_ERROR_PARKS = 2;
+const PARK_STREAK_KEY = `${NS}serverErrorParkStreak`;
+
+async function readParkStreak() {
+  const stored = await nativeStore.getJson(PARK_STREAK_KEY);
+  return Number.isInteger(stored?.count) ? stored.count : 0;
+}
+
+async function writeParkStreak(count) {
+  await nativeStore.setJson(PARK_STREAK_KEY, { count });
+}
+
+// True only when the server answered the write check with a 2xx. Sent under the same
+// credential as the record that just failed, which the server has just accepted.
+async function serverAcceptsWrites(authorKey) {
+  try {
+    await api.request('/health/write', {
+      method: 'GET',
+      ...(authorKey ? { accountKey: authorKey } : {}),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Comfortably longer than the drain loop's own 30s period, so the loop's screen is
 // always fresh enough for the drain that immediately follows it.
@@ -373,9 +407,10 @@ async function authorTokenKey(record) {
  *                    receipt number counts exactly as much as a 201 (D13).
  *   network        — left queued; the pass stops, since the next record would fail the
  *                    same way.
- *   5xx            — left queued and the pass moves on; parked on the attention list
- *                    once the server has failed it SERVER_ERROR_PARK_THRESHOLD times in
- *                    passes that got some other record accepted (see that constant).
+ *   5xx            — left queued and the pass stops, as for a network failure, after
+ *                    one write check that may add a strike; at
+ *                    SERVER_ERROR_PARK_THRESHOLD strikes it is parked on the attention
+ *                    list instead and the pass carries on (see that constant).
  *   other 4xx      — moved to the attention list with the server's reason (D8). Never
  *                    discarded, never guessed at.
  *
@@ -408,8 +443,8 @@ async function runDrainPass() {
     // dependants from the start — an order's queued status change must not go out
     // ahead of the order it changes just because that order was parked last pass.
     const blocked = new Set(records.filter((r) => r.status !== QUEUED).map((r) => r.id));
-    // Records the server answered with a 5xx this pass; judged once the pass is over.
-    const serverErrored = [];
+    // Records parked for a 5xx since the last accepted one (MAX_CONSECUTIVE_SERVER_ERROR_PARKS).
+    let parkStreak = await readParkStreak();
 
     for (const record of records) {
       if (record.status !== QUEUED) continue;
@@ -467,6 +502,7 @@ async function runDrainPass() {
         throw err;
       }
 
+      let authorKey = null;
       try {
         // ADR 0017 #7 — the per-record author, back on the wire as a REAL CREDENTIAL.
         //
@@ -482,7 +518,7 @@ async function runDrainPass() {
         // and the cheapest path) or when their token has gone — then it falls back to the
         // active session, and attribution is honour-system exactly as the captain
         // accepted it to be.
-        const authorKey = await authorTokenKey(record);
+        authorKey = await authorTokenKey(record);
         const response = await api.request(endpoint, {
           method: record.method,
           body: JSON.stringify(body),
@@ -496,6 +532,10 @@ async function runDrainPass() {
         }
         await removeRecord(record.id);
         sent++;
+        if (parkStreak !== 0) {
+          parkStreak = 0;
+          await writeParkStreak(0);
+        }
       } catch (err) {
         // A 401 is the session ending underneath the drain — a takeover on another
         // device (ADR 0017 #8), a deactivated account, an expired token. It says nothing
@@ -526,13 +566,27 @@ async function runDrainPass() {
           break; // the line is down; stop the pass
         }
 
-        // See SERVER_ERROR_PARK_THRESHOLD: keep going, and decide after the pass
-        // whether this was the server or this record.
+        // See SERVER_ERROR_PARK_THRESHOLD. Strictly in order: unless this 5xx parks the
+        // record, the pass stops here exactly as it always has.
         if (err.status >= 500) {
-          await saveDrainOutcome(record, { attempts, last_error });
+          const strike = await serverAcceptsWrites(authorKey);
+          const mayPark = parkStreak < MAX_CONSECUTIVE_SERVER_ERROR_PARKS;
+          const saved = await saveDrainOutcome(record, (current) => {
+            if (!strike) return { attempts, last_error };
+            const server_strikes = (current.server_strikes || 0) + 1;
+            return server_strikes >= SERVER_ERROR_PARK_THRESHOLD && mayPark
+              ? { attempts, last_error, server_strikes, status: NEEDS_ATTENTION }
+              : { attempts, last_error, server_strikes };
+          });
           blocked.add(record.id);
-          serverErrored.push(record);
-          continue;
+          if (saved?.status === NEEDS_ATTENTION) {
+            parkStreak += 1;
+            await writeParkStreak(parkStreak);
+            failed++;
+            continue; // parked aside; its dependants wait, the rest of the queue goes on
+          }
+          markOffline();
+          break; // the server is unwell or this record is still on probation; stop the pass
         }
 
         // A retried DELETE for something already gone has already achieved its goal —
@@ -549,24 +603,6 @@ async function runDrainPass() {
         await saveDrainOutcome(record, { status: NEEDS_ATTENTION, attempts, last_error });
         blocked.add(record.id);
         failed++;
-      }
-    }
-
-    if (serverErrored.length > 0) {
-      if (sent > 0) {
-        // The server accepted other records this pass, so these 5xx answers were about
-        // the records themselves.
-        for (const record of serverErrored) {
-          const saved = await saveDrainOutcome(record, (current) => {
-            const server_errors = (current.server_errors || 0) + 1;
-            return server_errors >= SERVER_ERROR_PARK_THRESHOLD
-              ? { server_errors, status: NEEDS_ATTENTION }
-              : { server_errors };
-          });
-          if (saved?.status === NEEDS_ATTENTION) failed++;
-        }
-      } else {
-        markOffline(); // nothing got through: the server is unwell, as before
       }
     }
 
@@ -639,7 +675,7 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   record.status = QUEUED;
   record.last_error = null;
   record.attempts = 0;
-  record.server_errors = 0;
+  record.server_strikes = 0;
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
   return record;
@@ -691,6 +727,7 @@ export async function pendingDeletionRefs() {
 export async function __clearOutbox() {
   for (const key of await nativeStore.keysWithPrefix(OUTBOX_PREFIX)) await nativeStore.remove(key);
   for (const key of await nativeStore.keysWithPrefix(REF_PREFIX)) await nativeStore.remove(key);
+  await nativeStore.remove(PARK_STREAK_KEY);
   draining = false;
   notifyOutboxListeners({ type: 'clear' });
 }
