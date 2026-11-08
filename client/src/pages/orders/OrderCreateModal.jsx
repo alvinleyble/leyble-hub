@@ -295,6 +295,7 @@ export default function OrderCreateModal({
             && !custs.some((c) => String(c.id) === String(editOrder.customer_id))) {
           custs = [...custs, {
             id: editOrder.customer_id,
+            _outboxId: Number(editOrder.customer_id.slice('local-'.length)),
             name: editOrder.customer_name,
             address: editOrder.customer_address,
             phone: editOrder.customer_phone,

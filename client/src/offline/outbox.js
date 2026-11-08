@@ -160,6 +160,13 @@ export async function listNeedsAttention() {
 // up where it left off.
 
 export function ref(outboxId, field = 'id') {
+  // JSON drops an undefined `$ref`, so a reference to no record would be stored as a
+  // bare `{ field }` that no longer looks like a reference at all — and the drain would
+  // then send the object itself, e.g. PATCH /customers/[object Object]. Refuse it here,
+  // at Save, where the operator still hears about it.
+  if (outboxId === undefined || outboxId === null) {
+    throw new Error('ref: an outbox record id is required');
+  }
   return { $ref: outboxId, field };
 }
 
