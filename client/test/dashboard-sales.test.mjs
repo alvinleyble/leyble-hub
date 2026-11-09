@@ -1,5 +1,5 @@
 // The sales Dashboard (captain's grill 2026-11-09; comparisons and history reworked
-// 2026-11-10): three totals, each split into the period still running (amber, IN
+// 2026-11-10; split into Sales / Products / Stock sub-tabs the same day): three totals, each split into the period still running (amber, IN
 // PROGRESS, a share of the whole previous period) and the last finished one (green or
 // red verdict); the month day by day, paged back to June 2026; the month-by-month
 // trend; the viewed month's top 10 and slow movers. The server computes every figure;
@@ -16,6 +16,8 @@ import {
   isSalesPayload, normalizeDashboard,
 } from '../src/utils/salesDashboard.js';
 import { salesDashboardPayload, pastMonthPayload } from './dashboard-fixture.mjs';
+import { nativeStore } from '../src/offline/nativeStore.js';
+import { DASHBOARD_TAB_KEY } from '../src/offline/keys.js';
 
 const { createRoot } = await import('react-dom/client');
 const DashboardPage = (await import('../src/pages/DashboardPage.jsx')).default;
@@ -50,6 +52,11 @@ function serve({ failMonths = false } = {}) {
     return pastMonthPayload(m[1]);
   };
   return calls;
+}
+
+async function openTab(r, key) {
+  await act(async () => { r.q(`dashboard-tab-${key}`).click(); });
+  await settle();
 }
 
 function touch(el, type, x, y) {
@@ -204,8 +211,8 @@ test('month pager: back to a finished month, bounded at June 2026 and at this mo
   assert.doesNotMatch(summary, /In progress/);
   assert.equal(r.all('dashboard-daily-bar').length, 31, 'the whole month');
   assert.equal(r.all('dashboard-daily-bar').filter((b) => b.dataset.today).length, 0, 'no amber day');
-  assert.match(r.all('dashboard-top-product')[0].textContent, /San Miguel Pale Pilsen \(2026-10\)/, 'top 10 follows the month');
-  assert.match(r.q('dashboard-slow-window').textContent, /last 14 days of October 2026 \(Oct 18 – Oct 31\)/);
+  assert.match(r.all('dashboard-top-product')[0].textContent, /Red Horse Grande 1L/,
+    "the Products tab keeps its own month: Sales' pager does not move it");
   assert.equal(next().disabled, false);
   // The cards never move: they are always today, this week, this month.
   assert.match(r.q('dashboard-total-today').textContent, /₱4,100\.00/);
@@ -315,6 +322,7 @@ test('top products show cases sold; slow movers say when their window is clamped
   });
   const r = renderPage();
   await settle();
+  await openTab(r, 'products');
 
   const top = r.all('dashboard-top-product');
   assert.equal(top.length, 2);
@@ -332,6 +340,7 @@ test('a full 14-day slow-mover window names its dates without the clamp note', a
   });
   const r = renderPage();
   await settle();
+  await openTab(r, 'products');
   assert.match(r.q('dashboard-slow-window').textContent, /no sales in the last 14 days \(Nov 17 – Nov 30\)/);
   assert.doesNotMatch(r.text(), /not 14/);
   r.unmount();
@@ -379,6 +388,179 @@ test('offline: a copy held from the old counters Dashboard is not drawn as blank
   await settle();
   assert.match(r.text(), /no dashboard figures saved yet/);
   assert.doesNotMatch(r.text(), /₱0\.00/);
+  r.unmount();
+});
+
+test('three sub-tabs: Sales opens by default, as a real tablist', async () => {
+  serve();
+  const r = renderPage();
+  await settle();
+
+  const list = r.container.querySelector('[role="tablist"]');
+  assert.equal(list.getAttribute('aria-label'), 'Dashboard sections');
+  const tabs = [...list.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs.map((t) => t.textContent), ['Sales', 'Products', 'Stock']);
+  assert.deepEqual(tabs.map((t) => t.getAttribute('aria-selected')), ['true', 'false', 'false']);
+  assert.deepEqual(tabs.map((t) => t.tabIndex), [0, -1, -1], 'only the selected tab is in the Tab order');
+  for (const t of tabs) {
+    assert.ok(t.className.includes('min-h-[48px]'), `${t.textContent} is a 48px target`);
+    const panel = r.container.querySelector(`#${t.getAttribute('aria-controls')}`);
+    assert.equal(panel.getAttribute('role'), 'tabpanel');
+    assert.equal(panel.getAttribute('aria-labelledby'), t.id);
+  }
+
+  assert.equal(r.q('dashboard-panel-sales').hidden, false);
+  assert.equal(r.q('dashboard-panel-products').hidden, true);
+  assert.equal(r.q('dashboard-panel-stock').hidden, true);
+  assert.ok(r.q('dashboard-panel-sales').contains(r.q('dashboard-total-today')), 'Sales: the three totals');
+  assert.ok(r.q('dashboard-panel-sales').contains(r.q('dashboard-daily')), 'Sales: the day-by-day chart');
+  assert.ok(r.q('dashboard-panel-sales').contains(r.q('dashboard-monthly')), 'Sales: the by-month trend');
+  assert.ok(r.q('dashboard-panel-products').contains(r.q('dashboard-top-products')), 'Products: top 10');
+  assert.ok(r.q('dashboard-panel-products').contains(r.q('dashboard-slow-movers')), 'Products: slow movers');
+  assert.ok(r.q('dashboard-panel-stock').contains(r.q('dashboard-low-stock')), 'Stock: low stock');
+
+  await openTab(r, 'stock');
+  assert.equal(r.q('dashboard-panel-sales').hidden, true);
+  assert.equal(r.q('dashboard-panel-stock').hidden, false);
+  assert.equal(r.q('dashboard-tab-stock').getAttribute('aria-selected'), 'true');
+  r.unmount();
+});
+
+test('the tabs answer the keyboard: arrows wrap, Home and End jump, focus follows', async () => {
+  serve();
+  const r = renderPage();
+  await settle();
+  const key = async (k) => {
+    await act(async () => {
+      document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    });
+  };
+  r.q('dashboard-tab-sales').focus();
+  await key('ArrowRight');
+  assert.equal(r.q('dashboard-tab-products').getAttribute('aria-selected'), 'true');
+  assert.equal(document.activeElement, r.q('dashboard-tab-products'));
+  await key('ArrowRight');
+  await key('ArrowRight');
+  assert.equal(document.activeElement, r.q('dashboard-tab-sales'), 'wraps from the last to the first');
+  await key('ArrowLeft');
+  assert.equal(document.activeElement, r.q('dashboard-tab-stock'), 'and back');
+  await key('Home');
+  assert.equal(r.q('dashboard-tab-sales').getAttribute('aria-selected'), 'true');
+  await key('End');
+  assert.equal(r.q('dashboard-tab-stock').getAttribute('aria-selected'), 'true');
+  assert.equal(r.q('dashboard-panel-stock').hidden, false);
+  r.unmount();
+});
+
+test('the last tab used is remembered on this device', async () => {
+  serve();
+  const first = renderPage();
+  await settle();
+  await openTab(first, 'products');
+  first.unmount();
+
+  const again = renderPage();
+  await settle();
+  assert.equal(again.q('dashboard-tab-products').getAttribute('aria-selected'), 'true');
+  assert.equal(again.q('dashboard-panel-products').hidden, false);
+  assert.equal(await nativeStore.getString(DASHBOARD_TAB_KEY), 'products');
+  again.unmount();
+
+  // Anything else held under the key is ignored, not trusted.
+  await nativeStore.setString(DASHBOARD_TAB_KEY, 'orders');
+  const third = renderPage();
+  await settle();
+  assert.equal(third.q('dashboard-tab-sales').getAttribute('aria-selected'), 'true');
+  third.unmount();
+});
+
+test('Products has its own month pager, bounded at June 2026 and this month', async () => {
+  const calls = serve();
+  const r = renderPage();
+  await settle();
+  await openTab(r, 'products');
+
+  const prev = () => r.q('dashboard-products-month-prev');
+  const next = () => r.q('dashboard-products-month-next');
+  assert.equal(r.q('dashboard-products-month-label').textContent, 'November 2026');
+  assert.equal(next().disabled, true);
+
+  await act(async () => { prev().click(); });
+  await settle();
+  assert.ok(calls.includes('/dashboard?month=2026-10'));
+  assert.equal(r.q('dashboard-products-month-label').textContent, 'October 2026');
+  assert.match(r.all('dashboard-top-product')[0].textContent, /San Miguel Pale Pilsen \(2026-10\)/);
+  assert.match(r.q('dashboard-products-month').parentElement.textContent, /October 2026, by gross sales/);
+  assert.match(r.q('dashboard-slow-window').textContent, /last 14 days of October 2026 \(Oct 18 – Oct 31\)/);
+  assert.equal(r.q('dashboard-month-label').textContent, 'November 2026', "Sales' pager stays where it was");
+
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => { prev().click(); });
+    await settle();
+  }
+  assert.equal(r.q('dashboard-products-month-label').textContent, 'June 2026');
+  assert.equal(prev().disabled, true);
+  assert.equal(calls.filter((c) => c.includes('month=2026-05')).length, 0);
+
+  const section = r.q('dashboard-panel-products').firstChild;
+  await act(async () => { touch(section, 'touchstart', 300, 100); touch(section, 'touchend', 100, 110); });
+  await settle();
+  assert.equal(r.q('dashboard-products-month-label').textContent, 'July 2026', 'swipe left: the month after');
+  r.unmount();
+});
+
+test('Products for a past month with no connection says so instead of empty lists', async () => {
+  serve({ failMonths: true });
+  const r = renderPage();
+  await settle();
+  await openTab(r, 'products');
+  await act(async () => { r.q('dashboard-products-month-prev').click(); });
+  await settle();
+  assert.match(r.q('dashboard-products-month-error').textContent, /October 2026 needs a connection/);
+  assert.equal(r.all('dashboard-top-product').length, 0, "never this month's list under October's name");
+  r.unmount();
+});
+
+test('Stock: the low-stock list, flagged on its tab with a worded count', async () => {
+  api.get = async () => salesDashboardPayload({
+    low_stock: [
+      { id: 1, name: '8oz Coke', category: 'Softdrinks', unit: 'case', current_stock: 0 },
+      { id: 2, name: 'Mismo Coke', category: 'Softdrinks', unit: 'case', current_stock: 6 },
+    ],
+  });
+  const r = renderPage();
+  await settle();
+  const count = r.q('dashboard-tab-stock-count');
+  assert.equal(count.textContent, '2 low');
+  assert.ok(count.className.includes('amber'));
+  assert.equal(r.q('dashboard-tab-stock').textContent, 'Stock2 low');
+
+  await openTab(r, 'stock');
+  const items = r.all('dashboard-low-stock-item');
+  assert.equal(items.length, 2);
+  assert.match(items[0].textContent, /8oz Coke.*0 case.*Out of stock/);
+  assert.match(items[1].textContent, /Mismo Coke.*6 case.*Low stock/);
+  r.unmount();
+
+  api.get = async () => salesDashboardPayload();
+  const healthy = renderPage();
+  await settle();
+  assert.equal(healthy.q('dashboard-tab-stock-count'), null, 'no flag when nothing is low');
+  await openTab(healthy, 'stock');
+  assert.match(healthy.q('dashboard-low-stock').textContent, /All stock levels are healthy/);
+  healthy.unmount();
+});
+
+test('offline: the held copy draws on every tab', async () => {
+  await writeBackOfficeCache(DASHBOARD_CACHE, salesDashboardPayload());
+  api.get = async () => { throw new TypeError('Failed to fetch'); };
+  const r = renderPage();
+  await settle();
+  assert.match(r.text(), /Viewing offline data/);
+  await openTab(r, 'products');
+  assert.equal(r.all('dashboard-top-product').length, 2);
+  await openTab(r, 'stock');
+  assert.match(r.q('dashboard-low-stock').textContent, /All stock levels are healthy/);
   r.unmount();
 });
 

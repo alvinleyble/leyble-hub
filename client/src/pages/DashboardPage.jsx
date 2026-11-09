@@ -16,11 +16,16 @@ import {
   padToMonthEnd,
 } from '../utils/salesDashboard';
 import { loadWithCache, readBackOfficeCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
+import { nativeStore } from '../offline/nativeStore.js';
+import { DASHBOARD_TAB_KEY } from '../offline/keys.js';
 
 // The Dashboard is sales and products (captain's grill, 2026-11-09; comparisons and
-// history reworked 2026-11-10). Three gross-sales totals, each split into the period
-// still running and the last one finished; the month day by day, paged back to June
-// 2026; the month-by-month trend; and the viewed month's best sellers and slow movers.
+// history reworked 2026-11-10), in three sub-tabs:
+//   Sales     three gross-sales totals, each split into the period still running and
+//             the last one finished; the month day by day, paged back to June 2026;
+//             and the month-by-month trend.
+//   Products  its own month pager, and that month's best sellers and slow movers.
+//   Stock     the low-stock list, as of right now.
 // Every figure — and what counts as a sale — is computed on the server
 // (server/src/lib/salesDashboard.js); this screen only lays them out.
 //
@@ -140,7 +145,7 @@ function SalesTotal({ periodKey, total, salesStart, asOf, testId }) {
 }
 
 // ‹ November 2026 › — bounded to the first counted month and this one.
-function MonthPager({ viewed, first, last, onChange }) {
+function MonthPager({ viewed, first, last, onChange, idPrefix = 'dashboard-month' }) {
   const { prev, next } = pagerBounds(viewed, first, last);
   const arrow = `inline-flex items-center justify-center w-12 h-12 shrink-0 rounded-lg text-2xl font-bold
                  text-blue-700 hover:bg-blue-50 disabled:text-slate-300 disabled:hover:bg-transparent
@@ -149,15 +154,15 @@ function MonthPager({ viewed, first, last, onChange }) {
     <div className="flex items-center justify-between gap-2">
       <button type="button" className={arrow} disabled={!prev} onClick={() => prev && onChange(prev)}
               aria-label={prev ? `Previous month, ${monthLabel(prev)}` : 'Previous month'}
-              data-testid="dashboard-month-prev">
+              data-testid={`${idPrefix}-prev`}>
         <span aria-hidden="true">‹</span>
       </button>
-      <p className="text-lg font-bold text-slate-900 text-center" aria-live="polite" data-testid="dashboard-month-label">
+      <p className="text-lg font-bold text-slate-900 text-center" aria-live="polite" data-testid={`${idPrefix}-label`}>
         {monthLabel(viewed)}
       </p>
       <button type="button" className={arrow} disabled={!next} onClick={() => next && onChange(next)}
               aria-label={next ? `Next month, ${monthLabel(next)}` : 'Next month'}
-              data-testid="dashboard-month-next">
+              data-testid={`${idPrefix}-next`}>
         <span aria-hidden="true">›</span>
       </button>
     </div>
@@ -462,59 +467,138 @@ function slowMoversSubtitle(slow, pastMonth) {
   return `Active products with no sales in the last 14 days (${range})`;
 }
 
-// Mirrors the loaded layout's sections (three totals, the two charts, the three
-// lists) so nothing shifts once real data replaces it.
-function DashboardSkeleton() {
+
+// ── Sub-tabs ───────────────────────────────────────────────────────────────────
+// Sales · Products · Stock (captain, 2026-11-10: one long page was too long a
+// scroll). Each is its own screenful; the last one used is remembered per device.
+
+export const DASHBOARD_TABS = [
+  { key: 'sales', label: 'Sales' },
+  { key: 'products', label: 'Products' },
+  { key: 'stock', label: 'Stock' },
+];
+const TAB_KEYS = DASHBOARD_TABS.map((t) => t.key);
+
+export function isDashboardTab(value) {
+  return TAB_KEYS.includes(value);
+}
+
+// A real tablist (WAI-ARIA tabs, automatic activation): ← → move and select, Home and
+// End jump to the ends, and only the selected tab is in the Tab order. Styled as the
+// design standard's chips (Q4): 48px pills, 16px text, blue when selected.
+function DashboardTabs({ tab, onChange, lowStockCount }) {
+  const refs = useRef({});
+  const move = (e) => {
+    const i = TAB_KEYS.indexOf(tab);
+    let next = null;
+    if (e.key === 'ArrowRight') next = TAB_KEYS[(i + 1) % TAB_KEYS.length];
+    else if (e.key === 'ArrowLeft') next = TAB_KEYS[(i - 1 + TAB_KEYS.length) % TAB_KEYS.length];
+    else if (e.key === 'Home') next = TAB_KEYS[0];
+    else if (e.key === 'End') next = TAB_KEYS[TAB_KEYS.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    onChange(next);
+    refs.current[next]?.focus();
+  };
   return (
-    <SkeletonGroup label="Loading dashboard" className={`${PAGE_PADDING} max-w-7xl mx-auto`}>
-      <div className={SECTION_GAP}>
-        <Skeleton className="h-8 w-40" />
-      </div>
-      <div className={`grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4 ${SECTION_GAP}`}>
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="rounded-xl border px-4 py-3 md:p-5 bg-white border-slate-200">
-            <Skeleton className="h-4 w-20 mb-2" />
-            <Skeleton className="h-9 w-40 mb-2" />
-            <Skeleton className="h-3 w-full mb-2" />
-            <Skeleton className="h-4 w-32" />
-          </div>
-        ))}
-      </div>
-      {[0, 1].map((s) => (
-        <section key={s} className={`${CARD} ${SECTION_GAP}`}>
-          <div className={SECTION_HEAD}><Skeleton className="h-5 w-48" /></div>
-          <div className="px-4 md:px-5 py-4"><Skeleton className="h-44 md:h-56 w-full" /></div>
-        </section>
-      ))}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-        {[0, 1, 2].map((s) => (
-          <section key={s} className={CARD}>
-            <div className={SECTION_HEAD}><Skeleton className="h-5 w-32" /></div>
-            <div className="divide-y divide-slate-300">
-              {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="flex items-center justify-between gap-4 px-5 py-4 min-h-[48px]">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-4 w-16" />
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </SkeletonGroup>
+    <div role="tablist" aria-label="Dashboard sections" onKeyDown={move}
+         className={`flex flex-nowrap gap-2 overflow-x-auto no-scrollbar ${SECTION_GAP}`}>
+      {DASHBOARD_TABS.map((t) => {
+        const selected = t.key === tab;
+        return (
+          <button
+            key={t.key}
+            ref={(el) => { refs.current[t.key] = el; }}
+            type="button"
+            role="tab"
+            id={`dashboard-tab-${t.key}`}
+            aria-selected={selected}
+            aria-controls={`dashboard-panel-${t.key}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(t.key)}
+            data-testid={`dashboard-tab-${t.key}`}
+            className={`shrink-0 inline-flex items-center gap-2 min-h-[48px] px-5 rounded-full border text-base
+                        font-semibold whitespace-nowrap transition-colors focus-visible:outline-none
+                        focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-1
+                        ${selected ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
+          >
+            {t.label}
+            {t.key === 'stock' && lowStockCount > 0 && (
+              // Amber: "look at this" (Q5). The word travels with the number.
+              <span className={`${PILL} ${toneClass('amber')}`} data-testid="dashboard-tab-stock-count">
+                {lowStockCount} low
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-const offlineLink = (
-  <Link
-    to="/orders"
-    className="inline-flex items-center justify-center min-h-[48px] px-5 rounded-lg
-               bg-amber-600 text-white text-base font-semibold hover:bg-amber-700
-               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
-  >
-    Go to Outgoing Orders
-  </Link>
-);
+function TabPanel({ id, tab, children }) {
+  return (
+    <div role="tabpanel" id={`dashboard-panel-${id}`} aria-labelledby={`dashboard-tab-${id}`}
+         hidden={tab !== id} data-testid={`dashboard-panel-${id}`}>
+      {children}
+    </div>
+  );
+}
+
+// ── Month paging ───────────────────────────────────────────────────────────────
+
+// One month view: this month from the main payload, or a past month read live (never
+// cached: the held copy is the current month's, and only that). Sales and Products
+// each keep their own.
+function useMonthView(data) {
+  const [viewed, setViewed] = useState(null);
+  const [past, setPast] = useState({ month: null, data: null, error: false });
+  const req = useRef(0);
+  const current = data ? data.selected_month.month : null;
+  const shown = viewed && viewed !== current ? viewed : current;
+
+  const load = useCallback((month, { silent = false } = {}) => {
+    const mine = ++req.current;
+    if (!silent) setPast({ month, data: null, error: false });
+    return api.get(`/dashboard?month=${encodeURIComponent(month)}`)
+      .then((payload) => {
+        if (mine !== req.current) return;
+        if (!isSalesPayload(payload)) throw new Error('unexpected dashboard shape');
+        setPast({ month, data: normalizeDashboard(payload), error: false });
+      })
+      .catch(() => {
+        if (mine !== req.current || silent) return;
+        setPast({ month, data: null, error: true });
+      });
+  }, []);
+
+  const goTo = useCallback((month) => {
+    if (!month || month === shown) return;
+    req.current += 1;
+    if (month === current) {
+      setViewed(null);
+      setPast({ month: null, data: null, error: false });
+      return;
+    }
+    setViewed(month);
+    load(month);
+  }, [shown, current, load]);
+
+  const isPast = Boolean(shown) && shown !== current;
+  const view = isPast ? (past.month === shown ? past.data : null) : data;
+  return {
+    shown,
+    current,
+    first: data ? monthKey(data.sales_start) : null,
+    isPast,
+    view,
+    waiting: isPast && !view && !past.error,
+    failed: isPast && !view && past.error,
+    goTo,
+    retry: () => load(shown),
+    refresh: () => { if (isPast) load(shown, { silent: true }); },
+  };
+}
 
 // Swipe left for the next month, right for the previous — a mostly-sideways drag only,
 // so scrolling the page up and down never flips the month.
@@ -538,17 +622,232 @@ function useSwipe(onLeft, onRight) {
   };
 }
 
+function useMonthSwipe(mv) {
+  const { prev, next } = mv.shown && mv.first
+    ? pagerBounds(mv.shown, mv.first, mv.current) : { prev: null, next: null };
+  return useSwipe(() => mv.goTo(next), () => mv.goTo(prev));
+}
+
+function MonthUnavailable({ mv, testId }) {
+  return (
+    <div className="px-5 py-8 text-center" data-testid={testId}>
+      <p className="text-base text-slate-700">
+        {monthLabel(mv.shown)} needs a connection. This device keeps only this month&rsquo;s figures.
+      </p>
+      <button type="button" onClick={mv.retry}
+              className="mt-2 min-h-[48px] px-4 text-base font-semibold text-blue-700 underline rounded-lg
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+        Try again
+      </button>
+    </div>
+  );
+}
+
+function ListPlaceholder() {
+  return (
+    <div className="divide-y divide-slate-300" role="status" aria-label="Loading">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center justify-between gap-4 px-5 py-4 min-h-[48px]">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── The three panels ───────────────────────────────────────────────────────────
+
+function SalesPanel({ data, mv, asOf }) {
+  const swipe = useMonthSwipe(mv);
+  const { totals, monthly } = data;
+  const salesStart = data.sales_start;
+  const view = mv.view;
+  return (
+    <>
+      {/* ── Gross sales: today, this week, this month ─────────────── */}
+      <div className={`grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4 ${SECTION_GAP}`}>
+        <SalesTotal periodKey="today" total={totals.today} salesStart={salesStart} asOf={asOf}
+                    testId="dashboard-total-today" />
+        <SalesTotal periodKey="week" total={totals.week} salesStart={salesStart} asOf={asOf}
+                    testId="dashboard-total-week" />
+        <SalesTotal periodKey="month" total={totals.month} salesStart={salesStart} asOf={asOf}
+                    testId="dashboard-total-month" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 items-start">
+        {/* ── One month, day by day, paged back to the first counted month ── */}
+        <section className={CARD} data-testid="dashboard-daily" {...swipe}>
+          <div className={SECTION_HEAD}>
+            <h2 className="text-lg font-bold text-slate-900">Gross sales by day</h2>
+            <p className="text-sm text-slate-600">Philippine time. Swipe or use the arrows for another month.</p>
+            <MonthPager viewed={mv.shown} first={mv.first} last={mv.current} onChange={mv.goTo} />
+            {view && <MonthSummary month={view.selected_month} salesStart={salesStart} asOf={asOf} />}
+          </div>
+          {mv.waiting && (
+            <div className="px-4 md:px-5 py-4" role="status" aria-label={`Loading ${monthLabel(mv.shown)}`}>
+              <Skeleton className="h-44 md:h-56 w-full" />
+            </div>
+          )}
+          {mv.failed && <MonthUnavailable mv={mv} testId="dashboard-month-error" />}
+          {view && (view.daily.length ? <DailySalesChart daily={view.daily} today={mv.isPast ? null : data.today} /> : (
+            <p className="px-5 py-10 text-center text-slate-600 text-base">No sales counted yet this month</p>
+          ))}
+        </section>
+
+        {/* ── Every month since sales were first counted ─────────────── */}
+        {monthly.length > 0 && (
+          <section className={CARD} data-testid="dashboard-monthly">
+            <div className={SECTION_HEAD}>
+              <h2 className="text-lg font-bold text-slate-900">Gross sales by month</h2>
+              <p className="text-sm text-slate-600">
+                Since {monthLabel(monthly[0].month)}, Philippine time. Tap a month to see its days.
+              </p>
+            </div>
+            <MonthlySalesChart monthly={monthly} viewed={mv.shown} onPick={mv.goTo} />
+          </section>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ProductsPanel({ mv }) {
+  const swipe = useMonthSwipe(mv);
+  const view = mv.view;
+  return (
+    <div {...swipe}>
+      <section className={`${CARD} ${SECTION_GAP}`} data-testid="dashboard-products-month">
+        <div className="px-4 md:px-5 py-2">
+          <MonthPager viewed={mv.shown} first={mv.first} last={mv.current} onChange={mv.goTo}
+                      idPrefix="dashboard-products-month" />
+          <p className="text-sm text-slate-600 text-center pb-1">
+            Best sellers and slow movers for this month. Swipe or use the arrows for another month.
+          </p>
+        </div>
+        {mv.failed && <MonthUnavailable mv={mv} testId="dashboard-products-month-error" />}
+      </section>
+
+      {!mv.failed && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 items-start">
+          <section className={CARD}>
+            <div className={SECTION_HEAD}>
+              <h2 className="text-lg font-bold text-slate-900">Top 10 products</h2>
+              <p className="text-sm text-slate-600">{monthLabel(mv.shown)}, by gross sales</p>
+            </div>
+            {view
+              ? <TopProducts rows={view.top_products}
+                             emptyText={mv.isPast ? `No sales in ${monthLabel(mv.shown)}` : 'No sales yet this month'} />
+              : <ListPlaceholder />}
+          </section>
+
+          <section className={CARD}>
+            <div className={SECTION_HEAD}>
+              <h2 className="text-lg font-bold text-slate-900">
+                Slow movers{view?.slow_movers?.products?.length ? ` (${view.slow_movers.products.length})` : ''}
+              </h2>
+              {view?.slow_movers && (
+                <p className="text-sm text-slate-600" data-testid="dashboard-slow-window">
+                  {slowMoversSubtitle(view.slow_movers, mv.isPast ? mv.shown : null)}
+                </p>
+              )}
+            </div>
+            {view
+              ? (view.slow_movers && <SlowMovers key={mv.shown} slow={view.slow_movers} />)
+              : <ListPlaceholder />}
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockPanel({ lowStock }) {
+  return (
+    <section className={CARD} data-testid="dashboard-low-stock">
+      <div className={SECTION_HEAD}>
+        <h2 className="text-lg font-bold text-slate-900">Low Stock</h2>
+        <p className="text-sm text-slate-600">Right now · products at or below {LOW_STOCK_THRESHOLD} units</p>
+      </div>
+      {lowStock.length === 0 ? (
+        <p className="px-5 py-10 text-center text-slate-600 text-base">All stock levels are healthy</p>
+      ) : (
+        // Two columns on a sideways tablet; one list on a phone.
+        <ul className="lg:grid lg:grid-cols-2 lg:gap-x-8 lg:px-5">
+          {lowStock.map((p) => (
+            <li key={p.id} data-testid="dashboard-low-stock-item"
+                className="flex items-center justify-between gap-4 px-4 md:px-5 lg:px-0 py-3 min-h-[48px]
+                           border-t border-slate-300 first:border-t-0 lg:[&:nth-child(2)]:border-t-0">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900 break-words">{p.name}</p>
+                {p.category && <p className="text-sm text-slate-600 mt-0.5">{p.category}</p>}
+              </div>
+              {/* The number and a worded badge — never colour alone (Q5). */}
+              <div className="shrink-0 flex flex-col items-end gap-1">
+                <span className="text-base font-bold tabular-nums text-slate-900 whitespace-nowrap">
+                  {p.current_stock} {p.unit}
+                </span>
+                <StockBadge stock={p.current_stock} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+// Mirrors the loaded layout (the tab row, then the Sales tab: three totals and the two
+// charts) so nothing shifts once real data replaces it.
+function DashboardSkeleton() {
+  return (
+    <SkeletonGroup label="Loading dashboard" className={`${PAGE_PADDING} max-w-7xl mx-auto`}>
+      <div className={SECTION_GAP}>
+        <Skeleton className="h-8 w-40" />
+      </div>
+      <div className={`flex gap-2 ${SECTION_GAP}`}>
+        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-28 rounded-full" />)}
+      </div>
+      <div className={`grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4 ${SECTION_GAP}`}>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="rounded-xl border px-4 py-3 md:p-5 bg-white border-slate-200">
+            <Skeleton className="h-4 w-20 mb-2" />
+            <Skeleton className="h-9 w-40 mb-2" />
+            <Skeleton className="h-3 w-full mb-2" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+        {[0, 1].map((s) => (
+          <section key={s} className={CARD}>
+            <div className={SECTION_HEAD}><Skeleton className="h-5 w-48" /></div>
+            <div className="px-4 md:px-5 py-4"><Skeleton className="h-44 md:h-56 w-full" /></div>
+          </section>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
+}
+
+const offlineLink = (
+  <Link
+    to="/orders"
+    className="inline-flex items-center justify-center min-h-[48px] px-5 rounded-lg
+               bg-amber-600 text-white text-base font-semibold hover:bg-amber-700
+               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+  >
+    Go to Outgoing Orders
+  </Link>
+);
+
 export default function DashboardPage() {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
   const [fromCache, setFromCache] = useState(false);
   const [cachedAt, setCachedAt]   = useState(null);
-  // A month other than the current one, and what the server said about it. Only the
-  // current month is held on the device; a past month is read live each time.
-  const [viewed, setViewed] = useState(null);
-  const [past, setPast] = useState({ month: null, data: null, loading: false, error: false });
-  const pastReq = useRef(0);
+  const [tab, setTab] = useState('sales');
 
   // ADR 0015 §9 — the Dashboard reads from a quietly-kept local copy when the line is
   // down, behind a banner naming when the copy was true, never the raw fetch failure.
@@ -566,29 +865,18 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const loadPast = useCallback((month, { silent = false } = {}) => {
-    const req = ++pastReq.current;
-    if (!silent) setPast({ month, data: null, loading: true, error: false });
-    // Never cached: the held copy is the current month's, and only that.
-    return api.get(`/dashboard?month=${encodeURIComponent(month)}`)
-      .then((payload) => {
-        if (req !== pastReq.current) return;
-        if (!isSalesPayload(payload)) throw new Error('unexpected dashboard shape');
-        setPast({ month, data: normalizeDashboard(payload), loading: false, error: false });
-      })
-      .catch(() => {
-        if (req !== pastReq.current || silent) return;
-        setPast({ month, data: null, loading: false, error: true });
-      });
-  }, []);
-
   // Local-first paint: a device holding a previously cached dashboard shows it
   // immediately (no skeleton) while the live fetch below quietly confirms or
-  // refreshes it in the background.
+  // refreshes it in the background. The remembered tab is read alongside it, so the
+  // screen opens on that tab rather than flicking over from Sales.
   useEffect(() => {
     let cancelled = false;
-    readBackOfficeCache(DASHBOARD_CACHE).then((held) => {
+    Promise.all([
+      readBackOfficeCache(DASHBOARD_CACHE).catch(() => null),
+      nativeStore.getString(DASHBOARD_TAB_KEY).catch(() => null),
+    ]).then(([held, savedTab]) => {
       if (cancelled) return;
+      if (isDashboardTab(savedTab)) setTab(savedTab);
       if (held && isSalesPayload(held.value)) {
         setData(normalizeDashboard(held.value));
         setFromCache(true);
@@ -598,33 +886,23 @@ export default function DashboardPage() {
       } else {
         load();
       }
-    }).catch(() => { if (!cancelled) load(); });
+    });
     return () => { cancelled = true; };
   }, [load]);
 
-  const current = data ? data.selected_month.month : null;
-  const first = data ? monthKey(data.sales_start) : null;
-  const shown = viewed && viewed !== current ? viewed : current;
+  const chooseTab = useCallback((next) => {
+    setTab(next);
+    nativeStore.setString(DASHBOARD_TAB_KEY, next).catch(() => {});
+  }, []);
 
-  const goTo = useCallback((month) => {
-    if (!month || month === shown) return;
-    if (month === current) {
-      pastReq.current += 1;
-      setViewed(null);
-      setPast({ month: null, data: null, loading: false, error: false });
-      return;
-    }
-    setViewed(month);
-    loadPast(month);
-  }, [shown, current, loadPast]);
+  const salesMonth = useMonthView(data);
+  const productsMonth = useMonthView(data);
 
   useRefreshListener(() => {
     load({ silent: true });
-    if (viewed && viewed !== current) loadPast(viewed, { silent: true });
+    salesMonth.refresh();
+    productsMonth.refresh();
   });
-
-  const bounds = shown && first ? pagerBounds(shown, first, current) : { prev: null, next: null };
-  const swipe = useSwipe(() => goTo(bounds.next), () => goTo(bounds.prev));
 
   if (loading) return <DashboardSkeleton />;
 
@@ -646,15 +924,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { totals, monthly, low_stock: lowStock } = data;
-  const salesStart = data.sales_start;
   const asOf = formatAsOf(data.as_of);
-  const isPast = shown !== current;
-  // What the month-specific sections draw: this month from the main payload, a past
-  // month from its own live read once it has landed.
-  const view = isPast ? (past.month === shown ? past.data : null) : data;
-  const monthWaiting = isPast && !view && !past.error;
-  const monthFailed = isPast && !view && past.error;
 
   return (
     <Page>
@@ -662,131 +932,11 @@ export default function DashboardPage() {
 
       {fromCache && <OfflineBanner cachedAt={cachedAt}>{offlineLink}</OfflineBanner>}
 
-      {/* ── Gross sales: today, this week, this month ─────────────── */}
-      <div className={`grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4 ${SECTION_GAP}`}>
-        <SalesTotal periodKey="today" total={totals.today} salesStart={salesStart} asOf={asOf}
-                    testId="dashboard-total-today" />
-        <SalesTotal periodKey="week" total={totals.week} salesStart={salesStart} asOf={asOf}
-                    testId="dashboard-total-week" />
-        <SalesTotal periodKey="month" total={totals.month} salesStart={salesStart} asOf={asOf}
-                    testId="dashboard-total-month" />
-      </div>
+      <DashboardTabs tab={tab} onChange={chooseTab} lowStockCount={data.low_stock.length} />
 
-      {/* ── One month, day by day, paged back to the first counted month ── */}
-      <section className={`${CARD} ${SECTION_GAP}`} data-testid="dashboard-daily" {...swipe}>
-        <div className={SECTION_HEAD}>
-          <h2 className="text-lg font-bold text-slate-900">Gross sales by day</h2>
-          <p className="text-sm text-slate-600">Philippine time. Swipe or use the arrows for another month.</p>
-          <MonthPager viewed={shown} first={first} last={current} onChange={goTo} />
-          {view && <MonthSummary month={view.selected_month} salesStart={salesStart} asOf={asOf} />}
-        </div>
-        {monthWaiting && (
-          <div className="px-4 md:px-5 py-4" role="status" aria-label={`Loading ${monthLabel(shown)}`}>
-            <Skeleton className="h-44 md:h-56 w-full" />
-          </div>
-        )}
-        {monthFailed && (
-          <div className="px-5 py-8 text-center" data-testid="dashboard-month-error">
-            <p className="text-base text-slate-700">
-              {monthLabel(shown)} needs a connection. This device keeps only this month&rsquo;s figures.
-            </p>
-            <button type="button" onClick={() => loadPast(shown)}
-                    className="mt-2 min-h-[48px] px-4 text-base font-semibold text-blue-700 underline rounded-lg
-                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
-              Try again
-            </button>
-          </div>
-        )}
-        {view && (view.daily.length ? <DailySalesChart daily={view.daily} today={isPast ? null : data.today} /> : (
-          <p className="px-5 py-10 text-center text-slate-600 text-base">No sales counted yet this month</p>
-        ))}
-      </section>
-
-      {/* ── Every month since sales were first counted ─────────────── */}
-      {monthly.length > 0 && (
-        <section className={`${CARD} ${SECTION_GAP}`} data-testid="dashboard-monthly">
-          <div className={SECTION_HEAD}>
-            <h2 className="text-lg font-bold text-slate-900">Gross sales by month</h2>
-            <p className="text-sm text-slate-600">
-              Since {monthLabel(monthly[0].month)}, Philippine time. Tap a month to see its days.
-            </p>
-          </div>
-          <MonthlySalesChart monthly={monthly} viewed={shown} onPick={goTo} />
-        </section>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-        <section className={CARD}>
-          <div className={SECTION_HEAD}>
-            <h2 className="text-lg font-bold text-slate-900">Top 10 products</h2>
-            <p className="text-sm text-slate-600">{monthLabel(shown)}, by gross sales</p>
-          </div>
-          {view
-            ? <TopProducts rows={view.top_products}
-                           emptyText={isPast ? `No sales in ${monthLabel(shown)}` : 'No sales yet this month'} />
-            : <ListPlaceholder failed={monthFailed} />}
-        </section>
-
-        <section className={CARD}>
-          <div className={SECTION_HEAD}>
-            <h2 className="text-lg font-bold text-slate-900">
-              Slow movers{view?.slow_movers?.products?.length ? ` (${view.slow_movers.products.length})` : ''}
-            </h2>
-            {view?.slow_movers && (
-              <p className="text-sm text-slate-600" data-testid="dashboard-slow-window">
-                {slowMoversSubtitle(view.slow_movers, isPast ? shown : null)}
-              </p>
-            )}
-          </div>
-          {view
-            ? (view.slow_movers && <SlowMovers key={shown} slow={view.slow_movers} />)
-            : <ListPlaceholder failed={monthFailed} />}
-        </section>
-
-        <section className={CARD}>
-          <div className={SECTION_HEAD}>
-            <h2 className="text-lg font-bold text-slate-900">Low Stock</h2>
-            <p className="text-sm text-slate-600">Right now · products at or below {LOW_STOCK_THRESHOLD} units</p>
-          </div>
-          {lowStock.length === 0 ? (
-            <p className="px-5 py-10 text-center text-slate-600 text-base">All stock levels are healthy</p>
-          ) : (
-            <ul className="divide-y divide-slate-300">
-              {lowStock.map((p) => (
-                <li key={p.id} className="flex items-center justify-between gap-4 px-4 md:px-5 py-3 min-h-[48px]">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-slate-900 break-words">{p.name}</p>
-                    {p.category && <p className="text-sm text-slate-600 mt-0.5">{p.category}</p>}
-                  </div>
-                  {/* The number and a worded badge — never colour alone (Q5). */}
-                  <div className="shrink-0 flex flex-col items-end gap-1">
-                    <span className="text-base font-bold tabular-nums text-slate-900 whitespace-nowrap">
-                      {p.current_stock} {p.unit}
-                    </span>
-                    <StockBadge stock={p.current_stock} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
+      <TabPanel id="sales" tab={tab}><SalesPanel data={data} mv={salesMonth} asOf={asOf} /></TabPanel>
+      <TabPanel id="products" tab={tab}><ProductsPanel mv={productsMonth} /></TabPanel>
+      <TabPanel id="stock" tab={tab}><StockPanel lowStock={data.low_stock} /></TabPanel>
     </Page>
-  );
-}
-
-function ListPlaceholder({ failed }) {
-  if (failed) {
-    return <p className="px-5 py-10 text-center text-slate-600 text-base">Needs a connection</p>;
-  }
-  return (
-    <div className="divide-y divide-slate-300" role="status" aria-label="Loading">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="flex items-center justify-between gap-4 px-5 py-4 min-h-[48px]">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-16" />
-        </div>
-      ))}
-    </div>
   );
 }
