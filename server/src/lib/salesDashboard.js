@@ -22,7 +22,7 @@
 // Everything is computed here, on the server, in four independent aggregate queries
 // run side by side (each is one round trip, and the API sits ~200ms from the DB).
 
-const SALES_START = '2026-11-01';
+const SALES_START = '2026-10-01';
 const TZ = 'Asia/Manila';
 const SLOW_MOVER_DAYS = 14;
 const TOP_PRODUCTS = 10;

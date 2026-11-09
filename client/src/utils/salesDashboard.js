@@ -36,7 +36,7 @@ function formatPct(pct) {
  *
  * @returns {{ tone: 'up'|'down'|'flat'|'none', arrow: string, text: string, note: string }}
  */
-export function describeChange(comparison, previousLabel, salesStart = '2026-11-01') {
+export function describeChange(comparison, previousLabel, salesStart = '2026-10-01') {
   if (!comparison || !comparison.available) {
     const from = formatDay(salesStart, { month: 'short', day: 'numeric', year: 'numeric' });
     return { tone: 'none', arrow: '', text: 'No comparison yet', note: `Sales are counted from ${from}` };

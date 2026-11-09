@@ -108,20 +108,41 @@ describe('Dashboard sales figures', () => {
     assert.equal(total(after, 'today') - total(before, 'today'), 1602.5, '2.5 cases × ₱641');
   });
 
-  it('nothing created before 2026-11-01 (Asia/Manila) appears in any figure', async () => {
-    const NOW = '2026-11-01T10:00:00';
+  it('nothing created before 2026-10-01 (Asia/Manila) appears in any figure', async () => {
+    const NOW = '2026-10-01T10:00:00'; // a Thursday
     const before = await at(NOW);
-    await order('pending', '2026-10-31T23:59:59', [{ p: grande, qty: 3 }]);
-    await order('pending', '2026-11-01T00:00:00', [{ p: grande, qty: 1 }]);
+    await order('pending', '2026-09-30T23:59:00', [{ p: grande, qty: 3 }]);
+    await order('pending', '2026-10-01T00:00:00', [{ p: grande, qty: 1 }]);
     const after = await at(NOW);
 
     for (const key of ['today', 'week', 'month']) {
-      assert.equal(total(after, key) - total(before, key), 641, `${key}: only the 1 November order`);
+      assert.equal(total(after, key) - total(before, key), 641, `${key}: only the 1 October order`);
     }
-    // The week began on Monday 26 October, so it counts only from the 1st.
-    assert.equal(after.totals.week.from, '2026-11-01');
+    // The week began on Monday 28 September, so it counts only from the 1st.
+    assert.equal(after.totals.week.from, '2026-10-01');
+    assert.equal(after.totals.month.from, '2026-10-01');
+    assert.deepEqual(after.daily.map((r) => r.date), ['2026-10-01'], 'no September day in the chart');
+
+    // The same boundary seen from later in the month: the 30 September order never appears.
+    const later = await at('2026-10-20T10:00:00');
+    assert.ok(total(later, 'month') >= 641, 'the 1 October order is in October');
+    assert.equal(later.daily[0].date, '2026-10-01');
+  });
+
+  it('October sales are counted, and November compares with October straight away', async () => {
+    const NOW = '2026-11-03T10:00:00';
+    const before = await at(NOW);
+    await order('pending', '2026-10-02T09:00:00', [{ p: grande, qty: 1, price: 55 }]);
+    await order('pending', '2026-11-03T08:00:00', [{ p: grande, qty: 1, price: 66 }]);
+    const after = await at(NOW);
+
+    // The month is November alone; October is the comparison, not part of the figure.
     assert.equal(after.totals.month.from, '2026-11-01');
-    assert.deepEqual(after.daily.map((r) => r.date), ['2026-11-01'], 'no October day in the chart');
+    assert.equal(total(after, 'month') - total(before, 'month'), 66);
+    const c = after.totals.month.comparison;
+    assert.equal(c.available, true, 'October is a full counted month');
+    assert.equal(c.previous_from, mnl('2026-10-01T00:00:00').toISOString());
+    assert.equal(c.previous_gross - before.totals.month.comparison.previous_gross, 55);
   });
 
   it('days are Asia/Manila days: 23:59:59 and 00:00 fall either side of midnight', async () => {
@@ -205,21 +226,26 @@ describe('Dashboard sales figures', () => {
       assert.equal(c.previous_to, mnl('2027-03-01T00:00:00').toISOString());
     });
 
-    it('no comparison when the previous period starts before 2026-11-01', async () => {
-      const first = await at('2026-11-01T10:00:00'); // Sunday the 1st
-      assert.equal(first.totals.today.comparison.available, false, 'yesterday was 31 October');
+    it('no comparison when the previous period starts before 2026-10-01', async () => {
+      const first = await at('2026-10-01T10:00:00'); // Thursday the 1st
+      assert.equal(first.totals.today.comparison.available, false, 'yesterday was 30 September');
       assert.equal(first.totals.week.comparison.available, false);
       assert.equal(first.totals.month.comparison.available, false);
 
-      const tue = await at('2026-11-03T10:00:00');
-      assert.equal(tue.totals.today.comparison.available, true, 'the 2nd is after the cutoff');
-      assert.equal(tue.totals.week.comparison.available, false, 'last week began 26 October');
-      assert.equal(tue.totals.month.comparison.available, false, 'October — stays this way until December');
+      const fri = await at('2026-10-02T10:00:00');
+      assert.equal(fri.totals.today.comparison.available, true, 'the 1st is the first counted day');
+      assert.equal(fri.totals.week.comparison.available, false, 'last week began 21 September');
+      assert.equal(fri.totals.month.comparison.available, false, 'September — stays this way until November');
 
-      const nextMon = await at('2026-11-09T10:00:00');
-      assert.equal(nextMon.totals.week.comparison.available, true, 'last week began Monday 2 November');
+      const thu = await at('2026-10-08T10:00:00');
+      assert.equal(thu.totals.week.comparison.available, false, 'last week began Monday 28 September');
+
+      const nextMon = await at('2026-10-12T10:00:00');
+      assert.equal(nextMon.totals.week.comparison.available, true, 'last week began Monday 5 October');
       assert.equal(nextMon.totals.month.comparison.available, false);
 
+      const nov = await at('2026-11-01T10:00:00');
+      assert.equal(nov.totals.month.comparison.available, true, 'November compares with October from day one');
       assert.equal((await at('2026-12-01T10:00:00')).totals.month.comparison.available, true);
     });
 
@@ -313,15 +339,27 @@ describe('Dashboard sales figures', () => {
       assert.equal(slow.has(draftOnly.id), true, 'a draft is not a sale');
     });
 
-    it('slow-mover window is clamped to 2026-11-01 until 14 days of history exist', async () => {
-      const early = await at('2026-11-05T10:00:00');
+    it('slow-mover window is clamped to 2026-10-01 until 14 days of history exist', async () => {
+      const early = await at('2026-10-05T10:00:00');
       assert.deepEqual(
         [early.slow_movers.from, early.slow_movers.days, early.slow_movers.clamped],
-        ['2026-11-01', 5, true]
+        ['2026-10-01', 5, true]
       );
-      const full = await at('2026-11-14T10:00:00');
+      const full = await at('2026-10-14T10:00:00');
       assert.deepEqual([full.slow_movers.from, full.slow_movers.days, full.slow_movers.clamped],
-        ['2026-11-01', 14, false]);
+        ['2026-10-01', 14, false]);
+      // From the second week of November the window is a plain 14 days again.
+      const nov = await at('2026-11-09T10:00:00');
+      assert.deepEqual([nov.slow_movers.from, nov.slow_movers.days, nov.slow_movers.clamped],
+        ['2026-10-27', 14, false]);
+    });
+
+    it('a product sold only before 2026-10-01 still counts as a slow mover', async () => {
+      const old = await product('TEST_DASH Slow pre-cutoff');
+      await order('pending', '2026-09-30T23:59:00', [{ p: old, qty: 1 }]);
+      const d = await at('2026-10-05T10:00:00');
+      assert.equal(new Set(d.slow_movers.products.map((p) => p.id)).has(old.id), true,
+        'a September sale is outside the counted history');
     });
   });
 
@@ -354,7 +392,7 @@ describe('Dashboard sales figures', () => {
       for (const k of ['as_of', 'totals', 'daily', 'top_products', 'slow_movers', 'low_stock']) {
         assert.ok(k in body, `has ${k}`);
       }
-      assert.equal(body.sales_start, '2026-11-01');
+      assert.equal(body.sales_start, '2026-10-01');
       assert.equal('orders' in body, false);
       assert.equal('summary' in body, false);
     });
