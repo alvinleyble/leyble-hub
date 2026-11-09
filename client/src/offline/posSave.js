@@ -282,17 +282,31 @@ export async function queueReceiptPrinted({ order, phase = 'pending', profileKey
   }
 
   const targetId = order.receipt_number || order.id;
+  const orderRecord = order.receipt_number
+    ? queuedOrderRecord(await listRecords(), order.receipt_number)
+    : null;
+  const dependsOn = [...new Set([order._outboxId, orderRecord?.id])]
+    .filter((id) => id !== undefined && id !== null);
   await enqueue({
     entityType: 'receipt_printed',
     endpoint: `/orders/${targetId}/receipt-printed`,
     method: 'POST',
     payload: { phase },
     profileKey: activeProfileKey,
-    dependsOn: order._outboxId ? [order._outboxId] : [],
+    dependsOn,
   });
 
   drainOutbox().catch(() => {});
   return updatedOrder;
+}
+
+// The queued create of an order this device has not synced yet, by its receipt number.
+// An order read back from local history carries no `_outboxId`, so this is how a later
+// write to it finds the record it has to wait for.
+function queuedOrderRecord(records, receiptNumber) {
+  return records.find(
+    (r) => r.entity_type === 'order' && r.receipt_number === receiptNumber && r.status === 'queued'
+  );
 }
 
 /**
@@ -435,10 +449,7 @@ export async function transitionLocalOrder({ order, newStatus, profileKey = null
     throw new Error('transitionLocalOrder: profileKey is required — capture the signed-in account at Save (D14)');
   }
 
-  const records = await listRecords();
-  const orderRecord = records.find(
-    (r) => r.entity_type === 'order' && r.receipt_number === order.receipt_number && r.status === 'queued'
-  );
+  const orderRecord = queuedOrderRecord(await listRecords(), order.receipt_number);
   if (!orderRecord) {
     // Already drained while this screen was open — the order is shared state now, so
     // its caller must fall back to the ordinary online transition.

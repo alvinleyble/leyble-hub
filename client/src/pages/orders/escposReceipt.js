@@ -2,7 +2,6 @@
 // Produces a Uint8Array sent directly to the printer via Bluetooth — no dialog needed.
 
 const W       = 48;
-const W_SMALL = 64; // chars/line at Font B (compressed) — used for the Terms block
 const ESC = 0x1B;
 const GS  = 0x1D;
 const LF  = 0x0A;
@@ -173,23 +172,11 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   ln();
   ln();
 
-  // ── Terms (smaller font, tighter line spacing) ────────────────────────────
+  // ── Thank-you footer (centred, normal font) ───────────────────────────────
   hr();
-  const terms = "TERMS: 18% interest per annum will be charged to vendee on all overdue accounts plus 25% of the amount due as attorney's fee in case of legal action that may arise out of the transaction and the venue shall be in Antipolo City";
-  b(ESC, 0x4D, 0x01);   // Font B (compressed)
-  b(ESC, 0x33, 0x14);   // line spacing = 20/180"
-  for (const l of wrap(terms, W_SMALL)) ln(l);
-  b(ESC, 0x32);          // restore default line spacing
-  b(ESC, 0x4D, 0x00);   // restore Font A
-
-  // ── Signature ──────────────────────────────────────────────────────────────
-  ln();
-  b(ESC, 0x61, 0x01);
-  ln('Received the above merchandise');
-  ln('in good order and condition');
-  ln();
-  b(ESC, 0x61, 0x00);
-  ln('By: ' + '_'.repeat(W - 4));
+  b(ESC, 0x61, 0x01);   // centre
+  ln('Thank you for your business!');
+  b(ESC, 0x61, 0x00);   // back to left
 
   // ── Feed + partial cut ─────────────────────────────────────────────────────
   b(ESC, 0x64, 0x04);   // feed 4 lines

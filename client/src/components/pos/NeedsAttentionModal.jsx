@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../../api/client';
-import { listNeedsAttention, repointRecord } from '../../offline/outbox';
+import { listNeedsAttention, repointRecord, isParkedForServerError } from '../../offline/outbox';
+import { getReceipt } from '../../offline/receiptHistory';
 import { useToast } from '../ui/Toast';
 import Spinner from '../ui/Spinner';
 import { customerMatches } from '../../utils/customerSearch';
@@ -22,11 +23,30 @@ function formatRefusalReason(lastError) {
   return `Server refused this receipt: ${lastError || 'Unknown validation error'} — select customer to re-point.`;
 }
 
+const SERVER_ERROR_REASON =
+  'The server kept having an error while saving this. It is not a problem with the sale’s details — '
+  + 'once the server is fixed, send it again as is.';
+
+// The customer currently on a parked order: a sale keeps it in its held receipt, a
+// parked draft in the record's display blob.
+async function withCustomerNames(list) {
+  return Promise.all(list.map(async (rec) => {
+    if (!isParkedForServerError(rec) || rec.entity_type !== 'order') return rec;
+    const held = rec.display?.customer_name
+      ? null
+      : await getReceipt(rec.receipt_number).catch(() => null);
+    return { ...rec, customer_name: rec.display?.customer_name || held?.customer_name || null };
+  }));
+}
+
 // D8 — Attention list for refused receipts.
 //
 // When a receipt is refused by the server (e.g. customer merged while offline),
 // it lands in this list. The store owner points it at the right record in a couple
 // of taps.
+//
+// A record moved aside because the server kept failing on it (not refused for its
+// data) gets no picker: nothing about it needs changing, so it is sent again as is.
 //
 // Invariants:
 // - Never discard, never auto-resolve.
@@ -47,8 +67,7 @@ export default function NeedsAttentionModal({ onClose }) {
   const loadAttentionList = async () => {
     setLoading(true);
     try {
-      const list = await listNeedsAttention();
-      setRecords(list);
+      setRecords(await withCustomerNames(await listNeedsAttention()));
     } catch {
       setRecords([]);
     } finally {
@@ -83,25 +102,40 @@ export default function NeedsAttentionModal({ onClose }) {
     setOpenDropdownId(null);
   };
 
-  const handleRepoint = async (record) => {
-    const target = selectedTargets[record.id];
-    if (!target) return;
-
+  const requeue = async (record, updates, successMessage, failureMessage) => {
     setSavingId(record.id);
     try {
-      await repointRecord(record.id, { customerId: target.id });
-      addToast(`Receipt ${record.receipt_number || record.id} re-pointed to ${target.name} and queued to sync.`, 'success');
-      const updated = await listNeedsAttention();
+      await repointRecord(record.id, updates);
+      addToast(successMessage, 'success');
+      const updated = await withCustomerNames(await listNeedsAttention());
       setRecords(updated);
       if (updated.length === 0) {
         onClose?.();
       }
     } catch (err) {
-      addToast(err.message || 'Failed to re-point receipt.', 'error');
+      addToast(err.message || failureMessage, 'error');
     } finally {
       setSavingId(null);
     }
   };
+
+  const handleRepoint = (record) => {
+    const target = selectedTargets[record.id];
+    if (!target) return;
+    return requeue(
+      record,
+      { customerId: target.id },
+      `Receipt ${record.receipt_number || record.id} re-pointed to ${target.name} and queued to sync.`,
+      'Failed to re-point receipt.',
+    );
+  };
+
+  const handleSendAgain = (record) => requeue(
+    record,
+    undefined,
+    `Receipt ${record.receipt_number || record.id} queued to send again as is.`,
+    'Failed to send the receipt again.',
+  );
 
   return (
     <div
@@ -152,10 +186,12 @@ export default function NeedsAttentionModal({ onClose }) {
               const isDropdownOpen = openDropdownId === rec.id;
               const items = rec.payload?.items || [];
               const total = items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
+              const serverError = isParkedForServerError(rec);
 
               return (
                 <div
                   key={rec.id}
+                  data-testid={`attention-record-${rec.id}`}
                   className="rounded-xl border border-amber-500/30 bg-v2-bg p-4 space-y-3"
                 >
                   {/* Top Bar of Record */}
@@ -176,11 +212,30 @@ export default function NeedsAttentionModal({ onClose }) {
                     </div>
                   </div>
 
+                  {rec.customer_name && (
+                    <p className="text-sm font-semibold text-v2-text">Customer: {rec.customer_name}</p>
+                  )}
+
                   {/* Plain-English Reason Banner */}
                   <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm font-semibold text-amber-200">
-                    {formatRefusalReason(rec.last_error)}
+                    {serverError ? SERVER_ERROR_REASON : formatRefusalReason(rec.last_error)}
                   </div>
 
+                  {serverError ? (
+                  <div className="flex items-center justify-end pt-1">
+                    <button
+                      type="button"
+                      disabled={savingId === rec.id}
+                      onClick={() => handleSendAgain(rec)}
+                      className="flex min-h-[48px] items-center gap-2 rounded-xl bg-amber-600 px-5 text-sm font-bold
+                                 text-white hover:bg-amber-500 disabled:opacity-40 shadow-sm
+                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+                    >
+                      {savingId === rec.id ? 'Sending…' : 'Send again as is'}
+                    </button>
+                  </div>
+                  ) : (
+                  <>
                   {/* Re-point Customer Picker */}
                   <div className="space-y-2">
                     <label className="block text-xs font-bold uppercase tracking-wider text-v2-muted">
@@ -267,6 +322,8 @@ export default function NeedsAttentionModal({ onClose }) {
                       {savingId === rec.id ? 'Re-pointing…' : 'Confirm & Re-point'}
                     </button>
                   </div>
+                  </>
+                  )}
                 </div>
               );
             })

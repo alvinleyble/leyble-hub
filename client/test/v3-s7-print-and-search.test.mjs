@@ -85,7 +85,7 @@ test('#10: an order prints no Sold by line regardless of whether seller is prese
 test('#10: the ESC/POS output contains only valid ASCII, even with non-ASCII order data', () => {
   const text = decode(generateEscPos(receiptOrder({ sold_by_name: 'José Ñoño' })));
   assert.ok(!text.includes('Sold by:'), 'no Sold by line printed');
-  assert.ok(!/[^\x00-\x7F]/.test(text.split('TERMS')[0]), 'no non-ASCII reaches the printer');
+  assert.ok(!/[^\x00-\x7F]/.test(text), 'no non-ASCII reaches the printer');
 });
 
 // ── #11 — bare digits are a sequence ────────────────────────────────────────

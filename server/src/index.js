@@ -15,6 +15,7 @@ const ticketRoutes = require('./routes/tickets');
 const auditRoutes = require('./routes/audit');
 const dashboardRoutes = require('./routes/dashboard');
 const versionRoutes = require('./routes/version');
+const healthRoutes = require('./routes/health');
 
 const app = express();
 
@@ -72,6 +73,7 @@ app.use(cookieParser());
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/v1/health', (req, res) => res.json({ status: 'ok' }));
+app.use('/api/v1/health', healthRoutes);
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/products', productRoutes);

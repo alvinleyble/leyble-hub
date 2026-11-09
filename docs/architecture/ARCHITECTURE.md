@@ -68,9 +68,10 @@ server/src/
 │   ├── idempotency.js    # request_key & receipt_number deduplication
 │   ├── personNumbers.js  # assertIssuableStation / receipt person range guards
 │   ├── deviceLetters.js  # nextDeviceLetter allocation helper
+│   ├── writeCheck.js     # checkDatabaseWritable — rolled-back probe behind GET /health/write
 │   └── version.js        # getMinVersion (cached) & isBelowMinVersion comparator
 └── routes/               # one file per resource (auth, products, customers, personnel,
-                          # orders, incoming, stations, tickets, audit, dashboard, version)
+                          # orders, incoming, stations, tickets, audit, dashboard, version, health)
 server/db/
 ├── migrations/NNN_*.sql  # schema (tracked in _migrations table)
 ├── migrate.js            # runs pending migrations transactionally
