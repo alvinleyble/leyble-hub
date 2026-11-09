@@ -25,6 +25,7 @@ import {
   loadWithCache, boundRows, readBackOfficeCache, __clearBackOfficeCache,
   DASHBOARD_CACHE, TICKETS_CACHE, DELIVERIES_CACHE, AUDIT_INVENTORY_CACHE,
 } from '../src/offline/backOfficeCache.js';
+import { salesDashboardPayload } from './dashboard-fixture.mjs';
 import {
   listConflicts, __clearConflicts, STOCK_FIELD, PRICE_FIELD,
 } from '../src/offline/reconcile.js';
@@ -149,10 +150,7 @@ test('§9: the cached window is bounded by age and row count, not mirrored whole
 });
 
 test('§9: the Dashboard renders cached figures behind a banner instead of a raw fetch failure', async () => {
-  const payload = {
-    summary: { in_transit_count: 2, pending_count: 7, completed_count: 1, pending_tickets: 0 },
-    orders: [], low_stock: [],
-  };
+  const payload = salesDashboardPayload();
   api.get = async () => payload;
   const first = renderPage(React.createElement(DashboardPage));
   await settle();
@@ -165,7 +163,7 @@ test('§9: the Dashboard renders cached figures behind a banner instead of a raw
   assert.match(blind.text(), /Viewing offline data/);
   assert.match(blind.text(), /Go to Outgoing Orders/);
   assert.doesNotMatch(blind.text(), /Failed to fetch/);
-  assert.match(blind.text(), /7/, 'the cached figures are actually shown, not just the banner');
+  assert.match(blind.text(), /₱52,345\.50/, 'the cached figures are actually shown, not just the banner');
   blind.unmount();
 });
 

@@ -18,6 +18,7 @@ import { __clearOutbox } from '../src/offline/outbox.js';
 import { __clearReceipts } from '../src/offline/receiptHistory.js';
 import { PRODUCTS_KEY, CUSTOMERS_KEY } from '../src/offline/keys.js';
 import { writeBackOfficeCache, __clearBackOfficeCache, DASHBOARD_CACHE } from '../src/offline/backOfficeCache.js';
+import { salesDashboardPayload } from './dashboard-fixture.mjs';
 
 const DashboardPage  = (await import('../src/pages/DashboardPage.jsx')).default;
 const OrdersPage     = (await import('../src/pages/orders/OrdersPage.jsx')).default;
@@ -89,10 +90,7 @@ test('DashboardPage: the skeleton clears once the live fetch resolves', async ()
   await settle();
   assert.ok(r.skeleton('Loading dashboard'));
 
-  resolveFetch({
-    summary: { in_transit_count: 1, pending_count: 2, completed_count: 0, pending_tickets: 0 },
-    orders: [], low_stock: [],
-  });
+  resolveFetch(salesDashboardPayload());
   await settle();
 
   assert.equal(r.skeleton('Loading dashboard'), null, 'skeleton is gone once real data has landed');
@@ -101,10 +99,9 @@ test('DashboardPage: the skeleton clears once the live fetch resolves', async ()
 });
 
 test('DashboardPage: a device already holding a cached dashboard paints it immediately, with no skeleton flash, even while the network hangs', async () => {
-  await writeBackOfficeCache(DASHBOARD_CACHE, {
-    summary: { in_transit_count: 3, pending_count: 9, completed_count: 2, pending_tickets: 1 },
-    orders: [], low_stock: [],
-  });
+  await writeBackOfficeCache(DASHBOARD_CACHE, salesDashboardPayload({
+    totals: { ...salesDashboardPayload().totals, today: { from: '2026-11-09', gross: 9999, comparison: { available: false } } },
+  }));
   // The network never resolves in this test — if the page waited on it, it would
   // never leave the skeleton. Local-first means it doesn't.
   api.get = () => hang();
@@ -113,7 +110,7 @@ test('DashboardPage: a device already holding a cached dashboard paints it immed
   await settle();
 
   assert.equal(r.skeleton('Loading dashboard'), null, 'no skeleton once a cached copy is held');
-  assert.match(r.text(), /9/, 'the cached figures render without waiting on the pending live fetch');
+  assert.match(r.text(), /₱9,999\.00/, 'the cached figures render without waiting on the pending live fetch');
   r.unmount();
 });
 
