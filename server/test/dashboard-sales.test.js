@@ -14,7 +14,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-key-32-chars
 const db = require('../src/db');
 const dashboardRoutes = require('../src/routes/dashboard');
 const { errorHandler } = require('../src/middleware/errorHandler');
-const { computeSalesDashboard } = require('../src/lib/salesDashboard');
+const { computeSalesDashboard, resolveMonth } = require('../src/lib/salesDashboard');
 
 const RUN = `${Date.now()}`;
 // A Manila wall-clock time as an instant. Manila is UTC+8 all year (no DST).
@@ -108,25 +108,26 @@ describe('Dashboard sales figures', () => {
     assert.equal(total(after, 'today') - total(before, 'today'), 1602.5, '2.5 cases × ₱641');
   });
 
-  it('nothing created before 2026-10-01 (Asia/Manila) appears in any figure', async () => {
-    const NOW = '2026-10-01T10:00:00'; // a Thursday
+  it('nothing created before 2026-06-01 (Asia/Manila) appears in any figure', async () => {
+    const NOW = '2026-06-01T10:00:00'; // a Monday
     const before = await at(NOW);
-    await order('pending', '2026-09-30T23:59:00', [{ p: grande, qty: 3 }]);
-    await order('pending', '2026-10-01T00:00:00', [{ p: grande, qty: 1 }]);
+    await order('pending', '2026-05-31T23:59:00', [{ p: grande, qty: 3 }]);
+    await order('pending', '2026-06-01T00:00:00', [{ p: grande, qty: 1 }]);
     const after = await at(NOW);
 
     for (const key of ['today', 'week', 'month']) {
-      assert.equal(total(after, key) - total(before, key), 641, `${key}: only the 1 October order`);
+      assert.equal(total(after, key) - total(before, key), 641, `${key}: only the 1 June order`);
     }
-    // The week began on Monday 28 September, so it counts only from the 1st.
-    assert.equal(after.totals.week.from, '2026-10-01');
-    assert.equal(after.totals.month.from, '2026-10-01');
-    assert.deepEqual(after.daily.map((r) => r.date), ['2026-10-01'], 'no September day in the chart');
+    assert.equal(after.totals.week.from, '2026-06-01');
+    assert.equal(after.totals.month.from, '2026-06-01');
+    assert.deepEqual(after.daily.map((r) => r.date), ['2026-06-01'], 'no May day in the chart');
+    assert.deepEqual(after.monthly.map((r) => r.month), ['2026-06'], 'no May bar in the trend');
+    assert.equal(after.monthly[0].gross - before.monthly[0].gross, 641);
 
-    // The same boundary seen from later in the month: the 30 September order never appears.
-    const later = await at('2026-10-20T10:00:00');
-    assert.ok(total(later, 'month') >= 641, 'the 1 October order is in October');
-    assert.equal(later.daily[0].date, '2026-10-01');
+    // The same boundary seen from later in the month: the 31 May order never appears.
+    const later = await at('2026-06-20T10:00:00');
+    assert.ok(total(later, 'month') >= 641, 'the 1 June order is in June');
+    assert.equal(later.daily[0].date, '2026-06-01');
   });
 
   it('October sales are counted, and November compares with October straight away', async () => {
@@ -172,7 +173,218 @@ describe('Dashboard sales figures', () => {
     assert.equal(d.daily.at(-1).date, '2026-11-12');
   });
 
-  describe('change indicators — like for like', () => {
+  describe('comparisons — the running period against the WHOLE previous one', () => {
+    // 2032, far from every other test's data. Mon 1 Mar 2032 starts a week and a month.
+    it('at 00:50 on Tuesday 2 March: yesterday, last week and February are whole and finished', async () => {
+      await order('pending', '2032-01-15T09:00:00', [{ p: grande, qty: 1, price: 3000 }]); // January
+      await order('pending', '2032-02-18T09:00:00', [{ p: grande, qty: 1, price: 500 }]);  // week of 16 Feb
+      await order('pending', '2032-02-23T09:00:00', [{ p: grande, qty: 1, price: 800 }]);  // Mon a week before yesterday
+      await order('pending', '2032-02-29T22:00:00', [{ p: grande, qty: 1, price: 200 }]);  // last Sunday, late
+      await order('pending', '2032-03-01T10:00:00', [{ p: grande, qty: 1, price: 1000 }]); // yesterday
+      await order('pending', '2032-03-02T00:30:00', [{ p: grande, qty: 1, price: 100 }]);  // today so far
+      const d = await at('2032-03-02T00:50:00');
+
+      const today = d.totals.today;
+      assert.equal(today.in_progress, true);
+      assert.equal(today.gross, 100);
+      assert.deepEqual(today.previous, {
+        available: true, from: '2032-03-01', to: '2032-03-01', gross: 1000, progress_pct: 10,
+        verdict: { available: true, from: '2032-02-23', to: '2032-02-23',
+          previous_gross: 800, change: 200, change_pct: 25 },
+      }, 'all of yesterday, judged against Monday a week earlier');
+      // The old like-for-like window (yesterday 00:00–00:50) stays for released app builds.
+      assert.equal(today.comparison.previous_gross, 0);
+      assert.equal(today.comparison.previous_to, mnl('2032-03-01T00:50:00').toISOString());
+
+      const week = d.totals.week;
+      assert.equal(week.from, '2032-03-01');
+      assert.equal(week.gross, 1100);
+      assert.deepEqual(week.previous, {
+        available: true, from: '2032-02-23', to: '2032-02-29', gross: 1000, progress_pct: 110,
+        verdict: { available: true, from: '2032-02-16', to: '2032-02-22',
+          previous_gross: 500, change: 500, change_pct: 100 },
+      }, 'all of last week — Sunday night included — against the week before');
+      assert.equal(week.comparison.previous_gross, 800, 'like-for-like: last Monday + 50 minutes');
+
+      const month = d.totals.month;
+      assert.equal(month.gross, 1100);
+      assert.deepEqual(month.previous, {
+        available: true, from: '2032-02-01', to: '2032-02-29', gross: 1500, progress_pct: 73.3,
+        verdict: { available: true, from: '2032-01-01', to: '2032-01-31',
+          previous_gross: 3000, change: -1500, change_pct: -50 },
+      }, 'all of February (a leap year) against January');
+    });
+
+    // Thu 1 Jul 2032; Mon 19 Jul starts the week.
+    it('mid-period (Wednesday 21 July, 3 PM): the whole previous periods, not just up to now', async () => {
+      await order('pending', '2032-05-20T09:00:00', [{ p: grande, qty: 1, price: 1000 }]); // May
+      await order('pending', '2032-06-10T09:00:00', [{ p: grande, qty: 1, price: 2000 }]); // June
+      await order('pending', '2032-07-06T09:00:00', [{ p: grande, qty: 1, price: 400 }]);  // week of 5 Jul
+      await order('pending', '2032-07-13T09:00:00', [{ p: grande, qty: 1, price: 250 }]);  // Tue a week ago
+      await order('pending', '2032-07-16T09:00:00', [{ p: grande, qty: 1, price: 350 }]);  // last week
+      await order('pending', '2032-07-19T09:00:00', [{ p: grande, qty: 1, price: 75 }]);   // this Monday
+      await order('pending', '2032-07-20T14:00:00', [{ p: grande, qty: 1, price: 400 }]);  // yesterday, before 3 PM
+      await order('pending', '2032-07-20T23:30:00', [{ p: grande, qty: 1, price: 100 }]);  // yesterday, late
+      await order('pending', '2032-07-21T10:00:00', [{ p: grande, qty: 1, price: 125 }]);  // today
+      const d = await at('2032-07-21T15:00:00');
+
+      assert.equal(d.totals.today.gross, 125);
+      assert.deepEqual(d.totals.today.previous, {
+        available: true, from: '2032-07-20', to: '2032-07-20', gross: 500, progress_pct: 25,
+        verdict: { available: true, from: '2032-07-13', to: '2032-07-13',
+          previous_gross: 250, change: 250, change_pct: 100 },
+      }, 'yesterday counts its late order too');
+      assert.equal(d.totals.today.comparison.previous_gross, 400, 'like-for-like stops at 3 PM');
+
+      assert.equal(d.totals.week.gross, 700);
+      assert.deepEqual(d.totals.week.previous, {
+        available: true, from: '2032-07-12', to: '2032-07-18', gross: 600, progress_pct: 116.7,
+        verdict: { available: true, from: '2032-07-05', to: '2032-07-11',
+          previous_gross: 400, change: 200, change_pct: 50 },
+      });
+
+      assert.equal(d.totals.month.gross, 1700);
+      assert.deepEqual(d.totals.month.previous, {
+        available: true, from: '2032-06-01', to: '2032-06-30', gross: 2000, progress_pct: 85,
+        verdict: { available: true, from: '2032-05-01', to: '2032-05-31',
+          previous_gross: 1000, change: 1000, change_pct: 100 },
+      });
+    });
+
+    it('at 00:50 on the 1st (Wednesday 1 September): all of August, and no percent against nothing', async () => {
+      await order('pending', '2032-08-03T09:00:00', [{ p: grande, qty: 1, price: 500 }]);
+      await order('pending', '2032-08-31T23:00:00', [{ p: grande, qty: 1, price: 1000 }]);
+      await order('pending', '2032-09-01T00:10:00', [{ p: grande, qty: 1, price: 30 }]);
+      const d = await at('2032-09-01T00:50:00');
+
+      assert.equal(d.totals.month.from, '2032-09-01');
+      assert.equal(d.totals.month.gross, 30);
+      assert.deepEqual(d.totals.month.previous, {
+        available: true, from: '2032-08-01', to: '2032-08-31', gross: 1500, progress_pct: 2,
+        verdict: { available: true, from: '2032-07-01', to: '2032-07-31',
+          previous_gross: 1700, change: -200, change_pct: -11.8 },
+      });
+      assert.equal(d.totals.month.comparison.previous_gross, 0, 'like-for-like: 1 August 00:00–00:50');
+      // Yesterday (Tue 31 Aug) against Tue 24 Aug, which sold nothing: pesos, no percent.
+      assert.deepEqual(d.totals.today.previous.verdict, {
+        available: true, from: '2032-08-24', to: '2032-08-24', previous_gross: 0, change: 1000, change_pct: null,
+      });
+      assert.equal(d.totals.today.previous.progress_pct, 3);
+    });
+
+    it('no comparison when the comparator starts before 2026-06-01', async () => {
+      const avail = (d, key) => [d.totals[key].previous.available, d.totals[key].previous.verdict?.available ?? false];
+
+      const first = await at('2026-06-01T10:00:00'); // Monday the 1st
+      for (const key of ['today', 'week', 'month']) {
+        assert.deepEqual(avail(first, key), [false, false], `${key}: nothing before 1 June`);
+        assert.equal(first.totals[key].comparison.available, false);
+      }
+      assert.deepEqual(first.selected_month.previous, { available: false, month: '2026-05' });
+
+      const tue = await at('2026-06-02T10:00:00');
+      assert.deepEqual(avail(tue, 'today'), [true, false], 'yesterday is 1 June; Monday 25 May is not counted');
+      assert.deepEqual(avail(tue, 'week'), [false, false], 'last week began 25 May');
+
+      const nextTue = await at('2026-06-09T10:00:00');
+      assert.deepEqual(avail(nextTue, 'today'), [true, true], 'Monday 8 June against Monday 1 June');
+      assert.deepEqual(avail(nextTue, 'week'), [true, false], 'last week is 1–7 June; the week before is May');
+
+      const third = await at('2026-06-15T10:00:00');
+      assert.deepEqual(avail(third, 'week'), [true, true], '8–14 June against 1–7 June');
+      assert.deepEqual(avail(third, 'month'), [false, false]);
+
+      const july = await at('2026-07-01T10:00:00');
+      assert.deepEqual(avail(july, 'month'), [true, false], 'July runs against June; June has no May');
+      const aug = await at('2026-08-01T10:00:00');
+      assert.deepEqual(avail(aug, 'month'), [true, true], 'July against June');
+    });
+  });
+
+  describe('the month being viewed (?month=YYYY-MM)', () => {
+    it('a past month is finished: every day, its best sellers, its own 14-day slow-mover window and a verdict', async () => {
+      // July 2032's orders come from the mid-period test above: 1,700 against June's 2,000.
+      const d = await computeSalesDashboard(db, { now: mnl('2032-09-01T00:50:00'), month: '2032-07' });
+      assert.deepEqual(d.selected_month, {
+        month: '2032-07', from: '2032-07-01', to: '2032-07-31', in_progress: false, gross: 1700,
+        verdict: { available: true, month: '2032-06', previous_gross: 2000, change: -300, change_pct: -15 },
+      });
+      assert.equal(d.daily.length, 31, 'the whole month, not up to today');
+      assert.equal(d.daily.reduce((n, r) => n + r.gross, 0), 1700);
+      assert.equal(d.top_products.length, 1);
+      assert.equal(d.top_products[0].product_id, grande.id);
+      assert.equal(d.top_products[0].gross, 1700);
+      assert.deepEqual([d.slow_movers.from, d.slow_movers.to, d.slow_movers.days, d.slow_movers.clamped],
+        ['2032-07-18', '2032-07-31', 14, false]);
+      assert.equal(d.slow_movers.products.some((p) => p.id === grande.id), false, 'it sold on 19–21 July');
+      // The totals stay on the real today, whichever month is viewed.
+      assert.equal(d.totals.month.from, '2032-09-01');
+    });
+
+    it('the current month is in progress: up to today, measured against all of last month', async () => {
+      const d = await computeSalesDashboard(db, { now: mnl('2032-07-21T15:00:00'), month: '2032-07' });
+      assert.deepEqual(d.selected_month, {
+        month: '2032-07', from: '2032-07-01', to: '2032-07-21', in_progress: true, gross: 1700,
+        previous: { available: true, month: '2032-06', gross: 2000, progress_pct: 85 },
+      });
+      assert.equal(d.daily.length, 21);
+      assert.equal(d.daily.at(-1).date, '2032-07-21');
+      const dflt = await at('2032-07-21T15:00:00');
+      assert.deepEqual(dflt.selected_month, d.selected_month, 'no month means this month');
+      assert.deepEqual(dflt.daily, d.daily);
+    });
+
+    it('June 2026, the first month, has no month before it to be judged against', async () => {
+      const d = await computeSalesDashboard(db, { now: mnl('2026-11-10T00:50:00'), month: '2026-06' });
+      assert.equal(d.selected_month.in_progress, false);
+      assert.deepEqual(d.selected_month.verdict, { available: false, month: '2026-05' });
+      assert.equal(d.daily[0].date, '2026-06-01');
+      assert.equal(d.daily.length, 30);
+      assert.deepEqual([d.slow_movers.from, d.slow_movers.to], ['2026-06-17', '2026-06-30']);
+    });
+
+    it('refuses a month before June 2026, after the current month, or not shaped YYYY-MM', () => {
+      const now = mnl('2026-11-10T00:50:00');
+      assert.equal(resolveMonth(undefined, now), '2026-11');
+      assert.equal(resolveMonth('2026-06', now), '2026-06');
+      assert.equal(resolveMonth('2026-11', now), '2026-11');
+      for (const bad of ['2026-05', '2026-12', '2027-01', '2026-13', '2026-6', 'june', ['2026-07']]) {
+        assert.throws(() => resolveMonth(bad, now), (err) => err.status === 400, String(bad));
+      }
+      // The current month is Manila's: 23:30 UTC on 31 Oct is already 1 November there.
+      assert.equal(resolveMonth('2026-11', new Date('2026-10-31T23:30:00Z')), '2026-11');
+    });
+  });
+
+  describe('by-month trend', () => {
+    it('one row per month from June 2026 to now, the last one in progress', async () => {
+      const NOW = '2026-08-15T10:00:00';
+      const before = await at(NOW);
+      await order('pending', '2026-06-30T23:59:00', [{ p: grande, qty: 1, price: 70 }]);
+      await order('pending', '2026-07-01T00:00:00', [{ p: grande, qty: 1, price: 80 }]);
+      await order('cancelled', '2026-07-02T09:00:00', [{ p: grande, qty: 1, price: 9000 }]);
+      await order('pending', '2026-08-15T09:00:00', [{ p: grande, qty: 1, price: 90 }]);
+      await order('pending', '2026-08-16T09:00:00', [{ p: grande, qty: 1, price: 9000 }]); // tomorrow
+      const after = await at(NOW);
+
+      assert.deepEqual(after.monthly.map((r) => [r.month, r.from, r.in_progress]), [
+        ['2026-06', '2026-06-01', false], ['2026-07', '2026-07-01', false], ['2026-08', '2026-08-01', true],
+      ]);
+      assert.deepEqual(after.monthly.map((r, i) => r.gross - before.monthly[i].gross), [70, 80, 90]);
+      assert.equal(after.monthly.at(-1).gross, total(after, 'month'), 'the running month matches its card');
+    });
+
+    it('keeps growing a bar a month', async () => {
+      const d = await at('2032-09-01T00:50:00');
+      assert.equal(d.monthly.length, 6 * 12 + 4, 'June 2026 to September 2032');
+      assert.equal(d.monthly[0].month, '2026-06');
+      assert.deepEqual(d.monthly.at(-1), { month: '2032-09', from: '2032-09-01', gross: 30, in_progress: true });
+      assert.equal(d.monthly.find((r) => r.month === '2032-07').gross, 1700);
+      assert.equal(d.monthly.filter((r) => r.in_progress).length, 1);
+    });
+  });
+
+  describe('legacy like-for-like comparison (read by app builds released before 2026-11-10)', () => {
     it('today compares with yesterday up to the same Manila time of day', async () => {
       const NOW = '2026-11-10T10:00:00';
       const before = await at(NOW);
@@ -224,29 +436,6 @@ describe('Dashboard sales figures', () => {
       const c = (await at('2027-03-31T10:00:00')).totals.month.comparison;
       assert.equal(c.previous_from, mnl('2027-02-01T00:00:00').toISOString());
       assert.equal(c.previous_to, mnl('2027-03-01T00:00:00').toISOString());
-    });
-
-    it('no comparison when the previous period starts before 2026-10-01', async () => {
-      const first = await at('2026-10-01T10:00:00'); // Thursday the 1st
-      assert.equal(first.totals.today.comparison.available, false, 'yesterday was 30 September');
-      assert.equal(first.totals.week.comparison.available, false);
-      assert.equal(first.totals.month.comparison.available, false);
-
-      const fri = await at('2026-10-02T10:00:00');
-      assert.equal(fri.totals.today.comparison.available, true, 'the 1st is the first counted day');
-      assert.equal(fri.totals.week.comparison.available, false, 'last week began 21 September');
-      assert.equal(fri.totals.month.comparison.available, false, 'September — stays this way until November');
-
-      const thu = await at('2026-10-08T10:00:00');
-      assert.equal(thu.totals.week.comparison.available, false, 'last week began Monday 28 September');
-
-      const nextMon = await at('2026-10-12T10:00:00');
-      assert.equal(nextMon.totals.week.comparison.available, true, 'last week began Monday 5 October');
-      assert.equal(nextMon.totals.month.comparison.available, false);
-
-      const nov = await at('2026-11-01T10:00:00');
-      assert.equal(nov.totals.month.comparison.available, true, 'November compares with October from day one');
-      assert.equal((await at('2026-12-01T10:00:00')).totals.month.comparison.available, true);
     });
 
     it('percent change is withheld against an empty previous period', async () => {
@@ -339,27 +528,26 @@ describe('Dashboard sales figures', () => {
       assert.equal(slow.has(draftOnly.id), true, 'a draft is not a sale');
     });
 
-    it('slow-mover window is clamped to 2026-10-01 until 14 days of history exist', async () => {
-      const early = await at('2026-10-05T10:00:00');
+    it('slow-mover window is clamped to 2026-06-01 until 14 days of history exist', async () => {
+      const early = await at('2026-06-05T10:00:00');
       assert.deepEqual(
         [early.slow_movers.from, early.slow_movers.days, early.slow_movers.clamped],
-        ['2026-10-01', 5, true]
+        ['2026-06-01', 5, true]
       );
-      const full = await at('2026-10-14T10:00:00');
+      const full = await at('2026-06-14T10:00:00');
       assert.deepEqual([full.slow_movers.from, full.slow_movers.days, full.slow_movers.clamped],
-        ['2026-10-01', 14, false]);
-      // From the second week of November the window is a plain 14 days again.
+        ['2026-06-01', 14, false]);
       const nov = await at('2026-11-09T10:00:00');
       assert.deepEqual([nov.slow_movers.from, nov.slow_movers.days, nov.slow_movers.clamped],
         ['2026-10-27', 14, false]);
     });
 
-    it('a product sold only before 2026-10-01 still counts as a slow mover', async () => {
+    it('a product sold only before 2026-06-01 still counts as a slow mover', async () => {
       const old = await product('TEST_DASH Slow pre-cutoff');
-      await order('pending', '2026-09-30T23:59:00', [{ p: old, qty: 1 }]);
-      const d = await at('2026-10-05T10:00:00');
+      await order('pending', '2026-05-31T23:59:00', [{ p: old, qty: 1 }]);
+      const d = await at('2026-06-05T10:00:00');
       assert.equal(new Set(d.slow_movers.products.map((p) => p.id)).has(old.id), true,
-        'a September sale is outside the counted history');
+        'a May sale is outside the counted history');
     });
   });
 
@@ -392,10 +580,39 @@ describe('Dashboard sales figures', () => {
       for (const k of ['as_of', 'totals', 'daily', 'top_products', 'slow_movers', 'low_stock']) {
         assert.ok(k in body, `has ${k}`);
       }
-      assert.equal(body.sales_start, '2026-10-01');
+      assert.equal(body.sales_start, '2026-06-01');
       assert.equal('orders' in body, false);
       assert.equal('summary' in body, false);
+      // The fields an app build released before 2026-11-10 reads keep their shape.
+      for (const key of ['today', 'week', 'month']) {
+        assert.equal(typeof body.totals[key].gross, 'number');
+        assert.equal(typeof body.totals[key].comparison.available, 'boolean');
+      }
+      assert.ok(Array.isArray(body.daily) && Array.isArray(body.top_products));
+      assert.ok(Array.isArray(body.slow_movers.products) && Array.isArray(body.low_stock));
+      // And the new ones sit beside them.
+      assert.equal(body.monthly[0].month, '2026-06');
+      assert.equal(body.monthly.at(-1).in_progress, true);
+      assert.equal(body.selected_month.month, body.monthly.at(-1).month);
     });
+
+    it('?month= picks a past month', async () => {
+      const res = await fetch(`${baseUrl}?month=2026-06`, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.selected_month.month, '2026-06');
+      assert.equal(body.selected_month.in_progress, false);
+      assert.equal(body.daily[0].date, '2026-06-01');
+      assert.equal(body.daily.length, 30);
+    });
+
+    for (const bad of ['2026-05', '2099-01', '2026-13', 'june', '2026-6']) {
+      it(`?month=${bad} is a 400`, async () => {
+        const res = await fetch(`${baseUrl}?month=${bad}`, { headers: { Authorization: `Bearer ${token}` } });
+        assert.equal(res.status, 400);
+        assert.match((await res.json()).error, /month|counted|started/);
+      });
+    }
 
     it('still requires a signed-in account', async () => {
       const res = await fetch(baseUrl);
