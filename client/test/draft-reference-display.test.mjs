@@ -23,7 +23,6 @@ import { ensureStationRegistered, __resetIssuance } from '../src/offline/station
 import { __clearOutbox } from '../src/offline/outbox.js';
 
 const OrdersPage       = (await import('../src/pages/orders/OrdersPage.jsx')).default;
-const DashboardPage    = (await import('../src/pages/DashboardPage.jsx')).default;
 const OrderCreateModal = (await import('../src/pages/orders/OrderCreateModal.jsx')).default;
 
 const settle = (ms = 40) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
@@ -162,47 +161,7 @@ test('OrdersPage: clicking a draft row still opens it for resume, and Discard is
   r.unmount();
 });
 
-// ── 3. DashboardPage — Active Orders ──────────────────────────────────────────
-//
-// GET /dashboard unions the open statuses with everything created in the last 5 days,
-// so a draft saved this morning lands in Active Orders too.
-
-const DASHBOARD_PAYLOAD = {
-  summary: { in_transit_count: 0, pending_count: 1, completed_count: 0, pending_tickets: 0 },
-  orders: [
-    SERVER_DRAFT,
-    { id: 2483, receipt_number: '2A-00001', status: 'pending', order_type: 'delivery',
-      customer_name: 'Corner Store', total_amount: 500, created_at: '2026-09-05T02:00:00.000Z',
-      sold_by_name: 'Josie', pending_receipt_printed_at: null, delivered_receipt_printed_at: null },
-  ],
-  low_stock: [],
-};
-
-test('DashboardPage shows a draft as "Draft" in both the card and the table view', async () => {
-  api.get = async (path) => (path === '/dashboard' ? DASHBOARD_PAYLOAD : {});
-
-  const r = render(React.createElement(DashboardPage, null));
-  await settle(40);
-
-  const cards = r.container.querySelectorAll('.lg\\:hidden.divide-y [data-testid="dashboard-order-row"]');
-  assert.equal(cards.length, 2);
-  assert.equal(cards[0].querySelectorAll('[data-card-line]').length, 3, 'the 3-line card recipe must be unbroken');
-  assert.equal(cards[0].querySelector('.font-mono').textContent.trim(), 'Draft');
-  assert.doesNotMatch(cards[0].textContent, /#2482/);
-
-  const tableRows = r.container.querySelectorAll('table [data-testid="dashboard-order-row"]');
-  assert.equal(tableRows.length, 2);
-  assert.equal(tableRows[0].querySelector('.font-mono').textContent.trim(), 'Draft');
-  assert.doesNotMatch(tableRows[0].textContent, /#2482/);
-
-  // The switch is off in tests, so the pending order keeps its `#<id>` here — the point
-  // is only that the draft did NOT, i.e. the two rows are treated differently.
-  assert.match(tableRows[1].textContent, /#2483/);
-
-  r.unmount();
-});
-
-// ── 4. OrderCreateModal — the resumed-draft title ─────────────────────────────
+// ── 3. OrderCreateModal — the resumed-draft title ─────────────────────────────
 
 test('OrderCreateModal titles a resumed server draft "Draft", not "Draft #2482"', async () => {
   api.get = async (path) => {

@@ -151,7 +151,7 @@ row that Personnel keeps.
 | Tickets | Previous card: #number over the title, one line of description, amount on the right, status badge |
 | Audit Log | Previous cards: what changed and when, the change or action on the right, badge or summary below |
 | New Order | Previous one-column page with the cart sheet |
-| Dashboard, Incoming | New card (not raised in the review) |
+| Incoming | New card (not raised in the review). The Dashboard has had no list since its 2026-11-09 sales redesign |
 
 The new header, search + Filters and chip rows stay on every page; the captain approved
 everything except the list/table part. The pages that keep their previous look are
