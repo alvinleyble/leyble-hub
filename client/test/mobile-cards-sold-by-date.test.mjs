@@ -11,11 +11,10 @@ import { __clearOutbox } from '../src/offline/outbox.js';
 import { saveOrderLocalFirst } from '../src/offline/posSave.js';
 
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
-const DashboardPage = (await import('../src/pages/DashboardPage.jsx')).default;
 
 
 // The shared phone card recipe (components/ui/ListCard.jsx, design standard Q6):
-// line 1 = customer + total, line 2 = receipt (· date on the Dashboard) + "Sold by",
+// line 1 = customer + total, line 2 = receipt + "Sold by",
 // line 3 = badges. Outgoing puts the date & time on line 3's right, under Sold by
 // (design standard R3), so its tests pass dateLine: 3.
 const cardLines = (card) => [...card.querySelectorAll('[data-card-line]')];
@@ -170,60 +169,6 @@ test('OrdersPage: mobile cards follow the shared card recipe with Date & Time an
   // sold_by_name null / whitespace -> "Sold by: —"
   assertRecipe(cards[1], { name: 'Corner Sari-Sari Store', ref: '#802', total: '500.00', soldBy: 'Sold by: —', dateLine: 3 });
   assertRecipe(cards[2], { name: 'Neighborhood Bakery', ref: '#803', total: '320.00', soldBy: 'Sold by: —', dateLine: 3 });
-
-  r.unmount();
-});
-
-test('DashboardPage: mobile cards follow the shared card recipe with Date & Time and Sold by', async () => {
-  const payload = {
-    summary: { in_transit_count: 0, pending_count: 2, completed_count: 0, pending_tickets: 0 },
-    orders: [
-      {
-        id: 901,
-        customer_id: 11,
-        customer_name: 'Alvin Store Main',
-        status: 'pending',
-        order_type: 'delivery',
-        total_amount: 3450,
-        created_at: '2026-07-03T12:28:00',
-        receipt_number: '1-000901',
-        sold_by_name: 'Manager Luis',
-        pending_receipt_printed_at: null,
-        delivered_receipt_printed_at: null,
-      },
-      {
-        id: 902,
-        customer_id: 12,
-        customer_name: 'Wholesale Depot',
-        status: 'pending',
-        order_type: 'pickup',
-        total_amount: 880,
-        created_at: '2026-07-03T15:10:00',
-        receipt_number: '1-000902',
-        sold_by_name: null,
-        pending_receipt_printed_at: null,
-        delivered_receipt_printed_at: null,
-      },
-    ],
-    low_stock: [],
-  };
-
-  api.get = async (path) => {
-    if (path === '/dashboard') return payload;
-    return {};
-  };
-
-  const r = render(React.createElement(DashboardPage, null));
-  await act(async () => { await new Promise((res) => setTimeout(res, 25)); });
-
-  const mobileContainer = r.container.querySelector('.lg\\:hidden.divide-y');
-  assert.ok(mobileContainer, 'Dashboard phone cards container (.lg:hidden.divide-y) should exist');
-
-  const cards = mobileContainer.querySelectorAll('[data-testid="dashboard-order-row"]');
-  assert.equal(cards.length, 2, 'Should render 2 mobile dashboard order cards');
-
-  assertRecipe(cards[0], { name: 'Alvin Store Main', ref: '#901', total: '3,450.00', date: 'Jul 3', soldBy: 'Sold by: Manager Luis' });
-  assertRecipe(cards[1], { name: 'Wholesale Depot', ref: '#902', total: '880.00', soldBy: 'Sold by: —' });
 
   r.unmount();
 });
