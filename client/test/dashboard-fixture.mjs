@@ -3,7 +3,7 @@
 export function salesDashboardPayload(overrides = {}) {
   return {
     as_of: '2026-11-09T02:15:00.000Z',
-    sales_start: '2026-11-01',
+    sales_start: '2026-10-01',
     week_starts_on: 'monday',
     totals: {
       today: { from: '2026-11-09', gross: 4100, comparison: {
@@ -12,7 +12,9 @@ export function salesDashboardPayload(overrides = {}) {
       week: { from: '2026-11-09', gross: 4100, comparison: {
         available: true, previous_gross: 4456.5, change: -356.5, change_pct: -8,
         previous_from: '2026-11-01T16:00:00.000Z', previous_to: '2026-11-02T02:15:00.000Z' } },
-      month: { from: '2026-11-01', gross: 52345.5, comparison: { available: false } },
+      month: { from: '2026-11-01', gross: 52345.5, comparison: {
+        available: true, previous_gross: 46000, change: 6345.5, change_pct: 13.8,
+        previous_from: '2026-09-30T16:00:00.000Z', previous_to: '2026-10-09T02:15:00.000Z' } },
     },
     daily: [
       { date: '2026-11-01', gross: 0 },
@@ -30,7 +32,7 @@ export function salesDashboardPayload(overrides = {}) {
       { product_id: 4, name: '8oz Coke', sku: null, unit: 'cs', cases: 20, gross: 4200 },
     ],
     slow_movers: {
-      from: '2026-11-01', to: '2026-11-09', days: 9, clamped: true,
+      from: '2026-10-27', to: '2026-11-09', days: 14, clamped: false,
       products: [{ id: 108, name: 'Vitamilk 300ml', sku: null, category: 'Milk', unit: 'cs' }],
     },
     low_stock: [],

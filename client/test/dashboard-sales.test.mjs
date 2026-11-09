@@ -56,9 +56,22 @@ test('three gross-sales totals, each with its like-for-like change indicator', a
 
   const month = r.q('dashboard-total-month');
   assert.match(month.textContent, /₱52,345\.50/);
-  assert.match(r.q('dashboard-total-month-change').textContent, /^No comparison yet$/);
-  assert.match(month.textContent, /Sales are counted from Nov 1, 2026/);
+  assert.match(r.q('dashboard-total-month-change').textContent, /▲ Up \+14% \(\+₱6,345\.50\)/);
+  assert.match(month.textContent, /vs last month so far \(₱46,000\.00\)/);
   assert.match(month.textContent, /November 2026/);
+  r.unmount();
+});
+
+test('a month with no counted previous month says where counting began', async () => {
+  api.get = async () => salesDashboardPayload({
+    sales_start: '2026-10-01',
+    totals: { ...salesDashboardPayload().totals, month: { from: '2026-10-01', gross: 900, comparison: { available: false } } },
+  });
+  const r = renderPage();
+  await settle();
+  const month = r.q('dashboard-total-month');
+  assert.match(r.q('dashboard-total-month-change').textContent, /^No comparison yet$/);
+  assert.match(month.textContent, /Sales are counted from Oct 1, 2026/);
   r.unmount();
 });
 
@@ -93,7 +106,12 @@ test('day-by-day chart: one bar per day so far, today picked, tap a bar to read 
 });
 
 test('top products show cases sold; slow movers say when their window is clamped', async () => {
-  api.get = async () => salesDashboardPayload();
+  api.get = async () => salesDashboardPayload({
+    slow_movers: {
+      from: '2026-10-01', to: '2026-10-09', days: 9, clamped: true,
+      products: [{ id: 108, name: 'Vitamilk 300ml', sku: null, category: 'Milk', unit: 'cs' }],
+    },
+  });
   const r = renderPage();
   await settle();
 
@@ -102,7 +120,7 @@ test('top products show cases sold; slow movers say when their window is clamped
   assert.match(top[0].textContent, /1\.Red Horse Grande 1L12\.5 cases sold₱8,012\.50/);
   assert.match(top[1].textContent, /20 cases sold/);
 
-  assert.match(r.q('dashboard-slow-window').textContent, /no sales Nov 1 – Nov 9\. That is 9 days, not 14, because sales only count from Nov 1\./);
+  assert.match(r.q('dashboard-slow-window').textContent, /no sales Oct 1 – Oct 9\. That is 9 days, not 14, because sales only count from Oct 1\./);
   assert.equal(r.all('dashboard-slow-mover').length, 1);
   r.unmount();
 });
@@ -140,8 +158,10 @@ test('offline: a copy held from the old counters Dashboard is not drawn as blank
 });
 
 test('describeChange words every case', () => {
-  assert.deepEqual(describeChange({ available: false }, 'yesterday', '2026-11-01'),
-    { tone: 'none', arrow: '', text: 'No comparison yet', note: 'Sales are counted from Nov 1, 2026' });
+  assert.deepEqual(describeChange({ available: false }, 'yesterday', '2026-10-01'),
+    { tone: 'none', arrow: '', text: 'No comparison yet', note: 'Sales are counted from Oct 1, 2026' });
+  assert.equal(describeChange({ available: false }, 'yesterday').note, 'Sales are counted from Oct 1, 2026',
+    'the default start is 1 October');
   const fromNothing = describeChange({ available: true, previous_gross: 0, change: 641, change_pct: null }, 'yesterday');
   assert.equal(fromNothing.text, '+₱641.00', 'no percent against an empty period');
   assert.equal(fromNothing.tone, 'up');
