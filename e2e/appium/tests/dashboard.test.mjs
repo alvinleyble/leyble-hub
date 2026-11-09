@@ -1,9 +1,10 @@
 // Dashboard screen — basic coverage per e2e/appium/README.md "Adding a new test".
 //
-// Dashboard has no filter/search control and no closer equivalent (no tabs, no category
-// switch — the Active Orders table and Low Stock panel both render unconditionally, at
-// once, not behind a toggle). Per the task brief this is noted here rather than forced:
-// only checks 1 and 3 apply to this screen.
+// The Dashboard is sales and products (captain's grill, 2026-11-09): three gross-sales
+// totals, a day-by-day chart for the month, the top 10 products and the slow movers.
+// It has no filter/search control and no item opens a detail view, so the closest
+// equivalents are checked instead: the figures load, and tapping a day's bar reads that
+// day out above the chart.
 
 import { withSession, assert } from '../helpers/driver.js';
 import { loginAs } from '../helpers/auth.js';
@@ -12,18 +13,24 @@ import { waitForTestId, allTestId } from '../helpers/ui.js';
 withSession(async (driver) => {
   await loginAs(driver);
 
-  // 1. The Active Orders list loads with real data.
-  await waitForTestId(driver, 'dashboard-orders-list');
-  const rows = await allTestId(driver, 'dashboard-order-row');
-  assert(rows.length > 0, `Dashboard Active Orders table shows at least one order (found ${rows.length})`);
+  // 1. The three gross-sales totals load, each with a peso figure.
+  for (const id of ['dashboard-total-today', 'dashboard-total-week', 'dashboard-total-month']) {
+    const tile = await waitForTestId(driver, id);
+    const text = await tile.getText();
+    assert(/₱[\d,]+\.\d{2}/.test(text), `${id} shows a peso total (got "${text}")`);
+  }
 
-  // 3. Opening an item from the list shows its detail view (Order Detail).
-  const link = await rows[0].$('a');
-  assert(await link.isExisting(), 'first Active Orders row has a receipt link');
-  await link.click();
+  // 2. The day-by-day chart has one bar per day of the month so far.
+  await waitForTestId(driver, 'dashboard-daily');
+  const bars = await allTestId(driver, 'dashboard-daily-bar');
+  assert(bars.length > 0, `Dashboard chart shows at least one day (found ${bars.length})`);
 
-  await waitForTestId(driver, 'order-detail', { timeout: 20000 });
-  assert(true, 'clicking a Dashboard order row opened the order detail view');
+  // 3. Tapping the first day's bar reads that day out above the chart.
+  // A JS click, as clickTestId does — a thin bar can report "not interactable" natively.
+  await driver.execute((el) => el.click(), bars[0]);
+  const selected = await waitForTestId(driver, 'dashboard-daily-selected');
+  const readout = await selected.getText();
+  assert(/₱[\d,]+\.\d{2}/.test(readout), `tapping a bar shows that day's total (got "${readout}")`);
 
   console.log('\nALL ASSERTIONS PASSED');
 }).catch((err) => {
