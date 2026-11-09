@@ -130,6 +130,10 @@ export function backOfficeKey(name) {
   return `${BACKOFFICE_PREFIX}${name}`;
 }
 
+// The Dashboard sub-tab last used on this device ('sales' | 'products' | 'stock').
+// A screen preference, so it lives with the device, not the account.
+export const DASHBOARD_TAB_KEY = `${NS}dashboard.tab`;
+
 // ── Slice 3.3 (ADR 0015 §8) — device-issued delivery references ─────────────
 //
 // `<station>-DEL-<sequence>`, e.g. `1-DEL-00007`. Its own sequence, deliberately
