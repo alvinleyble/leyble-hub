@@ -101,6 +101,11 @@ async function run() {
       const driver = await createDriver({ udid: serials[index] });
       drivers.push(driver);
       await switchToWebview(driver);
+      // A WebView can attach before React has painted its first route. Do not
+      // let loginAs mistake that blank startup moment for a remembered session.
+      await driver.waitUntil(() => driver.execute(() => Boolean(
+        document.querySelector('input[type="email"]') || document.querySelector('[data-testid="nav-link-dashboard"]')
+      )), { timeout: 60000, interval: 2000, timeoutMsg: 'the app did not paint its login or Dashboard route' });
       await loginAs(driver, { email });
       if (index === 0) keepAlive = setInterval(() => driver.getTimeouts().catch(() => {}), 30000);
     }
