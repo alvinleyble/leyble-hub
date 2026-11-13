@@ -8,7 +8,8 @@ import { waitingCount, listNeedsAttention, subscribeOutbox, drainOutbox } from '
 // - navigator.onLine === false short-circuits immediately without probing.
 // - Probe cached for 30s in steady state (not hammered every 5s).
 // - Probed immediately on 'online' event and before interactive save.
-// - Failed drain attempt marks offline immediately.
+// - A drain that cannot reach the server marks offline immediately (a 5xx is the
+//   server answering, so it does not — see SERVER_ERROR_RETRY_MS in outbox.js).
 // - With V25_OFFLINE_CORE off, no probing happens unless app-wide sync starts it explicitly.
 // - Never logs out, never surfaces errors.
 

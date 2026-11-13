@@ -2,7 +2,7 @@ import { api } from '../api/client';
 import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
-import { markOffline } from './status';
+import { markOffline, probeReachability } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
 import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
@@ -337,6 +337,38 @@ export function isParkedForServerError(record) {
   return record?.status === NEEDS_ATTENTION && record.parked_for === PARKED_FOR_SERVER_ERROR;
 }
 
+// A 5xx is the server ANSWERING, so it says nothing about the line and never marks the
+// device offline by itself (it used to: the /health watcher then marked the device
+// online again ~7 seconds later and drained into the same 5xx, flipping the status
+// light and every online-only action back and forth until the record parked). Only
+// when the write check did not pass either does the device ask GET /health — the same
+// probe the watcher uses — and go offline if that does not answer, which is a gateway
+// in front of a server that is down.
+//
+// Without the offline cycle to slow it, the drain paces the record itself: after a 5xx
+// it is not sent again until SERVER_ERROR_RETRY_MS has passed (`next_attempt_at`). A
+// pass that reaches it sooner — a save's own drain, a reconnect's second pass, a
+// pull-to-refresh — stops there exactly as the 5xx would have stopped it, so nothing
+// behind it goes first. The interval sits under the 30-second drain loop with room
+// for a slow answer, so the loop retries it on every tick: one send and one write
+// check per 30 seconds, and the strike spacing above still parks it about four to five
+// minutes in.
+const SERVER_ERROR_RETRY_MS = 20_000;
+
+function heldAfterServerError(record) {
+  const at = record.next_attempt_at;
+  if (typeof at !== 'number') return false;
+  const wait = at - Date.now();
+  // A hold further off than the interval itself means the device clock moved back;
+  // never strand a record on it.
+  return wait > 0 && wait <= SERVER_ERROR_RETRY_MS;
+}
+
+async function markOfflineUnlessReachable() {
+  const reachable = await probeReachability({ force: true, enabled: true }).catch(() => false);
+  if (!reachable) markOffline();
+}
+
 // Safety cap. A check that passes while the problem is really server-wide (a route
 // broken for every record, say) must not walk the whole queue into Needs attention one
 // record at a time. So at most this many DISTINCT records may be parked for a 5xx with
@@ -441,10 +473,11 @@ async function authorTokenKey(record) {
  *                    receipt number counts exactly as much as a 201 (D13).
  *   network        — left queued; the pass stops, since the next record would fail the
  *                    same way.
- *   5xx            — left queued and the pass stops, as for a network failure, after
- *                    one write check that may add a strike; at
- *                    SERVER_ERROR_PARK_THRESHOLD strikes it is parked on the attention
- *                    list instead and the pass carries on (see that constant).
+ *   5xx            — left queued and the pass stops, after one write check that may
+ *                    add a strike; at SERVER_ERROR_PARK_THRESHOLD strikes it is parked
+ *                    on the attention list instead and the pass carries on (see that
+ *                    constant). The device stays online, and the record is not sent
+ *                    again for SERVER_ERROR_RETRY_MS.
  *   other 4xx      — moved to the attention list with the server's reason (D8). Never
  *                    discarded, never guessed at.
  *
@@ -499,6 +532,11 @@ async function runDrainPass() {
       // hour ago says nothing about now: the periodic loop screens immediately before
       // it drains, so anything genuinely ready is stamped seconds ago.
       if (record.guard && !isFreshlyScreened(record.guard)) continue;
+      // Paced after a 5xx (SERVER_ERROR_RETRY_MS): stop here, as the 5xx itself did.
+      if (heldAfterServerError(record)) {
+        blocked.add(record.id);
+        break;
+      }
 
       let body;
       let endpoint = record.endpoint;
@@ -604,6 +642,7 @@ async function runDrainPass() {
         // See SERVER_ERROR_PARK_THRESHOLD. Strictly in order: unless this 5xx parks the
         // record, the pass stops here exactly as it always has.
         if (err.status >= 500) {
+          const failedAt = Date.now();
           const strike = await serverAcceptsWrites(authorKey);
           const struckAt = Date.now();
           const mayPark = parkedSinceAccepted.has(record.id)
@@ -612,9 +651,10 @@ async function runDrainPass() {
             const lastStrikeAt = current.last_strike_at;
             const tooSoon = typeof lastStrikeAt === 'number'
               && struckAt - lastStrikeAt < SERVER_STRIKE_SPACING_MS;
-            if (!strike || tooSoon) return { attempts, last_error };
+            const failure = { attempts, last_error, next_attempt_at: failedAt + SERVER_ERROR_RETRY_MS };
+            if (!strike || tooSoon) return failure;
             const server_strikes = (current.server_strikes || 0) + 1;
-            const counted = { attempts, last_error, server_strikes, last_strike_at: struckAt };
+            const counted = { ...failure, server_strikes, last_strike_at: struckAt };
             return server_strikes >= SERVER_ERROR_PARK_THRESHOLD && mayPark
               ? { ...counted, status: NEEDS_ATTENTION, parked_for: PARKED_FOR_SERVER_ERROR }
               : counted;
@@ -626,7 +666,7 @@ async function runDrainPass() {
             failed++;
             continue; // parked aside; its dependants wait, the rest of the queue goes on
           }
-          markOffline();
+          if (!strike) await markOfflineUnlessReachable();
           break; // the server is unwell or this record is still on probation; stop the pass
         }
 
@@ -719,6 +759,7 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   record.attempts = 0;
   record.server_strikes = 0;
   record.last_strike_at = null;
+  record.next_attempt_at = null;
   record.parked_for = null;
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
