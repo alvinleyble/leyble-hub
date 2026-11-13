@@ -95,6 +95,20 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(product);
   } catch (err) {
     await client.query('ROLLBACK');
+    // Match the UNIQUE constraint itself: SKU equality is case-sensitive and does
+    // not collapse whitespace. Older clients still get the same 409/code/error.
+    if (err.code === '23505' && err.constraint === 'products_sku_key') {
+      try {
+        const { rows: [existing] } = await client.query('SELECT * FROM products WHERE sku = $1', [sku]);
+        if (existing) {
+          return res.status(409).json({
+            error: 'This record already exists.', code: 'duplicate', existing_product: existing,
+          });
+        }
+      } catch (lookupError) {
+        return next(lookupError);
+      }
+    }
     next(err);
   } finally {
     client.release();

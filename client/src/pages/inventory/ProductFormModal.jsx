@@ -54,8 +54,8 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
 
     setSaving(true);
     try {
-      // ADR 0015 §6 — adding a product is additive and conflict-free, so it takes one
-      // code path online and blind: queue it, drain immediately. Connected, that lands
+      // ADR 0015 §6 — adding a product takes one code path online and blind:
+      // queue it, drain immediately (SKU clashes are resolved by the drain). Connected, that lands
       // in about a second and the operator sees the ordinary toast; blind, it shows on
       // the grid as "Waiting to sync" until the line returns.
       const profileKey = await api.getActiveProfile();

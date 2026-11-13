@@ -75,12 +75,14 @@ export async function refreshEntity(entity) {
  * failure the interrupted-sync rule exists to prevent. A row present in the delta wins
  * over the held one (that is what "changed" means); everything else is left alone.
  */
-export async function applyCatalogueDelta(entity, changedRows) {
+export async function applyCatalogueDelta(entity, changedRows, { replaceLocalId } = {}) {
   const rows = Array.isArray(changedRows) ? changedRows : [];
   if (rows.length === 0) return readCached(entity);
 
   const held = await readCached(entity);
-  const byId = new Map(held.map((r) => [String(r.id), r]));
+  const byId = new Map(held
+    .filter((r) => replaceLocalId === undefined || String(r.id) !== String(replaceLocalId))
+    .map((r) => [String(r.id), r]));
   for (const row of rows) {
     if (row?.id === undefined || row?.id === null) continue;
     byId.set(String(row.id), row);

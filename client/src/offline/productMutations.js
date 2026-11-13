@@ -28,7 +28,8 @@ import { outboxKey } from './keys.js';
 // ── Local-first writes ──────────────────────────────────────────────────────
 
 /**
- * Queue a new product. Additive and conflict-free, so it needs no guard.
+ * Queue a new product. Stock/price guards apply to edits, not creates; a SKU
+ * collision is resolved by the drain (same-name adoption, otherwise attention).
  * The row has no id until it syncs; the Inventory list merges it in from the outbox
  * (queuedProductsFromOutbox below), the same way the directory shows queued customers.
  */

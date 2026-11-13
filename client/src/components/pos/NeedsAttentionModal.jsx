@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../../api/client';
-import { listNeedsAttention, repointRecord, isParkedForServerError } from '../../offline/outbox';
+import { listNeedsAttention, repointRecord, isParkedForServerError, isProductCodeClash } from '../../offline/outbox';
+import ProductCodeClashCard from './ProductCodeClashCard.jsx';
 import { getReceipt } from '../../offline/receiptHistory';
 import { useToast } from '../ui/Toast';
 import Spinner from '../ui/Spinner';
@@ -183,6 +184,9 @@ export default function NeedsAttentionModal({ onClose, onShowSyncDetails }) {
             </div>
           ) : (
             records.map((rec) => {
+              if (isProductCodeClash(rec)) {
+                return <ProductCodeClashCard key={rec.id} record={rec} onResolved={loadAttentionList} />;
+              }
               const query = queries[rec.id] || '';
               const matchedCustomers = customers.filter((c) => customerMatches(c, query)).slice(0, 30);
               const target = selectedTargets[rec.id];

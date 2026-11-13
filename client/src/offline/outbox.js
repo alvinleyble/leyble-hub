@@ -6,6 +6,7 @@ import { markOffline, probeReachability, checkIsOnline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
 import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
+import { applyCatalogueDelta } from './catalogue.js';
 
 // D2/D5/D13/D14 — the outbox: records the device has saved locally and not yet handed
 // to the server. Offline is not a mode; it is an outbox that has not drained yet, so
@@ -272,6 +273,23 @@ async function pruneRefs(remaining) {
       await nativeStore.remove(key);
     }
   }
+}
+
+// Product creates alone may adopt a duplicate. The server, not a client SKU
+// search, determines equality; only the names are normalized on the device.
+const normalizedProductName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+function duplicateProduct(record, err) {
+  if (record.entity_type !== 'product' || record.method !== 'POST' || record.endpoint !== '/products') return null;
+  if (err?.status !== 409 || err.data?.code !== 'duplicate') return null;
+  const product = err.data.existing_product;
+  return product?.id && typeof product.name === 'string' && product.sku === record.payload?.sku
+    ? product : null;
+}
+
+export function isProductCodeClash(record) {
+  return record?.entity_type === 'product' && record?.status === NEEDS_ATTENTION
+    && Boolean(record.product_clash?.existing_product?.id);
 }
 
 // ── Draining ────────────────────────────────────────────────────────────────
@@ -571,11 +589,29 @@ async function runDrainPass() {
         // active session, and attribution is honour-system exactly as the captain
         // accepted it to be.
         authorKey = await authorTokenKey(record);
-        const response = await api.request(endpoint, {
-          method: record.method,
-          body: JSON.stringify(body),
-          ...(authorKey ? { accountKey: authorKey } : {}),
-        });
+        let response;
+        if (record.entity_type === 'product' && record.product_adoption) {
+          // An explicit operator answer is durable before the drain starts. A
+          // restart between the answer and completion must not resend the create.
+          response = record.product_adoption;
+        } else {
+          try {
+            response = await api.request(endpoint, {
+              method: record.method,
+              body: JSON.stringify(body),
+              ...(authorKey ? { accountKey: authorKey } : {}),
+            });
+          } catch (err) {
+            const existing = duplicateProduct(record, err);
+            if (!existing || normalizedProductName(record.payload?.name) !== normalizedProductName(existing.name)) throw err;
+            response = existing;
+          }
+        }
+        if (record.entity_type === 'product' && response?.id) {
+          // Only the server product stands. In particular, never apply the queued
+          // create's price or initial stock to a product that already exists.
+          await applyCatalogueDelta('products', [response], { replaceLocalId: `local-${record.id}` });
+        }
         await rememberResult(record.id, response);
         const snapshot = orderSnapshotFrom(record, response);
         if (snapshot) {
@@ -665,8 +701,10 @@ async function runDrainPass() {
           continue;
         }
 
+        const existingProduct = duplicateProduct(record, err);
         await saveDrainOutcome(record, {
           status: NEEDS_ATTENTION, attempts, last_error, last_error_status, last_attempt_at,
+          ...(existingProduct ? { product_clash: { sku: record.payload.sku, existing_product: existingProduct } } : {}),
         });
         blocked.add(record.id);
         failed++;
@@ -751,6 +789,35 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
   return record;
+}
+
+// Both answers keep the same durable record and its dependency identity. Only the
+// drain's ordinary success path completes it and remembers the server id.
+export async function useExistingProduct(id) {
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!isProductCodeClash(record)) throw new Error('This product-code clash is no longer waiting.');
+  const saved = await saveDrainOutcome(record, {
+    status: QUEUED, product_adoption: record.product_clash.existing_product,
+    last_error: null, attempts: 0,
+  });
+  notifyOutboxListeners({ type: 'repoint', record: saved });
+  return saved;
+}
+
+export async function changeProductCode(id, code) {
+  const sku = String(code || '').trim();
+  if (!sku) throw new Error('Enter a new product code.');
+  if (sku.length > 100) throw new Error('Product codes must be 100 characters or fewer.');
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!isProductCodeClash(record)) throw new Error('This product-code clash is no longer waiting.');
+  if (sku === record.payload.sku) throw new Error('Enter a different product code.');
+  const saved = await saveDrainOutcome(record, (current) => ({
+    payload: { ...current.payload, sku }, status: QUEUED, product_clash: null,
+    product_adoption: null, last_error: null, attempts: 0,
+    server_strikes: 0, last_strike_at: null, parked_for: null,
+  }));
+  notifyOutboxListeners({ type: 'repoint', record: saved });
+  return saved;
 }
 
 /**
