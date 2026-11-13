@@ -59,7 +59,7 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
       // in about a second and the operator sees the ordinary toast; blind, it shows on
       // the grid as "Waiting to sync" until the line returns.
       const profileKey = await api.getActiveProfile();
-      const { synced } = await createProductLocalFirst({
+      const { synced, adopted } = await createProductLocalFirst({
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -71,9 +71,11 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
         requires_bottle_return: form.requires_bottle_return,
       }, { profileKey });
       addToast(
-        synced
-          ? `${form.name} added to inventory.`
-          : `${form.name} saved on this device \u00b7 will sync when connected.`,
+        adopted
+          ? `${form.name} already exists; using the existing product.`
+          : synced
+            ? `${form.name} added to inventory.`
+            : `${form.name} saved on this device \u00b7 will sync when connected.`,
         'success'
       );
       onSaved();

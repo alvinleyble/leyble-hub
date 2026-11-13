@@ -79,7 +79,7 @@ async function waitClash(driver, sku, mine, theirs, filename) {
   await clickTestId(driver, 'status-light');
   await driver.waitUntil(async () => (await driver.$('body').getText()).includes('Use existing product'), { timeout: 15000, interval: 1000 });
   const text = await driver.$('body').getText();
-  assert(text.includes(sku) && text.includes(mine) && text.includes(theirs), 'clash shows code and both product names');
+  assert(text.includes(sku) && text.includes(mine) && text.includes(theirs), 'clash shows the code and both sides of what differs');
   assert(text.includes('Use existing product') && text.includes('Change code'), 'clash offers both required actions');
   await driver.saveScreenshot(`${output}/screenshots/${filename}`);
 }
@@ -113,13 +113,26 @@ async function run() {
     const [phone, tablet] = drivers;
     const sameSku = `same-${stamp}`;
     await addOffline(phone, 0, 'Clash Same Drink', sameSku);
-    await addOffline(tablet, 1, 'clash  SAME drink', sameSku, '999');
+    await addOffline(tablet, 1, 'clash  SAME drink', sameSku);
     connection(0, true);
     await waitQueueEmpty(phone);
     connection(1, true);
     await waitQueueEmpty(tablet);
     let matches = (await products()).filter(p => p.sku === sameSku);
-    assert(matches.length === 1 && Number(matches[0].base_wholesale_price) === 200, 'same-name creates yield one product; existing price stands');
+    assert(matches.length === 1 && Number(matches[0].base_wholesale_price) === 200, 'same name and same values yield one product, adopted silently');
+
+    const priceSku = `price-${stamp}`;
+    await addOffline(phone, 0, 'Clash Price Drink', priceSku);
+    await addOffline(tablet, 1, 'clash  PRICE drink', priceSku, '999');
+    connection(0, true);
+    await waitQueueEmpty(phone);
+    connection(1, true);
+    await waitClash(tablet, priceSku, '₱999.00', '₱200.00', 'tablet-product-price-clash.png');
+    await clickText(tablet, 'Use existing product');
+    await waitQueueEmpty(tablet);
+    matches = (await products()).filter(p => p.sku === priceSku);
+    assert(matches.length === 1 && Number(matches[0].base_wholesale_price) === 200, 'same name with a different price reaches a person; adoption keeps the existing price');
+    await closeAttention(tablet);
 
     const differentSku = `different-${stamp}`;
     await addOffline(phone, 0, 'Server Cola', differentSku);

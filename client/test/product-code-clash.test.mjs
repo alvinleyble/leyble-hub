@@ -6,11 +6,17 @@ import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import * as outbox from '../src/offline/outbox.js';
 import { getCachedEntity, applyCatalogueDelta } from '../src/offline/catalogue.js';
 import { __resetStatusState, stopReachabilityWatcher } from '../src/offline/status.js';
-import { queuedProductsFromOutbox } from '../src/offline/productMutations.js';
+import { queuedProductsFromOutbox, createProductLocalFirst } from '../src/offline/productMutations.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import NeedsAttentionModal from '../src/components/pos/NeedsAttentionModal.jsx';
+import ProductFormModal from '../src/pages/inventory/ProductFormModal.jsx';
 
-const existing = { id: 81, name: 'Cola One Litre', sku: 'clvb 1l', unit: 'case', base_wholesale_price: '200.00', current_stock: '12', is_active: true };
+// The server row as POST /products stores it (NUMERIC columns arrive as strings).
+const existing = {
+  id: 81, name: 'Cola One Litre', sku: 'clvb 1l', category: null, unit: 'case',
+  base_wholesale_price: '200.00', deposit_fee: '0.00', current_stock: '12.00',
+  units_per_case: 1, requires_bottle_return: false, is_active: true,
+};
 let originalRequest, originalGet;
 beforeEach(async () => {
   __resetMemoryBackend();
@@ -19,20 +25,39 @@ beforeEach(async () => {
   originalRequest = api.request;
   originalGet = api.get;
   api.get = async () => [];
+  localStorage.setItem('activeProfile', 'josie');
 });
-afterEach(() => { api.request = originalRequest; api.get = originalGet; stopReachabilityWatcher(); __resetStatusState(); });
-const duplicate = () => Object.assign(new Error('This record already exists.'), { status: 409, data: { code: 'duplicate', existing_product: existing } });
-const queueProduct = (name = '  COLA   one litre  ') => outbox.enqueue({ entityType: 'product', endpoint: '/products', profileKey: 'josie', payload: { name, sku: existing.sku, unit: 'case', base_wholesale_price: 999, current_stock: 99 } });
-async function park() {
-  const record = await queueProduct('Different drink');
-  api.request = async () => { throw duplicate(); };
+afterEach(() => { api.request = originalRequest; api.get = originalGet; localStorage.clear(); stopReachabilityWatcher(); __resetStatusState(); });
+const duplicate = (product = existing) => Object.assign(new Error('This record already exists.'), { status: 409, data: { code: 'duplicate', existing_product: product } });
+// The same body ProductFormModal sends for the same product typed in on another device.
+const queueProduct = (name = '  COLA   one litre  ', values = {}) => outbox.enqueue({
+  entityType: 'product', endpoint: '/products', profileKey: 'josie',
+  payload: {
+    name, category: null, unit: 'case', sku: existing.sku, base_wholesale_price: 200,
+    deposit_fee: 0, current_stock: 12, units_per_case: 1, requires_bottle_return: false, ...values,
+  },
+});
+async function park(name = 'Different drink', values = { base_wholesale_price: 999 }, product = existing) {
+  const record = await queueProduct(name, values);
+  api.request = async () => { throw duplicate(product); };
   await outbox.drainOutbox();
   return record;
 }
+const settle = (ms = 20) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+function setInput(input, value) {
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+  // Same jsdom input-event workaround used by the existing form suites.
+  const propsKey = Object.keys(input).find(key => key.startsWith('__reactProps'));
+  input[propsKey].onChange({ target: { value } });
+}
+const inputFor = (view, label) => {
+  const node = view.all('label').find(l => l.textContent.replace('*', '').trim() === label);
+  return document.getElementById(node.htmlFor);
+};
+const attentionModal = () => React.createElement(ToastProvider, null, React.createElement(NeedsAttentionModal));
 
-test('same normalized name adopts the server product and resolves order, price and stock references', async () => {
+test('same normalized name and same entered values adopt the server product and resolve order, price and stock references', async () => {
   const product = await queueProduct();
-  await applyCatalogueDelta('products', [{ ...product.payload, id: `local-${product.id}` }]);
   const calls = [];
   for (const [entityType, endpoint, method, payload, endpointParams] of [
     ['order', '/orders', 'POST', { items: [{ product_id: outbox.ref(product.id) }] }],
@@ -46,12 +71,70 @@ test('same normalized name adopts the server product and resolves order, price a
   };
   const result = await outbox.drainOutbox();
   assert.equal(result.sent, 4);
+  assert.deepEqual(result.adopted, [product.id]);
   assert.deepEqual(await outbox.listRecords(), []);
   assert.equal(calls[0][1].items[0].product_id, existing.id);
   assert.equal(calls[1][1].product_id, existing.id);
   assert.equal(calls[2][0], '/products/81');
-  assert.deepEqual(await getCachedEntity('products'), [existing], 'server values stand; create values are not applied');
   assert.deepEqual(await queuedProductsFromOutbox(), []);
+});
+
+test('same name with any entered value differing reaches Needs attention instead of being adopted', async () => {
+  for (const values of [
+    { base_wholesale_price: 999 },
+    { unit: 'bottle' },
+    { units_per_case: 24 },
+    { requires_bottle_return: true },
+    { deposit_fee: 5 },
+    { current_stock: 50 },
+    { category: 'Soft Drinks' },
+  ]) {
+    await outbox.__clearOutbox();
+    await queueProduct(existing.name, values);
+    api.request = async () => { throw duplicate(); };
+    const result = await outbox.drainOutbox();
+    assert.deepEqual(result.adopted, [], `${Object.keys(values)[0]} differs, so nothing is adopted`);
+    const [parked] = await outbox.listNeedsAttention();
+    assert.ok(outbox.isProductCodeClash(parked), `${Object.keys(values)[0]} differs, so a person decides`);
+    assert.deepEqual(outbox.productClashDifferences(parked.payload, parked.product_clash.existing_product).map(d => d.field), Object.keys(values));
+  }
+});
+
+test('a deleted (deactivated) product is never adopted silently, even when every value matches', async () => {
+  await queueProduct(existing.name);
+  api.request = async () => { throw duplicate({ ...existing, is_active: false }); };
+  const result = await outbox.drainOutbox();
+  assert.deepEqual(result.adopted, []);
+  const [parked] = await outbox.listNeedsAttention();
+  assert.ok(outbox.isProductCodeClash(parked));
+  assert.equal(parked.product_clash.existing_product.is_active, false);
+});
+
+test('Use existing product on a deleted product reactivates it through the product update path, then adopts it', async () => {
+  const product = await park(existing.name, {}, { ...existing, is_active: false });
+  const calls = [];
+  api.request = async (path, options) => {
+    calls.push([path, options.method, JSON.parse(options.body)]);
+    if (path === '/products/81' && options.method === 'PATCH') return { ...existing, is_active: true };
+    if (path === '/products') throw new Error('adoption must not resend the create');
+    return { id: 3 };
+  };
+  await outbox.useExistingProduct(product.id);
+  assert.deepEqual(calls, [['/products/81', 'PATCH', { is_active: true }]]);
+  assert.equal((await outbox.drainOutbox()).sent, 1);
+  await outbox.enqueue({ entityType: 'price', endpoint: '/prices', payload: { product_id: outbox.ref(product.id) }, profileKey: 'josie' });
+  await outbox.drainOutbox();
+  assert.deepEqual(calls.at(-1), ['/prices', 'POST', { product_id: 81, request_key: calls.at(-1)[2].request_key }]);
+  assert.deepEqual(await outbox.listRecords(), []);
+});
+
+test('bringing back a deleted product without a connection leaves the question waiting', async () => {
+  const product = await park(existing.name, {}, { ...existing, is_active: false });
+  api.request = async () => { throw new TypeError('Failed to fetch'); };
+  await assert.rejects(() => outbox.useExistingProduct(product.id), /needs a connection/);
+  const [still] = await outbox.listNeedsAttention();
+  assert.equal(still.id, product.id);
+  assert.equal(still.product_adoption, undefined);
 });
 
 test('different names park with both names and block dependants without changing order flow', async () => {
@@ -77,7 +160,16 @@ test('Use existing product completes through the drain and remembers its referen
   api.request = async (_path, options) => { assert.equal(JSON.parse(options.body).product_id, 81); return { id: 2 }; };
   await outbox.drainOutbox();
   assert.deepEqual(await outbox.listRecords(), []);
-  assert.deepEqual(await getCachedEntity('products'), [existing]);
+});
+
+test('Use existing product never writes the clash-time copy over a newer held catalogue row', async () => {
+  const product = await park();
+  const newer = { ...existing, base_wholesale_price: '210.00', current_stock: '8.00', order_count: 40 };
+  await applyCatalogueDelta('products', [newer]);
+  await outbox.useExistingProduct(product.id);
+  api.request = async () => { throw new Error('adoption must not resend the create'); };
+  assert.equal((await outbox.drainOutbox()).sent, 1);
+  assert.deepEqual(await getCachedEntity('products'), [newer]);
 });
 
 test('Change code requeues the same record with its entered fields and new code', async () => {
@@ -95,17 +187,17 @@ test('Change code requeues the same record with its entered fields and new code'
   assert.deepEqual(await outbox.listRecords(), []);
 });
 
-test('lost response retry adopts the already accepted product without applying initial stock twice', async () => {
+test('lost response retry of this device\'s own accepted create is adopted silently', async () => {
   const product = await queueProduct(existing.name);
   api.request = async () => { throw new TypeError('lost response after server accepted create'); };
   await outbox.drainOutbox();
   const [retry] = await outbox.listRecords();
   assert.equal(retry.request_key, product.request_key);
   api.request = async () => { throw duplicate(); };
-  await outbox.drainOutbox();
+  const result = await outbox.drainOutbox();
+  assert.deepEqual(result.adopted, [product.id]);
   assert.deepEqual(await outbox.listNeedsAttention(), []);
   assert.deepEqual(await outbox.listRecords(), []);
-  assert.equal((await getCachedEntity('products'))[0].current_stock, '12');
 });
 
 test('old server duplicate with no product body stays recoverable; unrelated order duplicate is unchanged', async () => {
@@ -126,7 +218,7 @@ test('only whitespace and case are normalized in names; SKU spelling is never lo
   }
   await outbox.__clearOutbox();
   await queueProduct();
-  api.request = async () => { const err = duplicate(); err.data.existing_product = { ...existing, sku: existing.sku.toUpperCase() }; throw err; };
+  api.request = async () => { throw duplicate({ ...existing, sku: existing.sku.toUpperCase() }); };
   await outbox.drainOutbox();
   assert.equal((await outbox.listNeedsAttention()).length, 1, 'no case-insensitive SKU lookup or adoption');
 });
@@ -151,14 +243,20 @@ test('clash bookkeeping merges onto the current stored record, not the pass-star
   assert.equal((await outbox.listNeedsAttention())[0].payload.category, 'Concurrent edit');
 });
 
-test('clash card shows both names and both actions, never the customer picker', async () => {
-  await park();
+test('clash card shows both names, each differing value for this device and the server, and both actions', async () => {
+  await park('Different drink', { base_wholesale_price: 999, current_stock: 50 });
   let view;
-  await act(async () => { view = render(React.createElement(ToastProvider, null, React.createElement(NeedsAttentionModal))); });
+  await act(async () => { view = render(attentionModal()); });
   try {
     assert.match(view.text(), /Different drink/);
     assert.match(view.text(), /Cola One Litre/);
     assert.match(view.text(), /clvb 1l/);
+    const rows = view.all('[data-testid^="product-clash-difference-"]').map(li => li.textContent);
+    assert.deepEqual(rows, [
+      'Price: this device ₱999.00, server ₱200.00',
+      'Stock: this device 50, server 12',
+    ]);
+    assert.doesNotMatch(view.text(), /deleted/);
     assert.ok(view.all('button').some(b => b.textContent === 'Use existing product'));
     assert.ok(view.all('button').some(b => b.textContent === 'Change code'));
     assert.doesNotMatch(view.text(), /Assign to Active Customer/);
@@ -168,23 +266,40 @@ test('clash card shows both names and both actions, never the customer picker', 
       await new Promise(resolve => setTimeout(resolve, 20));
     });
     assert.deepEqual(await outbox.listRecords(), []);
-    assert.deepEqual(await getCachedEntity('products'), [existing]);
+  } finally { view.unmount(); }
+});
+
+test('clash card says plainly when the existing product was deleted, and Use existing product brings it back', async () => {
+  await park(existing.name, {}, { ...existing, is_active: false });
+  let view;
+  await act(async () => { view = render(attentionModal()); });
+  try {
+    assert.match(view.text(), /This product was deleted \(deactivated\) on the server/);
+    assert.deepEqual(view.all('[data-testid^="product-clash-difference-"]'), []);
+    const calls = [];
+    api.request = async (path, options) => {
+      calls.push([path, options.method]);
+      if (path === '/products') throw new Error('adoption must not resend the create');
+      return { ...existing, is_active: true };
+    };
+    await act(async () => {
+      view.click(view.all('button').find(b => b.textContent === 'Use existing product'));
+      await new Promise(resolve => setTimeout(resolve, 20));
+    });
+    assert.deepEqual(calls, [['/products/81', 'PATCH']]);
+    assert.deepEqual(await outbox.listRecords(), []);
   } finally { view.unmount(); }
 });
 
 test('Change code card input saves the new code and drains without altering entered product details', async () => {
   await park();
   let view;
-  await act(async () => { view = render(React.createElement(ToastProvider, null, React.createElement(NeedsAttentionModal))); });
+  await act(async () => { view = render(attentionModal()); });
   try {
     view.click(view.all('button').find(b => b.textContent === 'Change code'));
-    const input = view.all('input')[0];
-    assert.ok(view.all('label').some(label => label.htmlFor === input.id && label.textContent === 'New product code'));
+    const input = inputFor(view, 'New product code');
     await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, 'new-code');
-      // Same jsdom input-event workaround used by the existing form suites.
-      const propsKey = Object.keys(input).find(key => key.startsWith('__reactProps'));
-      input[propsKey].onChange({ target: { value: 'new-code' } });
+      setInput(input, 'new-code');
       input.dispatchEvent(new window.Event('input', { bubbles: true }));
     });
     let body;
@@ -198,4 +313,30 @@ test('Change code card input saves the new code and drains without altering ente
     assert.equal(body.base_wholesale_price, 999);
     assert.deepEqual(await outbox.listRecords(), []);
   } finally { view.unmount(); }
+});
+
+test('an online Add Product that adopts an existing product says so, never "added to inventory"', async () => {
+  const atZero = { ...existing, current_stock: '0.00' };
+  api.request = async () => { throw duplicate(atZero); };
+  let view;
+  await act(async () => { view = render(React.createElement(ToastProvider, null, React.createElement(ProductFormModal, { onClose() {}, onSaved() {} }))); });
+  try {
+    await act(async () => {
+      setInput(inputFor(view, 'Product Name'), 'Cola One Litre');
+      setInput(inputFor(view, 'SKU'), existing.sku);
+      setInput(inputFor(view, 'Wholesale Price (₱ / case)'), '200');
+    });
+    view.click(view.all('button').find(b => b.textContent.includes('Save Product')));
+    await settle(60);
+    assert.match(view.text(), /Cola One Litre already exists; using the existing product\./);
+    assert.doesNotMatch(view.text(), /added to inventory/);
+    assert.deepEqual(await outbox.listRecords(), []);
+  } finally { view.unmount(); }
+});
+
+test('createProductLocalFirst reports a genuinely new product as created, not adopted', async () => {
+  api.request = async (_path, options) => ({ ...JSON.parse(options.body), id: 92 });
+  const result = await createProductLocalFirst({ name: 'Brand new', unit: 'case', sku: 'new-1', base_wholesale_price: 50 }, { profileKey: 'josie' });
+  assert.equal(result.synced, true);
+  assert.equal(result.adopted, false);
 });

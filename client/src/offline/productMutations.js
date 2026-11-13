@@ -29,7 +29,8 @@ import { outboxKey } from './keys.js';
 
 /**
  * Queue a new product. Stock/price guards apply to edits, not creates; a SKU
- * collision is resolved by the drain (same-name adoption, otherwise attention).
+ * collision is resolved by the drain (adopted only when the existing product is
+ * active and every entered value matches, otherwise attention).
  * The row has no id until it syncs; the Inventory list merges it in from the outbox
  * (queuedProductsFromOutbox below), the same way the directory shows queued customers.
  */
@@ -41,8 +42,8 @@ export async function createProductLocalFirst(payload, { profileKey }) {
     payload,
     profileKey,
   });
-  const synced = await drainNow(record.id);
-  return { record, synced };
+  const { synced, adopted } = await drainNow(record.id);
+  return { record, synced, adopted };
 }
 
 /**
@@ -98,7 +99,7 @@ export async function updateProductLocalFirst(productId, patch, {
 
   await applyLocalProductPatch(productId, body);
 
-  const synced = await drainNow(record.id);
+  const { synced } = await drainNow(record.id);
   return { record, synced };
 }
 
@@ -131,7 +132,7 @@ export async function batchPriceLocalFirst(updates, reason, { profileKey, produc
     await applyLocalProductPatch(u.id, { base_wholesale_price: Number(u.new_price) });
   }
 
-  const synced = await drainNow(record.id);
+  const { synced } = await drainNow(record.id);
   return { record, synced };
 }
 
@@ -163,10 +164,10 @@ async function attachGuard(recordId, guard) {
 // caller uses that to word its toast ("updated" vs "saved on this device").
 async function drainNow(recordId) {
   await screenProductMutations().catch(() => {});
-  await drainOutbox().catch(() => null);
+  const result = await drainOutbox().catch(() => null);
   const stillQueued = (await listRecords().catch(() => []))
     .some((r) => r.id === recordId);
-  return !stillQueued;
+  return { synced: !stillQueued, adopted: Boolean(result?.adopted?.includes(recordId)) };
 }
 
 // ── The conflict guard (ADR 0015 §6) ────────────────────────────────────────
