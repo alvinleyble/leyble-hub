@@ -213,7 +213,7 @@ test('the light shows one word, names its status, and a tap spells it out', asyn
 
   assert.equal(view.container.querySelector('[data-testid="status-light-popup"]'), null);
   view.click(light);
-  assert.equal(view.container.querySelector('[data-testid="status-light-popup"]').textContent, 'Online · all saved');
+  assert.equal(view.container.querySelector('[data-testid="status-light-popup-label"]').textContent, 'Online · all saved');
   assert.equal(light.getAttribute('aria-expanded'), 'true');
   view.press('Escape');
   await flush();

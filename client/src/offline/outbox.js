@@ -359,16 +359,17 @@ async function writeParkedSinceAccepted(ids) {
 // A write addressed to an order (`/orders/<R>`, `/orders/<R>/…`) cannot land before the
 // create that makes R exist, whether or not it was queued with a `depends_on` link to it
 // — a print of an order read back from local history has none, nor does one queued by an
-// older build.
+// older build. Exported so the sync-details view names the same record "next to send"
+// that this drain would actually try first.
 const ORDER_TARGET = /^\/orders\/([^/]+)(?:\/|$)/;
 
-function orderCreatesByReceipt(records) {
+export function orderCreatesByReceipt(records) {
   return new Map(records
     .filter((r) => r.entity_type === 'order' && r.receipt_number)
     .map((r) => [r.receipt_number, r.id]));
 }
 
-function waitsOn(record, createsByReceipt) {
+export function waitsOn(record, createsByReceipt) {
   const target = ORDER_TARGET.exec(record.endpoint || '')?.[1];
   const create = target === undefined ? undefined : createsByReceipt.get(target);
   const deps = record.depends_on || [];
@@ -593,9 +594,13 @@ async function runDrainPass() {
 
         const attempts = (record.attempts || 0) + 1;
         const last_error = err.message || String(err);
+        // Read only by the sync-details view (syncDetails.js), so staff can see when a
+        // stuck record was last tried and what kind of answer it got. Bookkeeping only.
+        const last_error_status = err.status ?? null;
+        const last_attempt_at = new Date().toISOString();
 
         if (isNetworkFailure(err)) {
-          await saveDrainOutcome(record, { attempts, last_error });
+          await saveDrainOutcome(record, { attempts, last_error, last_error_status, last_attempt_at });
           blocked.add(record.id);
           markOffline();
           break; // the line is down; stop the pass
@@ -612,9 +617,12 @@ async function runDrainPass() {
             const lastStrikeAt = current.last_strike_at;
             const tooSoon = typeof lastStrikeAt === 'number'
               && struckAt - lastStrikeAt < SERVER_STRIKE_SPACING_MS;
-            if (!strike || tooSoon) return { attempts, last_error };
+            if (!strike || tooSoon) return { attempts, last_error, last_error_status, last_attempt_at };
             const server_strikes = (current.server_strikes || 0) + 1;
-            const counted = { attempts, last_error, server_strikes, last_strike_at: struckAt };
+            const counted = {
+              attempts, last_error, last_error_status, last_attempt_at,
+              server_strikes, last_strike_at: struckAt,
+            };
             return server_strikes >= SERVER_ERROR_PARK_THRESHOLD && mayPark
               ? { ...counted, status: NEEDS_ATTENTION, parked_for: PARKED_FOR_SERVER_ERROR }
               : counted;
@@ -641,7 +649,9 @@ async function runDrainPass() {
           continue;
         }
 
-        await saveDrainOutcome(record, { status: NEEDS_ATTENTION, attempts, last_error });
+        await saveDrainOutcome(record, {
+          status: NEEDS_ATTENTION, attempts, last_error, last_error_status, last_attempt_at,
+        });
         blocked.add(record.id);
         failed++;
       }
@@ -716,6 +726,8 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
 
   record.status = QUEUED;
   record.last_error = null;
+  record.last_error_status = null;
+  record.last_attempt_at = null;
   record.attempts = 0;
   record.server_strikes = 0;
   record.last_strike_at = null;
