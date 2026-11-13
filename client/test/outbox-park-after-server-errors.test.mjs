@@ -303,7 +303,7 @@ test('the cap: with 3 distinct bad records only 2 park, until a record is accept
   // A record is accepted (the server fix reaches /bad/3): the set clears and the next
   // bad record may park again.
   bad.delete('/bad/3');
-  await drainLater();
+  await drainOutbox();
   assert.equal(await stored(b3.id), undefined);
   assert.equal(await stored(good.id), undefined);
   assert.deepEqual(await parkedIds(), [], 'an accepted record clears the set');
@@ -433,18 +433,16 @@ test('repeated 5xx passes within 60 seconds add only one strike', async () => {
   const bad = await queue('/bad');
   await queue('/good/behind');
 
-  // As many sends as the 20-second retry pacing lets through inside one minute (a
-  // reconnect's double pass and the drain loop in between are held back by it, see
-  // outbox-server-error-stays-online.test.mjs).
+  // A reconnect's double pass plus the drain loop: ten passes inside one minute.
   await drainLater(0);
-  for (let i = 0; i < 2; i++) await drainLater(20_000);
+  for (let i = 0; i < 9; i++) await drainLater(6_000);
   let record = await stored(bad.id);
   assert.equal(record.server_strikes, 1);
   assert.equal(record.status, QUEUED);
-  assert.equal(record.attempts, 3, 'every failure is still recorded in attempts');
-  assert.equal(checks, 3, 'each 5xx still asks the write check');
+  assert.equal(record.attempts, 10, 'every failure is still recorded in attempts');
+  assert.equal(checks, 10, 'each 5xx still asks the write check');
 
-  await drainLater(STRIKE_SPACING_MS - 40_000); // exactly 60 seconds after the first strike
+  await drainLater(STRIKE_SPACING_MS - 54_000); // exactly 60 seconds after the first strike
   record = await stored(bad.id);
   assert.equal(record.server_strikes, 2);
 });

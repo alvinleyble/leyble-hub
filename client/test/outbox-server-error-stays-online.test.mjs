@@ -7,10 +7,7 @@
 //
 // What stays: a network failure or the client's own timeout still takes the device
 // offline, and so does a 5xx when /health itself does not answer. What changes: a 5xx
-// from a server that is plainly there leaves the device online, and the drain paces
-// retries of that record itself — it is not sent again until SERVER_ERROR_RETRY_MS has
-// passed, and nothing behind it goes in the meantime — instead of leaning on the
-// offline/online cycle to slow it down.
+// from a server that is plainly there leaves the device online.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import './render.mjs'; // jsdom globals — api/client.js reads window/localStorage on import
@@ -18,12 +15,11 @@ import './render.mjs'; // jsdom globals — api/client.js reads window/localStor
 import { api } from '../src/api/client.js';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import {
-  enqueue, drainOutbox, listRecords, repointRecord, __clearOutbox, NEEDS_ATTENTION, QUEUED,
+  enqueue, drainOutbox, listRecords, __clearOutbox, NEEDS_ATTENTION, QUEUED,
 } from '../src/offline/outbox.js';
 import { checkIsOnline, markOnline, __resetStatusState } from '../src/offline/status.js';
 
 const STRIKES = 5;
-const RETRY_MS = 20_000;     // SERVER_ERROR_RETRY_MS
 const DRAIN_LOOP_MS = 30_000; // offline/index.js's DRAIN_INTERVAL_MS
 const WRITE_CHECK = '/health/write';
 
@@ -187,63 +183,4 @@ test('a network failure or the client timeout on the record still takes the devi
     assert.equal((await stored(record.id)).status, QUEUED);
     assert.equal((await stored(behind.id)).attempts, 0);
   }
-});
-
-test('after a 5xx the record is not sent again until the retry interval has passed, and nothing goes ahead of it', async () => {
-  let failing = true;
-  serve((path) => (path === '/bad' && failing ? httpError(500) : null));
-  const bad = await queue('/bad');
-  const behind = await queue('/good/behind');
-
-  await drainLater(0);
-  assert.deepEqual(sent, ['/bad']);
-
-  // A reconnect's double pass, a save's own drain, a pull-to-refresh: all inside the
-  // interval. None of them sends it again, and the queue behind it keeps waiting.
-  sent = [];
-  for (let i = 0; i < 4; i++) {
-    const result = await drainLater(RETRY_MS / 5);
-    assert.equal(result.sent, 0);
-  }
-  assert.deepEqual(sent, [], 'held for the retry interval');
-  assert.equal((await stored(bad.id)).attempts, 1);
-  assert.equal((await stored(behind.id)).attempts, 0, 'still strictly in order');
-
-  await drainLater(RETRY_MS / 5); // exactly RETRY_MS after the failure
-  assert.deepEqual(sent, ['/bad'], 'retried once the interval has passed');
-  assert.equal((await stored(bad.id)).attempts, 2);
-
-  failing = false;
-  sent = [];
-  await drainLater(RETRY_MS);
-  assert.deepEqual(sent, ['/bad', '/good/behind'], 'once it goes through, the rest follows in order');
-  assert.deepEqual(await listRecords(), []);
-});
-
-test('sending a parked record again as is is not held back by its last failure', async () => {
-  let failing = true;
-  serve((path) => (path === '/bad' && failing ? httpError(500) : null));
-  const bad = await queue('/bad');
-  await passesUntilParked(bad.id, DRAIN_LOOP_MS);
-  assert.equal((await stored(bad.id)).status, NEEDS_ATTENTION);
-
-  failing = false;
-  const requeued = await repointRecord(bad.id);
-  assert.equal(requeued.next_attempt_at, null);
-  sent = [];
-  await drainOutbox();
-  assert.deepEqual(sent, ['/bad']);
-  assert.equal(await stored(bad.id), undefined);
-});
-
-test('a device clock set back does not strand a held record', async () => {
-  serve((path) => (path === '/bad' ? httpError(500) : null));
-  const bad = await queue('/bad');
-  await drainLater(0);
-  assert.equal((await stored(bad.id)).attempts, 1);
-
-  clock -= 60 * 60_000; // an hour back
-  sent = [];
-  await drainOutbox();
-  assert.deepEqual(sent, ['/bad'], 'a hold further away than the interval itself is not trusted');
 });
