@@ -2,7 +2,7 @@ import { api } from '../api/client';
 import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
-import { markOffline, probeReachability } from './status';
+import { markOffline, probeReachability, checkIsOnline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
 import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
@@ -341,11 +341,14 @@ export function isParkedForServerError(record) {
 // device offline by itself (it used to: the /health watcher then marked the device
 // online again ~7 seconds later and drained into the same 5xx, flipping the status
 // light and every online-only action back and forth until the record parked). Only
-// when the write check did not pass either does the device ask GET /health — the same
-// probe the watcher uses — and go offline if that does not answer, which is a gateway
-// in front of a server that is down.
+// when the write check did not pass either does a device that is online ask GET /health
+// — the same probe the watcher uses — and go offline if that does not answer, which is
+// a gateway in front of a server that is down. A device already offline stays offline:
+// coming back is the watcher's job, since its `online` event is what runs the
+// reconnect sync.
 async function markOfflineUnlessReachable() {
-  const reachable = await probeReachability({ force: true, enabled: true }).catch(() => false);
+  const reachable = checkIsOnline(true)
+    && await probeReachability({ force: true, enabled: true }).catch(() => false);
   if (!reachable) markOffline();
 }
 

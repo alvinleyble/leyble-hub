@@ -17,7 +17,9 @@ import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import {
   enqueue, drainOutbox, listRecords, __clearOutbox, NEEDS_ATTENTION, QUEUED,
 } from '../src/offline/outbox.js';
-import { checkIsOnline, markOnline, __resetStatusState } from '../src/offline/status.js';
+import {
+  checkIsOnline, markOnline, markOffline, startReachabilityWatcher, __resetStatusState,
+} from '../src/offline/status.js';
 
 const STRIKES = 5;
 const DRAIN_LOOP_MS = 30_000; // offline/index.js's DRAIN_INTERVAL_MS
@@ -182,5 +184,35 @@ test('a network failure or the client timeout on the record still takes the devi
     assert.deepEqual(sent.slice(-1), ['/orders'], 'the pass stops at it');
     assert.equal((await stored(record.id)).status, QUEUED);
     assert.equal((await stored(behind.id)).attempts, 0);
+  }
+});
+
+test('a device already offline is not brought back by a 5xx pass; the watcher brings it back with its online event', async () => {
+  // A request timed out a moment ago, the line is back, and the database is refusing
+  // writes. The reconnect sync listens for the watcher's `online` event, so a pass that
+  // quietly marked the device online would leave the catalogue unsynced.
+  let failing = true;
+  serve((path) => (path === '/bad' && failing ? httpError(500) : null), () => httpError(503));
+  const bad = await queue('/bad');
+  markOffline();
+  let onlineEvents = 0;
+  const countOnline = () => { onlineEvents++; };
+  window.addEventListener('online', countOnline);
+  try {
+    await drainLater(DRAIN_LOOP_MS);
+    assert.equal(checkIsOnline(true), false, 'still offline after the pass');
+    assert.equal(healthProbes, 0, 'the pass leaves /health to the watcher');
+    assert.equal((await stored(bad.id)).status, QUEUED);
+
+    failing = false;
+    startReachabilityWatcher({ enabled: true, intervalMs: 5 });
+    for (let i = 0; i < 400 && (await listRecords()).length > 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(onlineEvents, 1, 'the watcher fires the online event');
+    assert.equal(checkIsOnline(true), true);
+    assert.deepEqual(await listRecords(), [], 'and the queue goes through');
+  } finally {
+    window.removeEventListener('online', countOnline);
   }
 });
