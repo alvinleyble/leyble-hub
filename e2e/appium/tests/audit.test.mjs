@@ -10,6 +10,22 @@ import { withSession, assert } from '../helpers/driver.js';
 import { loginAs, navigateTo, showEverything } from '../helpers/auth.js';
 import { waitForTestId, clickTestId, allTestId, assertCount, waitForCountSettled } from '../helpers/ui.js';
 
+// Since #153 every filter on this screen sits in a collapsed "Filters" panel behind one
+// button (SearchFilterBar). Each tab mounts its own bar, so the Activity tab's panel
+// starts closed again. Opens it — by a JS click, as clickTestId does — only if closed.
+async function openFiltersPanel(driver) {
+  const selector = 'button[aria-expanded][aria-label^="Filters"]';
+  await (await driver.$(selector)).waitForDisplayed({ timeout: 15000 });
+  const opened = await driver.execute((sel) => {
+    const button = document.querySelector(sel);
+    if (!button) return false;
+    if (button.getAttribute('aria-expanded') !== 'true') button.click();
+    return true;
+  }, selector);
+  assert(opened === true, 'opened the Audit Log "Filters" panel');
+  await waitForTestId(driver, 'filters-panel');
+}
+
 withSession(async (driver) => {
   await loginAs(driver);
   // Audit Log is hidden until Settings' "Show everything" is on.
@@ -24,6 +40,7 @@ withSession(async (driver) => {
   // read "Restock" once that filter is selected. Restock entries come from Incoming
   // Supplies' auto-restock, a long-shipped, actively-used module (CLAUDE.md), so this is
   // the action type most likely to be non-empty in any dev/QA database.
+  await openFiltersPanel(driver);
   const actionFilter = await waitForTestId(driver, 'audit-filter-action');
   await actionFilter.selectByAttribute('value', 'restock');
   await waitForCountSettled(driver, 'audit-row');
@@ -38,6 +55,7 @@ withSession(async (driver) => {
   // reference link — see file header for why this is the closest equivalent here).
   await clickTestId(driver, 'audit-tab-activity');
   await waitForTestId(driver, 'audit-list');
+  await openFiltersPanel(driver);
   const entityFilter = await waitForTestId(driver, 'audit-filter-entity');
   await entityFilter.selectByAttribute('value', 'order');
   await waitForCountSettled(driver, 'audit-row');
