@@ -751,7 +751,10 @@ export default function OrderDetailPage() {
               {itemCredit(item) > 0 && (
                 <tr data-testid="order-bottle-credit">
                   <SpanCell phone={2} sm={4} className="px-3 sm:px-5 pb-3 text-right text-green-800">
-                    Bottles returned {bottlesReturned(item, liveReturnCounts)} × {PHP(item.unit_deposit_fee)}
+                    Bottles returned{' '}
+                    <span className="whitespace-nowrap">
+                      {bottlesReturned(item, liveReturnCounts)} × {PHP(item.unit_deposit_fee)}
+                    </span>
                   </SpanCell>
                   <td className="px-3 sm:px-5 pb-3 text-right tabular-nums whitespace-nowrap text-green-800">
                     {PHP(-itemCredit(item))}
