@@ -12,7 +12,8 @@
     "seed": "node db/seed.js",
     "seed-tickets": "node db/seed-tickets.js",
     "reset-data": "node db/reset-data.js",
-    "create-user": "node db/create-user.js"
+    "create-user": "node db/create-user.js",
+    "refresh-staging": "node db/refresh-staging-from-prod.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
