@@ -20,17 +20,14 @@ import {
   checkIsOnline, ref,
 } from '../../offline/index.js';
 import { formatPeso } from '../../utils/money';
+import { parseCustomerEntry } from '../../utils/customerEntry';
+import { orderCustomerMatches } from '../../utils/customerSearch';
 
 // Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
 const PHP = formatPeso;
 
 const INPUT = `w-full h-11 px-3 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white
                focus:outline-none focus:ring-2 focus:ring-blue-600`;
-
-const customerMatches = (c, q) => {
-  const s = q.trim().toLowerCase();
-  return s === '' ? false : c.name.toLowerCase().includes(s);
-};
 
 // G29 — a customer quick-created offline carries a temporary id until its real POST
 // /customers drains and its row exists server-side (D5). Any code path that would hit
@@ -52,7 +49,7 @@ function CustomerAndOrderTypeFields({
         <p className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1.5">Customer</p>
         <Combobox
           items={activeCustomers}
-          match={customerMatches}
+          match={orderCustomerMatches}
           value={selectedCustomer ?? null}
           displayValue={(c) => c.name}
           minChars={1}
@@ -60,19 +57,22 @@ function CustomerAndOrderTypeFields({
           onQueryChange={onQueryChange}
           onCreate={onCreateCustomer}
           creating={creatingCustomer}
-          renderCreate={(name) => (
-            <>
-              <span className="text-lg leading-none">＋</span>
-              <span>Create <span className="font-bold">“{name}”</span> as a new Customer</span>
-            </>
-          )}
+          renderCreate={(query) => {
+            const { name, address } = parseCustomerEntry(query);
+            return (
+              <>
+                <NavIcon name="customers" className="w-5 h-5 shrink-0" />
+                <span className="text-base break-words min-w-0">Create <span className="font-bold">“{name}”</span>{address && <> ({address})</>} as a new Customer</span>
+              </>
+            );
+          }}
           placeholder="Search or type a new customer name…"
           emptyText="No customers match."
           aria-label="Customer"
           renderRow={(c) => (
             <>
               <span className="min-w-0 truncate">
-                <span className="font-medium text-slate-800">{c.name}</span>
+                <span className="text-base font-medium text-slate-800">{c.name}</span>
                 {c.address && (
                   <span className="italic text-slate-500"> - {c.address}</span>
                 )}
@@ -394,7 +394,9 @@ export default function OrderCreateModal({
   // saveOrderLocalFirst: one code path, online or offline, every day — queue POST
   // /customers in the outbox and hand back a `local-<outboxId>` customer the rest of
   // the modal already knows to treat specially (isLocalCustomer above).
-  const handleCreateCustomer = async (name) => {
+  const handleCreateCustomer = async (query) => {
+    const { name, address } = parseCustomerEntry(query);
+    if (!name) { addToast('Customer name is required.', 'error'); return; }
     setCreatingCustomer(true);
     try {
       const profileKey = await api.getActiveProfile();
@@ -402,13 +404,14 @@ export default function OrderCreateModal({
         entityType: 'customer',
         endpoint: '/customers',
         method: 'POST',
-        payload: { name, customer_type: 'regular' },
+        payload: { name, ...(address && { address }), customer_type: 'regular' },
         profileKey,
       });
       const localCustomer = {
         id: `local-${rec.id}`,
         _outboxId: rec.id,
         name,
+        address,
         customer_type: 'regular',
         is_active: true,
       };

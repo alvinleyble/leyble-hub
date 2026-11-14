@@ -473,7 +473,7 @@ function stubOrderModalApis({ customers = [] } = {}) {
   return priceFetches;
 }
 
-test('G29: quick-creating a customer offline queues POST /customers and yields a local-<id> customer, never a direct online POST', async () => {
+test('G29: slash quick-create offline queues name + address and immediately makes the note searchable', async () => {
   const priceFetches = stubOrderModalApis();
   let draftPostCalled = false;
   api.post = async (path) => {
@@ -492,12 +492,13 @@ test('G29: quick-creating a customer offline queues POST /customers and yields a
   const custInput = r.byLabel('Customer');
   act(() => {
     custInput.focus();
-    changeInput(custInput, 'Brand New Sari-Sari');
+    changeInput(custInput, 'Brand New Sari-Sari/brgy dalig');
   });
   await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
 
   const createBtn = r.all('button').find((b) => b.textContent.includes('Create') && b.textContent.includes('Brand New Sari-Sari'));
   assert.ok(createBtn, 'quick-create option should be offered');
+  assert.match(createBtn.textContent, /Create “Brand New Sari-Sari” \(brgy dalig\) as a new Customer/);
   // Combobox's create row fires on mousedown (so the tap can't blur-close the list
   // first), not click.
   act(() => { createBtn.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true })); });
@@ -507,6 +508,17 @@ test('G29: quick-creating a customer offline queues POST /customers and yields a
   const customerRecord = records.find((rec) => rec.entity_type === 'customer');
   assert.ok(customerRecord, 'the quick-create must be queued in the outbox');
   assert.equal(customerRecord.payload.name, 'Brand New Sari-Sari');
+  assert.equal(customerRecord.payload.address, 'brgy dalig');
+  assert.match(r.text(), /Address: brgy dalig/, 'the selected customer gets its note before syncing');
+
+  for (const query of ['dalig', 'sari-sari/dalig']) {
+    const searchInput = r.byLabel('Customer'); // the phone header collapses after creation
+    act(() => { searchInput.focus(); changeInput(searchInput, query); });
+    const row = r.all('[role="option"] button').find((b) =>
+      b.textContent.includes('Brand New Sari-Sari') && !b.textContent.includes('Create'));
+    assert.ok(row, `the new customer is found by ${query}`);
+    assert.match(row.textContent, /brgy dalig/);
+  }
 
   // Selecting the freshly quick-created local customer must skip the saved-prices
   // fetch entirely (there is no real id yet to fetch prices for).
