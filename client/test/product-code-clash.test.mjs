@@ -209,12 +209,42 @@ test('lost response retry of this device\'s own accepted create is adopted silen
   assert.deepEqual(await outbox.listRecords(), []);
 });
 
-test('old server duplicate with no product body stays recoverable; unrelated order duplicate is unchanged', async () => {
-  await queueProduct();
-  await outbox.enqueue({ entityType: 'order', endpoint: '/orders', payload: {}, profileKey: 'josie' });
-  api.request = async () => { throw Object.assign(new Error('Duplicate'), { status: 409, data: { code: 'duplicate' } }); };
-  await outbox.drainOutbox();
-  assert.equal((await outbox.listNeedsAttention()).length, 2);
+test('a product create parked by an older build offers Send again as is, and the resend is classified by the new drain', async () => {
+  for (const [values, adopts] of [[{}, true], [{ base_wholesale_price: 999 }, false]]) {
+    await outbox.__clearOutbox();
+    const product = await queueProduct(existing.name, values);
+    const order = await outbox.enqueue({ entityType: 'order', endpoint: '/orders', payload: {}, profileKey: 'josie' });
+    api.request = async () => { throw Object.assign(new Error('This record already exists.'), { status: 409, data: { code: 'duplicate' } }); };
+    await outbox.drainOutbox();
+    const parked = await outbox.listNeedsAttention();
+    assert.deepEqual(parked.map(r => r.id), [product.id, order.id]);
+    assert.equal(parked[0].product_clash, undefined, 'parked the way the pre-clash build parked it');
+
+    let view;
+    await act(async () => { view = render(attentionModal()); });
+    try {
+      const productCard = view.container.querySelector(`[data-testid="attention-record-${product.id}"]`);
+      const orderCard = view.container.querySelector(`[data-testid="attention-record-${order.id}"]`);
+      assert.match(orderCard.textContent, /Assign to Active Customer/, 'other record types keep the re-point card');
+      assert.doesNotMatch(productCard.textContent, /Assign to Active Customer/);
+      assert.match(productCard.textContent, /Cola One Litre/);
+      const sendAgain = [...productCard.querySelectorAll('button')].find(b => b.textContent === 'Send again as is');
+      assert.ok(sendAgain, 'the parked product create can be sent again');
+      await act(async () => {
+        view.click(sendAgain);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      });
+    } finally { view.unmount(); }
+
+    const requeued = (await outbox.listRecords()).find(r => r.id === product.id);
+    assert.equal(requeued.status, outbox.QUEUED);
+    assert.deepEqual(requeued.payload, product.payload, 'sent again unchanged');
+    api.request = async (path) => { if (path === '/products') throw duplicate(); return { id: 1 }; };
+    await outbox.drainOutbox();
+    const after = (await outbox.listRecords()).find(r => r.id === product.id);
+    if (adopts) assert.equal(after, undefined, 'same product: used automatically');
+    else assert.ok(outbox.isProductCodeClash(after), 'a differing price reaches the clash card');
+  }
 });
 
 test('only whitespace and case are normalized in names; SKU spelling is never loosened', async () => {

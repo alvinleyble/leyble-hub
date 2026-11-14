@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../../api/client';
-import { listNeedsAttention, repointRecord, isParkedForServerError, isProductCodeClash } from '../../offline/outbox';
+import {
+  listNeedsAttention, repointRecord, isParkedForServerError, isProductCodeClash, isProductCreate,
+} from '../../offline/outbox';
 import ProductCodeClashCard from './ProductCodeClashCard.jsx';
 import { getReceipt } from '../../offline/receiptHistory';
 import { useToast } from '../ui/Toast';
@@ -22,6 +24,12 @@ function formatRefusalReason(lastError) {
     return 'A product in this order was modified or removed on the server — review and re-point.';
   }
   return `Server refused this receipt: ${lastError || 'Unknown validation error'} — select customer to re-point.`;
+}
+
+function productRefusalReason(rec) {
+  return `The server refused the new product “${rec.payload?.name || 'Product'}”: `
+    + `${rec.last_error || 'Unknown validation error'} — send it again as is. If the same `
+    + 'product is already on the server it is used; if anything differs, you will be asked.';
 }
 
 const SERVER_ERROR_REASON =
@@ -137,7 +145,9 @@ export default function NeedsAttentionModal({ onClose, onShowSyncDetails }) {
   const handleSendAgain = (record) => requeue(
     record,
     undefined,
-    `Receipt ${record.receipt_number || record.id} queued to send again as is.`,
+    isProductCreate(record)
+      ? `${record.payload?.name || 'Product'} queued to send again as is.`
+      : `Receipt ${record.receipt_number || record.id} queued to send again as is.`,
     'Failed to send the receipt again.',
   );
 
@@ -194,6 +204,7 @@ export default function NeedsAttentionModal({ onClose, onShowSyncDetails }) {
               const items = rec.payload?.items || [];
               const total = items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
               const serverError = isParkedForServerError(rec);
+              const productCreate = isProductCreate(rec);
 
               return (
                 <div
@@ -225,10 +236,12 @@ export default function NeedsAttentionModal({ onClose, onShowSyncDetails }) {
 
                   {/* Plain-English Reason Banner */}
                   <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm font-semibold text-amber-200">
-                    {serverError ? SERVER_ERROR_REASON : formatRefusalReason(rec.last_error)}
+                    {serverError ? SERVER_ERROR_REASON
+                      : productCreate ? productRefusalReason(rec)
+                        : formatRefusalReason(rec.last_error)}
                   </div>
 
-                  {serverError ? (
+                  {serverError || productCreate ? (
                   <div className="flex items-center justify-end pt-1">
                     <button
                       type="button"

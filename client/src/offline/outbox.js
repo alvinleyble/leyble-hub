@@ -298,8 +298,12 @@ function isSameProduct(payload, existing) {
     && productClashDifferences(payload, existing).length === 0;
 }
 
+export function isProductCreate(record) {
+  return record?.entity_type === 'product' && record.method === 'POST' && record.endpoint === '/products';
+}
+
 function duplicateProduct(record, err) {
-  if (record.entity_type !== 'product' || record.method !== 'POST' || record.endpoint !== '/products') return null;
+  if (!isProductCreate(record)) return null;
   if (err?.status !== 409 || err.data?.code !== 'duplicate') return null;
   const product = err.data.existing_product;
   return product?.id && typeof product.name === 'string' && product.sku === record.payload?.sku
