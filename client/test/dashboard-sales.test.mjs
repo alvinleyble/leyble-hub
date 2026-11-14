@@ -111,7 +111,7 @@ test('the last finished period carries the green or red verdict, against its own
   const up = r.q('dashboard-total-today-change');
   assert.equal(up.textContent, '▲ Up +25% (+₱800.00)');
   assert.ok(up.className.includes('text-green-700'), 'up is green');
-  assert.match(yesterday.textContent, /vs Sun, Nov 1 \(₱3,200\.00\)$/, 'the same weekday a week earlier');
+  assert.match(yesterday.textContent, /vs Sat, Nov 7 \(₱3,200\.00\)$/, 'the comparator date comes from the server, not a client weekday rule');
 
   const lastWeek = r.q('dashboard-total-week-finished');
   assert.match(lastWeek.textContent, /Last weekNov 2 – Nov 8/);
@@ -326,11 +326,92 @@ test('top products show cases sold; slow movers say when their window is clamped
 
   const top = r.all('dashboard-top-product');
   assert.equal(top.length, 2);
-  assert.match(top[0].textContent, /1\.Red Horse Grande 1L12\.5 cases sold₱8,012\.50/);
-  assert.match(top[1].textContent, /20 cases sold/);
+  assert.match(top[0].textContent, /1\.Red Horse Grande 1L₱8,012\.5012\.5 cases/);
+  assert.match(top[1].textContent, /20 cases/);
 
   assert.match(r.q('dashboard-slow-window').textContent, /no sales Jun 1 – Jun 9\. That is 9 days, not 14, because sales only count from Jun 1\./);
   assert.equal(r.all('dashboard-slow-mover').length, 1);
+  r.unmount();
+});
+
+test('Cases defaults on every mount; rankings change membership, bold metric and subtitle, including offline', async () => {
+  const p = (id, name, cases, gross, orders) => ({ product_id: id, name, cases, gross, orders });
+  const bulk = p(1, 'Bulk Coke', 2793.5, 780307, 472);
+  const premium = p(2, 'Premium Beer', 100, 900000, 50);
+  const frequent = p(3, 'Daily Water', 90, 5000, 900);
+  const payload = salesDashboardPayload({ top_products_by: {
+    cases: [bulk, premium], sales: [premium, bulk], orders: [frequent, bulk],
+  } });
+  await writeBackOfficeCache(DASHBOARD_CACHE, payload);
+  api.get = async () => { throw new TypeError('Failed to fetch'); };
+  let r = renderPage();
+  await settle();
+  await openTab(r, 'products');
+  assert.equal(r.q('dashboard-ranking-cases').getAttribute('aria-selected'), 'true');
+  assert.equal(r.q('dashboard-ranking-subtitle').textContent.trim(), 'November 2026, by cases');
+  assert.match(r.all('dashboard-top-product')[0].textContent, /Bulk Coke/);
+  assert.equal(r.all('dashboard-top-primary')[0].textContent, '2,793.5 cases');
+  assert.ok(r.all('dashboard-top-primary')[0].className.includes('font-bold'));
+  assert.equal(r.all('dashboard-top-secondary')[0].textContent, '₱780,307.00 · 472 orders');
+
+  await act(async () => r.q('dashboard-ranking-sales').click());
+  assert.match(r.all('dashboard-top-product')[0].textContent, /Premium Beer/);
+  assert.equal(r.all('dashboard-top-primary')[0].textContent, '₱900,000.00');
+  assert.equal(r.all('dashboard-top-secondary')[0].textContent, '100 cases · 50 orders');
+  assert.equal(r.q('dashboard-ranking-subtitle').textContent.trim(), 'November 2026, by sales');
+
+  await act(async () => r.q('dashboard-ranking-orders').click());
+  assert.match(r.all('dashboard-top-product')[0].textContent, /Daily Water/);
+  assert.equal(r.all('dashboard-top-primary')[0].textContent, '900 orders');
+  assert.equal(r.all('dashboard-top-secondary')[0].textContent, '90 cases · ₱5,000.00');
+  assert.equal(r.q('dashboard-ranking-subtitle').textContent.trim(), 'November 2026, by orders');
+  assert.equal(r.all('dashboard-top-product').some((row) => row.textContent.includes('Premium Beer')), false);
+  r.unmount();
+
+  r = renderPage();
+  await settle();
+  await openTab(r, 'products');
+  assert.equal(r.q('dashboard-ranking-cases').getAttribute('aria-selected'), 'true', 'choice never persists');
+  r.unmount();
+});
+
+test('ranking chips have sub-tab keyboard behaviour and labelled panels', async () => {
+  const payload = salesDashboardPayload({ top_products_by: { cases: [], sales: [], orders: [] } });
+  api.get = async () => payload;
+  const r = renderPage();
+  await settle();
+  await openTab(r, 'products');
+  const press = async (key) => act(async () => {
+    r.q('dashboard-ranking-cases').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  });
+  await press('ArrowRight');
+  assert.equal(document.activeElement, r.q('dashboard-ranking-sales'));
+  assert.equal(r.q('dashboard-ranking-sales').tabIndex, 0);
+  assert.equal(r.q('dashboard-ranking-cases').tabIndex, -1);
+  assert.equal(r.container.querySelector('#dashboard-ranking-panel').getAttribute('aria-labelledby'), 'dashboard-ranking-sales');
+  await press('End');
+  assert.equal(document.activeElement, r.q('dashboard-ranking-orders'));
+  await press('ArrowRight');
+  assert.equal(document.activeElement, r.q('dashboard-ranking-cases'));
+  await press('ArrowLeft');
+  assert.equal(document.activeElement, r.q('dashboard-ranking-orders'));
+  await press('Home');
+  assert.equal(document.activeElement, r.q('dashboard-ranking-cases'));
+  r.unmount();
+});
+
+test('an old cached payload stays honestly sales-ranked with no chips or invented order counts', async () => {
+  await writeBackOfficeCache(DASHBOARD_CACHE, salesDashboardPayload());
+  api.get = async () => { throw new TypeError('Failed to fetch'); };
+  const r = renderPage();
+  await settle();
+  await openTab(r, 'products');
+  assert.equal(r.q('dashboard-ranking-cases'), null);
+  assert.equal(r.q('dashboard-ranking-subtitle').textContent.trim(), 'November 2026, by sales');
+  assert.match(r.all('dashboard-top-product')[0].textContent, /Red Horse Grande 1L/);
+  assert.equal(r.all('dashboard-top-primary')[0].textContent, '₱8,012.50');
+  assert.equal(r.all('dashboard-top-secondary')[0].textContent, '12.5 cases');
+  assert.doesNotMatch(r.q('dashboard-top-products').textContent, /orders|undefined|NaN/);
   r.unmount();
 });
 
@@ -490,7 +571,7 @@ test('Products has its own month pager, bounded at June 2026 and this month', as
   assert.ok(calls.includes('/dashboard?month=2026-10'));
   assert.equal(r.q('dashboard-products-month-label').textContent, 'October 2026');
   assert.match(r.all('dashboard-top-product')[0].textContent, /San Miguel Pale Pilsen \(2026-10\)/);
-  assert.match(r.q('dashboard-products-month').parentElement.textContent, /October 2026, by gross sales/);
+  assert.match(r.q('dashboard-products-month').parentElement.textContent, /October 2026, by sales/);
   assert.match(r.q('dashboard-slow-window').textContent, /last 14 days of October 2026 \(Oct 18 – Oct 31\)/);
   assert.equal(r.q('dashboard-month-label').textContent, 'November 2026', "Sales' pager stays where it was");
 

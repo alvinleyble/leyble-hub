@@ -20,12 +20,12 @@
 //    MONDAY (Postgres `date_trunc('week')`, ISO). A period that starts before
 //    SALES_START counts only from SALES_START.
 //
-// How a period is compared (captain, 2026-11-10). A period still running is never
+// How a period is compared (captain, 2026-11-14). A period still running is never
 // given a verdict: it is shown IN PROGRESS, as a share of the WHOLE previous period
 // (today against all of yesterday, this week against all of last week, this month
 // against all of last month). The up/down verdict belongs to the last FINISHED
 // period, judged against its own comparator:
-//   yesterday  vs the same weekday a week earlier,
+//   yesterday  vs the day before yesterday (every day, including Sundays),
 //   last week  vs the week before,
 //   last month vs the month before.
 // A comparison whose comparator starts before SALES_START is not made at all.
@@ -56,7 +56,7 @@ const BOUNDS = `
 // Order lines that count as sales, from SALES_START on. Callers narrow by created_at.
 const SALE_LINES = `
   sale_lines AS (
-    SELECT o.created_at,
+    SELECT o.created_at, o.id AS order_id,
            oi.product_id,
            oi.quantity,
            oi.quantity * oi.unit_price AS value
@@ -74,9 +74,8 @@ const day = (expr) => `((${expr})::timestamp AT TIME ZONE '${TZ}')`;
 //         ahead must not book a sale into a day that has not happened);
 //   prev  the WHOLE previous period — yesterday, last week, last month. It is both
 //         what the running period is measured against and the last finished period;
-//   cmp   what that finished period is judged against — the same weekday a week
-//         earlier for yesterday, the week before for last week, the month before
-//         for last month;
+//   cmp   what that finished period is judged against — the day before for
+//         yesterday, the week before for last week, the month before for last month;
 //   like  the previous period up to the same point — the old like-for-like window,
 //         kept only for `comparison`, which app builds released before 2026-11-10 read.
 const TOTALS_SQL = `
@@ -84,7 +83,7 @@ const TOTALS_SQL = `
   periods AS (
     SELECT 'today' AS key, today AS cur_start, today + 1 AS cur_end,
            today - 1 AS prev_start, today AS prev_end,
-           today - 8 AS cmp_start,  today - 7 AS cmp_end
+           today - 2 AS cmp_start,  today - 1 AS cmp_end
     FROM b
     UNION ALL
     SELECT 'week', week_start, week_start + 7, week_start - 7, week_start,
@@ -158,21 +157,33 @@ const DAILY_SQL = `
   FROM days LEFT JOIN per_day ON per_day.d = days.d
   ORDER BY days.d`;
 
-// The viewed month's best sellers by gross sales; "cases" is the summed line quantity.
+// Aggregate the viewed month once, then select each true top 10 in SQL. Keep the
+// old gross/cases/name ranking separately: installed builds depend on top_products.
+// New ties use the other measures before name (and id for identical names).
 const TOP_SQL = `
   WITH ${BOUNDS},
-  ${SALE_LINES}
-  SELECT p.id AS product_id, p.name, p.sku, p.unit,
-         SUM(s.quantity) AS cases,
-         SUM(s.value)    AS gross
-  FROM sale_lines s
-  JOIN products p ON p.id = s.product_id
-  CROSS JOIN b
-  WHERE s.created_at >= ${day('GREATEST(b.sel_start, b.cutoff)')}
-    AND s.created_at <  ${day('LEAST(b.sel_end, b.today + 1)')}
-  GROUP BY p.id, p.name, p.sku, p.unit
-  ORDER BY gross DESC, cases DESC, p.name ASC
-  LIMIT ${TOP_PRODUCTS}`;
+  ${SALE_LINES},
+  aggregates AS (
+    SELECT p.id AS product_id, p.name, p.sku, p.unit,
+           SUM(s.quantity) AS cases,
+           SUM(s.value)    AS gross,
+           COUNT(DISTINCT s.order_id) AS orders
+    FROM sale_lines s
+    JOIN products p ON p.id = s.product_id
+    CROSS JOIN b
+    WHERE s.created_at >= ${day('GREATEST(b.sel_start, b.cutoff)')}
+      AND s.created_at <  ${day('LEAST(b.sel_end, b.today + 1)')}
+    GROUP BY p.id, p.name, p.sku, p.unit
+  ), ranked AS (
+    SELECT *,
+      ROW_NUMBER() OVER (ORDER BY gross DESC, cases DESC, name ASC, product_id) AS legacy_rank,
+      ROW_NUMBER() OVER (ORDER BY cases DESC, gross DESC, orders DESC, name ASC, product_id) AS cases_rank,
+      ROW_NUMBER() OVER (ORDER BY gross DESC, cases DESC, orders DESC, name ASC, product_id) AS sales_rank,
+      ROW_NUMBER() OVER (ORDER BY orders DESC, cases DESC, gross DESC, name ASC, product_id) AS orders_rank
+    FROM aggregates
+  )
+  SELECT * FROM ranked
+  WHERE LEAST(legacy_rank, cases_rank, sales_rank, orders_rank) <= ${TOP_PRODUCTS}`;
 
 // Active products with no counted sale in the 14 Manila days ending on the viewed
 // month's last day — or ending today, for the month still running — clamped to
@@ -349,6 +360,14 @@ async function computeSalesDashboard(db, { now = new Date(), month } = {}) {
   const byKey = Object.fromEntries(totals.rows.map((r) => [r.key, periodTotal(r)]));
   const dailyRows = daily.rows.map((r) => ({ date: r.date, gross: money(r.gross) }));
   const slowHead = slow.rows[0];
+  const topList = (rank, withOrders = true) => top.rows
+    .filter((r) => Number(r[rank]) <= TOP_PRODUCTS)
+    .sort((a, b) => Number(a[rank]) - Number(b[rank]))
+    .map((r) => ({
+      product_id: r.product_id, name: r.name, sku: r.sku, unit: r.unit,
+      cases: Number(r.cases), gross: money(r.gross),
+      ...(withOrders ? { orders: Number(r.orders) } : {}),
+    }));
   return {
     as_of: now.toISOString(),
     today: manilaDate(now),
@@ -358,14 +377,12 @@ async function computeSalesDashboard(db, { now = new Date(), month } = {}) {
     // The month that `daily`, `top_products` and `slow_movers` describe.
     selected_month: selectedMonth(monthly.rows, viewed, dailyRows),
     daily: dailyRows,
-    top_products: top.rows.map((r) => ({
-      product_id: r.product_id,
-      name: r.name,
-      sku: r.sku,
-      unit: r.unit,
-      cases: Number(r.cases),
-      gross: money(r.gross),
-    })),
+    top_products: topList('legacy_rank', false),
+    top_products_by: {
+      cases: topList('cases_rank'),
+      sales: topList('sales_rank'),
+      orders: topList('orders_rank'),
+    },
     slow_movers: {
       from: slowHead.from_date,
       to: slowHead.to_date,
