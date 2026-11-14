@@ -87,16 +87,16 @@ describe('Dashboard sales figures', () => {
     assert.equal(total(after, 'today') - total(before, 'today'), 1282, 'two cases at ₱641, nothing else');
     assert.equal(total(after, 'month') - total(before, 'month'), 1282);
 
-    // The two figures the sale must NOT be: the post-close total (deposit fully
-    // credited back) and price + deposit again (the deposit counted twice).
+    // The figure the sale must NOT be: the post-close total (deposit fully credited
+    // back). Since migration 051 an open line's stored total is the listed price itself.
     const { rows: [line] } = await db.query(
       'SELECT line_total FROM order_items WHERE order_id = $1', [closedId]);
-    assert.equal(Number(line.line_total), 641, 'the stored post-close line total, for reference');
+    assert.equal(Number(line.line_total), 614, 'the stored post-close line total, for reference');
     const { rows: [pendingLine] } = await db.query(
       `SELECT oi.line_total FROM order_items oi JOIN orders o ON o.id = oi.order_id
        WHERE o.customer_id = $1 AND o.status = 'pending' AND o.created_at = $2`,
       [customerId, mnl('2026-11-03T09:00:00')]);
-    assert.equal(Number(pendingLine.line_total), 668, 'line_total adds the deposit on top — the dashboard must not');
+    assert.equal(Number(pendingLine.line_total), 641, 'line_total no longer adds the deposit on top');
   });
 
   it('a closed order with bottles returned still counts at 641 per case, not less', async () => {

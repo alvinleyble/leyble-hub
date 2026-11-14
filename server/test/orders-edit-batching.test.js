@@ -525,10 +525,10 @@ describe('Order edit stays inside the write budget (batched PATCH transaction)',
       await expectStatus(closeRes, 200);
       const closed = await closeRes.json();
       assert.equal(Number(closed.items[0].bottles_returned), 30);
-      // 4 × 100 goods + (48 − 30) un-returned bottles × ₱5 deposit
-      assert.equal(Number(closed.total_amount), 400 + 18 * 5);
+      // 4 × 100 listed (deposit included) − 30 returned bottles × ₱5 (migration 051)
+      assert.equal(Number(closed.total_amount), 400 - 30 * 5);
 
-      // Fixing the price on a closed order must not wipe the returns and re-inflate it.
+      // Fixing the price on a closed order must not wipe the returns and lose the credit.
       const res = await api(`/${order.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -541,7 +541,7 @@ describe('Order edit stays inside the write budget (batched PATCH transaction)',
       await expectStatus(res, 200);
       const edited = await res.json();
       assert.equal(Number(edited.items[0].bottles_returned), 30);
-      assert.equal(Number(edited.total_amount), 440 + 18 * 5);
+      assert.equal(Number(edited.total_amount), 440 - 30 * 5);
 
       // And the carry-back is clamped by what the new line can hold: dropping to one
       // case leaves only 12 bottles to return against.
@@ -557,7 +557,7 @@ describe('Order edit stays inside the write budget (batched PATCH transaction)',
       await expectStatus(res2, 200);
       const shrunk = await res2.json();
       assert.equal(Number(shrunk.items[0].bottles_returned), 12);
-      assert.equal(Number(shrunk.total_amount), 110);
+      assert.equal(Number(shrunk.total_amount), 110 - 12 * 5);
     });
 
     it('writes the lines in packer (category, then name) order', async () => {

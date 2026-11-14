@@ -1,3 +1,5 @@
+import { bottleCredit, bottlesReturned, countsReturns } from './bottleReturns.js';
+
 const PHP = (n) =>
   `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -22,27 +24,13 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   // every receipt printed before V2.5 was.
   const receiptNo = order.receipt_number || String(order.id).padStart(5, '0');
   const isPickupOrder = order.order_type === 'pickup';
-  // Deposit only appears on the closing receipt (status = completed/delivered).
-  // Pending receipts assume full bottle return — no deposit charged.
-  const showDeposit = order.status === 'completed' || order.status === 'done';
-
-  const itemDepForPrint = (item) => {
-    if (!showDeposit) return 0;
-    const dep = Number(item.unit_deposit_fee);
-    if (!dep) return 0;
-    const totalBtl = Number(item.quantity) * (Number(item.units_per_case) || 1);
-    const isLive = item.requires_bottle_return
-      && returnCounts[item.id] !== undefined
-      && returnCounts[item.id] !== '';
-    const returned = isLive
-      ? Math.max(Number(returnCounts[item.id]) || 0, 0)
-      : Math.max(Number(item.bottles_returned) || 0, 0);
-    return (totalBtl - returned) * dep;
-  };
+  // The listed price already includes the deposit (bottleReturns.js). Only the closing
+  // receipt (completed/done) counts returns, as one credit line under the product.
+  const showReturns = countsReturns(order.status);
+  const creditFor = (item) => (showReturns ? bottleCredit(item, returnCounts) : 0);
 
   const printItemsTotal   = order.items.reduce(
-    (s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
-  const printDepositTotal = order.items.reduce((s, i) => s + itemDepForPrint(i), 0);
+    (s, i) => s + Number(i.quantity) * Number(i.unit_price) - creditFor(i), 0);
   // persistent-delivery-fee.md decision 4: unset means the line doesn't exist, not
   // ₱0.00 — a deliberately-configured ₱0.00 still prints its own line.
   const hasDeliveryFee    = order.delivery_fee_charged !== null && order.delivery_fee_charged !== undefined;
@@ -54,49 +42,22 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
     ? overrides.adjustment_reason
     : order.adjustment_reason;
   // Decision 12: delivery fee joins the total ahead of the adjustment term.
-  const printTotal        = printItemsTotal + printDepositTotal + printDeliveryFee + printAdj;
-  const printHasSubtotals = (showDeposit && printDepositTotal > 0) || hasDeliveryFee || printAdj !== 0;
+  const printTotal        = printItemsTotal + printDeliveryFee + printAdj;
+  const printHasSubtotals = hasDeliveryFee || printAdj !== 0;
   const printTotalCases   = order.items.reduce((s, i) => s + Number(i.quantity), 0);
 
   const itemRows = order.items.map((item) => {
     const qty      = Number(item.quantity);
-    const dep      = Number(item.unit_deposit_fee);
-    const upc      = Number(item.units_per_case) || 1;
-    const totalBtl = qty * upc;
-    const itemDep  = itemDepForPrint(item);
-    const displayTotal = qty * Number(item.unit_price) + itemDep;
+    const displayTotal = qty * Number(item.unit_price);
 
-    let depLine = '';
-    // Show the deposit breakdown whenever there's a net charge (un-returned bottles)
-    // or a net credit (over-returned bottles). Skip only when itemDep is exactly 0
-    // (all bottles returned — nothing owed either way).
-    if (showDeposit && dep > 0 && itemDep !== 0) {
-      const isLive = item.requires_bottle_return
-        && returnCounts[item.id] !== undefined
-        && returnCounts[item.id] !== '';
-      const returned = isLive
-        ? Math.max(Number(returnCounts[item.id]) || 0, 0)
-        : Math.max(Number(item.bottles_returned) || 0, 0);
-      const netBtl = totalBtl - returned;
-      depLine = `<div style="display:flex;justify-content:space-between;font-size:10px;color:#444;margin-top:1px">
-           <span>&nbsp;&nbsp;Deposit: ${totalBtl} btls &times; ${PHP(dep)}</span>
-           <span>${PHP(totalBtl * dep)}</span>
-         </div>`;
-      if (returned > 0) {
-        const netLabel = netBtl < 0 ? 'Net credit' : 'Net deposit';
-        const netVal   = netBtl < 0
-          ? `-${PHP(Math.abs(netBtl) * dep)}`
-          : PHP(netBtl * dep);
-        depLine += `<div style="display:flex;justify-content:space-between;font-size:10px;color:#444">
-           <span>&nbsp;&nbsp;Returned: ${returned} btls &times; ${PHP(dep)}</span>
-           <span>-${PHP(returned * dep)}</span>
-         </div>
-         <div style="display:flex;justify-content:space-between;font-size:10px;color:#444">
-           <span>&nbsp;&nbsp;${netLabel}</span>
-           <span>${netVal}</span>
-         </div>`;
-      }
-    }
+    // Nothing extra when no bottles came back: the listed price already holds the deposit.
+    const credit = creditFor(item);
+    const depLine = credit > 0
+      ? `<div style="display:flex;justify-content:space-between;margin-top:1px">
+           <span>&nbsp;&nbsp;Bottles returned ${bottlesReturned(item, returnCounts)} &times; ${PHP(item.unit_deposit_fee)}</span>
+           <span>-${PHP(credit)}</span>
+         </div>`
+      : '';
     return `
       <div style="margin-bottom:5px">
         <div style="font-weight:bold">${item.sku || ''}</div>
@@ -116,10 +77,7 @@ export function generateReceiptHtml(order, returnCounts = {}, overrides = {}) {
   const subtotalRows = printHasSubtotals ? `
     <div class="row-between" style="margin-top:3px">
       <span>Items</span><span>${PHP(printItemsTotal)}</span>
-    </div>${showDeposit && printDepositTotal > 0 ? `
-    <div class="row-between">
-      <span>Deposit fee</span><span>+${PHP(printDepositTotal)}</span>
-    </div>` : ''}${hasDeliveryFee ? `
+    </div>${hasDeliveryFee ? `
     <div class="row-between">
       <span>Delivery Fee</span><span>${PHP(printDeliveryFee)}</span>
     </div>` : ''}${printAdj !== 0 ? `

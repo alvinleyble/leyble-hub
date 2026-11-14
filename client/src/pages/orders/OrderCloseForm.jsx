@@ -5,40 +5,27 @@ import Button from '../../components/ui/Button';
 import Stepper from '../../components/ui/Stepper';
 import { handleStaleOrderWrite } from './orderConcurrency.js';
 import { formatPeso } from '../../utils/money';
+import { bottleCredit, bottlesReturned } from './bottleReturns.js';
 
 // Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
 const PHP = formatPeso;
 
-// Mirrors the order_items.line_total GENERATED column (migration 023) exactly:
-// quantity * unit_price + (quantity * units_per_case - bottles_returned) * unit_deposit_fee
-// Note the DB formula charges the deposit whenever unit_deposit_fee > 0 — it does NOT
-// check requires_bottle_return. That flag only controls whether the close form below
-// shows an input for this item (see `bottleItems`); items without one keep whatever
-// bottles_returned they were saved with (normally 0) and still carry their deposit in
-// full. Gating depositOwed on requires_bottle_return here would under-report lineTotal
-// for such items and make the subtotals disagree with the order's real total.
+// Mirrors the order_items.line_total GENERATED column (migration 051) exactly:
+// quantity * unit_price - bottles_returned * unit_deposit_fee. The listed price already
+// includes every bottle's deposit, so returned bottles are a credit and nothing is ever
+// added on top (bottleReturns.js). Only requires_bottle_return items get a live input
+// below; the rest keep the bottles_returned they were saved with (normally 0).
 export function breakdownForItem(item, returnCounts) {
-  const qty   = Number(item.quantity) || 0;
-  const price = Number(item.unit_price) || 0;
-  const dep   = Number(item.unit_deposit_fee) || 0;
-  const upc   = Number(item.units_per_case) || 1;
-  const hasDeposit = dep > 0;
-  // Only requires_bottle_return items get a live input below — that's the one case
-  // where an in-progress (possibly empty-string) returnCounts entry should win over
-  // the saved bottles_returned.
-  const tracked = hasDeposit && item.requires_bottle_return;
+  const qty = Number(item.quantity) || 0;
+  const basePrice    = qty * (Number(item.unit_price) || 0);
+  const totalBottles = qty * (Number(item.units_per_case) || 1);
+  const returned     = bottlesReturned(item, returnCounts);
+  const credit       = bottleCredit(item, returnCounts);
 
-  const basePrice    = qty * price;
-  const totalBottles = qty * upc;
-  const entry = returnCounts[item.id];
-  const rawReturned = tracked && entry !== undefined && entry !== ''
-    ? Number(entry) || 0
-    : Number(item.bottles_returned) || 0;
-  const returned    = Math.max(rawReturned, 0);
-  const unreturned  = totalBottles - returned;
-  const depositOwed = hasDeposit ? unreturned * dep : 0;
-
-  return { hasDeposit, basePrice, totalBottles, returned, unreturned, depositOwed, lineTotal: basePrice + depositOwed };
+  return {
+    hasDeposit: Number(item.unit_deposit_fee) > 0,
+    basePrice, totalBottles, returned, credit, lineTotal: basePrice - credit,
+  };
 }
 
 // Renders only when the order has returnable-bottle items — caller is responsible for that check.
@@ -97,11 +84,9 @@ export default function OrderCloseForm({
                 min={0}
                 label={`Bottles returned for ${item.sku || item.product_name}`}
               />
-              {returnCounts[item.id] !== '' && (
-                <p className={`text-sm mt-1 tabular-nums ${b.depositOwed < 0 ? 'text-green-700' : 'text-slate-500'}`}>
-                  {b.depositOwed < 0
-                    ? `Credit: ${Math.abs(b.unreturned)} btls × ${PHP(Number(item.unit_deposit_fee))} = −${PHP(Math.abs(b.depositOwed))}`
-                    : `Net deposit: ${b.unreturned} btls × ${PHP(Number(item.unit_deposit_fee))} = ${PHP(b.depositOwed)}`}
+              {returnCounts[item.id] !== '' && b.credit > 0 && (
+                <p className="text-sm mt-1 tabular-nums text-green-700">
+                  Bottles returned {b.returned} × {PHP(item.unit_deposit_fee)} = {PHP(-b.credit)}
                 </p>
               )}
             </div>
