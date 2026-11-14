@@ -1,12 +1,12 @@
 // Shared order math for the V2 POS. Kept in one place so the on-screen order,
 // the History rows and the printed receipt can never drift apart.
 //
-// Totals are **goods-only** — quantity × price per case, nothing for the bottle
-// deposit (captain's correction, 2026-08-20; see proposal §2.4). V1 treats every
-// bottle as returned until an order is closed and the returns are counted, and
-// §2.1 makes `pending` V2's terminal state, so V2 never reaches the step where a
-// deposit becomes real. Lines still carry `unit_deposit_fee` to the backend for
-// that V1 closing step — the POS just never charges or shows it.
+// Totals are quantity × listed price per case (captain's correction, 2026-08-20;
+// see proposal §2.4). The listed price already includes every bottle's deposit
+// (migration 051); returned bottles are credited only when V1 closes the order and
+// counts them, and §2.1 makes `pending` V2's terminal state, so V2 never reaches that
+// step. Lines still carry `unit_deposit_fee` to the backend for V1's close — the POS
+// just never shows it.
 
 export const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 

@@ -81,16 +81,78 @@ test('ESC/POS receipt: falls back to the product name when SKU is missing (diver
   assert.ok(text.includes('Coke Sakto 200ml'));
 });
 
-test('receipt: pending receipts are goods-only; deposit only appears at completed/done', () => {
+// The receipt as printed: bold on/off toggles dropped so a line reads as one string.
+const text = (bytes) => dec(bytes).replace(/\x1BE[\x00\x01]/g, '');
+
+test('receipt: the listed price already holds the deposit — nothing is added at close', () => {
   const withDep = [item({ quantity: 1, unit_price: 100, unit_deposit_fee: 5, units_per_case: 24,
                           requires_bottle_return: true })];
-  const pending = dec(generateEscPos(baseOrder({ items: withDep, status: 'pending' }), {}, {}));
+  const pending = text(generateEscPos(baseOrder({ items: withDep, status: 'pending' }), {}, {}));
   assert.equal(pending.includes('Deposit fee'), false);
   assert.ok(pending.includes('TOTAL') && pending.includes('PHP100.00'));
 
-  const done = dec(generateEscPos(baseOrder({ items: withDep, status: 'done' }), {}, {}));
-  assert.ok(done.includes('Deposit fee'));
-  assert.ok(done.includes('PHP220.00'), '100 goods + 24*5 deposit = 220');
+  const done = text(generateEscPos(baseOrder({ items: withDep, status: 'done' }), {}, {}));
+  assert.equal(done.includes('Deposit'), false);
+  assert.equal(done.includes('Bottles returned'), false);
+  assert.match(done, /\nTOTAL +PHP100\.00\n/, 'no bottles back: the same 100 as before closing');
+});
+
+// The closing receipt (migration 051): Red Horse Grande 1L at 641 a case, 6 bottles at
+// 4.50. A credit line under the product only when bottles come back, nothing else.
+const rhGrande = (over = {}) => item({
+  id: 7, sku: 'RH Grande 1L', product_name: 'Red Horse Grande 1L', quantity: 1, unit_price: 641,
+  unit_deposit_fee: 4.5, units_per_case: 6, requires_bottle_return: true, ...over,
+});
+const htmlText = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&times;/g, '×').replace(/\s+/g, ' ');
+
+test('closing receipt, all six bottles back: 641.00, then Bottles returned 6 x 4.50 -27.00, TOTAL 614.00', () => {
+  const order = baseOrder({ status: 'done', items: [rhGrande({ bottles_returned: 6 })] });
+  const escpos = text(generateEscPos(order));
+  assert.match(escpos,
+    /RH Grande 1L\n  1 cs x PHP641\.00 +PHP641\.00\n  Bottles returned 6 x PHP4\.50 +-PHP27\.00\n/);
+  assert.match(escpos, /\nTOTAL +PHP614\.00\n/);
+  assert.equal(escpos.split('\n').find((l) => l.includes('Bottles returned')).length, 48,
+    'the credit line fills, and fits, the 48-column paper');
+  for (const gone of ['Dep:', 'Ret:', 'Net deposit', 'Net credit', 'Deposit fee']) {
+    assert.equal(escpos.includes(gone), false, gone);
+  }
+
+  const html = htmlText(generateReceiptHtml(order));
+  assert.match(html, /1 cs × ₱641\.00 ₱641\.00 Bottles returned 6 × ₱4\.50 -₱27\.00/);
+  assert.match(html, /TOTAL ₱614\.00/);
+  for (const gone of ['Deposit', 'Returned:', 'Net deposit', 'Net credit']) {
+    assert.equal(html.includes(gone), false, gone);
+  }
+});
+
+test('closing receipt, some bottles back on a multi-line order with delivery fee and adjustment', () => {
+  const order = baseOrder({
+    status: 'done', delivery_fee_charged: 50, adjustment: -20, adjustment_reason: 'Suki',
+    items: [rhGrande({ quantity: 2, bottles_returned: 5 }), item({ id: 8, quantity: 2, unit_price: 300 })],
+  });
+  const escpos = text(generateEscPos(order));
+  assert.match(escpos, /  2 cs x PHP641\.00 +PHP1,282\.00\n  Bottles returned 5 x PHP4\.50 +-PHP22\.50\n/);
+  assert.equal(escpos.match(/Bottles returned/g).length, 1, 'only the returnable line gets one');
+  // Items is the net of the item lines: 1282 - 22.50 + 600
+  assert.match(escpos, /\nItems +PHP1,859\.50\n/);
+  assert.match(escpos, /\nDelivery Fee +PHP50\.00\n/);
+  assert.match(escpos, /\nFINAL TOTAL +PHP1,889\.50\n/);
+
+  const html = htmlText(generateReceiptHtml(order));
+  assert.match(html, /Bottles returned 5 × ₱4\.50 -₱22\.50/);
+  assert.match(html, /Items ₱1,859\.50 Delivery Fee ₱50\.00/);
+  assert.match(html, /FINAL TOTAL ₱1,889\.50/);
+});
+
+test('closing receipt reads the counts being typed on the close form; pending ignores returns', () => {
+  const delivered = baseOrder({ status: 'completed', items: [rhGrande()] });
+  assert.match(text(generateEscPos(delivered, { 7: '6' })), /\nTOTAL +PHP614\.00\n/);
+  assert.match(text(generateEscPos(delivered, { 7: '0' })), /\nTOTAL +PHP641\.00\n/);
+  assert.match(htmlText(generateReceiptHtml(delivered, { 7: '3' })), /Bottles returned 3 × ₱4\.50 -₱13\.50.*TOTAL ₱627\.50/);
+
+  const pending = baseOrder({ status: 'pending', items: [rhGrande()] });
+  assert.equal(text(generateEscPos(pending, { 7: '6' })).includes('Bottles returned'), false);
+  assert.match(text(generateEscPos(pending, { 7: '6' })), /\nTOTAL +PHP641\.00\n/);
 });
 
 test('receipt: generateEscPos/generateReceiptHtml expose NO overrides.showDeposit escape hatch', () => {
