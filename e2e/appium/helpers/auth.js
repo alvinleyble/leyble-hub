@@ -3,7 +3,7 @@
 // this is that flow, factored out of login.test.mjs so it isn't repeated in each test.
 
 import { assert } from './driver.js';
-import { clickTestId } from './ui.js';
+import { clickTestId, waitForTestId } from './ui.js';
 
 // ADR 0017 §5/§6 — every person has their own account now, so there is no shared login
 // and no profile pick. Pass `email` to drive the suite as Alvin or Luis instead; all
@@ -77,8 +77,12 @@ export async function switchAccount(driver, email) {
   assert(true, `switched this tablet to ${email} with no password`);
 }
 
-// The six top tabs are always on screen; everything else sits behind the hamburger
-// menu at the far right of the tab bar (client/src/components/layout/navigation.js).
+// The top tabs are always on screen; everything else sits behind the hamburger menu at
+// the far right of the tab bar (client/src/components/layout/navigation.js). With
+// Settings' "Show everything" off — every fresh install — the tabs are Dashboard,
+// Outgoing, Inventory and Customers and the menu holds Settings only; a test that needs
+// Incoming, Personnel, Tickets, Audit Log, the later order stages or stock counts calls
+// showEverything(driver) first.
 const MENU_PATHS = new Set(['tickets', 'audit', 'settings']);
 
 // Taps the given screen's tab, or opens the menu first for a screen that lives there.
@@ -86,4 +90,20 @@ const MENU_PATHS = new Set(['tickets', 'audit', 'settings']);
 export async function navigateTo(driver, navPath) {
   if (MENU_PATHS.has(navPath)) await clickTestId(driver, 'nav-menu-button');
   await clickTestId(driver, `nav-link-${navPath}`);
+}
+
+// Turns Settings' "Show everything" switch on (or, with `on: false`, back off) and waits
+// for the switch to say so. It is device state: `pm clear` puts it back to off, which is
+// how every run starts. Leaves the app on the Settings screen.
+export async function showEverything(driver, { on = true } = {}) {
+  await navigateTo(driver, 'settings');
+  const toggle = await waitForTestId(driver, 'settings-show-everything');
+  if ((await toggle.getAttribute('aria-checked')) !== String(on)) {
+    await clickTestId(driver, 'settings-show-everything');
+  }
+  await driver.waitUntil(
+    async () => (await toggle.getAttribute('aria-checked')) === String(on),
+    { timeout: 10000, interval: 500, timeoutMsg: `Show everything did not turn ${on ? 'on' : 'off'}` }
+  );
+  assert(true, `Settings → Show everything is ${on ? 'on' : 'off'}`);
 }

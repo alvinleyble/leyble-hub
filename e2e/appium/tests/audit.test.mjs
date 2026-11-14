@@ -7,11 +7,13 @@
 // the task brief's allowance for a screen without a literal match to a required check.
 
 import { withSession, assert } from '../helpers/driver.js';
-import { loginAs, navigateTo } from '../helpers/auth.js';
+import { loginAs, navigateTo, showEverything } from '../helpers/auth.js';
 import { waitForTestId, clickTestId, allTestId, assertCount, waitForCountSettled } from '../helpers/ui.js';
 
 withSession(async (driver) => {
   await loginAs(driver);
+  // Audit Log is hidden until Settings' "Show everything" is on.
+  await showEverything(driver);
   await navigateTo(driver, 'audit');
 
   // 1. The Inventory tab's list loads with real data (default tab).

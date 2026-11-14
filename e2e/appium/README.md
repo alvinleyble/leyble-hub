@@ -21,6 +21,10 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
   the screen's closest equivalent — see each file's header comment for screens where none
   applies or a substitution was made), and opening an item shows its detail view. Use any of
   these as the template for a new test.
+- `tests/trimmed-default.test.mjs` — the trimmed app a fresh install starts in (Settings'
+  "Show everything" off): four tabs, Settings alone in the menu, no In Transit / Delivered /
+  Closed on Outgoing, no stock counts on Inventory, a hidden screen's route landing on
+  Outgoing; then the switch on brings it all back and off trims it again.
 - `tests/concurrency.test.mjs` — two-device ADR 0019 coverage: one device saves an order
   edit while the other still holds its revision, then verifies the second device sees the
   stale-write message instead of silently overwriting the first change.
@@ -32,7 +36,11 @@ reach. This is a **manual/on-demand tool, not a CI gate** — see "Why this isn'
   `switchAccount(driver, email)` (ADR 0017 #7 — the two-tap, no-password switch between
   accounts this device already remembers) and
   `navigateTo(driver, 'orders')` (opens the nav drawer and taps a screen's link — see "How
-  screen tests navigate" below).
+  screen tests navigate" below) and `showEverything(driver)` (turns Settings' "Show
+  everything" switch on, which `pm clear` resets to off — call it before reaching Incoming,
+  Personnel, Tickets, Audit Log, the later order stages or stock counts; the personnel,
+  tickets, audit and concurrency tests do, and orders does when Pending and Cancelled are
+  both empty).
 - `helpers/ui.js` — small `data-testid`-based query/click helpers (`waitForTestId`,
   `clickTestId`, `allTestId`, `assertCount`, `waitForCountSettled`) used across every test.
 - `package.json` — `appium` (the WebDriver-protocol server), `appium-uiautomator2-driver` (the
@@ -45,7 +53,7 @@ Every screen's list container, filter/search control, list item, and detail-view
 don't depend on visible copy or DOM structure — grep the relevant `client/src/pages/**` file for
 `data-testid` to see a screen's hooks. Navigation carries them too: `nav-link-<path>` (e.g. `nav-link-orders`) on each
 top tab and each menu link, and `nav-menu-button` on the hamburger that opens the menu
-(Tickets, Audit Log, Settings).
+(Settings, plus Tickets and Audit Log once "Show everything" is on).
 
 Nothing here touches `client/` or `server/`'s own build or test setup. The one thing it does
 depend on outside this directory is a debug-build-only Android networking override — see
@@ -99,7 +107,7 @@ npx appium --base-path /wd/hub --allow-insecure uiautomator2:chromedriver_autodo
 # 5. In another terminal: clear the app's persisted login (see "Clean state" below), then run
 #    a test — any of the `test:*` scripts in package.json (test:login, test:dashboard,
 #    test:orders, test:inventory, test:customers, test:personnel, test:tickets,
-#    test:audit, test:concurrency). Every non-login test logs in for itself first
+#    test:audit, test:concurrency, test:trimmed-default). Every non-login test logs in for itself first
 #    (helpers/auth.js), so `pm clear` before each of them matters the same way it does for
 #    test:login.
 adb shell am force-stop com.leyble.hub
