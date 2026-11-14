@@ -2,8 +2,10 @@
 // returned" prefill. Under migration 023's formula that prefill changed nothing; under
 // 051 it would take a full bottle credit off each of them. The owners accepted the
 // prefill rather than counting, so 052 resets those counts to zero and the orders keep
-// the listed price they closed at. Partial counts, orders with no deposit lines, and
-// orders closed after 051 (through the new form, which defaults to 0) keep what they have.
+// the listed price they closed at. A line recorded above its full count is prefill plus
+// a stray tap (live order 169) and counts as full. Partial counts — even beside a line
+// that is over — orders with no deposit lines, and orders closed after 051 (through the
+// new form, which defaults to 0) keep what they have.
 //
 // Proved the way close-deposit-math.test.js proves 051: inside one transaction the 023
 // column is put back and 051's _migrations row removed, so the database is pre-051;
@@ -53,10 +55,12 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
           [name, `PREFILL_${name}_${Date.now()}`, price, deposit, upc, deposit > 0]);
         return p;
       };
-      // Red Horse Grande 1L: ₱641.00 a case, 6 bottles at ₱4.50. A second deposit product
-      // (12 bottles at ₱3.00) and Coke, which carries no deposit.
+      // Red Horse Grande 1L: ₱641.00 a case, 6 bottles at ₱4.50. Three more deposit
+      // products (12 bottles a case) and Coke, which carries no deposit.
       const rh   = await mkProduct('RH_GRANDE', 641, 4.5, 6);
       const smb  = await mkProduct('SMB_PALE', 500, 3, 12);
+      const ck   = await mkProduct('COKE_KASALO', 400, 3, 12);
+      const rhl  = await mkProduct('RH_LITRO', 600, 4.5, 12);
       const coke = await mkProduct('COKE_8OZ', 300, 0, 24);
 
       // closedAgo: how long before now the order was closed; 051 is recorded as applied
@@ -89,6 +93,9 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
         allBack:      await mkOrder('done', [[rh, 1, 6]]),               // the prefill
         allBackMulti: await mkOrder('done', [[rh, 1, 6], [smb, 2, 24], [coke, 2, 0]]),
         allBackHalf:  await mkOrder('done', [[rh, 0.5, 3]]),             // half a case
+        // Like live order 169: three full lines and one a bottle over (61 of 60).
+        overByOne:    await mkOrder('done', [[rh, 2, 12], [smb, 1, 12], [ck, 1, 12], [rhl, 5, 61]]),
+        overPartial:  await mkOrder('done', [[rh, 1, 7], [smb, 1, 5]]),  // one over, one partial
         someBack:     await mkOrder('done', [[rh, 2, 5]]),
         noneBack:     await mkOrder('done', [[rh, 1, 0]]),
         mixed:        await mkOrder('done', [[rh, 1, 6], [smb, 2, 5]]),  // one full, one partial
@@ -119,7 +126,8 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
       const original = await snapshot(preIds);
       const originalTotals = totals(original, Object.keys(ids));
       assert.deepEqual(originalTotals, {
-        allBack: 641, allBackMulti: 2241, allBackHalf: 320.5, someBack: 1313.5,
+        allBack: 641, allBackMulti: 2241, allBackHalf: 320.5,
+        overByOne: 5177.5, overPartial: 1157.5, someBack: 1313.5,
         noneBack: 668, mixed: 1698, noDeposit: 900, open: 641,
       });
 
@@ -130,6 +138,9 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
         [ids.allBack]:      { current: 641,    final: 641,    reset: true },
         [ids.allBackMulti]: { current: 2241,   final: 2241,   reset: true },
         [ids.allBackHalf]:  { current: 320.5,  final: 320.5,  reset: true },
+        // The stray bottle had taken ₱4.50 off under 023; reset, it is the listed ₱5,182.00.
+        [ids.overByOne]:    { current: 5177.5, final: 5182,   reset: true },
+        [ids.overPartial]:  { current: 1157.5, final: 1094.5, reset: false },
         [ids.someBack]:     { current: 1313.5, final: 1259.5, reset: false },
         [ids.noneBack]:     { current: 668,    final: 641,    reset: false },
         [ids.mixed]:        { current: 1698,   final: 1599,   reset: false },
@@ -145,7 +156,8 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
         [M051_FILE]);
       const after051 = await snapshot(preIds);
       assert.deepEqual(totals(after051, Object.keys(ids)), {
-        allBack: 614, allBackMulti: 2142, allBackHalf: 307, someBack: 1259.5,
+        allBack: 614, allBackMulti: 2142, allBackHalf: 307,
+        overByOne: 4781.5, overPartial: 1094.5, someBack: 1259.5,
         noneBack: 641, mixed: 1599, noDeposit: 900, open: 641,
       }, '051 alone credits the prefill');
 
@@ -167,18 +179,24 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
         assert.ok(after052[ids[key]].returned.every((n) => n === 0), `${key} counts reset`);
         assert.notEqual(after052[ids[key]].revision, before052[ids[key]].revision, `${key} rewritten`);
       }
+      // Prefill plus a stray tap: reset too, to the full listed price.
+      assert.equal(after052[ids.overByOne].total, 5182);
+      assert.deepEqual(after052[ids.overByOne].returned, [0, 0, 0, 0]);
+      assert.notEqual(after052[ids.overByOne].revision, before052[ids.overByOne].revision);
       // Real counts keep their count and 051's total; the rest are not written at all.
+      assert.deepEqual(after052[ids.overPartial].returned, [7, 5]);
+      assert.equal(after052[ids.overPartial].total, 1094.5);
       assert.deepEqual(after052[ids.someBack].returned, [5]);
       assert.deepEqual(after052[ids.mixed].returned, [6, 5]);
       assert.deepEqual(after052[ids.postAll].returned, [6]);
-      for (const key of ['someBack', 'noneBack', 'mixed', 'noDeposit', 'open', 'postAll']) {
+      for (const key of ['overPartial', 'someBack', 'noneBack', 'mixed', 'noDeposit', 'open', 'postAll']) {
         assert.deepEqual(after052[ids[key]], before052[ids[key]], `${key} untouched by 052`);
       }
 
       const counted = notices.map((m) => m.match(/^052: reset prefilled bottle counts on (\d+) closed order\(s\)$/))
         .filter(Boolean);
       assert.equal(counted.length, 1, notices.join(' | '));
-      assert.ok(Number(counted[0][1]) >= 3, notices.join(' | '));
+      assert.ok(Number(counted[0][1]) >= 4, notices.join(' | '));
 
       // The preview's answer — before either migration, and between 051 and 052 — is the
       // end state.
@@ -188,7 +206,8 @@ describe('Migration 052: reset prefilled bottle counts on closed orders', () => 
       for (const id of allIds.filter((i) => i !== ids.open)) {
         assert.equal(previewMid.rows[id].final, after052[id].total, `mid preview of ${id}`);
         assert.equal(previewMid.rows[id].reset,
-          [ids.allBack, ids.allBackMulti, ids.allBackHalf].includes(id), `mid preview reset of ${id}`);
+          [ids.allBack, ids.allBackMulti, ids.allBackHalf, ids.overByOne].includes(id),
+          `mid preview reset of ${id}`);
       }
       const previewEnd = await runPreview(allIds);
       for (const row of Object.values(previewEnd.rows)) {

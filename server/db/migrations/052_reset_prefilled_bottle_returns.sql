@@ -7,7 +7,9 @@
 -- one of those orders (a case of Red Horse Grande 1L: ₱641.00 → ₱614.00). The owners
 -- confirmed the prefilled counts were accepted, not counted. So an order that records
 -- EVERY bottle back on EVERY deposit line is read as prefill and reset to none returned,
--- which puts it back on exactly the listed price it closed at.
+-- which puts it back on exactly the listed price it closed at. A line recorded ABOVE its
+-- full count is prefill plus a stray tap (live order 169: three full lines and one at 61
+-- of 60), so it counts as full too.
 --
 -- What counts as prefill, all of it required:
 --   * status 'done' (only closing records returns);
@@ -17,17 +19,18 @@
 --     count there was typed by someone and is kept. Without 051's row (this file run by
 --     hand, out of order) every closed order qualifies;
 --   * at least one deposit line (unit_deposit_fee > 0), and on every deposit line
---     bottles_returned = quantity * units_per_case.
+--     bottles_returned >= quantity * units_per_case (at or above its full count).
 -- An order with a partial count on any deposit line is left as it is and keeps 051's
--- total; an order with no deposit lines is untouched.
+-- total, even when another of its lines is over; an order with no deposit lines is
+-- untouched.
 --
 -- Stock does not move: bottle returns never touched stock (the close route writes only
 -- order_items.bottles_returned and the order's total; inventory_audit_logs is written
 -- solely by stock movement, which keys on quantity). Nothing here writes
 -- inventory_audit_logs, customer_product_prices or activity_logs — all append-only.
 --
--- A second run changes nothing: a reset order no longer records every bottle back, and
--- only lines whose count is not already 0 are written.
+-- A second run changes nothing: a reset order now records 0 bottles back, below the full
+-- count, and only lines whose count is not already 0 are written.
 --
 -- server/db/previews/052_prefill_reset.sql shows the combined effect of 051 and this
 -- migration on a database that has run neither, and writes nothing.
@@ -54,7 +57,7 @@ BEGIN
        AND NOT EXISTS (
              SELECT 1 FROM order_items oi
               WHERE oi.order_id = o.id AND oi.unit_deposit_fee > 0
-                AND oi.bottles_returned <> oi.quantity * oi.units_per_case)
+                AND oi.bottles_returned < oi.quantity * oi.units_per_case)
   ), reset AS (
     UPDATE order_items oi
        SET bottles_returned = 0,

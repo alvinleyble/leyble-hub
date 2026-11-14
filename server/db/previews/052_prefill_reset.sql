@@ -10,7 +10,8 @@
 --
 -- Which orders count as prefill follows 052 exactly: closed before 051's applied_at in
 -- _migrations — every closed order when 051 has not run yet — with at least one deposit
--- line and every deposit line recording every bottle back.
+-- line and every deposit line recording every bottle back, or more (a stray tap over the
+-- full count still reads as prefill).
 --
 --   psql "$DATABASE_URL" -f server/db/previews/052_prefill_reset.sql
 
@@ -28,7 +29,7 @@ WITH cutoff AS (
                           AND oi.bottles_returned <> 0)
            AND NOT EXISTS (SELECT 1 FROM order_items oi
                             WHERE oi.order_id = o.id AND oi.unit_deposit_fee > 0
-                              AND oi.bottles_returned <> oi.quantity * oi.units_per_case)
+                              AND oi.bottles_returned < oi.quantity * oi.units_per_case)
            AS counts_reset
     FROM orders o CROSS JOIN cutoff c
    WHERE o.status = 'done'
@@ -68,7 +69,7 @@ WITH cutoff AS (
                           AND oi.bottles_returned <> 0)
            AND NOT EXISTS (SELECT 1 FROM order_items oi
                             WHERE oi.order_id = o.id AND oi.unit_deposit_fee > 0
-                              AND oi.bottles_returned <> oi.quantity * oi.units_per_case)
+                              AND oi.bottles_returned < oi.quantity * oi.units_per_case)
            AS counts_reset
     FROM orders o CROSS JOIN cutoff c
    WHERE o.status = 'done'
