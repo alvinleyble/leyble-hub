@@ -2,7 +2,7 @@ import { api } from '../api/client';
 import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
-import { markOffline } from './status';
+import { markOffline, probeReachability, checkIsOnline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
 import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
@@ -337,6 +337,21 @@ export function isParkedForServerError(record) {
   return record?.status === NEEDS_ATTENTION && record.parked_for === PARKED_FOR_SERVER_ERROR;
 }
 
+// A 5xx is the server ANSWERING, so it says nothing about the line and never marks the
+// device offline by itself (it used to: the /health watcher then marked the device
+// online again ~7 seconds later and drained into the same 5xx, flipping the status
+// light and every online-only action back and forth until the record parked). Only
+// when the write check did not pass either does a device that is online ask GET /health
+// — the same probe the watcher uses — and go offline if that does not answer, which is
+// a gateway in front of a server that is down. A device already offline stays offline:
+// coming back is the watcher's job, since its `online` event is what runs the
+// reconnect sync.
+async function markOfflineUnlessReachable() {
+  const reachable = checkIsOnline(true)
+    && await probeReachability({ force: true, enabled: true }).catch(() => false);
+  if (!reachable) markOffline();
+}
+
 // Safety cap. A check that passes while the problem is really server-wide (a route
 // broken for every record, say) must not walk the whole queue into Needs attention one
 // record at a time. So at most this many DISTINCT records may be parked for a 5xx with
@@ -441,10 +456,11 @@ async function authorTokenKey(record) {
  *                    receipt number counts exactly as much as a 201 (D13).
  *   network        — left queued; the pass stops, since the next record would fail the
  *                    same way.
- *   5xx            — left queued and the pass stops, as for a network failure, after
- *                    one write check that may add a strike; at
- *                    SERVER_ERROR_PARK_THRESHOLD strikes it is parked on the attention
- *                    list instead and the pass carries on (see that constant).
+ *   5xx            — left queued and the pass stops, after one write check that may
+ *                    add a strike; at SERVER_ERROR_PARK_THRESHOLD strikes it is parked
+ *                    on the attention list instead and the pass carries on (see that
+ *                    constant). A 5xx alone never takes the device offline (see
+ *                    markOfflineUnlessReachable).
  *   other 4xx      — moved to the attention list with the server's reason (D8). Never
  *                    discarded, never guessed at.
  *
@@ -626,7 +642,7 @@ async function runDrainPass() {
             failed++;
             continue; // parked aside; its dependants wait, the rest of the queue goes on
           }
-          markOffline();
+          if (!strike) await markOfflineUnlessReachable();
           break; // the server is unwell or this record is still on probation; stop the pass
         }
 
