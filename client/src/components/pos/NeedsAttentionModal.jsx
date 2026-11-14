@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../../api/client';
-import { listNeedsAttention, repointRecord, isParkedForServerError } from '../../offline/outbox';
+import {
+  listNeedsAttention, repointRecord, isParkedForServerError, isProductCodeClash, isProductCreate,
+} from '../../offline/outbox';
+import ProductCodeClashCard from './ProductCodeClashCard.jsx';
 import { getReceipt } from '../../offline/receiptHistory';
 import { useToast } from '../ui/Toast';
 import Spinner from '../ui/Spinner';
@@ -21,6 +24,12 @@ function formatRefusalReason(lastError) {
     return 'A product in this order was modified or removed on the server — review and re-point.';
   }
   return `Server refused this receipt: ${lastError || 'Unknown validation error'} — select customer to re-point.`;
+}
+
+function productRefusalReason(rec) {
+  return `The server refused the new product “${rec.payload?.name || 'Product'}”: `
+    + `${rec.last_error || 'Unknown validation error'} — send it again as is. If the same `
+    + 'product is already on the server it is used; if anything differs, you will be asked.';
 }
 
 const SERVER_ERROR_REASON =
@@ -50,7 +59,10 @@ async function withCustomerNames(list) {
 //
 // Invariants:
 // - Never discard, never auto-resolve.
-export default function NeedsAttentionModal({ onClose }) {
+//
+// `onShowSyncDetails`, when given, adds a footer button that opens the read-only sync
+// details (StatusLight passes it: a red light opens this list, not the popup).
+export default function NeedsAttentionModal({ onClose, onShowSyncDetails }) {
   const { addToast } = useToast();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -133,7 +145,9 @@ export default function NeedsAttentionModal({ onClose }) {
   const handleSendAgain = (record) => requeue(
     record,
     undefined,
-    `Receipt ${record.receipt_number || record.id} queued to send again as is.`,
+    isProductCreate(record)
+      ? `${record.payload?.name || 'Product'} queued to send again as is.`
+      : `Receipt ${record.receipt_number || record.id} queued to send again as is.`,
     'Failed to send the receipt again.',
   );
 
@@ -180,6 +194,9 @@ export default function NeedsAttentionModal({ onClose }) {
             </div>
           ) : (
             records.map((rec) => {
+              if (isProductCodeClash(rec)) {
+                return <ProductCodeClashCard key={rec.id} record={rec} onResolved={loadAttentionList} />;
+              }
               const query = queries[rec.id] || '';
               const matchedCustomers = customers.filter((c) => customerMatches(c, query)).slice(0, 30);
               const target = selectedTargets[rec.id];
@@ -187,6 +204,7 @@ export default function NeedsAttentionModal({ onClose }) {
               const items = rec.payload?.items || [];
               const total = items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.unit_price || 0)), 0);
               const serverError = isParkedForServerError(rec);
+              const productCreate = isProductCreate(rec);
 
               return (
                 <div
@@ -218,10 +236,12 @@ export default function NeedsAttentionModal({ onClose }) {
 
                   {/* Plain-English Reason Banner */}
                   <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-sm font-semibold text-amber-200">
-                    {serverError ? SERVER_ERROR_REASON : formatRefusalReason(rec.last_error)}
+                    {serverError ? SERVER_ERROR_REASON
+                      : productCreate ? productRefusalReason(rec)
+                        : formatRefusalReason(rec.last_error)}
                   </div>
 
-                  {serverError ? (
+                  {serverError || productCreate ? (
                   <div className="flex items-center justify-end pt-1">
                     <button
                       type="button"
@@ -331,7 +351,20 @@ export default function NeedsAttentionModal({ onClose }) {
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 items-center justify-end border-t border-v2-border px-6 py-4">
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-v2-border px-6 py-4">
+          {onShowSyncDetails && (
+            <button
+              type="button"
+              onClick={onShowSyncDetails}
+              disabled={savingId !== null}
+              data-testid="attention-sync-details"
+              className="flex min-h-tablet items-center justify-center rounded-xl border border-v2-border px-5 text-base
+                         font-bold text-v2-text hover:bg-v2-raised disabled:opacity-40
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            >
+              Sync details
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}

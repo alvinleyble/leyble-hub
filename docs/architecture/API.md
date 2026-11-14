@@ -29,7 +29,7 @@ Authentication enforces one session per user account ([ADR 0017](../adr/0017-rec
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/products` | List. Query: `include_inactive`, `updated_since` (watermark sync filter for keyset deltas, 035) |
-| POST | `/products` | Create product. |
+| POST | `/products` | Create product. Optional `request_key` (migration 050): a key already spent on a product returns that product with `200`. A SKU already taken is `409` with `code: 'duplicate'` and the product holding it as `existing_product` (inactive rows included); the offline drain uses that body to adopt or ask ([drain outcomes](../product/proposals/v2-5-offline-accessibility.md)). |
 | GET | `/products/:id` | One product. |
 | PATCH | `/products/:id` | Update; field-level diffs logged to `activity_logs`. Enforces deposit rules vs `requires_bottle_return`. |
 | DELETE | `/products/:id` | Soft-delete (`is_active=false`). |

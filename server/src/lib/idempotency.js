@@ -38,7 +38,8 @@
 // Everything above stores the key ON the row the request created, which is only
 // possible because a create's result is a new row. An UPDATE has none: the order
 // already exists and is edited many times, so `claimRequestKey` below stores the key
-// in `request_keys` (migration 050) alongside the entity it was spent on.
+// in `request_keys` (migration 050) alongside the entity it was spent on. A product
+// create claims there too, because `products` has no `request_key` column of its own.
 //
 // It is the same mechanism, not a second one — the same device-minted key, the same
 // `normalizeRequestKey`, the same "a conflict means this already happened, answer with
@@ -50,9 +51,9 @@
 const RECEIPT_TABLES = new Set(['orders', 'supplier_deliveries']);
 
 // The same idea for `request_keys.entity_type`: a closed set, never a request field.
-// `order` is the only member today; a second entity is one entry here plus the claim
-// call in its route.
-const MUTATION_ENTITIES = new Set(['order']);
+// `order` mutations, and `product` creates (a products row has no `request_key` column
+// of its own). Another entity is one entry here plus the claim call in its route.
+const MUTATION_ENTITIES = new Set(['order', 'product']);
 
 const UNIQUE_VIOLATION = '23505';
 

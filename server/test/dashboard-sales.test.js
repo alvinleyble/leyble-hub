@@ -189,9 +189,9 @@ describe('Dashboard sales figures', () => {
       assert.equal(today.gross, 100);
       assert.deepEqual(today.previous, {
         available: true, from: '2032-03-01', to: '2032-03-01', gross: 1000, progress_pct: 10,
-        verdict: { available: true, from: '2032-02-23', to: '2032-02-23',
-          previous_gross: 800, change: 200, change_pct: 25 },
-      }, 'all of yesterday, judged against Monday a week earlier');
+        verdict: { available: true, from: '2032-02-29', to: '2032-02-29',
+          previous_gross: 200, change: 800, change_pct: 400 },
+      }, 'all of Monday, judged against Sunday (no weekday exceptions)');
       // The old like-for-like window (yesterday 00:00–00:50) stays for released app builds.
       assert.equal(today.comparison.previous_gross, 0);
       assert.equal(today.comparison.previous_to, mnl('2032-03-01T00:50:00').toISOString());
@@ -231,8 +231,8 @@ describe('Dashboard sales figures', () => {
       assert.equal(d.totals.today.gross, 125);
       assert.deepEqual(d.totals.today.previous, {
         available: true, from: '2032-07-20', to: '2032-07-20', gross: 500, progress_pct: 25,
-        verdict: { available: true, from: '2032-07-13', to: '2032-07-13',
-          previous_gross: 250, change: 250, change_pct: 100 },
+        verdict: { available: true, from: '2032-07-19', to: '2032-07-19',
+          previous_gross: 75, change: 425, change_pct: 566.7 },
       }, 'yesterday counts its late order too');
       assert.equal(d.totals.today.comparison.previous_gross, 400, 'like-for-like stops at 3 PM');
 
@@ -265,11 +265,22 @@ describe('Dashboard sales figures', () => {
           previous_gross: 1700, change: -200, change_pct: -11.8 },
       });
       assert.equal(d.totals.month.comparison.previous_gross, 0, 'like-for-like: 1 August 00:00–00:50');
-      // Yesterday (Tue 31 Aug) against Tue 24 Aug, which sold nothing: pesos, no percent.
+      // Yesterday (Tue 31 Aug) against Mon 30 Aug, which sold nothing: pesos, no percent.
       assert.deepEqual(d.totals.today.previous.verdict, {
-        available: true, from: '2032-08-24', to: '2032-08-24', previous_gross: 0, change: 1000, change_pct: null,
+        available: true, from: '2032-08-30', to: '2032-08-30', previous_gross: 0, change: 1000, change_pct: null,
       });
       assert.equal(d.totals.today.previous.progress_pct, 3);
+    });
+
+    it('on Monday, yesterday is Sunday and is compared with Saturday', async () => {
+      await order('pending', '2034-11-11T23:59:59', [{ p: grande, qty: 1, price: 1000 }]);
+      await order('pending', '2034-11-12T00:00:00', [{ p: grande, qty: 1, price: 500 }]);
+      const d = await at('2034-11-13T10:00:00');
+      assert.equal(d.totals.today.previous.from, '2034-11-12');
+      assert.deepEqual(d.totals.today.previous.verdict, {
+        available: true, from: '2034-11-11', to: '2034-11-11',
+        previous_gross: 1000, change: -500, change_pct: -50,
+      });
     });
 
     it('no comparison when the comparator starts before 2026-06-01', async () => {
@@ -283,11 +294,16 @@ describe('Dashboard sales figures', () => {
       assert.deepEqual(first.selected_month.previous, { available: false, month: '2026-05' });
 
       const tue = await at('2026-06-02T10:00:00');
-      assert.deepEqual(avail(tue, 'today'), [true, false], 'yesterday is 1 June; Monday 25 May is not counted');
+      assert.deepEqual(avail(tue, 'today'), [true, false], 'yesterday is 1 June; 31 May is not counted');
       assert.deepEqual(avail(tue, 'week'), [false, false], 'last week began 25 May');
+      assert.deepEqual(tue.totals.today.previous.verdict, {
+        available: false, from: '2026-05-31', to: '2026-05-31',
+      });
+      assert.equal((await at('2026-06-03T10:00:00')).totals.today.previous.verdict.available, true,
+        'a daily comparison becomes available as soon as both days are counted');
 
       const nextTue = await at('2026-06-09T10:00:00');
-      assert.deepEqual(avail(nextTue, 'today'), [true, true], 'Monday 8 June against Monday 1 June');
+      assert.deepEqual(avail(nextTue, 'today'), [true, true], 'Monday 8 June against Sunday 7 June');
       assert.deepEqual(avail(nextTue, 'week'), [true, false], 'last week is 1–7 June; the week before is May');
 
       const third = await at('2026-06-15T10:00:00');
@@ -314,6 +330,10 @@ describe('Dashboard sales figures', () => {
       assert.equal(d.top_products.length, 1);
       assert.equal(d.top_products[0].product_id, grande.id);
       assert.equal(d.top_products[0].gross, 1700);
+      for (const list of Object.values(d.top_products_by)) {
+        assert.deepEqual(list.map((r) => [r.product_id, r.gross, r.orders]), [[grande.id, 1700, 7]],
+          'each ranking describes the selected past month, not the current month');
+      }
       assert.deepEqual([d.slow_movers.from, d.slow_movers.to, d.slow_movers.days, d.slow_movers.clamped],
         ['2032-07-18', '2032-07-31', 14, false]);
       assert.equal(d.slow_movers.products.some((p) => p.id === grande.id), false, 'it sold on 19–21 July');
@@ -491,6 +511,59 @@ describe('Dashboard sales figures', () => {
       assert.equal(d.top_products[3].gross, 900);
     });
 
+    it('each ranking is a true top 10, with distinct counted orders and deterministic ties', async () => {
+      // A separate month: ten steady products, one bulk purchase, and a frequent
+      // small purchase. The three winners cannot all fit in any single top 10.
+      const steady = [];
+      for (let i = 0; i < 10; i += 1) {
+        const p = await product(`TEST_DASH Steady ${String(i).padStart(2, '0')}`);
+        steady.push(p);
+        await order('pending', '2035-05-10T09:00:00', [{ p, qty: 10, price: 100 }]);
+      }
+      const bulk = await product('TEST_DASH Bulk');
+      const premium = await product('TEST_DASH Premium');
+      const frequent = await product('TEST_DASH Frequent');
+      await order('done', '2035-05-10T09:00:00', [
+        { p: bulk, qty: 100.5, price: 1 },
+        { p: premium, qty: 1, price: 5000 },
+        // Two lines of the same product in one order count as ONE order.
+        { p: frequent, qty: 0.5, price: 1 }, { p: frequent, qty: 0.5, price: 1 },
+      ]);
+      await order('completed', '2035-05-11T09:00:00', [{ p: frequent, qty: 1, price: 1 }]);
+      for (const status of ['draft', 'cancelled']) {
+        await order(status, '2035-05-12T09:00:00', [{ p: premium, qty: 999, price: 999 }]);
+      }
+      await order('pending', '2035-04-30T23:59:59', [{ p: premium, qty: 999, price: 999 }]);
+      const d = await at('2035-05-20T10:00:00');
+      const { cases, sales, orders } = d.top_products_by;
+      assert.deepEqual(cases.map((r) => r.product_id), [bulk.id, ...steady.slice(0, 9).map((p) => p.id)]);
+      assert.deepEqual(sales.map((r) => r.product_id), [premium.id, ...steady.slice(0, 9).map((p) => p.id)]);
+      assert.deepEqual(orders.map((r) => r.product_id), [frequent.id, bulk.id, ...steady.slice(0, 8).map((p) => p.id)]);
+      assert.deepEqual(orders[0], {
+        product_id: frequent.id, name: frequent.name, sku: null, unit: 'cs', cases: 2, gross: 2, orders: 2,
+      });
+      assert.equal(cases[0].cases, 100.5);
+      assert.deepEqual(d.top_products, sales.map(({ orders, ...legacy }) => legacy), 'legacy gross list and row shape unchanged');
+    });
+
+    it('new ties use remaining measures before name while legacy ties still use name', async () => {
+      const a = await product('TEST_DASH A tie');
+      const b = await product('TEST_DASH B tie');
+      const c = await product('TEST_DASH C tie');
+      const e = await product('TEST_DASH D tie');
+      await order('pending', '2035-06-10T09:00:00', [
+        { p: a, qty: 4, price: 100 }, { p: b, qty: 2, price: 100 },
+        { p: c, qty: 4, price: 50 }, { p: e, qty: 4, price: 25 },
+      ]);
+      await order('pending', '2035-06-11T09:00:00', [{ p: b, qty: 2, price: 100 }]);
+      const d = await at('2035-06-20T10:00:00');
+      const ids = (rows) => rows.map((r) => r.product_id);
+      assert.deepEqual(ids(d.top_products), [a.id, b.id, c.id, e.id]);
+      for (const key of ['cases', 'sales', 'orders']) {
+        assert.deepEqual(ids(d.top_products_by[key]), [b.id, a.id, c.id, e.id], `${key}: all measures used before name`);
+      }
+    });
+
     it('top products count a returned-bottle line at full price', async () => {
       const NOW = '2031-06-05T10:00:00';
       await order('done', '2031-06-02T09:00:00', [{ p: grande, qty: 1.5, returned: 9 }]);
@@ -577,7 +650,7 @@ describe('Dashboard sales figures', () => {
       const res = await fetch(baseUrl, { headers: { Authorization: `Bearer ${token}` } });
       assert.equal(res.status, 200);
       const body = await res.json();
-      for (const k of ['as_of', 'totals', 'daily', 'top_products', 'slow_movers', 'low_stock']) {
+      for (const k of ['as_of', 'totals', 'daily', 'top_products', 'top_products_by', 'slow_movers', 'low_stock']) {
         assert.ok(k in body, `has ${k}`);
       }
       assert.equal(body.sales_start, '2026-06-01');

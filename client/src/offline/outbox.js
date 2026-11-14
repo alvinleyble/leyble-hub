@@ -2,7 +2,7 @@ import { api } from '../api/client';
 import { nativeStore } from './nativeStore';
 import { NS, OUTBOX_PREFIX, outboxKey } from './keys';
 import { isSimulatedOffline } from '../config/features';
-import { markOffline } from './status';
+import { markOffline, probeReachability, checkIsOnline } from './status';
 import { handleDrainCompletion } from './drainNotifier.js';
 import { newRequestKey } from './requestKeys.js';
 import { putOrderSnapshot, getReceipt } from './receiptHistory.js';
@@ -274,6 +274,47 @@ async function pruneRefs(remaining) {
   }
 }
 
+// Product creates alone may adopt a duplicate. The server, not a client SKU
+// search, determines equality; only the names are normalized on the device.
+const normalizedProductName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+// The values typed on Add Product that adopting the existing product would drop: the
+// price, and an initial stock when one was entered. Fields the offline form locks
+// (bottles per case, bottle return, deposit) and blanks never send a create to a person.
+const PRODUCT_CLASH_FIELDS = [
+  { field: 'base_wholesale_price', label: 'Price', kind: 'peso', entered: (v) => v !== undefined && v !== null && v !== '' },
+  { field: 'current_stock', label: 'Stock', kind: 'number', entered: (v) => Number(v) > 0 },
+];
+
+export function productClashDifferences(payload, existing) {
+  return PRODUCT_CLASH_FIELDS
+    .filter(({ field, entered }) => entered(payload?.[field]) && Number(payload[field]) !== Number(existing?.[field]))
+    .map(({ field, label, kind }) => ({ field, label, kind, mine: payload[field], theirs: existing?.[field] }));
+}
+
+function isSameProduct(payload, existing) {
+  return existing.is_active !== false
+    && normalizedProductName(payload?.name) === normalizedProductName(existing.name)
+    && productClashDifferences(payload, existing).length === 0;
+}
+
+export function isProductCreate(record) {
+  return record?.entity_type === 'product' && record.method === 'POST' && record.endpoint === '/products';
+}
+
+function duplicateProduct(record, err) {
+  if (!isProductCreate(record)) return null;
+  if (err?.status !== 409 || err.data?.code !== 'duplicate') return null;
+  const product = err.data.existing_product;
+  return product?.id && typeof product.name === 'string' && product.sku === record.payload?.sku
+    ? product : null;
+}
+
+export function isProductCodeClash(record) {
+  return record?.entity_type === 'product' && record?.status === NEEDS_ATTENTION
+    && Boolean(record.product_clash?.existing_product?.id);
+}
+
 // ── Draining ────────────────────────────────────────────────────────────────
 
 // ADR 0017 #9 — the retry key rides on the body of every POST the outbox sends.
@@ -337,6 +378,21 @@ export function isParkedForServerError(record) {
   return record?.status === NEEDS_ATTENTION && record.parked_for === PARKED_FOR_SERVER_ERROR;
 }
 
+// A 5xx is the server ANSWERING, so it says nothing about the line and never marks the
+// device offline by itself (it used to: the /health watcher then marked the device
+// online again ~7 seconds later and drained into the same 5xx, flipping the status
+// light and every online-only action back and forth until the record parked). Only
+// when the write check did not pass either does a device that is online ask GET /health
+// — the same probe the watcher uses — and go offline if that does not answer, which is
+// a gateway in front of a server that is down. A device already offline stays offline:
+// coming back is the watcher's job, since its `online` event is what runs the
+// reconnect sync.
+async function markOfflineUnlessReachable() {
+  const reachable = checkIsOnline(true)
+    && await probeReachability({ force: true, enabled: true }).catch(() => false);
+  if (!reachable) markOffline();
+}
+
 // Safety cap. A check that passes while the problem is really server-wide (a route
 // broken for every record, say) must not walk the whole queue into Needs attention one
 // record at a time. So at most this many DISTINCT records may be parked for a 5xx with
@@ -359,16 +415,17 @@ async function writeParkedSinceAccepted(ids) {
 // A write addressed to an order (`/orders/<R>`, `/orders/<R>/…`) cannot land before the
 // create that makes R exist, whether or not it was queued with a `depends_on` link to it
 // — a print of an order read back from local history has none, nor does one queued by an
-// older build.
+// older build. Exported so the sync-details view names the same record "next to send"
+// that this drain would actually try first.
 const ORDER_TARGET = /^\/orders\/([^/]+)(?:\/|$)/;
 
-function orderCreatesByReceipt(records) {
+export function orderCreatesByReceipt(records) {
   return new Map(records
     .filter((r) => r.entity_type === 'order' && r.receipt_number)
     .map((r) => [r.receipt_number, r.id]));
 }
 
-function waitsOn(record, createsByReceipt) {
+export function waitsOn(record, createsByReceipt) {
   const target = ORDER_TARGET.exec(record.endpoint || '')?.[1];
   const create = target === undefined ? undefined : createsByReceipt.get(target);
   const deps = record.depends_on || [];
@@ -393,7 +450,7 @@ async function serverAcceptsWrites(authorKey) {
 // always fresh enough for the drain that immediately follows it.
 const SCREEN_FRESHNESS_MS = 90_000;
 
-function isFreshlyScreened(guard) {
+export function isFreshlyScreened(guard) {
   const at = guard?.screened_at;
   return typeof at === 'number' && (Date.now() - at) < SCREEN_FRESHNESS_MS;
 }
@@ -441,10 +498,11 @@ async function authorTokenKey(record) {
  *                    receipt number counts exactly as much as a 201 (D13).
  *   network        — left queued; the pass stops, since the next record would fail the
  *                    same way.
- *   5xx            — left queued and the pass stops, as for a network failure, after
- *                    one write check that may add a strike; at
- *                    SERVER_ERROR_PARK_THRESHOLD strikes it is parked on the attention
- *                    list instead and the pass carries on (see that constant).
+ *   5xx            — left queued and the pass stops, after one write check that may
+ *                    add a strike; at SERVER_ERROR_PARK_THRESHOLD strikes it is parked
+ *                    on the attention list instead and the pass carries on (see that
+ *                    constant). A 5xx alone never takes the device offline (see
+ *                    markOfflineUnlessReachable).
  *   other 4xx      — moved to the attention list with the server's reason (D8). Never
  *                    discarded, never guessed at.
  *
@@ -471,6 +529,7 @@ async function runDrainPass() {
   let failed = 0;
   let result = null;
   const syncedOrders = [];
+  const adoptedProducts = [];
   try {
     const records = await listRecords();
     // A record already on the attention list has not synced either, so it blocks its
@@ -554,11 +613,27 @@ async function runDrainPass() {
         // active session, and attribution is honour-system exactly as the captain
         // accepted it to be.
         authorKey = await authorTokenKey(record);
-        const response = await api.request(endpoint, {
-          method: record.method,
-          body: JSON.stringify(body),
-          ...(authorKey ? { accountKey: authorKey } : {}),
-        });
+        let response;
+        let adopted = false;
+        if (record.entity_type === 'product' && record.product_adoption) {
+          // An explicit operator answer is durable before the drain starts. A
+          // restart between the answer and completion must not resend the create.
+          response = record.product_adoption;
+          adopted = true;
+        } else {
+          try {
+            response = await api.request(endpoint, {
+              method: record.method,
+              body: JSON.stringify(body),
+              ...(authorKey ? { accountKey: authorKey } : {}),
+            });
+          } catch (err) {
+            const existing = duplicateProduct(record, err);
+            if (!existing || !isSameProduct(record.payload, existing)) throw err;
+            response = existing;
+            adopted = true;
+          }
+        }
         await rememberResult(record.id, response);
         const snapshot = orderSnapshotFrom(record, response);
         if (snapshot) {
@@ -567,6 +642,7 @@ async function runDrainPass() {
         }
         await removeRecord(record.id);
         sent++;
+        if (adopted) adoptedProducts.push(record.id);
         if (parkedSinceAccepted.size !== 0) {
           parkedSinceAccepted = new Set();
           await writeParkedSinceAccepted(parkedSinceAccepted);
@@ -593,9 +669,13 @@ async function runDrainPass() {
 
         const attempts = (record.attempts || 0) + 1;
         const last_error = err.message || String(err);
+        // Read only by the sync-details view (syncDetails.js), so staff can see when a
+        // stuck record was last tried and what kind of answer it got. Bookkeeping only.
+        const last_error_status = err.status ?? null;
+        const last_attempt_at = new Date().toISOString();
 
         if (isNetworkFailure(err)) {
-          await saveDrainOutcome(record, { attempts, last_error });
+          await saveDrainOutcome(record, { attempts, last_error, last_error_status, last_attempt_at });
           blocked.add(record.id);
           markOffline();
           break; // the line is down; stop the pass
@@ -612,9 +692,12 @@ async function runDrainPass() {
             const lastStrikeAt = current.last_strike_at;
             const tooSoon = typeof lastStrikeAt === 'number'
               && struckAt - lastStrikeAt < SERVER_STRIKE_SPACING_MS;
-            if (!strike || tooSoon) return { attempts, last_error };
+            if (!strike || tooSoon) return { attempts, last_error, last_error_status, last_attempt_at };
             const server_strikes = (current.server_strikes || 0) + 1;
-            const counted = { attempts, last_error, server_strikes, last_strike_at: struckAt };
+            const counted = {
+              attempts, last_error, last_error_status, last_attempt_at,
+              server_strikes, last_strike_at: struckAt,
+            };
             return server_strikes >= SERVER_ERROR_PARK_THRESHOLD && mayPark
               ? { ...counted, status: NEEDS_ATTENTION, parked_for: PARKED_FOR_SERVER_ERROR }
               : counted;
@@ -626,7 +709,7 @@ async function runDrainPass() {
             failed++;
             continue; // parked aside; its dependants wait, the rest of the queue goes on
           }
-          markOffline();
+          if (!strike) await markOfflineUnlessReachable();
           break; // the server is unwell or this record is still on probation; stop the pass
         }
 
@@ -641,7 +724,11 @@ async function runDrainPass() {
           continue;
         }
 
-        await saveDrainOutcome(record, { status: NEEDS_ATTENTION, attempts, last_error });
+        const existingProduct = duplicateProduct(record, err);
+        await saveDrainOutcome(record, {
+          status: NEEDS_ATTENTION, attempts, last_error, last_error_status, last_attempt_at,
+          ...(existingProduct ? { product_clash: { sku: record.payload.sku, existing_product: existingProduct } } : {}),
+        });
         blocked.add(record.id);
         failed++;
       }
@@ -651,7 +738,7 @@ async function runDrainPass() {
     await pruneRefs(remaining);
     const waiting = remaining.filter((r) => r.status === QUEUED).length;
     notifyOutboxListeners({ type: 'drain', sent, failed, waiting });
-    result = { sent, failed, waiting, orders: syncedOrders };
+    result = { sent, failed, waiting, orders: syncedOrders, adopted: adoptedProducts };
     return result;
   } finally {
     draining = false;
@@ -716,6 +803,8 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
 
   record.status = QUEUED;
   record.last_error = null;
+  record.last_error_status = null;
+  record.last_attempt_at = null;
   record.attempts = 0;
   record.server_strikes = 0;
   record.last_strike_at = null;
@@ -723,6 +812,43 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
   return record;
+}
+
+// Both answers keep the same durable record and its dependency identity. Only the
+// drain's ordinary success path completes it and remembers the server id.
+export async function useExistingProduct(id) {
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!isProductCodeClash(record)) throw new Error('This product-code clash is no longer waiting.');
+  let product = record.product_clash.existing_product;
+  if (product.is_active === false) {
+    product = await api.request(`/products/${product.id}`, {
+      method: 'PATCH', body: JSON.stringify({ is_active: true }),
+    }).catch((err) => {
+      throw err?.status ? err : new Error('Bringing back a deleted product needs a connection.');
+    });
+  }
+  const saved = await saveDrainOutcome(record, {
+    status: QUEUED, product_adoption: product,
+    last_error: null, last_error_status: null, last_attempt_at: null, attempts: 0,
+  });
+  notifyOutboxListeners({ type: 'repoint', record: saved });
+  return saved;
+}
+
+export async function changeProductCode(id, code) {
+  const sku = String(code || '').trim();
+  if (!sku) throw new Error('Enter a new product code.');
+  if (sku.length > 100) throw new Error('Product codes must be 100 characters or fewer.');
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!isProductCodeClash(record)) throw new Error('This product-code clash is no longer waiting.');
+  if (sku === record.payload.sku) throw new Error('Enter a different product code.');
+  const saved = await saveDrainOutcome(record, (current) => ({
+    payload: { ...current.payload, sku }, status: QUEUED, product_clash: null,
+    product_adoption: null, last_error: null, last_error_status: null, last_attempt_at: null, attempts: 0,
+    server_strikes: 0, last_strike_at: null, parked_for: null,
+  }));
+  notifyOutboxListeners({ type: 'repoint', record: saved });
+  return saved;
 }
 
 /**

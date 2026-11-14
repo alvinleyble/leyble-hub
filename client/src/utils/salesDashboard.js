@@ -190,7 +190,7 @@ export function niceCeiling(max) {
 
 export function formatCases(n) {
   const v = Number(n) || 0;
-  const s = Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+  const s = v.toLocaleString('en-PH', { maximumFractionDigits: 2 });
   return `${s} ${v === 1 ? 'case' : 'cases'}`;
 }
 
@@ -220,6 +220,28 @@ export function normalizeDashboard(payload) {
     monthly: Array.isArray(payload.monthly) ? payload.monthly : [],
     top_products: payload.top_products ?? [],
     low_stock: payload.low_stock ?? [],
+  };
+}
+
+// A legacy offline copy has only the gross-ranked top_products. Never re-sort that
+// truncated list and call it a different top 10, or invent missing order counts.
+export function productRanking(view, picked = 'cases') {
+  const lists = view?.top_products_by;
+  const available = ['cases', 'sales', 'orders'].every((key) => Array.isArray(lists?.[key]));
+  const key = available ? picked : 'sales';
+  return { key, available, rows: available ? lists[key] : (view?.top_products ?? []) };
+}
+
+export function productMetrics(product, ranking) {
+  const values = {
+    cases: formatCases(product.cases),
+    sales: formatPeso(product.gross),
+    orders: product.orders == null ? null : `${product.orders.toLocaleString('en-PH')} ${product.orders === 1 ? 'order' : 'orders'}`,
+  };
+  return {
+    primary: values[ranking],
+    secondary: ['cases', 'sales', 'orders'].filter((key) => key !== ranking && values[key] != null)
+      .map((key) => values[key]).join(' · '),
   };
 }
 

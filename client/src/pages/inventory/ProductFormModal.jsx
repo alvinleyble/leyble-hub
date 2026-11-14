@@ -54,12 +54,12 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
 
     setSaving(true);
     try {
-      // ADR 0015 §6 — adding a product is additive and conflict-free, so it takes one
-      // code path online and blind: queue it, drain immediately. Connected, that lands
+      // ADR 0015 §6 — adding a product takes one code path online and blind:
+      // queue it, drain immediately (SKU clashes are resolved by the drain). Connected, that lands
       // in about a second and the operator sees the ordinary toast; blind, it shows on
       // the grid as "Waiting to sync" until the line returns.
       const profileKey = await api.getActiveProfile();
-      const { synced } = await createProductLocalFirst({
+      const { synced, adopted, clash } = await createProductLocalFirst({
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -70,10 +70,13 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
         units_per_case:       Number(form.units_per_case),
         requires_bottle_return: form.requires_bottle_return,
       }, { profileKey });
-      addToast(
-        synced
-          ? `${form.name} added to inventory.`
-          : `${form.name} saved on this device \u00b7 will sync when connected.`,
+      if (clash) addToast('Product code already exists; tap the status light to choose.', 'error');
+      else addToast(
+        adopted
+          ? `${form.name} already exists; using the existing product.`
+          : synced
+            ? `${form.name} added to inventory.`
+            : `${form.name} saved on this device \u00b7 will sync when connected.`,
         'success'
       );
       onSaved();

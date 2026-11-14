@@ -222,11 +222,11 @@ System configuration key-value store. Primary use: minimum Android app version e
 Seeded dormant with `('min_version', NULL)`. The captain can raise or adjust the required version directly in the Supabase SQL Editor (`UPDATE app_settings SET value = '1.3.0' WHERE key = 'min_version';` or `UPDATE app_settings SET value = '14' WHERE key = 'min_version';`) without publishing another build. RLS is enabled with zero public policies.
 
 ### 18. `request_keys` (050)
-Retry keys for order **mutations**. Migration 039's `orders.request_key` covers creates, where the key can ride the row the request made; an UPDATE has no such row, so the key is claimed here inside the same transaction as the write it guards.
+Retry keys for order **mutations** and for product **creates**. Migration 039's `orders.request_key` covers order and delivery creates, where the key can ride the row the request made; an UPDATE has no such row, and `products` has no `request_key` column, so the key is claimed here inside the same transaction as the write it guards.
 | Column | Type | Notes |
 |---|---|---|
 | `request_key` | VARCHAR(64) PRIMARY KEY | The device-minted key, same shape and same `normalizeRequestKey` validation as `orders.request_key` |
-| `entity_type` | VARCHAR(32) NOT NULL | Closed set in `server/src/lib/idempotency.js` (`MUTATION_ENTITIES`), never taken from a request body. `'order'` is the only member today |
+| `entity_type` | VARCHAR(32) NOT NULL | Closed set in `server/src/lib/idempotency.js` (`MUTATION_ENTITIES`), never taken from a request body: `'order'` and `'product'` |
 | `entity_id` | BIGINT NOT NULL | The row the key was spent on. Returned rather than assumed, so a key replayed against a *different* order is answered `409 request_key_reused` instead of with the wrong order |
 | `created_at` | TIMESTAMPTZ NOT NULL DEFAULT NOW() | |
 
@@ -258,6 +258,7 @@ A create can store its key on the row it made. An **update** has no such row —
 - Why it is needed: `client/src/api/client.js` aborts every request after 5s. The abort reaches the socket, not Express, so the handler commits while the operator is told the save failed. The retry then either commits a second edit or is refused with [ADR 0019](../adr/0019-order-revision-and-delta-sync.md)'s `409 stale_write` against a revision its own unreported write superseded.
 - Covered routes: `PATCH /orders/:id`, `PATCH /orders/:id/adjustment`, `POST /orders/:id/status`, `/close`, `/finalize`, `/receipt-printed`. `DELETE /orders/:id` is excluded (a replayed delete 404s, which the outbox already reads as success).
 - The key is claimed **before** the revision compare-and-swap and before the status/state-machine checks: a replay is stale and out-of-state *because of its own first attempt*, so asking those questions first would answer it with a 409 or 422 describing a conflict with itself.
+- `POST /products` claims its key here too (`entity_type = 'product'`): a resent create whose first attempt committed is answered `200` with that product, never as a SKU clash with itself.
 - The claim is one `INSERT … ON CONFLICT DO NOTHING` inside the caller's transaction — one extra round trip, flat, and only when a key is sent. A request carrying no key behaves exactly as it did before.
 
 ---
