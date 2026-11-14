@@ -30,11 +30,17 @@ const ACTION_TYPE_LABELS = {
   delivery_edit:     'Delivery Edited',
 };
 
-export default function ProductDetailPanel({ productId, onClose, onSaved, cachedProduct = null }) {
+// `stockShown` false (Settings' "Show everything" off) leaves out everything about
+// stock counts: the Current Stock summary, Adjust Stock, the Current Stock field and the
+// stock-movement entries in the log. Name, prices, deposit and category stay.
+export default function ProductDetailPanel({ productId, onClose, onSaved, cachedProduct = null, stockShown = true }) {
   const { addToast } = useToast();
 
   const [product, setProduct]       = useState(null);
   const [auditLog, setAuditLog]     = useState([]);
+  const shownLog = stockShown
+    ? (auditLog || [])
+    : (auditLog || []).filter((entry) => entry.field_changed !== 'current_stock');
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
 
@@ -292,6 +298,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
             )}
 
             {/* ── Stock summary ─────────────────────────────────── */}
+            {stockShown && (
             <div className="px-6 py-5 bg-slate-50 border-b border-slate-400">
               <div className="flex items-end justify-between gap-4">
                 <div>
@@ -399,6 +406,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                 </div>
               )}
             </div>
+            )}
 
             {/* ── Details: read first (design standard Q13) ────────── */}
             {!editing ? (
@@ -449,11 +457,13 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                       className={INPUT + ' disabled:bg-slate-100 disabled:text-slate-500'} />
                   </FormField>
 
-                  <FormField label="Current Stock" required error={formErrors.current_stock}
-                    hint={`Cases — 0.5 = half case`}>
-                    <input type="number" min="0" step="0.5" value={form.current_stock}
-                      onChange={set('current_stock')} className={INPUT} />
-                  </FormField>
+                  {stockShown && (
+                    <FormField label="Current Stock" required error={formErrors.current_stock}
+                      hint={`Cases — 0.5 = half case`}>
+                      <input type="number" min="0" step="0.5" value={form.current_stock}
+                        onChange={set('current_stock')} className={INPUT} />
+                    </FormField>
+                  )}
 
                   <div className="sm:col-span-2 min-h-[48px]" title={blockedTip}>
                     <div className="flex items-center gap-3 min-h-[48px]">
@@ -534,12 +544,12 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
             </form>
             )}
 
-            {/* ── Audit log ─────────────────────────────────────── */}
+            {/* ── Audit log (stock movements left out while stock counts are hidden) ── */}
             <div className="px-6 py-5">
               <p className="text-sm font-bold text-slate-600 uppercase tracking-wide mb-4">
                 Audit Log (last 50)
               </p>
-              {(auditLog || []).length === 0 ? (
+              {shownLog.length === 0 ? (
                 <p className="text-slate-600 text-sm">
                   {fromCache
                     ? 'The audit log lives on the server — it needs a connection to read.'
@@ -547,7 +557,7 @@ export default function ProductDetailPanel({ productId, onClose, onSaved, cached
                 </p>
               ) : (
                 <ol className="relative border-l border-slate-400 ml-2 space-y-5">
-                  {(auditLog || []).map((entry) => (
+                  {shownLog.map((entry) => (
                     <li key={entry.id} className="ml-4">
                       <div className="absolute -left-1.5 mt-1.5 w-3 h-3 rounded-full bg-slate-300 border-2 border-white" />
                       <p className="text-sm font-semibold text-slate-700">

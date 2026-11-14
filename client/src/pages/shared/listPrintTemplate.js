@@ -51,7 +51,8 @@ const FOOT = `
 </html>`;
 
 // ── Product price list ────────────────────────────────────────────────────────
-export function productListHtml(products) {
+// `stock: false` leaves each product's stock line off (Settings' "Show everything" off).
+export function productListHtml(products, { stock = true } = {}) {
   const active = (products || []).filter((p) => p.is_active !== false);
 
   const groups = {};
@@ -72,7 +73,7 @@ export function productListHtml(products) {
       ${p.requires_bottle_return
         ? `<div class="row-between"><span>Deposit/btl</span><span>${PHP(p.deposit_fee)}</span></div>`
         : ''}
-      <div class="row-between"><span>Stock</span><span>${Number(p.current_stock)} cs</span></div>
+      ${stock ? `<div class="row-between"><span>Stock</span><span>${Number(p.current_stock)} cs</span></div>` : ''}
     </div>`).join('');
     return `<div class="cat">${esc(cat)}</div>${rows}`;
   }).join('');

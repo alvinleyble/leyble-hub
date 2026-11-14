@@ -28,11 +28,12 @@ import { listConflicts, subscribeConflicts } from '../../offline/reconcile.js';
 import { queuedProductsFromOutbox, pendingProductEditIds } from '../../offline/productMutations.js';
 import { subscribeOutbox } from '../../offline/outbox.js';
 import { checkIsOnline } from '../../offline/status.js';
+import { useShowEverything } from '../../config/showEverything';
 
 // Reserves the same vertical space the category-chip row and the stock-filter
 // segmented control occupy once categories are known, so their appearance after load
 // doesn't push the table down a beat later.
-function InventoryFiltersSkeleton() {
+function InventoryFiltersSkeleton({ stockShown = true }) {
   return (
     <SkeletonGroup label="Loading filters" className="mb-3">
       <div className="flex gap-2 mb-3">
@@ -40,7 +41,7 @@ function InventoryFiltersSkeleton() {
         <Skeleton className="h-12 w-20 rounded-full" />
         <Skeleton className="h-12 w-36 rounded-full" />
       </div>
-      <Skeleton className="h-12 w-72 rounded-full" />
+      {stockShown && <Skeleton className="h-12 w-72 rounded-full" />}
     </SkeletonGroup>
   );
 }
@@ -105,6 +106,10 @@ export default function InventoryPage() {
   const [showInactive, setShowInactive] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter]   = useState('all');
+  // Settings' "Show everything". Off, this page is the product and price list: stock
+  // counts, the stock filter, low/out-of-stock marks and stock adjustments are hidden
+  // (stock still moves underneath, exactly as before).
+  const { showEverything: stockShown } = useShowEverything();
   const [creating, setCreating]         = useState(false);
   const [selectedId, setSelectedId]     = useState(null);
 
@@ -209,7 +214,10 @@ export default function InventoryPage() {
   // A product added while blind prints alongside the rest: 7.5 says it is real from the
   // moment it is saved, and a count sheet that silently omits it is the opposite of that.
   const handlePrintList = () =>
-    printList(productListHtml(displayProducts), productListEscPos(displayProducts));
+    printList(
+      productListHtml(displayProducts, { stock: stockShown }),
+      productListEscPos(displayProducts, { stock: stockShown }),
+    );
 
   const allCategories = [...new Set(displayProducts.map((p) => p.category ?? 'Uncategorised'))].sort();
 
@@ -218,6 +226,7 @@ export default function InventoryPage() {
     const matchCategory =
       categoryFilter === 'all' || (p.category ?? 'Uncategorised') === categoryFilter;
     const matchStock =
+      !stockShown ||
       stockFilter === 'all' ||
       stockState(p.current_stock) === stockFilter;
     return matchSearch && matchCategory && matchStock;
@@ -337,13 +346,13 @@ export default function InventoryPage() {
       />
 
       {loading ? (
-        <InventoryFiltersSkeleton />
+        <InventoryFiltersSkeleton stockShown={stockShown} />
       ) : (
         <>
           {/* ── Category chips (Q4): one row that scrolls, with a faded edge while
               more categories sit off-screen. */}
           {allCategories.length > 1 && (
-            <ChipRow label="Category" className="mb-3">
+            <ChipRow label="Category" className={stockShown ? 'mb-3' : SECTION_GAP}>
               {['all', ...allCategories].map((cat) => (
                 <Chip key={cat} selected={categoryFilter === cat} onClick={() => setCategoryFilter(cat)}>
                   {cat === 'all' ? 'All Categories' : cat}
@@ -354,14 +363,16 @@ export default function InventoryPage() {
 
           {/* ── Stock chips — the same chip as the row above, so it reads as one kind
               of control; Low/Out turn amber/red when chosen, with the word on them. */}
-          <ChipRow label="Stock" className={SECTION_GAP}>
-            {STOCK_CHIPS.map((opt) => (
-              <Chip key={opt.value} tone={opt.tone} selected={stockFilter === opt.value}
-                    onClick={() => setStockFilter(opt.value)}>
-                {opt.label}
-              </Chip>
-            ))}
-          </ChipRow>
+          {stockShown && (
+            <ChipRow label="Stock" className={SECTION_GAP}>
+              {STOCK_CHIPS.map((opt) => (
+                <Chip key={opt.value} tone={opt.tone} selected={stockFilter === opt.value}
+                      onClick={() => setStockFilter(opt.value)}>
+                  {opt.label}
+                </Chip>
+              ))}
+            </ChipRow>
+          )}
         </>
       )}
 
@@ -417,10 +428,10 @@ export default function InventoryPage() {
                     title={<span className={p.is_active ? '' : 'text-slate-500 line-through'}>{p.name}</span>}
                     titleRight={<>{PHP(p.base_wholesale_price)}<span className="text-sm font-normal text-slate-600"> / {p.unit || 'case'}</span></>}
                     meta={<span className="font-mono">{p.sku ?? p.unit}</span>}
-                    metaRight={<>In stock: <b className="text-base text-slate-900 tabular-nums">{p.current_stock}</b> {p.unit}</>}
+                    metaRight={stockShown && <>In stock: <b className="text-base text-slate-900 tabular-nums">{p.current_stock}</b> {p.unit}</>}
                     badges={[
                       !p.is_active && <TagBadge key="inactive" kind="inactive" />,
-                      stockState(p.current_stock) && <StockBadge key="stock" stock={p.current_stock} />,
+                      stockShown && stockState(p.current_stock) && <StockBadge key="stock" stock={p.current_stock} />,
                       (p._unsynced || pendingEditIds.has(String(p.id))) && <TagBadge key="sync" kind="unsynced" />,
                     ]}
                   />
@@ -451,7 +462,7 @@ export default function InventoryPage() {
                 <th className="text-right px-4 lg:px-5 py-3 font-semibold">Price / Case</th>
                 <th className="text-right px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Deposit / Bottle</th>
                 <th className="text-right px-4 lg:px-5 py-3 font-semibold hidden lg:table-cell">Btl / Case</th>
-                <th className="text-right px-4 lg:px-5 py-3 font-semibold">Stock</th>
+                {stockShown && <th className="text-right px-4 lg:px-5 py-3 font-semibold">Stock</th>}
                 <th className="text-left px-4 lg:px-5 py-3 font-semibold">Status</th>
               </tr>
             </thead>
@@ -460,7 +471,7 @@ export default function InventoryPage() {
                 <React.Fragment key={cat}>
                   <tr className="bg-slate-100 border-y border-slate-300">
                     <td
-                      colSpan={batchMode ? 8 : 7}
+                      colSpan={6 + (batchMode ? 1 : 0) + (stockShown ? 1 : 0)}
                       className="px-4 lg:px-5 py-2 text-sm font-bold text-slate-600 uppercase tracking-wide"
                     >
                       {cat}
@@ -512,15 +523,17 @@ export default function InventoryPage() {
                       <td className="px-4 lg:px-5 py-4 text-right text-slate-600 tabular-nums hidden lg:table-cell">
                         {p.units_per_case}
                       </td>
-                      <td className="px-4 lg:px-5 py-4 text-right tabular-nums whitespace-nowrap">
-                        <span className="font-bold text-base text-slate-900">{p.current_stock}</span>
-                        <span className="text-sm text-slate-600 ml-1">{p.unit}</span>
-                      </td>
+                      {stockShown && (
+                        <td className="px-4 lg:px-5 py-4 text-right tabular-nums whitespace-nowrap">
+                          <span className="font-bold text-base text-slate-900">{p.current_stock}</span>
+                          <span className="text-sm text-slate-600 ml-1">{p.unit}</span>
+                        </td>
+                      )}
                       <td className="px-4 lg:px-5 py-4">
                         {/* Status + stock state as words (Q5): Inactive, Low stock, Out of stock. */}
                         <div className="flex flex-wrap gap-1.5">
                           {p.is_active ? <TagBadge kind="active" /> : <TagBadge kind="inactive" />}
-                          <StockBadge stock={p.current_stock} />
+                          {stockShown && <StockBadge stock={p.current_stock} />}
                         </div>
                       </td>
                     </tr>
@@ -536,6 +549,7 @@ export default function InventoryPage() {
       {creating && (
         <ProductFormModal
           offline={fromCache || !checkIsOnline()}
+          stockShown={stockShown}
           onClose={() => setCreating(false)}
           onSaved={() => { setCreating(false); load(true); }}
         />
@@ -545,6 +559,7 @@ export default function InventoryPage() {
         <ProductDetailPanel
           productId={selectedId}
           cachedProduct={products.find((p) => String(p.id) === String(selectedId)) || null}
+          stockShown={stockShown}
           onClose={() => setSelectedId(null)}
           onSaved={() => load(true)}
         />

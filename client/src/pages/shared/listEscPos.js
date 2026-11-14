@@ -73,7 +73,8 @@ function dateStr() {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
 }
 
-export function productListEscPos(products) {
+// `stock: false` leaves each product's stock line off (Settings' "Show everything" off).
+export function productListEscPos(products, { stock = true } = {}) {
   const active = (products || []).filter((p) => p.is_active !== false);
 
   const groups = {};
@@ -100,7 +101,7 @@ export function productListEscPos(products) {
       if (p.sku) for (const l of wrap(`  ${p.name}`)) ln(l);
       ln(padLR('  Price/case', fmtMoney(p.base_wholesale_price)));
       if (p.requires_bottle_return) ln(padLR('  Deposit/btl', fmtMoney(p.deposit_fee)));
-      ln(padLR('  Stock', `${Number(p.current_stock)} cs`));
+      if (stock) ln(padLR('  Stock', `${Number(p.current_stock)} cs`));
     }
     ln();
   }

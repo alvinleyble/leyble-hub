@@ -3,13 +3,14 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { V25_OFFLINE_CORE } from '../../config/features';
 import NavIcon from './NavIcon';
 import StatusLight from './StatusLight';
-import { TAB_ITEMS, isCurrentPage } from './navigation';
+import { TAB_ITEMS, isCurrentPage, visibleNavItems } from './navigation';
+import { useShowEverything } from '../../config/showEverything';
 import { useDuplicateBubble } from './useDuplicateBubble';
 
 /**
  * The two rows across the top of every screen, on every screen size. The title row
  * carries the app name on the left and the status light then the menu button on the
- * right; under it, the six tabs share the full width in equal segments. Phones show
+ * right; under it, the tabs (four, or six with Settings' "Show everything" on) share the full width in equal segments. Phones show
  * tab icons only (the name stays as visually hidden text, so each tab is still named
  * for a screen reader); tablets and computers add the name under or beside the icon.
  *
@@ -18,6 +19,7 @@ import { useDuplicateBubble } from './useDuplicateBubble';
  */
 export default function TopTabBar({ onRefresh, onOpenMenu, menuOpen = false, duplicatesEnabled = V25_OFFLINE_CORE }) {
   const { pathname } = useLocation();
+  const { showEverything } = useShowEverything();
   const duplicateCount = useDuplicateBubble({
     enabled: duplicatesEnabled,
     onCustomers: pathname === '/customers' || pathname.startsWith('/customers/'),
@@ -45,7 +47,7 @@ export default function TopTabBar({ onRefresh, onOpenMenu, menuOpen = false, dup
       </div>
 
       <nav className="flex h-14 sm:h-16 lg:h-14 border-t border-slate-800" aria-label="Main navigation">
-        {TAB_ITEMS.map(({ path, label, icon }) => {
+        {visibleNavItems(TAB_ITEMS, showEverything).map(({ path, label, icon }) => {
           const bubble = path === '/customers' ? duplicateCount : 0;
           return (
             <NavLink

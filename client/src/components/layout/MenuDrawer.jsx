@@ -2,14 +2,16 @@ import React, { useEffect, useRef } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import NavIcon from './NavIcon';
-import { MENU_ITEMS, isCurrentPage } from './navigation';
+import { MENU_ITEMS, isCurrentPage, visibleNavItems } from './navigation';
+import { useShowEverything } from '../../config/showEverything';
 
 const ROW = `flex w-full items-center gap-3 min-h-[48px] px-5 text-base font-medium transition-colors duration-100
              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400`;
 
 /**
  * The hamburger menu: slides in from the right edge, under the button that opens it.
- * Holds what does not earn a tab — Tickets, Audit Log, Settings — and Log out. Stays
+ * Holds what does not earn a tab — Settings, plus Tickets and Audit Log while Settings'
+ * "Show everything" is on — and Log out. Stays
  * mounted so it can slide both ways; `invisible` while shut keeps its links out of the
  * tab order and the accessibility tree.
  */
@@ -17,6 +19,7 @@ export default function MenuDrawer({ open, onClose, onRefresh }) {
   const { logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { showEverything } = useShowEverything();
   const closeRef = useRef(null);
 
   useEffect(() => {
@@ -68,7 +71,7 @@ export default function MenuDrawer({ open, onClose, onRefresh }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-2" aria-label="More">
-          {MENU_ITEMS.map(({ path, label, icon }) => (
+          {visibleNavItems(MENU_ITEMS, showEverything).map(({ path, label, icon }) => (
             <NavLink
               key={path}
               to={path}

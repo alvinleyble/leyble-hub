@@ -153,3 +153,9 @@ export const RECONCILE_PREFIX = `${NS}reconcile.`;
 export function reconcileKey(id) {
   return `${RECONCILE_PREFIX}${id}`;
 }
+
+// The Settings "Show everything" switch: 'on' brings back every screen and control the
+// trimmed app hides (later order stages, stock counts, Incoming, Personnel, Tickets,
+// Audit Log). Anything else, including no value at all, is off. A device preference,
+// not an account setting: it is never synced and survives logout like the keys above.
+export const SHOW_EVERYTHING_KEY = `${NS}showEverything`;
