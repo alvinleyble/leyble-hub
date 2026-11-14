@@ -4,6 +4,8 @@ import { V25_OFFLINE_CORE } from '../../config/features.js';
 import { useOfflineStatus } from '../../offline/status.js';
 import { useSyncActivity } from '../../offline/sync.js';
 import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
+import SyncDetailsModal from './SyncDetailsModal.jsx';
+import NavIcon from './NavIcon.jsx';
 
 // D7 — the standing connection marker: a light and one short word beside the menu
 // button. (It was text-less for a while; the UI audit, F23, flagged a colour-only
@@ -17,6 +19,10 @@ import NeedsAttentionModal from '../pos/NeedsAttentionModal.jsx';
 //            pill did, and it pulses faster than the other colours
 // Every wording the pill could show is still reachable through that tap (and is the
 // light's accessible name), so no state the old marker distinguished is lost.
+//
+// Sync details (what is still waiting, oldest first, with each record's tries and last
+// error) opens from here too: from the tap's popup in every colour but red, and from
+// the attention list's footer when red, since a red tap goes straight to that list.
 //
 // When V25_OFFLINE_CORE is off, renders null.
 
@@ -59,6 +65,7 @@ export default function StatusLight() {
 export function StatusLightButton() {
   const [attentionModalOpen, setAttentionModalOpen] = useState(false);
   const [popupOpen, setPopupOpen] = useState(false);
+  const [syncDetailsOpen, setSyncDetailsOpen] = useState(false);
   const wrapRef = useRef(null);
   const { pathname } = useLocation();
   const { isOnline, waitingCount, needsAttentionCount } = useOfflineStatus();
@@ -113,17 +120,37 @@ export function StatusLightButton() {
 
       {popupOpen && !hasAttention && (
         <div
-          className="absolute right-0 top-full z-50 mt-1 flex items-center gap-2 whitespace-nowrap rounded-lg
+          className="absolute right-0 top-full z-50 mt-1 flex flex-col gap-2 rounded-lg
                      border border-slate-200 bg-white px-3 py-2 text-base font-semibold text-slate-900 shadow-lg"
           data-testid="status-light-popup"
         >
-          <span className={`block h-2.5 w-2.5 shrink-0 rounded-full ${dot.split(' ')[0]}`} aria-hidden="true" />
-          {label}
+          <span className="flex items-center gap-2 whitespace-nowrap" data-testid="status-light-popup-label">
+            <span className={`block h-2.5 w-2.5 shrink-0 rounded-full ${dot.split(' ')[0]}`} aria-hidden="true" />
+            {label}
+          </span>
+          <button
+            type="button"
+            onClick={() => { setPopupOpen(false); setSyncDetailsOpen(true); }}
+            className="flex min-h-[48px] items-center justify-between gap-2 whitespace-nowrap rounded-lg border
+                       border-slate-300 px-3 text-base font-semibold text-blue-700 hover:bg-slate-100
+                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            data-testid="status-light-sync-details"
+          >
+            Sync details
+            <NavIcon name="chevronRight" className="h-5 w-5" />
+          </button>
         </div>
       )}
 
       {attentionModalOpen && (
-        <NeedsAttentionModal onClose={() => setAttentionModalOpen(false)} />
+        <NeedsAttentionModal
+          onClose={() => setAttentionModalOpen(false)}
+          onShowSyncDetails={() => { setAttentionModalOpen(false); setSyncDetailsOpen(true); }}
+        />
+      )}
+
+      {syncDetailsOpen && (
+        <SyncDetailsModal onClose={() => setSyncDetailsOpen(false)} />
       )}
     </div>
   );

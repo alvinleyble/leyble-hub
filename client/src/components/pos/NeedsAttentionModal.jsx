@@ -50,7 +50,10 @@ async function withCustomerNames(list) {
 //
 // Invariants:
 // - Never discard, never auto-resolve.
-export default function NeedsAttentionModal({ onClose }) {
+//
+// `onShowSyncDetails`, when given, adds a footer button that opens the read-only sync
+// details (StatusLight passes it: a red light opens this list, not the popup).
+export default function NeedsAttentionModal({ onClose, onShowSyncDetails }) {
   const { addToast } = useToast();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -331,7 +334,20 @@ export default function NeedsAttentionModal({ onClose }) {
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 items-center justify-end border-t border-v2-border px-6 py-4">
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-v2-border px-6 py-4">
+          {onShowSyncDetails && (
+            <button
+              type="button"
+              onClick={onShowSyncDetails}
+              disabled={savingId !== null}
+              data-testid="attention-sync-details"
+              className="flex min-h-tablet items-center justify-center rounded-xl border border-v2-border px-5 text-base
+                         font-bold text-v2-text hover:bg-v2-raised disabled:opacity-40
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v2-accent"
+            >
+              Sync details
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
