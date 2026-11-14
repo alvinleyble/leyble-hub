@@ -14,6 +14,7 @@ import { useAppRefresh } from '../src/components/layout/useAppRefresh.js';
 import { usePullToRefresh, shouldIgnorePull, PULL_THRESHOLD } from '../src/components/layout/usePullToRefresh.js';
 
 import { isCurrentPage } from '../src/components/layout/navigation.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const TopTabBar = (await import('../src/components/layout/TopTabBar.jsx')).default;
 const MenuDrawer = (await import('../src/components/layout/MenuDrawer.jsx')).default;
@@ -204,7 +205,8 @@ test('Tab bar: from a sub-page, the section tab navigates back rather than refre
   view.unmount();
 });
 
-test('Menu: re-tapping the open page refreshes it, and every tap closes the menu', async () => {
+test('Menu: re-tapping the open page refreshes it, and every tap closes the menu', async (t) => {
+  await showEverythingFor(t);
   let refreshed = 0;
   let closed = 0;
   const view = await renderNavAt('/tickets', MenuDrawer, {

@@ -18,7 +18,9 @@ const DEFAULT_FORM = {
   requires_bottle_return: false,
 };
 
-export default function ProductFormModal({ onClose, onSaved, offline = false }) {
+// `stockShown` false (Settings' "Show everything" off) leaves out Initial Stock; a new
+// product then starts at the form's default of 0, the same as leaving it untouched.
+export default function ProductFormModal({ onClose, onSaved, offline = false, stockShown = true }) {
   const { addToast } = useToast();
 
   // Criteria 7.3 / 7.4 — "Bottles per Case" and "Requires bottle return" are the two
@@ -142,15 +144,17 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
                 className={FIELD_CLASS + ' disabled:bg-slate-100 disabled:text-slate-400'} />
             </FormField>
 
-            <FormField label="Initial Stock" error={errors.current_stock}>
-              <Stepper
-                value={form.current_stock}
-                onChange={(v) => setForm((f) => ({ ...f, current_stock: v }))}
-                step={0.5}
-                min={0}
-                label="Initial stock in cases"
-              />
-            </FormField>
+            {stockShown && (
+              <FormField label="Initial Stock" error={errors.current_stock}>
+                <Stepper
+                  value={form.current_stock}
+                  onChange={(v) => setForm((f) => ({ ...f, current_stock: v }))}
+                  step={0.5}
+                  min={0}
+                  label="Initial stock in cases"
+                />
+              </FormField>
+            )}
 
             <div className="sm:col-span-2 border-t border-slate-300 pt-4">
               <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">Pricing (per case)</p>

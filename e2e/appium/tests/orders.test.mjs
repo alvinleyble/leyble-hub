@@ -1,7 +1,7 @@
 // Outgoing Orders screen — basic coverage per e2e/appium/README.md "Adding a new test".
 
 import { withSession, assert } from '../helpers/driver.js';
-import { loginAs, navigateTo } from '../helpers/auth.js';
+import { loginAs, navigateTo, showEverything } from '../helpers/auth.js';
 import { waitForTestId, clickTestId, allTestId, assertCount, waitForCountSettled, setInputValue } from '../helpers/ui.js';
 
 withSession(async (driver) => {
@@ -24,13 +24,24 @@ withSession(async (driver) => {
   // (rather than "All") so the first row is guaranteed to navigate to Order Detail —
   // clicking a Draft row instead opens the resume-draft modal, not the detail page. Which
   // status actually has rows varies with the shared dev database's contents, so this
-  // tries each in turn rather than assuming "Pending" specifically is non-empty.
+  // tries each in turn rather than assuming "Pending" specifically is non-empty. In
+  // Transit, Delivered and Closed are only there once Settings' "Show everything" is on,
+  // so they are the fallback when the always-shown tabs are empty.
   let detailRows = [];
-  for (const tab of ['pending', 'in_transit', 'completed', 'done', 'cancelled']) {
-    await clickTestId(driver, `orders-tab-${tab}`);
-    await waitForCountSettled(driver, 'orders-row');
-    detailRows = await allTestId(driver, 'orders-row');
-    if (detailRows.length > 0) break;
+  const findRows = async (tabs) => {
+    for (const tab of tabs) {
+      await clickTestId(driver, `orders-tab-${tab}`);
+      await waitForCountSettled(driver, 'orders-row');
+      detailRows = await allTestId(driver, 'orders-row');
+      if (detailRows.length > 0) return;
+    }
+  };
+  await findRows(['pending', 'cancelled']);
+  if (detailRows.length === 0) {
+    await showEverything(driver);
+    await navigateTo(driver, 'orders');
+    await waitForTestId(driver, 'orders-list');
+    await findRows(['in_transit', 'completed', 'done']);
   }
   assert(detailRows.length > 0, `at least one non-draft Orders tab has a row to open (found ${detailRows.length})`);
   await detailRows[0].click();

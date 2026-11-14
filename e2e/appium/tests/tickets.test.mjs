@@ -4,11 +4,13 @@
 // closest equivalent, per the task brief's allowance for screens without a search box.
 
 import { withSession, assert } from '../helpers/driver.js';
-import { loginAs, navigateTo } from '../helpers/auth.js';
+import { loginAs, navigateTo, showEverything } from '../helpers/auth.js';
 import { waitForTestId, clickTestId, allTestId, waitForCountSettled } from '../helpers/ui.js';
 
 withSession(async (driver) => {
   await loginAs(driver);
+  // Tickets is hidden until Settings' "Show everything" is on.
+  await showEverything(driver);
   await navigateTo(driver, 'tickets');
 
   // 1. The ticket list loads with real data. "All" is used for this check (rather than

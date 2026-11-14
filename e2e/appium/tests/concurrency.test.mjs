@@ -3,7 +3,7 @@
 // and DEVICE_B_UDID to target them; the defaults are the standard two local emulators.
 
 import { createDriver, switchToWebview, assert } from '../helpers/driver.js';
-import { loginAs, navigateTo } from '../helpers/auth.js';
+import { loginAs, navigateTo, showEverything } from '../helpers/auth.js';
 import {
   allTestId, clickTestId, setInputValue, testId, waitForCountSettled, waitForTestId,
 } from '../helpers/ui.js';
@@ -97,6 +97,9 @@ async function ensureCartSheetOpen(driver) {
 // logic issue, and this sidesteps it by halving the simultaneous automation load.
 async function setUpDeviceToEditForm(driver, email) {
   await loginAs(driver, { email });
+  // openFirstNonDraftOrder walks every status tab, In Transit / Delivered / Closed
+  // included, so both devices need the whole app on to pick the same order.
+  await showEverything(driver);
   await navigateTo(driver, 'orders');
   const orderHeading = await openFirstNonDraftOrder(driver);
   await clickTestId(driver, 'order-edit-button');

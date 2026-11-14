@@ -15,6 +15,7 @@ import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
 import { bottleCredit, bottlesReturned, countsReturns } from './bottleReturns.js';
 import { usePrintReceipt } from './usePrintReceipt';
+import { useShowEverything } from '../../config/showEverything';
 import PrinterPicker from './PrinterPicker';
 import { orderRef } from '../../utils/orderRef';
 import {
@@ -164,6 +165,10 @@ export default function OrderDetailPage() {
   const [fromLocalSnapshot, setFromLocalSnapshot] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  // Settings' "Show everything". Off, nothing here moves an order past pending:
+  // Dispatch, Picked Up, Delivered, Close, Reopen and the steps back are hidden. Edit,
+  // Print and Cancel stay, and an order already further along still opens and prints.
+  const { showEverything: stagesShown } = useShowEverything();
   const [editing, setEditing]       = useState(false);
   const [closing, setClosing]       = useState(false);
   // A delta that lands while the operator is forming an edit is held beside the form,
@@ -202,8 +207,7 @@ export default function OrderDetailPage() {
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
     twicePrompt, confirmTwice,
-    printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
-  } = usePrintReceipt(order, returnCounts, setOrder);
+  } = usePrintReceipt(order, returnCounts, setOrder, undefined, { autoTag: true });
 
   const adoptAuthoritativeOrder = useCallback((current) => {
     setOrder(current);
@@ -800,7 +804,7 @@ export default function OrderDetailPage() {
       </div>
 
       {/* Bottle returns — review inline before closing */}
-      {order.status === 'completed' && bottleItems.length > 0 && (
+      {stagesShown && order.status === 'completed' && bottleItems.length > 0 && (
         <OrderCloseForm
           order={order}
           returnCounts={returnCounts}
@@ -888,7 +892,7 @@ export default function OrderDetailPage() {
         )}
       </div>
 
-      {order.status === 'completed' && (
+      {stagesShown && order.status === 'completed' && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
           <Button
             className="w-full"
@@ -952,7 +956,7 @@ export default function OrderDetailPage() {
             </Button>
 
             {/* Delivery pending: Start Dispatch */}
-            {order.status === 'pending' && !isPickup && (
+            {stagesShown && order.status === 'pending' && !isPickup && (
               <Button
                 disabled={offlineViewingSynced}
                 title={offlineViewingSynced ? 'Needs a connection' : undefined}
@@ -969,7 +973,7 @@ export default function OrderDetailPage() {
             )}
 
             {/* Pickup pending: Mark as Picked Up */}
-            {order.status === 'pending' && isPickup && (
+            {stagesShown && order.status === 'pending' && isPickup && (
               <Button
                 disabled={offlineViewingSynced}
                 title={offlineViewingSynced ? 'Needs a connection' : undefined}
@@ -985,7 +989,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'in_transit' && (
+            {stagesShown && order.status === 'in_transit' && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1000,7 +1004,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'in_transit' && (
+            {stagesShown && order.status === 'in_transit' && (
               <Button
                 variant="warning"
                 disabled={offlineViewingSynced}
@@ -1015,7 +1019,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'completed' && !isPickup && (
+            {stagesShown && order.status === 'completed' && !isPickup && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1030,7 +1034,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'completed' && isPickup && (
+            {stagesShown && order.status === 'completed' && isPickup && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1045,7 +1049,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'done' && (
+            {stagesShown && order.status === 'done' && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1124,20 +1128,6 @@ export default function OrderDetailPage() {
           loading={printing}
         >
           Print a second copy for your records?
-        </Modal>
-      )}
-
-      {/* Confirm tagging this order as printed */}
-      {printPrompt && (
-        <Modal
-          title="Tag receipt as printed?"
-          onClose={cancelPrintTag}
-          onConfirm={confirmPrintTag}
-          confirmLabel="Yes, tag as printed"
-          loading={taggingPrint}
-        >
-          Do you want to tag Order {orderRef(order)} as printed
-          ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
         </Modal>
       )}
 
