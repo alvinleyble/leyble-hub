@@ -275,31 +275,21 @@ async function pruneRefs(remaining) {
 }
 
 // Product creates alone may adopt a duplicate. The server, not a client SKU
-// search, determines equality; only names and other text values are normalized on the device.
+// search, determines equality; only the names are normalized on the device.
 const normalizedProductName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
+// The values typed on Add Product that adopting the existing product would drop: the
+// price, and an initial stock when one was entered. Fields the offline form locks
+// (bottles per case, bottle return, deposit) and blanks never send a create to a person.
 const PRODUCT_CLASH_FIELDS = [
-  ['category', 'Category', 'text'],
-  ['unit', 'Unit', 'text'],
-  ['base_wholesale_price', 'Price', 'peso'],
-  ['units_per_case', 'Bottles per case', 'number'],
-  ['requires_bottle_return', 'Bottle return', 'boolean'],
-  ['deposit_fee', 'Deposit per bottle', 'peso'],
-  ['current_stock', 'Stock', 'number'],
+  { field: 'base_wholesale_price', label: 'Price', kind: 'peso', entered: (v) => v !== undefined && v !== null && v !== '' },
+  { field: 'current_stock', label: 'Stock', kind: 'number', entered: (v) => Number(v) > 0 },
 ];
-const SAME_VALUE = {
-  text: (a, b) => normalizedProductName(a) === normalizedProductName(b),
-  number: (a, b) => Number(a) === Number(b),
-  peso: (a, b) => Number(a) === Number(b),
-  boolean: (a, b) => Boolean(a) === Boolean(b),
-};
 
-// Every value entered on this device (besides the name and the code itself) that the
-// server product does not share. A field the create never carried was not entered.
 export function productClashDifferences(payload, existing) {
   return PRODUCT_CLASH_FIELDS
-    .filter(([field, , kind]) => payload?.[field] !== undefined && !SAME_VALUE[kind](payload[field], existing?.[field]))
-    .map(([field, label, kind]) => ({ field, label, kind, mine: payload[field], theirs: existing?.[field] }));
+    .filter(({ field, entered }) => entered(payload?.[field]) && Number(payload[field]) !== Number(existing?.[field]))
+    .map(({ field, label, kind }) => ({ field, label, kind, mine: payload[field], theirs: existing?.[field] }));
 }
 
 function isSameProduct(payload, existing) {

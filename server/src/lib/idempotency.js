@@ -50,9 +50,9 @@
 const RECEIPT_TABLES = new Set(['orders', 'supplier_deliveries']);
 
 // The same idea for `request_keys.entity_type`: a closed set, never a request field.
-// `order` is the only member today; a second entity is one entry here plus the claim
-// call in its route.
-const MUTATION_ENTITIES = new Set(['order']);
+// `order` mutations, and `product` creates (a products row has no `request_key` column
+// of its own). Another entity is one entry here plus the claim call in its route.
+const MUTATION_ENTITIES = new Set(['order', 'product']);
 
 const UNIQUE_VIOLATION = '23505';
 

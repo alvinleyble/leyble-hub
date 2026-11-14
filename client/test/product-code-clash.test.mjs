@@ -79,15 +79,11 @@ test('same normalized name and same entered values adopt the server product and 
   assert.deepEqual(await queuedProductsFromOutbox(), []);
 });
 
-test('same name with any entered value differing reaches Needs attention instead of being adopted', async () => {
+test('same name with a different entered price or initial stock reaches Needs attention instead of being adopted', async () => {
   for (const values of [
     { base_wholesale_price: 999 },
-    { unit: 'bottle' },
-    { units_per_case: 24 },
-    { requires_bottle_return: true },
-    { deposit_fee: 5 },
+    { base_wholesale_price: 0 },
     { current_stock: 50 },
-    { category: 'Soft Drinks' },
   ]) {
     await outbox.__clearOutbox();
     await queueProduct(existing.name, values);
@@ -98,6 +94,19 @@ test('same name with any entered value differing reaches Needs attention instead
     assert.ok(outbox.isProductCodeClash(parked), `${Object.keys(values)[0]} differs, so a person decides`);
     assert.deepEqual(outbox.productClashDifferences(parked.payload, parked.product_clash.existing_product).map(d => d.field), Object.keys(values));
   }
+});
+
+test('values the offline form locks or leaves blank never send a same-name create to a person', async () => {
+  const configured = {
+    ...existing, category: 'Soft Drinks', units_per_case: 24, requires_bottle_return: true,
+    deposit_fee: '5.00', current_stock: '30.00',
+  };
+  const product = await queueProduct(existing.name, { current_stock: 0 });
+  api.request = async () => { throw duplicate(configured); };
+  const result = await outbox.drainOutbox();
+  assert.deepEqual(result.adopted, [product.id]);
+  assert.deepEqual(await outbox.listNeedsAttention(), []);
+  assert.deepEqual(await outbox.listRecords(), []);
 });
 
 test('a deleted (deactivated) product is never adopted silently, even when every value matches', async () => {
@@ -334,9 +343,28 @@ test('an online Add Product that adopts an existing product says so, never "adde
   } finally { view.unmount(); }
 });
 
-test('createProductLocalFirst reports a genuinely new product as created, not adopted', async () => {
+test('an online Add Product that clashes sends the operator to Needs attention, never "will sync when connected"', async () => {
+  api.request = async () => { throw duplicate(); };
+  let view;
+  await act(async () => { view = render(React.createElement(ToastProvider, null, React.createElement(ProductFormModal, { onClose() {}, onSaved() {} }))); });
+  try {
+    await act(async () => {
+      setInput(inputFor(view, 'Product Name'), 'Cola One Litre');
+      setInput(inputFor(view, 'SKU'), existing.sku);
+      setInput(inputFor(view, 'Wholesale Price (₱ / case)'), '999');
+    });
+    view.click(view.all('button').find(b => b.textContent.includes('Save Product')));
+    await settle(60);
+    assert.match(view.text(), /Product code already exists; tap the status light to choose\./);
+    assert.doesNotMatch(view.text(), /will sync when connected|added to inventory|using the existing product/);
+    assert.equal((await outbox.listNeedsAttention()).length, 1);
+  } finally { view.unmount(); }
+});
+
+test('createProductLocalFirst reports a genuinely new product as created, not adopted or clashing', async () => {
   api.request = async (_path, options) => ({ ...JSON.parse(options.body), id: 92 });
   const result = await createProductLocalFirst({ name: 'Brand new', unit: 'case', sku: 'new-1', base_wholesale_price: 50 }, { profileKey: 'josie' });
   assert.equal(result.synced, true);
   assert.equal(result.adopted, false);
+  assert.equal(result.clash, false);
 });

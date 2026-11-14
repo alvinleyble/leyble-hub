@@ -4,11 +4,7 @@ import { PHP } from '../../utils/money.js';
 import { useToast } from '../ui/Toast.jsx';
 
 function shown({ kind }, value) {
-  if (kind === 'boolean') return value ? 'Yes' : 'No';
-  if (value === null || value === undefined || value === '') return 'None';
-  if (kind === 'peso') return PHP(value);
-  if (kind === 'number') return String(Number(value));
-  return String(value);
+  return kind === 'peso' ? PHP(value) : String(Number(value));
 }
 
 // This is a product question, not an order/customer re-point. Keep that existing

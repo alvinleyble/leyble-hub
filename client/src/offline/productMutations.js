@@ -1,5 +1,5 @@
 import { api } from '../api/client.js';
-import { enqueue, drainOutbox, listRecords, QUEUED } from './outbox.js';
+import { enqueue, drainOutbox, listRecords, isProductCodeClash, QUEUED } from './outbox.js';
 import { applyCatalogueDelta, getCachedEntity } from './catalogue.js';
 import {
   recordConflict, hasOpenConflict, removeConflict, listConflicts,
@@ -30,7 +30,7 @@ import { outboxKey } from './keys.js';
 /**
  * Queue a new product. Stock/price guards apply to edits, not creates; a SKU
  * collision is resolved by the drain (adopted only when the existing product is
- * active and every entered value matches, otherwise attention).
+ * active and its name, price and any entered stock match, otherwise attention).
  * The row has no id until it syncs; the Inventory list merges it in from the outbox
  * (queuedProductsFromOutbox below), the same way the directory shows queued customers.
  */
@@ -42,8 +42,8 @@ export async function createProductLocalFirst(payload, { profileKey }) {
     payload,
     profileKey,
   });
-  const { synced, adopted } = await drainNow(record.id);
-  return { record, synced, adopted };
+  const { synced, adopted, clash } = await drainNow(record.id);
+  return { record, synced, adopted, clash };
 }
 
 /**
@@ -165,9 +165,13 @@ async function attachGuard(recordId, guard) {
 async function drainNow(recordId) {
   await screenProductMutations().catch(() => {});
   const result = await drainOutbox().catch(() => null);
-  const stillQueued = (await listRecords().catch(() => []))
-    .some((r) => r.id === recordId);
-  return { synced: !stillQueued, adopted: Boolean(result?.adopted?.includes(recordId)) };
+  const mine = (await listRecords().catch(() => []))
+    .find((r) => r.id === recordId);
+  return {
+    synced: !mine,
+    adopted: Boolean(result?.adopted?.includes(recordId)),
+    clash: isProductCodeClash(mine),
+  };
 }
 
 // ── The conflict guard (ADR 0015 §6) ────────────────────────────────────────

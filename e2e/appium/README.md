@@ -248,8 +248,8 @@ then reconnects them in order. Never point this test at a shared/production data
    npm run test:product-code-clash
    ```
 
-The run verifies automatic adoption when the name and every entered value match (one
-server product, both queues empty), Needs attention for the same name with a different
+The run verifies automatic adoption when the name, price and any entered initial stock
+match (one server product, both queues empty), Needs attention for the same name with a different
 price (₱999 vs ₱200, both prices shown; explicit adoption keeps ₱200), different-name
 attention with both names and both actions, explicit adoption on the tablet, and changing
 the code on the phone. It saves `tablet-product-price-clash.png`,

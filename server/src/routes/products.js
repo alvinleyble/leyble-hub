@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { logActivity, diffFields } = require('../lib/activityLog');
+const { normalizeRequestKey, claimRequestKey } = require('../lib/idempotency');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -43,19 +44,37 @@ ORDER BY category NULLS LAST, name`,
   }
 });
 
+// A resent create whose first attempt already committed is answered with the product
+// it made, as it stands now, never as a clash with itself.
+async function productForSpentKey(runner, requestKey) {
+  if (!requestKey) return null;
+  const { rows: [spent] } = await runner.query(
+    `SELECT p.* FROM request_keys k JOIN products p ON p.id = k.entity_id
+      WHERE k.request_key = $1 AND k.entity_type = 'product'`,
+    [requestKey]
+  );
+  return spent || null;
+}
+
 // POST /api/v1/products
 router.post('/', async (req, res, next) => {
   const {
     name, category, unit, sku,
     base_wholesale_price = 0,
     deposit_fee = 0, current_stock = 0, units_per_case = 1,
-    requires_bottle_return = false,
+    requires_bottle_return = false, request_key,
   } = req.body;
 
   // Validate input before opening a connection/transaction — an early return after
   // BEGIN would release the client mid-transaction (pg won't auto-rollback).
   if (!name || !unit) {
     return res.status(400).json({ error: 'name and unit are required' });
+  }
+  let requestKey = null;
+  try {
+    requestKey = normalizeRequestKey(request_key);
+  } catch (err) {
+    return next(err);
   }
 
   const client = await db.connect();
@@ -91,6 +110,19 @@ router.post('/', async (req, res, next) => {
       performedBy: req.user.id,
     });
 
+    if (requestKey) {
+      const claim = await claimRequestKey(client, { key: requestKey, entityType: 'product', entityId: product.id });
+      if (!claim.claimed) {
+        await client.query('ROLLBACK');
+        const spent = await productForSpentKey(client, requestKey);
+        if (spent) return res.json(spent);
+        return res.status(409).json({
+          code: 'request_key_reused',
+          error: 'This request key was already used for a different write. Re-issue the request.',
+        });
+      }
+    }
+
     await client.query('COMMIT');
     res.status(201).json(product);
   } catch (err) {
@@ -99,6 +131,8 @@ router.post('/', async (req, res, next) => {
     // not collapse whitespace. Older clients still get the same 409/code/error.
     if (err.code === '23505' && err.constraint === 'products_sku_key') {
       try {
+        const spent = await productForSpentKey(client, requestKey);
+        if (spent) return res.json(spent);
         const { rows: [existing] } = await client.query('SELECT * FROM products WHERE sku = $1', [sku]);
         if (existing) {
           return res.status(409).json({

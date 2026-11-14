@@ -59,7 +59,7 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
       // in about a second and the operator sees the ordinary toast; blind, it shows on
       // the grid as "Waiting to sync" until the line returns.
       const profileKey = await api.getActiveProfile();
-      const { synced, adopted } = await createProductLocalFirst({
+      const { synced, adopted, clash } = await createProductLocalFirst({
         name:                 form.name.trim(),
         category:             form.category.trim() || null,
         unit:                 form.unit.trim(),
@@ -70,7 +70,8 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
         units_per_case:       Number(form.units_per_case),
         requires_bottle_return: form.requires_bottle_return,
       }, { profileKey });
-      addToast(
+      if (clash) addToast('Product code already exists; tap the status light to choose.', 'error');
+      else addToast(
         adopted
           ? `${form.name} already exists; using the existing product.`
           : synced
