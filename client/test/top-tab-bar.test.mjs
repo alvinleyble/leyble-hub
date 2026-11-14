@@ -15,6 +15,7 @@ import { lightStatus } from '../src/components/layout/StatusLight.jsx';
 import {
   nextSeenCount, shouldShowBubble, SEEN_DUPLICATES_KEY,
 } from '../src/components/layout/useDuplicateBubble.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const TopTabBar = (await import('../src/components/layout/TopTabBar.jsx')).default;
 const MenuDrawer = (await import('../src/components/layout/MenuDrawer.jsx')).default;
@@ -76,7 +77,8 @@ async function renderAt(path, element) {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-test('the six tabs run Dashboard → Personnel, each named even when only its icon shows', async () => {
+test('the six tabs run Dashboard → Personnel, each named even when only its icon shows', async (t) => {
+  await showEverythingFor(t);
   api.get = async () => [];
   const view = await renderAt('/dashboard', h(TopTabBar, { onOpenMenu: () => {} }));
   const tabs = view.all('nav[aria-label="Main navigation"] a');
@@ -138,7 +140,8 @@ test('the light sits in the title row, directly left of the hamburger', async ()
   view.unmount();
 });
 
-test('the six tabs share the full width in equal segments on every screen size', async () => {
+test('the six tabs share the full width in equal segments on every screen size', async (t) => {
+  await showEverythingFor(t);
   api.get = async () => [];
   const view = await renderAt('/dashboard', h(TopTabBar, { onOpenMenu: () => {} }));
   const tabs = view.all('nav[aria-label="Main navigation"] a');
@@ -153,7 +156,8 @@ test('the six tabs share the full width in equal segments on every screen size',
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
-test('the menu holds Leyble Hub + close, then Tickets, Audit Log, Settings, Log out', async () => {
+test('the menu holds Leyble Hub + close, then Tickets, Audit Log, Settings, Log out', async (t) => {
+  await showEverythingFor(t);
   api.get = async (p) => (p === '/auth/me' ? { id: 1, email: 'josie@leyblestore.com', full_name: 'Josie' } : []);
   let closed = 0;
   const view = await renderAt('/dashboard', h(MenuDrawer, { open: true, onClose: () => { closed += 1; } }));

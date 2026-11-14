@@ -223,9 +223,10 @@ import { PHP } from '../../utils/money'; // formatPeso: ₱1,234.50, −₱135.0
 **Toasts**: `const { addToast } = useToast()` → `addToast(msg, 'success' | 'error')`.
 
 **Navigation**: every screen size uses one top tab bar (`TopTabBar.jsx`, items in
-`client/src/components/layout/navigation.js`) — six tabs, icons only below `sm:`, with the
-status light (`StatusLight.jsx`) and the hamburger menu (`MenuDrawer.jsx`: Tickets, Audit Log,
-Settings, Log out) at the far right. There is no sidebar. Width-based `sm:`/`md:`/`lg:` are
+`client/src/components/layout/navigation.js`) — six tabs (four while Settings' "Show
+everything" switch, `client/src/config/showEverything.js`, is off), icons only below `sm:`,
+with the status light (`StatusLight.jsx`) and the hamburger menu (`MenuDrawer.jsx`: Tickets
+and Audit Log while that switch is on, Settings, Log out) at the far right. There is no sidebar. Width-based `sm:`/`md:`/`lg:` are
 used for everything responsive (table columns etc.).
 
 ### V2 tablet shell (in progress — see [docs/product/proposals/v2-tablet-pos-overhaul.md](docs/product/proposals/v2-tablet-pos-overhaul.md))

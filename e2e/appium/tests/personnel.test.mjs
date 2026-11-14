@@ -1,11 +1,13 @@
 // Personnel screen — basic coverage per e2e/appium/README.md "Adding a new test".
 
 import { withSession, assert } from '../helpers/driver.js';
-import { loginAs, navigateTo } from '../helpers/auth.js';
+import { loginAs, navigateTo, showEverything } from '../helpers/auth.js';
 import { waitForTestId, allTestId, assertCount, waitForCountSettled, setInputValue } from '../helpers/ui.js';
 
 withSession(async (driver) => {
   await loginAs(driver);
+  // Personnel is hidden until Settings' "Show everything" is on.
+  await showEverything(driver);
   await navigateTo(driver, 'personnel');
 
   // 1. The personnel list loads with real data.

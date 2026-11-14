@@ -8,6 +8,7 @@ import OrderCloseForm, { breakdownForItem } from './OrderCloseForm';
 import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
+import { useShowEverything } from '../../config/showEverything';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
 import {
@@ -64,6 +65,9 @@ const MODES = {
 // math/live preview stays in one place.
 export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered' }) {
   const cfg = MODES[mode] ?? MODES.delivered;
+  // Settings' "Show everything" off: Outgoing offers no way in here, and should one ever
+  // open, it still never moves an order past pending (no Dispatch / Delivered / Close).
+  const { showEverything: stagesShown } = useShowEverything();
   const { addToast } = useToast();
   const [orders, setOrders]   = useState({});
   const [loading, setLoading] = useState(true);
@@ -185,9 +189,8 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
     twicePrompt, confirmTwice,
-    printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, (updated) =>
-    setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment);
+    setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment, { autoTag: true });
 
   // Reset the bottle-return entries and adjustment fields whenever the active
   // (unprocessed) order changes — otherwise stale values from the previous order
@@ -579,7 +582,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                       </p>
                     </div>
                   )
-                ) : (
+                ) : stagesShown && (
                   <div className="bg-white rounded-xl border border-slate-200 p-5">
                     <Button
                       className="w-full"
@@ -622,20 +625,6 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
           loading={printing}
         >
           Print a second copy for your records?
-        </Modal>
-      )}
-
-      {/* Confirm tagging this order as printed, after returning from the print dialog */}
-      {printPrompt && (
-        <Modal
-          title="Tag receipt as printed?"
-          onClose={cancelPrintTag}
-          onConfirm={confirmPrintTag}
-          confirmLabel="Yes, tag as printed"
-          loading={taggingPrint}
-        >
-          Do you want to tag Order {orderRef(orders[printPrompt.orderId] || { id: printPrompt.orderId })} as printed
-          ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
         </Modal>
       )}
 

@@ -22,8 +22,10 @@ const isOrderObject = (val) => Boolean(val && typeof val === 'object' && (val.id
 // `options`:
 //   copies  — print this many copies with no "print twice?" gate (V2 POS: 2)
 //   autoTag — tag the order as printed straight after a successful print instead of
-//             asking first (V2 POS's zero-prompt flow; the NOT PRINTED badge in
-//             History is what surfaces a print that never happened).
+//             asking first. OrderDetailPage and ReviewQueueModal both pass it: the
+//             owners forgot to answer "Tag receipt as printed?" and had no way to tag
+//             an order later. A print that errors never reaches the tag, and the Not
+//             Printed badge on Outgoing is what surfaces a print that never happened.
 export function usePrintReceipt(order, returnCounts, onTagged, liveAdjustment, options = {}) {
   const { copies: forcedCopies = null, autoTag = false } = options;
   const { addToast } = useToast();

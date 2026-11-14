@@ -10,6 +10,7 @@ import { api } from '../src/api/client.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import { __clearReceipts } from '../src/offline/receiptHistory.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
 
@@ -71,7 +72,8 @@ async function renderWithSelection(status) {
   return r;
 }
 
-test('closing a review queue opened from the selection leaves no stale banner and no frozen selection', async () => {
+test('closing a review queue opened from the selection leaves no stale banner and no frozen selection', async (t) => {
+  await showEverythingFor(t);
   const r = await renderWithSelection('completed');
 
   r.click(buttonNamed(r, 'Review Selected'));
@@ -102,7 +104,8 @@ test('closing a review queue opened from the selection leaves no stale banner an
   r.unmount();
 });
 
-test('a revision bump to a selected order while the queue is NOT open still freezes the selection', async () => {
+test('a revision bump to a selected order while the queue is NOT open still freezes the selection', async (t) => {
+  await showEverythingFor(t);
   const r = await renderWithSelection('in_transit');
   assert.ok(buttons(r).some((button) => button.textContent.includes('Mark Delivered')));
 

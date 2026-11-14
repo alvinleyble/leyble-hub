@@ -19,6 +19,7 @@ import { putReceipt, getReceipt } from '../src/offline/receiptHistory.js';
 import { saveOrderLocalFirst, cleanupOrphanedDraftDirect, updateLocalOrder } from '../src/offline/posSave.js';
 import { notifyDrainCompleteWith, handleDrainCompletionWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
 import { startOfflineCore, stopOfflineCore } from '../src/offline/index.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const { createRoot } = await import('react-dom/client');
 
@@ -725,7 +726,8 @@ function makeLocalOrder(overrides = {}) {
   };
 }
 
-test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and (ADR 0015 §5) now KEEPS Dispatch enabled while unsynced', async () => {
+test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and (ADR 0015 §5) now KEEPS Dispatch enabled while unsynced', async (t) => {
+  await showEverythingFor(t);
   await putReceipt(makeLocalOrder());
   // Slice 3.2 — "unsynced" is now the outbox's answer, not "we read this locally", so
   // the order has to actually be queued for the banner and the offline transitions to
@@ -762,7 +764,8 @@ test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "
   r.unmount();
 });
 
-test('Slice 3.2: a SYNCED order read from local history offline shows the offline-copy banner, not "Waiting to sync", and gates every transition', async () => {
+test('Slice 3.2: a SYNCED order read from local history offline shows the offline-copy banner, not "Waiting to sync", and gates every transition', async (t) => {
+  await showEverythingFor(t);
   // The order is in local history (the eager sync put it there) but nothing about it
   // is queued — it exists on the server and other tablets can see it. Flagging it
   // "unsynced" would hand the operator ADR 0015 §5's offline transitions on an order
