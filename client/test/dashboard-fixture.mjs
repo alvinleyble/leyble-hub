@@ -19,7 +19,7 @@ export function salesDashboardPayload(overrides = {}) {
         from: '2026-11-09', gross: 4100, comparison: legacy(3660, 440, 12), in_progress: true,
         previous: {
           available: true, from: '2026-11-08', to: '2026-11-08', gross: 4000, progress_pct: 102.5,
-          verdict: { available: true, from: '2026-11-01', to: '2026-11-01', previous_gross: 3200, change: 800, change_pct: 25 },
+          verdict: { available: true, from: '2026-11-07', to: '2026-11-07', previous_gross: 3200, change: 800, change_pct: 25 },
         },
       },
       week: {

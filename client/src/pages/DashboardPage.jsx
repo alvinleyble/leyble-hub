@@ -3,6 +3,7 @@ import { useRefreshListener } from '../offline/refresh';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { StockBadge } from '../components/ui/Badge';
+import { Chip, ChipRow } from '../components/ui/ChipRow';
 import Page, { PAGE_PADDING, SECTION_GAP } from '../components/ui/Page';
 import PageHeader from '../components/ui/PageHeader';
 import { PHP } from '../utils/money';
@@ -12,8 +13,8 @@ import OfflineBanner from '../components/ui/OfflineBanner';
 import { formatCardDateTime } from '../utils/dateFormat';
 import {
   describeVerdict, describeProgress, periodLabels, formatDay, formatAsOf, dayOfMonth, monthLabel,
-  monthShort, monthKey, pagerBounds, niceCeiling, formatCases, isSalesPayload, normalizeDashboard,
-  padToMonthEnd,
+  monthShort, monthKey, pagerBounds, niceCeiling, isSalesPayload, normalizeDashboard,
+  padToMonthEnd, productRanking, productMetrics,
 } from '../utils/salesDashboard';
 import { loadWithCache, readBackOfficeCache, DASHBOARD_CACHE } from '../offline/backOfficeCache.js';
 import { nativeStore } from '../offline/nativeStore.js';
@@ -403,23 +404,58 @@ function MonthlySalesChart({ monthly, viewed, onPick }) {
   );
 }
 
-function TopProducts({ rows, emptyText }) {
+const RANKINGS = ['cases', 'sales', 'orders'];
+
+function ProductRankingTabs({ ranking, onChange }) {
+  const move = (e) => {
+    const i = RANKINGS.indexOf(ranking);
+    const next = e.key === 'ArrowRight' ? RANKINGS[(i + 1) % RANKINGS.length]
+      : e.key === 'ArrowLeft' ? RANKINGS[(i + RANKINGS.length - 1) % RANKINGS.length]
+        : e.key === 'Home' ? RANKINGS[0] : e.key === 'End' ? RANKINGS.at(-1) : null;
+    if (!next) return;
+    e.preventDefault();
+    onChange(next);
+    e.currentTarget.querySelector(`#dashboard-ranking-${next}`)?.focus();
+  };
+  return (
+    <div role="tablist" aria-label="Top 10 ranking" onKeyDown={move} className="mt-2 mb-2">
+      <ChipRow label="Product rankings">
+        {RANKINGS.map((key) => (
+          <Chip key={key} role="tab" id={`dashboard-ranking-${key}`}
+                data-testid={`dashboard-ranking-${key}`} selected={ranking === key}
+                aria-pressed={undefined} aria-selected={ranking === key}
+                aria-controls="dashboard-ranking-panel" tabIndex={ranking === key ? 0 : -1}
+                onClick={() => onChange(key)}>
+            {key[0].toUpperCase() + key.slice(1)}
+          </Chip>
+        ))}
+      </ChipRow>
+    </div>
+  );
+}
+
+function TopProducts({ rows, ranking, emptyText }) {
   if (!rows.length) {
     return <p className="px-5 py-10 text-center text-slate-600 text-base">{emptyText}</p>;
   }
   return (
     <ol className="divide-y divide-slate-300" data-testid="dashboard-top-products">
-      {rows.map((p, i) => (
-        <li key={p.product_id} data-testid="dashboard-top-product"
-            className="flex items-start gap-3 px-4 md:px-5 py-3 min-h-[48px]">
-          <span className="w-7 shrink-0 text-base font-bold text-slate-600 tabular-nums">{i + 1}.</span>
-          <div className="min-w-0 flex-1">
-            <p className="text-base font-semibold text-slate-900 break-words">{p.name}</p>
-            <p className="text-sm text-slate-600 tabular-nums">{formatCases(p.cases)} sold</p>
-          </div>
-          <span className="shrink-0 text-base font-bold text-slate-900 tabular-nums whitespace-nowrap">{PHP(p.gross)}</span>
-        </li>
-      ))}
+      {rows.map((p, i) => {
+        const metrics = productMetrics(p, ranking);
+        return (
+          <li key={p.product_id} data-testid="dashboard-top-product"
+              className="flex items-start gap-3 px-4 md:px-5 py-3 min-h-[48px]">
+            <span className="w-7 shrink-0 text-base font-bold text-slate-600 tabular-nums">{i + 1}.</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-base font-semibold text-slate-900 break-words">{p.name}</p>
+            </div>
+            <div className="min-w-0 text-right tabular-nums">
+              <p className="text-base font-bold text-slate-900" data-testid="dashboard-top-primary">{metrics.primary}</p>
+              <p className="text-sm text-slate-600" data-testid="dashboard-top-secondary">{metrics.secondary}</p>
+            </div>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -715,6 +751,8 @@ function SalesPanel({ data, mv, asOf }) {
 function ProductsPanel({ mv }) {
   const swipe = useMonthSwipe(mv);
   const view = mv.view;
+  const [pickedRanking, setPickedRanking] = useState('cases');
+  const ranking = productRanking(view, pickedRanking);
   return (
     <div {...swipe}>
       <section className={`${CARD} ${SECTION_GAP}`} data-testid="dashboard-products-month">
@@ -733,12 +771,18 @@ function ProductsPanel({ mv }) {
           <section className={CARD}>
             <div className={SECTION_HEAD}>
               <h2 className="text-lg font-bold text-slate-900">Top 10 products</h2>
-              <p className="text-sm text-slate-600">{monthLabel(mv.shown)}, by gross sales</p>
+              {ranking.available && <ProductRankingTabs ranking={ranking.key} onChange={setPickedRanking} />}
+              <p className="text-sm text-slate-600" data-testid="dashboard-ranking-subtitle">
+                {monthLabel(mv.shown)}, by {ranking.key}
+              </p>
             </div>
-            {view
-              ? <TopProducts rows={view.top_products}
-                             emptyText={mv.isPast ? `No sales in ${monthLabel(mv.shown)}` : 'No sales yet this month'} />
-              : <ListPlaceholder />}
+            <div id="dashboard-ranking-panel" role={ranking.available ? 'tabpanel' : undefined}
+                 aria-labelledby={ranking.available ? `dashboard-ranking-${ranking.key}` : undefined}>
+              {view
+                ? <TopProducts rows={ranking.rows} ranking={ranking.key}
+                               emptyText={mv.isPast ? `No sales in ${monthLabel(mv.shown)}` : 'No sales yet this month'} />
+                : <ListPlaceholder />}
+            </div>
           </section>
 
           <section className={CARD}>
