@@ -12,6 +12,7 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import { __clearReceipts } from '../src/offline/receiptHistory.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const OrderDetailPage = (await import('../src/pages/orders/OrderDetailPage.jsx')).default;
 const { createRoot } = await import('react-dom/client');
@@ -172,7 +173,8 @@ test('the cold-load skeleton footer spans exactly the visible columns', async ()
   r.unmount();
 });
 
-test('closing a delivered order starts at no bottles returned, so its total does not move until some are counted', async () => {
+test('closing a delivered order starts at no bottles returned, so its total does not move until some are counted', async (t) => {
+  await showEverythingFor(t);
   api.get = async (path) => (path === '/orders/42'
     ? order({ status: 'completed', items: [{ ...order().items[0], bottles_returned: 0 }] }) : []);
   const r = renderDetail();
