@@ -21,7 +21,7 @@ import {
 } from '../../offline/index.js';
 import { formatPeso } from '../../utils/money';
 import { parseCustomerEntry } from '../../utils/customerEntry';
-import { orderCustomerMatches } from '../../utils/customerSearch';
+import { orderCustomerMatches, isExistingOrderCustomer } from '../../utils/customerSearch';
 
 // Money on screen: the shared formatter (design standard Q15) — "−₱96.00", not "₱-96.00".
 const PHP = formatPeso;
@@ -56,6 +56,7 @@ function CustomerAndOrderTypeFields({
           onSelect={onSelectCustomer}
           onQueryChange={onQueryChange}
           onCreate={onCreateCustomer}
+          isCreateDuplicate={isExistingOrderCustomer}
           creating={creatingCustomer}
           renderCreate={(query) => {
             const { name, address } = parseCustomerEntry(query);

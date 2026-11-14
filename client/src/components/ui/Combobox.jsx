@@ -42,6 +42,7 @@ export default function Combobox({
   isAdded,
   onCreate,            // optional: (query) => void — shows a "+ Create …" row for the typed text
   renderCreate,        // optional: (query) => node — custom label for the create row
+  isCreateDuplicate,   // optional: (item, query) => boolean — domain-specific exact identity
   creating = false,    // optional: busy flag while the parent saves the new record
   ...rest // id + aria-* injected by FormField, forwarded to <input>
 }) {
@@ -92,7 +93,9 @@ export default function Combobox({
   // Hide the create row when the typed text already names an existing item — guards against
   // creating an obvious duplicate.
   const exactExists = items.some(
-    (i) => displayValue(i).trim().toLowerCase() === trimmedQuery.toLowerCase()
+    (i) => isCreateDuplicate
+      ? isCreateDuplicate(i, trimmedQuery)
+      : displayValue(i).trim().toLowerCase() === trimmedQuery.toLowerCase()
   );
   const canCreate = Boolean(onCreate) && trimmedQuery !== '' && !exactExists;
 

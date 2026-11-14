@@ -474,7 +474,9 @@ function stubOrderModalApis({ customers = [] } = {}) {
 }
 
 test('G29: slash quick-create offline queues name + address and immediately makes the note searchable', async () => {
-  const priceFetches = stubOrderModalApis();
+  const priceFetches = stubOrderModalApis({ customers: [
+    { id: 55, name: 'Legacy Store/brgy dalig', address: null, is_active: true },
+  ] });
   let draftPostCalled = false;
   api.post = async (path) => {
     if (path === '/orders') { draftPostCalled = true; return { id: 1 }; }
@@ -511,18 +513,31 @@ test('G29: slash quick-create offline queues name + address and immediately make
   assert.equal(customerRecord.payload.address, 'brgy dalig');
   assert.match(r.text(), /Address: brgy dalig/, 'the selected customer gets its note before syncing');
 
-  for (const query of ['dalig', 'sari-sari/dalig']) {
+  for (const query of ['dalig', 'sari-sari/dalig', ' BRAND NEW SARI-SARI / BRGY DALIG ']) {
     const searchInput = r.byLabel('Customer'); // the phone header collapses after creation
     act(() => { searchInput.focus(); changeInput(searchInput, query); });
-    const row = r.all('[role="option"] button').find((b) =>
+    const options = [...searchInput.parentElement.querySelectorAll('[role="option"] button')];
+    const row = options.find((b) =>
       b.textContent.includes('Brand New Sari-Sari') && !b.textContent.includes('Create'));
     assert.ok(row, `the new customer is found by ${query}`);
     assert.match(row.textContent, /brgy dalig/);
+    const createOffered = options.some((b) => b.textContent.includes('Create'));
+    assert.equal(createOffered, query !== ' BRAND NEW SARI-SARI / BRGY DALIG ',
+      'only exact name + note suppresses Create; partial searches may still create');
+  }
+
+  for (const query of ['Legacy Store/brgy dalig', ' LEGACY STORE/BRGY DALIG ']) {
+    const searchInput = r.byLabel('Customer');
+    act(() => { searchInput.focus(); changeInput(searchInput, query); });
+    const options = [...searchInput.parentElement.querySelectorAll('[role="option"] button')];
+    assert.ok(options.some((b) => b.textContent.includes('Legacy Store/brgy dalig')),
+      'an unsplit historical customer remains findable');
+    assert.equal(options.some((b) => b.textContent.includes('Create')), false,
+      'the exact legacy slash-name also suppresses Create');
   }
 
   // Selecting the freshly quick-created local customer must skip the saved-prices
   // fetch entirely (there is no real id yet to fetch prices for).
-  assert.match(r.text(), /Brand New Sari-Sari/);
   assert.equal(priceFetches.length, 0, 'GET /customers/local-*/prices must never be attempted');
 
   // The early draft-on-customer-pick effect must also skip for a local customer.
