@@ -225,6 +225,38 @@ cd e2e/appium && npm run test:concurrency
 two devices into Josie and Luis by default because each account has one active session; optional
 `DEVICE_A_EMAIL` and `DEVICE_B_EMAIL` overrides must name different staging accounts.
 
+### Product-code clashes (two devices, throwaway local database only)
+
+`tests/product-code-clash.test.mjs` uses the same multi-device harness, but requires
+`emulator-5556` (phone) and `emulator-5558` (tablet) explicitly. It disables Wi-Fi and
+mobile data on those devices while entering each product through Inventory → Add Product,
+then reconnects them in order. Never point this test at a shared/production database.
+
+1. Start a migrated **throwaway local** backend with Josie, Luis and Alvin activated
+   (password `leyble123`). Build/install a debug APK against it using the local-backend
+   recipe above, with `VITE_API_URL=http://10.0.2.2:<port>` and
+   `VITE_V25_OFFLINE_CORE=on` on the build command line.
+2. Clear only the two test devices before the run. Start Appium with
+   `--default-capabilities '{"appium:udid":"emulator-5556","appium:uiautomator2ServerInstallTimeout":120000,"appium:uiautomator2ServerLaunchTimeout":120000,"appium:adbExecTimeout":120000}'`
+   in addition to the flags above. These longer startup limits accommodate cold-booted
+   emulators on a loaded host; the app's own API timeout is unchanged.
+3. Run:
+
+   ```bash
+   DEVICE_A_UDID=emulator-5556 DEVICE_B_UDID=emulator-5558 \
+   TEST_API_URL=http://localhost:<port> TEST_OUTPUT_DIR=/absolute/proof/path \
+   npm run test:product-code-clash
+   ```
+
+The run verifies automatic adoption when the name, price and any entered initial stock
+match (one server product, both queues empty), Needs attention for the same name with a different
+price (₱999 vs ₱200, both prices shown; explicit adoption keeps ₱200), different-name
+attention with both names and both actions, explicit adoption on the tablet, and changing
+the code on the phone. It saves `tablet-product-price-clash.png`,
+`tablet-product-code-clash.png` and `phone-product-code-clash.png` under the output
+folder's `screenshots/`. Fixtures remain in the throwaway database; destroy that database
+when finished. The test restores connectivity and tears down its automation sessions.
+
 ## Adding a new test
 
 1. Copy the shape of an existing screen test (e.g. `tests/orders.test.mjs`): wrap the body in

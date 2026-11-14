@@ -13,7 +13,8 @@
     "test:personnel": "node tests/personnel.test.mjs",
     "test:tickets": "node tests/tickets.test.mjs",
     "test:audit": "node tests/audit.test.mjs",
-    "test:concurrency": "node tests/concurrency.test.mjs"
+    "test:concurrency": "node tests/concurrency.test.mjs",
+    "test:product-code-clash": "node tests/product-code-clash.test.mjs"
   },
   "dependencies": {
     "appium": "^3.7.0",
