@@ -23,8 +23,8 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
 
   // Criteria 7.3 / 7.4 — "Bottles per Case" and "Requires bottle return" are the two
   // fields a blind device may not decide. They are not per-device facts like a stock
-  // count: units_per_case is baked into every line total ever computed from this
-  // product (order_items.line_total is GENERATED from it) and requires_bottle_return
+  // count: units_per_case is snapshotted onto every order line of this product as
+  // its bottle count (order_items.units_per_case) and requires_bottle_return
   // decides whether the whole bottle-deposit ledger applies. Criteria 7.5 still lets
   // the product be added right now — these two simply keep their defaults until
   // someone with a connection sets them. Disabled-with-a-message, never a silent drop

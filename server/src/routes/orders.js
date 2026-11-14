@@ -165,8 +165,9 @@ async function resolveOrderId(runner, param) {
   return Number.isInteger(num) ? num : null;
 }
 
-// The "goods-only while open, deposit folded in once closed" rule (see the totals note in
-// CLAUDE.md) expressed as ONE statement: the status test that used to cost a SELECT of its
+// The "listed price while open, returned-bottle credit taken off once closed" rule (see the
+// totals note in CLAUDE.md; line_total is quantity*unit_price − bottles_returned*unit_deposit_fee
+// since migration 051) expressed as ONE statement: the status test that used to cost a SELECT of its
 // own is a CASE over the row being updated, and the sum is a scalar subquery rather than a
 // separate round trip. `o.status` inside the SET reads the row's pre-update value, and no
 // caller of this ever changes status in the same statement, so the branch is unchanged.
