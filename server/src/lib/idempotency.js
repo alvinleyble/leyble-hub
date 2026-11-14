@@ -38,7 +38,8 @@
 // Everything above stores the key ON the row the request created, which is only
 // possible because a create's result is a new row. An UPDATE has none: the order
 // already exists and is edited many times, so `claimRequestKey` below stores the key
-// in `request_keys` (migration 050) alongside the entity it was spent on.
+// in `request_keys` (migration 050) alongside the entity it was spent on. A product
+// create claims there too, because `products` has no `request_key` column of its own.
 //
 // It is the same mechanism, not a second one — the same device-minted key, the same
 // `normalizeRequestKey`, the same "a conflict means this already happened, answer with
