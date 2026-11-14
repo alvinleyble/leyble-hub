@@ -829,7 +829,7 @@ export async function useExistingProduct(id) {
   }
   const saved = await saveDrainOutcome(record, {
     status: QUEUED, product_adoption: product,
-    last_error: null, attempts: 0,
+    last_error: null, last_error_status: null, last_attempt_at: null, attempts: 0,
   });
   notifyOutboxListeners({ type: 'repoint', record: saved });
   return saved;
@@ -844,7 +844,7 @@ export async function changeProductCode(id, code) {
   if (sku === record.payload.sku) throw new Error('Enter a different product code.');
   const saved = await saveDrainOutcome(record, (current) => ({
     payload: { ...current.payload, sku }, status: QUEUED, product_clash: null,
-    product_adoption: null, last_error: null, attempts: 0,
+    product_adoption: null, last_error: null, last_error_status: null, last_attempt_at: null, attempts: 0,
     server_strikes: 0, last_strike_at: null, parked_for: null,
   }));
   notifyOutboxListeners({ type: 'repoint', record: saved });
