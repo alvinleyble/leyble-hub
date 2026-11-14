@@ -394,7 +394,7 @@ async function serverAcceptsWrites(authorKey) {
 // always fresh enough for the drain that immediately follows it.
 const SCREEN_FRESHNESS_MS = 90_000;
 
-function isFreshlyScreened(guard) {
+export function isFreshlyScreened(guard) {
   const at = guard?.screened_at;
   return typeof at === 'number' && (Date.now() - at) < SCREEN_FRESHNESS_MS;
 }

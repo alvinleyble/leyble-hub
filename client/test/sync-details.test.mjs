@@ -20,6 +20,7 @@ import {
   STATE_NEXT, STATE_WAITING, STATE_BLOCKED, STATE_ATTENTION,
 } from '../src/offline/syncDetails.js';
 import { markOnline, stopReachabilityWatcher, __resetStatusState } from '../src/offline/status.js';
+import { updateProductLocalFirst } from '../src/offline/productMutations.js';
 import { ToastProvider } from '../src/components/ui/Toast.jsx';
 
 const SyncDetailsModal = (await import('../src/components/layout/SyncDetailsModal.jsx')).default;
@@ -109,6 +110,12 @@ test('every record type the app queues is named in staff words, never a bare end
   assert.equal(d({ entity_type: 'product', payload: { name: 'Royal 1L' } }).title, 'New product: Royal 1L');
   assert.deepEqual(d({ entity_type: 'product_update', method: 'PATCH', endpoint: '/products/7', payload: { current_stock: 40 } }),
     { title: 'Product edit: Coke 1L', detail: 'Changed: stock count' });
+  assert.deepEqual(d({ entity_type: 'product_stock_confirm', method: 'PATCH', endpoint: '/products/7',
+    payload: { current_stock: 42, reason: 'Reconciled after offline edit' } }),
+  { title: 'Product edit: Coke 1L', detail: 'Changed: stock count' }, 'an answered stock question is a product edit');
+  assert.deepEqual(d({ entity_type: 'product_price_confirm', method: 'PATCH', endpoint: '/products/8',
+    payload: { base_wholesale_price: 310, reason: 'Reconciled after offline edit' } }),
+  { title: 'Product edit: Sprite 1.5L', detail: 'Changed: price' }, 'an answered price question is a product edit');
   assert.deepEqual(d({ entity_type: 'product_batch_price', endpoint: '/products/batch-price',
     payload: { updates: [{ id: 7, new_price: 1 }, { id: 8, new_price: 2 }], reason: 'supplier' } }),
   { title: 'Price change: 2 products', detail: 'Coke 1L, Sprite 1.5L' });
@@ -144,8 +151,9 @@ test('the last error reads in plain words, by what kind of answer it was', () =>
   assert.equal(e({ last_error: 'customer_id is required', last_error_status: 400, status: NEEDS_ATTENTION }),
     'The server refused this change.');
   assert.equal(e({ last_error: 'Failed to fetch' }), 'Could not reach the server — no internet, or the server was down.');
-  assert.equal(e({ last_error: 'Connection timed out (5s). The server or internet took too long to respond.' }),
-    'The server took too long to answer (more than 5 seconds).');
+  assert.equal(e({ last_error: 'Connection timed out (5s). The server or internet took too long to respond. Tap Retry to try again.' }),
+    'The server or the internet connection took too long to answer (more than 5 seconds).',
+    'a timeout cannot tell a slow server from a slow line, so it does not blame the server alone');
   assert.equal(e({ last_error: 'Request failed (500)', status: NEEDS_ATTENTION, parked_for: 'server_error' }),
     'The server kept having an error saving this, so it was set aside. It is not a problem with the details.');
   assert.equal(e({ last_error: 'Depends on outbox record 4, which no longer exists and left no resolvable reference.', status: NEEDS_ATTENTION }),
@@ -187,6 +195,20 @@ test('a record on the attention list is listed and marked, and what waits on it 
     'a status change addressed to a parked order waits, and so does anything linked to it; the drain moves on to 4');
   assert.equal(details.attentionCount, 1);
   assert.equal(details.waitingCount, 3);
+});
+
+test('a stock or price edit is "next" only once it has been freshly checked against the server', () => {
+  const guard = { kind: 'product_patch', checks: [{ product_id: 7, field: 'current_stock' }] };
+  const stock = (fields) => rec(10, { entity_type: 'product_update', method: 'PATCH', endpoint: '/products/7', guard, ...fields });
+  assert.deepEqual(
+    buildSyncDetails([stock({ guard: { ...guard, screened_at: Date.now() } }), rec(11)]).rows.map((r) => r.state),
+    [STATE_NEXT, STATE_WAITING],
+  );
+  assert.deepEqual(
+    buildSyncDetails([stock({ guard: { ...guard, screened_at: Date.now() - 10 * 60_000 } }), rec(11)]).rows.map((r) => r.state),
+    [STATE_WAITING, STATE_NEXT],
+    'a check from ten minutes ago says nothing about now',
+  );
 });
 
 test('nothing on the device is an empty list', () => {
@@ -249,6 +271,30 @@ test('a network failure is timed too, with no server answer', async () => {
   assert.equal(details.rows[0].error, 'Could not reach the server — no internet, or the server was down.');
 });
 
+test('"next to send" is the record the drain actually tried, not a stock count it passed over', async () => {
+  const offline = async () => { throw new TypeError('Failed to fetch'); };
+  api.get = offline;
+  api.request = offline;
+  await updateProductLocalFirst(7, { current_stock: 40 }, {
+    profileKey: 'josie@leyblestore.com', guardFields: ['current_stock'],
+    product: { id: 7, name: 'Coke 1L', unit: 'case', current_stock: 30 },
+  });
+  await enqueue({ entityType: 'order', endpoint: '/orders', payload: {}, profileKey: 'josie@leyblestore.com', receiptNumber: '2A-00011' });
+  await enqueue({ entityType: 'order', endpoint: '/orders', payload: {}, profileKey: 'josie@leyblestore.com', receiptNumber: '2A-00012' });
+  await drainOutbox();
+
+  const [count, tried, behind] = await listRecords();
+  assert.ok(count.guard, 'the stock count is guarded');
+  assert.equal(count.attempts, 0, 'the drain passed over the unchecked count');
+  assert.equal(tried.attempts, 1, 'and tried the first order');
+  assert.equal(behind.attempts, 0);
+
+  const details = await loadSyncDetails();
+  assert.deepEqual(details.rows.map((r) => [r.id, r.state]),
+    [[count.id, STATE_WAITING], [tried.id, STATE_NEXT], [behind.id, STATE_WAITING]]);
+  assert.equal(details.rows[1].error, 'Could not reach the server — no internet, or the server was down.');
+});
+
 // ── The view ─────────────────────────────────────────────────────────────────
 
 test('the view lists the head record first with its tries, last error and raw message', async () => {
@@ -287,6 +333,29 @@ test('the view lists the head record first with its tries, last error and raw me
 
   view.press('Escape');
   assert.equal(closed, 1);
+});
+
+test('the view keeps focus where the user put it while the status light re-renders it', async () => {
+  const details = buildSyncDetails([rec(1, { receipt_number: '3A-00356' })]);
+  let rerender;
+  let closedBy = null;
+  function Host() {
+    const [n, setN] = React.useState(0);
+    rerender = () => setN((x) => x + 1);
+    return h(SyncDetailsModal, { onClose: () => { closedBy = n; }, load: async () => details });
+  }
+  const view = render(h(Host));
+  await flush();
+  const closeButton = view.all('button').find((b) => b.textContent.trim() === 'Close');
+  act(() => { closeButton.focus(); });
+  assert.ok(document.activeElement === closeButton);
+
+  act(() => { rerender(); });
+  act(() => { rerender(); });
+  assert.ok(document.activeElement === closeButton, 'a re-render with a new onClose does not pull focus back to the panel');
+
+  view.press('Escape');
+  assert.equal(closedBy, 2, 'Escape closes through the latest onClose');
 });
 
 test('the view says so when nothing is waiting', async () => {

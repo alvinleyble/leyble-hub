@@ -105,6 +105,8 @@ function RecordCard({ row, position }) {
 export default function SyncDetailsModal({ onClose, load = loadSyncDetails }) {
   const [data, setData] = useState(null);
   const panelRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const liveRef = useRef(true);
 
@@ -125,10 +127,10 @@ export default function SyncDetailsModal({ onClose, load = loadSyncDetails }) {
 
   useEffect(() => {
     panelRef.current?.focus();
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current?.(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   const rows = data?.rows || [];
 

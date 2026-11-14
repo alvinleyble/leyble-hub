@@ -1,4 +1,6 @@
-import { listRecords, QUEUED, NEEDS_ATTENTION, isParkedForServerError, waitsOn, orderCreatesByReceipt } from './outbox.js';
+import {
+  listRecords, QUEUED, NEEDS_ATTENTION, isParkedForServerError, waitsOn, orderCreatesByReceipt, isFreshlyScreened,
+} from './outbox.js';
 import { getCachedEntity } from './catalogue.js';
 import { formatPeso } from '../utils/money.js';
 import { orderStatusLabel } from '../utils/statusBadges.js';
@@ -164,7 +166,9 @@ export function describeRecord(record, lookups = buildLookups()) {
     }
     case 'product':
       return { title: `New product: ${p.name || 'unnamed'}`, detail: null };
-    case 'product_update': {
+    case 'product_update':
+    case 'product_stock_confirm':
+    case 'product_price_confirm': {
       const id = idFromEndpoint(record.endpoint);
       return {
         title: `Product edit: ${lookups.products.get(String(id)) || 'a product'}`,
@@ -231,7 +235,7 @@ export function plainError(record) {
     return 'The server refused this change.';
   }
 
-  if (TIMEOUT_WORDS.test(message)) return 'The server took too long to answer (more than 5 seconds).';
+  if (TIMEOUT_WORDS.test(message)) return 'The server or the internet connection took too long to answer (more than 5 seconds).';
   if (NETWORK_WORDS.test(message)) return 'Could not reach the server — no internet, or the server was down.';
   // Recorded before this tablet kept the answer's status: say only what is certain.
   return record.status === NEEDS_ATTENTION ? 'The server refused this change.' : 'The last try failed.';
@@ -243,7 +247,8 @@ export function plainError(record) {
  *
  * `state` mirrors the drain's own walk: a record on the Needs attention list blocks
  * anything waiting on it, a queued record waiting on a blocked one is blocked in turn,
- * and the first queued record nothing holds back is the one the next pass tries first.
+ * a stock or price edit not freshly checked against the server is passed over, and the
+ * first queued record nothing holds back is the one the next pass tries first.
  */
 export function buildSyncDetails(records, lookups = buildLookups({ records })) {
   const sorted = [...(records || [])].sort((a, b) => Number(a.id) - Number(b.id));
@@ -260,11 +265,11 @@ export function buildSyncDetails(records, lookups = buildLookups({ records })) {
     } else if (waitsOn(record, createsByReceipt).some((id) => blocked.has(id))) {
       blocked.add(record.id);
       state = STATE_BLOCKED;
-    } else if (!nextFound) {
+    } else if (nextFound || (record.guard && !isFreshlyScreened(record.guard))) {
+      state = STATE_WAITING;
+    } else {
       nextFound = true;
       state = STATE_NEXT;
-    } else {
-      state = STATE_WAITING;
     }
     const { title, detail } = describeRecord(record, lookups);
     return {
