@@ -274,6 +274,47 @@ async function pruneRefs(remaining) {
   }
 }
 
+// Product creates alone may adopt a duplicate. The server, not a client SKU
+// search, determines equality; only the names are normalized on the device.
+const normalizedProductName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+// The values typed on Add Product that adopting the existing product would drop: the
+// price, and an initial stock when one was entered. Fields the offline form locks
+// (bottles per case, bottle return, deposit) and blanks never send a create to a person.
+const PRODUCT_CLASH_FIELDS = [
+  { field: 'base_wholesale_price', label: 'Price', kind: 'peso', entered: (v) => v !== undefined && v !== null && v !== '' },
+  { field: 'current_stock', label: 'Stock', kind: 'number', entered: (v) => Number(v) > 0 },
+];
+
+export function productClashDifferences(payload, existing) {
+  return PRODUCT_CLASH_FIELDS
+    .filter(({ field, entered }) => entered(payload?.[field]) && Number(payload[field]) !== Number(existing?.[field]))
+    .map(({ field, label, kind }) => ({ field, label, kind, mine: payload[field], theirs: existing?.[field] }));
+}
+
+function isSameProduct(payload, existing) {
+  return existing.is_active !== false
+    && normalizedProductName(payload?.name) === normalizedProductName(existing.name)
+    && productClashDifferences(payload, existing).length === 0;
+}
+
+export function isProductCreate(record) {
+  return record?.entity_type === 'product' && record.method === 'POST' && record.endpoint === '/products';
+}
+
+function duplicateProduct(record, err) {
+  if (!isProductCreate(record)) return null;
+  if (err?.status !== 409 || err.data?.code !== 'duplicate') return null;
+  const product = err.data.existing_product;
+  return product?.id && typeof product.name === 'string' && product.sku === record.payload?.sku
+    ? product : null;
+}
+
+export function isProductCodeClash(record) {
+  return record?.entity_type === 'product' && record?.status === NEEDS_ATTENTION
+    && Boolean(record.product_clash?.existing_product?.id);
+}
+
 // ── Draining ────────────────────────────────────────────────────────────────
 
 // ADR 0017 #9 — the retry key rides on the body of every POST the outbox sends.
@@ -488,6 +529,7 @@ async function runDrainPass() {
   let failed = 0;
   let result = null;
   const syncedOrders = [];
+  const adoptedProducts = [];
   try {
     const records = await listRecords();
     // A record already on the attention list has not synced either, so it blocks its
@@ -571,11 +613,27 @@ async function runDrainPass() {
         // active session, and attribution is honour-system exactly as the captain
         // accepted it to be.
         authorKey = await authorTokenKey(record);
-        const response = await api.request(endpoint, {
-          method: record.method,
-          body: JSON.stringify(body),
-          ...(authorKey ? { accountKey: authorKey } : {}),
-        });
+        let response;
+        let adopted = false;
+        if (record.entity_type === 'product' && record.product_adoption) {
+          // An explicit operator answer is durable before the drain starts. A
+          // restart between the answer and completion must not resend the create.
+          response = record.product_adoption;
+          adopted = true;
+        } else {
+          try {
+            response = await api.request(endpoint, {
+              method: record.method,
+              body: JSON.stringify(body),
+              ...(authorKey ? { accountKey: authorKey } : {}),
+            });
+          } catch (err) {
+            const existing = duplicateProduct(record, err);
+            if (!existing || !isSameProduct(record.payload, existing)) throw err;
+            response = existing;
+            adopted = true;
+          }
+        }
         await rememberResult(record.id, response);
         const snapshot = orderSnapshotFrom(record, response);
         if (snapshot) {
@@ -584,6 +642,7 @@ async function runDrainPass() {
         }
         await removeRecord(record.id);
         sent++;
+        if (adopted) adoptedProducts.push(record.id);
         if (parkedSinceAccepted.size !== 0) {
           parkedSinceAccepted = new Set();
           await writeParkedSinceAccepted(parkedSinceAccepted);
@@ -665,8 +724,10 @@ async function runDrainPass() {
           continue;
         }
 
+        const existingProduct = duplicateProduct(record, err);
         await saveDrainOutcome(record, {
           status: NEEDS_ATTENTION, attempts, last_error, last_error_status, last_attempt_at,
+          ...(existingProduct ? { product_clash: { sku: record.payload.sku, existing_product: existingProduct } } : {}),
         });
         blocked.add(record.id);
         failed++;
@@ -677,7 +738,7 @@ async function runDrainPass() {
     await pruneRefs(remaining);
     const waiting = remaining.filter((r) => r.status === QUEUED).length;
     notifyOutboxListeners({ type: 'drain', sent, failed, waiting });
-    result = { sent, failed, waiting, orders: syncedOrders };
+    result = { sent, failed, waiting, orders: syncedOrders, adopted: adoptedProducts };
     return result;
   } finally {
     draining = false;
@@ -751,6 +812,43 @@ export async function repointRecord(id, { customerId, payloadUpdates } = {}) {
   await saveRecord(record);
   notifyOutboxListeners({ type: 'repoint', record });
   return record;
+}
+
+// Both answers keep the same durable record and its dependency identity. Only the
+// drain's ordinary success path completes it and remembers the server id.
+export async function useExistingProduct(id) {
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!isProductCodeClash(record)) throw new Error('This product-code clash is no longer waiting.');
+  let product = record.product_clash.existing_product;
+  if (product.is_active === false) {
+    product = await api.request(`/products/${product.id}`, {
+      method: 'PATCH', body: JSON.stringify({ is_active: true }),
+    }).catch((err) => {
+      throw err?.status ? err : new Error('Bringing back a deleted product needs a connection.');
+    });
+  }
+  const saved = await saveDrainOutcome(record, {
+    status: QUEUED, product_adoption: product,
+    last_error: null, last_error_status: null, last_attempt_at: null, attempts: 0,
+  });
+  notifyOutboxListeners({ type: 'repoint', record: saved });
+  return saved;
+}
+
+export async function changeProductCode(id, code) {
+  const sku = String(code || '').trim();
+  if (!sku) throw new Error('Enter a new product code.');
+  if (sku.length > 100) throw new Error('Product codes must be 100 characters or fewer.');
+  const record = await nativeStore.getJson(outboxKey(id));
+  if (!isProductCodeClash(record)) throw new Error('This product-code clash is no longer waiting.');
+  if (sku === record.payload.sku) throw new Error('Enter a different product code.');
+  const saved = await saveDrainOutcome(record, (current) => ({
+    payload: { ...current.payload, sku }, status: QUEUED, product_clash: null,
+    product_adoption: null, last_error: null, last_error_status: null, last_attempt_at: null, attempts: 0,
+    server_strikes: 0, last_strike_at: null, parked_for: null,
+  }));
+  notifyOutboxListeners({ type: 'repoint', record: saved });
+  return saved;
 }
 
 /**
