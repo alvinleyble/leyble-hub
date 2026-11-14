@@ -6,10 +6,12 @@ import Page from '../../components/ui/Page';
 import PageHeader from '../../components/ui/PageHeader';
 import { usePrinter } from '../../context/PrinterContext';
 import { getAppInfo } from '../../version/appVersion';
+import ShowEverythingSwitch from './ShowEverythingSwitch';
 
 // The Settings screen itself: one row per sub-setting — icon, name, a one-line summary
 // and a chevron. Tapping a row opens that sub-setting on its own screen
-// (/settings/<id>); nothing is expanded here.
+// (/settings/<id>); nothing is expanded here. Under the list sits the one switch that
+// lives on this screen itself, "Show everything".
 export const SETTINGS_SCREENS = [
   { id: 'profile', title: 'Profile',     icon: 'profile' },
   { id: 'printer', title: 'Printer',     icon: 'printer' },
@@ -79,6 +81,7 @@ export default function SettingsList({
           ))}
         </ul>
       </nav>
+      <ShowEverythingSwitch />
     </Page>
   );
 }

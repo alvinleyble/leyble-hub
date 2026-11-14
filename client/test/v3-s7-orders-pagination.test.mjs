@@ -9,6 +9,7 @@ import { STATION_KEY } from '../src/offline/keys.js';
 import { ensureStationRegistered, __resetIssuance } from '../src/offline/station.js';
 import { __clearOutbox } from '../src/offline/outbox.js';
 import { saveOrderLocalFirst } from '../src/offline/posSave.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
 
@@ -295,7 +296,8 @@ test('V3.0 Slice 7: Filters reset page to 1 (status tab, dates, search)', async 
   assert.ok(lastCall.includes('status=pending'), 'Status should be pending');
 });
 
-test('V3.0 Slice 7: Bulk selection is scoped to current page and cleared on page change', async () => {
+test('V3.0 Slice 7: Bulk selection is scoped to current page and cleared on page change', async (t) => {
+  await showEverythingFor(t);
   let currentPage = 1;
 
   api.get = async (path) => {

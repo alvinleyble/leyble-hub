@@ -66,7 +66,7 @@ next day locally). Put the throwaway database in UTC once and all 158 pass —
 does not pass it through.
 
 `server/test/v2-accuracy-audit.test.js` + `audit-client.test.mjs` come from the V2 accuracy audit
-and deliberately **pin some still-broken behaviour** (the closed-order deposit total, the ESC/POS
+and deliberately **pin some still-broken behaviour** (the ESC/POS
 non-ASCII bytes, the blank no-SKU receipt line). Invert those assertions as each fix lands rather
 than treating a passing run as "all correct".
 
@@ -96,7 +96,7 @@ than treating a passing run as "all correct".
   and make the end state identical whichever path a database arrives by. Reference:
   [040_receipt_device_letter.sql](server/db/migrations/040_receipt_device_letter.sql).
 - `inventory_audit_logs`, `customer_product_prices`, and `activity_logs` are **append-only** — never `UPDATE` or `DELETE` these tables.
-- `order_items.line_total` is a PostgreSQL `GENERATED` column — never write to it directly. Since migration 023 the formula is `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee` (deposit charged on un-returned bottles).
+- `order_items.line_total` is a PostgreSQL `GENERATED` column — never write to it directly. Since migration 051 the formula is `quantity*unit_price − bottles_returned*unit_deposit_fee` (the listed price already includes every bottle's deposit; returned bottles are credited).
 - Multiple personnel per order via `order_personnel` join table (not FK columns on `orders`).
 - **At most one Driver per order** — validated in `syncPersonnel` in
   [server/src/routes/orders.js](server/src/routes/orders.js) (400 on >1 Driver). V3.5 removed
@@ -176,9 +176,9 @@ save — the server (`POST/PATCH /orders`) accepts an explicit override or snaps
 customer's current fee itself when the client sends none, and always forces it back to `NULL`
 when `order_type !== 'delivery'`, regardless of what was sent. `NULL` means "not configured, no
 row shown anywhere"; a deliberate `₱0.00` still prints its own line. It joins the client-computed
-grand total (`itemsSubtotal + depositTotal + delivery_fee_charged + adjustment`) ahead of
+grand total (`itemsSubtotal − bottle credit + delivery_fee_charged + adjustment`) ahead of
 `adjustment`, in `OrderCreateModal.jsx`, `OrderDetailPage.jsx`, `receiptTemplate.js` and
-`escposReceipt.js` — `total_amount` itself stays goods+deposit only, same as `adjustment` today.
+`escposReceipt.js` — `total_amount` itself stays goods less bottle credit only, same as `adjustment` today.
 
 ### Frontend patterns (follow these exactly — consistency matters)
 
@@ -223,9 +223,10 @@ import { PHP } from '../../utils/money'; // formatPeso: ₱1,234.50, −₱135.0
 **Toasts**: `const { addToast } = useToast()` → `addToast(msg, 'success' | 'error')`.
 
 **Navigation**: every screen size uses one top tab bar (`TopTabBar.jsx`, items in
-`client/src/components/layout/navigation.js`) — six tabs, icons only below `sm:`, with the
-status light (`StatusLight.jsx`) and the hamburger menu (`MenuDrawer.jsx`: Tickets, Audit Log,
-Settings, Log out) at the far right. There is no sidebar. Width-based `sm:`/`md:`/`lg:` are
+`client/src/components/layout/navigation.js`) — six tabs (four while Settings' "Show
+everything" switch, `client/src/config/showEverything.js`, is off), icons only below `sm:`,
+with the status light (`StatusLight.jsx`) and the hamburger menu (`MenuDrawer.jsx`: Tickets
+and Audit Log while that switch is on, Settings, Log out) at the far right. There is no sidebar. Width-based `sm:`/`md:`/`lg:` are
 used for everything responsive (table columns etc.).
 
 ### V2 tablet shell (in progress — see [docs/product/proposals/v2-tablet-pos-overhaul.md](docs/product/proposals/v2-tablet-pos-overhaul.md))
@@ -241,7 +242,7 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
 - All V2 slices merge to `staging` only; `main` is merged once at the end (batched APK cutover).
 - **POS (Slice 1, done):** [client/src/pages/pos/POSPage.jsx](client/src/pages/pos/POSPage.jsx) plus
   `client/src/components/pos/`. Order math lives in `posMath.js` — every POS figure and the
-  printed receipt are **goods-only**: V2 never charges or shows the bottle deposit, because it
+  printed receipt are **quantity × listed price**: V2 never credits returned bottles, because it
   never reaches the closing step where returns are counted (captain correction 2026-08-20,
   reversing proposal §2.4 — lines still carry `unit_deposit_fee` for V1's close flow). POS copy
   says "order", never "ticket". Two popups share `POSListModal.jsx`: History (Created +
@@ -274,8 +275,8 @@ The V2 tablet POS overhaul lands slice by slice **alongside** V1, not in place o
   The POS surfaces only Draft / Created (`pending`) / Cancelled and never writes
   `order_personnel`; Amber Edit Mode cannot change customer or order type (backend accepts those
   on drafts only). Its zero-prompt 2-copy print reuses `usePrintReceipt` via
-  `options.copies` / `options.autoTag` (receipts derive deposit display from status: goods-only
-  for pending, deposit shown on completed/done) — V1's prompts and receipts are unchanged.
+  `options.copies` / `options.autoTag` (receipts derive the returned-bottle credit from status:
+  none for pending, credited on completed/done) — V1's prompts and receipts are unchanged.
 - **Inventory (Slice 2, done):** [client/src/pages/inventory/InventoryV2Page.jsx](client/src/pages/inventory/InventoryV2Page.jsx)
   plus `client/src/components/inventory/`. Ships with zero backend changes — batch price edit
   (`InventoryBatchPriceModal.jsx`, reason required client-side), in-line price edit and the
@@ -832,7 +833,7 @@ Every V1 screen now works blind. What a future session most needs to know:
   §7. `units_per_case` (7.4), `requires_bottle_return` + its `deposit_fee` (7.3) and
   `is_active` (7.8) are disabled offline on **both** `ProductFormModal` and
   `ProductDetailPanel`. The reason they are not reconcilable like a stock count:
-  `units_per_case` is an input to the GENERATED `order_items.line_total`, the
+  `units_per_case` is snapshotted onto every order line as its bottle count, the
   bottle-return flag decides whether the deposit ledger applies at all, and `is_active`
   decides what every other tablet can sell — none has a second honest value for
   `StockReconcileModal` to offer. `is_active` follows the same rule on Customers (8.5).
@@ -959,7 +960,7 @@ into the bundle — documented in `e2e/appium/README.md`.
 | Tickets | ✅ Done | Create, view, resolve |
 | Audit Log | ✅ Done | Read-only, filterable. Two append-only sources: `inventory_audit_logs` (stock deltas, `GET /api/v1/audit`) and `activity_logs` (cross-entity change log for orders/customers/products/personnel/tickets, `GET /api/v1/audit/activity`) |
 
-> **Order totals:** an order's stored `total_amount` is **goods-only (qty × price) while it is open**; the bottle deposit on un-returned bottles is folded into the total only when the order is closed and returns are counted (`recomputeTotal` in [server/src/routes/orders.js](server/src/routes/orders.js)). This is intentional — pre-close totals deliberately exclude the refundable deposit.
+> **Order totals:** an order's stored `total_amount` is **qty × listed price while it is open**; the listed price already includes every bottle's deposit, and the credit for returned bottles is taken off only when the order is closed and returns are counted (`recomputeTotal` in [server/src/routes/orders.js](server/src/routes/orders.js)).
 
 ---
 
@@ -983,7 +984,7 @@ The archived [docs/archive/SPECIFICATION.md](docs/archive/SPECIFICATION.md) pred
 | `supplier_delivery_items.quantity_received INT` | **`NUMERIC(10,2)`** (migration 022) — supports 0.5-case deliveries |
 | `products` has no bottle-return flag | `requires_bottle_return BOOLEAN NOT NULL DEFAULT FALSE` added (migration 023). NB: per-bottle deposit amount lives in the pre-existing `products.deposit_fee` (migration 002) |
 | `order_items` has no case-size / return fields | `units_per_case INT NOT NULL DEFAULT 1` and `bottles_returned INT NOT NULL DEFAULT 0` added (migration 023) |
-| `order_items.line_total = quantity*(unit_price+unit_deposit_fee)` | **Reformulated** (migration 023) to `quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee`; still a `GENERATED ... STORED` column. Defaults (`units_per_case=1, bottles_returned=0`) reproduce the old result |
+| `order_items.line_total = quantity*(unit_price+unit_deposit_fee)` | **Reformulated** (migration 023, again in 051) to `quantity*unit_price − bottles_returned*unit_deposit_fee`; still a `GENERATED ... STORED` column |
 | no system-wide change log | `activity_logs` table added (migration 024) — append-only; `entity_type IN ('order','customer','product','personnel','ticket')`, `entity_id`, `action`, `summary`, `performed_by`, `created_at`. Written via [server/src/lib/activityLog.js](server/src/lib/activityLog.js) |
 | `customer_product_prices.custom_deposit_fee` exists | **Dropped** (migration 026); deposit is now product-level (`products.deposit_fee`) with per-line override (`order_items.unit_deposit_fee`), not per-customer |
 | no device/station concept, receipt number = row id | `stations` table + `orders.receipt_station`/`receipt_sequence` and the `GENERATED` `orders.receipt_number` added (migration 033). Partial unique index on the pair; historical rows keep NULL and are never backfilled |

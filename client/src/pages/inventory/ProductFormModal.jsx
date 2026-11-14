@@ -18,13 +18,15 @@ const DEFAULT_FORM = {
   requires_bottle_return: false,
 };
 
-export default function ProductFormModal({ onClose, onSaved, offline = false }) {
+// `stockShown` false (Settings' "Show everything" off) leaves out Initial Stock; a new
+// product then starts at the form's default of 0, the same as leaving it untouched.
+export default function ProductFormModal({ onClose, onSaved, offline = false, stockShown = true }) {
   const { addToast } = useToast();
 
   // Criteria 7.3 / 7.4 — "Bottles per Case" and "Requires bottle return" are the two
   // fields a blind device may not decide. They are not per-device facts like a stock
-  // count: units_per_case is baked into every line total ever computed from this
-  // product (order_items.line_total is GENERATED from it) and requires_bottle_return
+  // count: units_per_case is snapshotted onto every order line of this product as
+  // its bottle count (order_items.units_per_case) and requires_bottle_return
   // decides whether the whole bottle-deposit ledger applies. Criteria 7.5 still lets
   // the product be added right now — these two simply keep their defaults until
   // someone with a connection sets them. Disabled-with-a-message, never a silent drop
@@ -142,15 +144,17 @@ export default function ProductFormModal({ onClose, onSaved, offline = false }) 
                 className={FIELD_CLASS + ' disabled:bg-slate-100 disabled:text-slate-400'} />
             </FormField>
 
-            <FormField label="Initial Stock" error={errors.current_stock}>
-              <Stepper
-                value={form.current_stock}
-                onChange={(v) => setForm((f) => ({ ...f, current_stock: v }))}
-                step={0.5}
-                min={0}
-                label="Initial stock in cases"
-              />
-            </FormField>
+            {stockShown && (
+              <FormField label="Initial Stock" error={errors.current_stock}>
+                <Stepper
+                  value={form.current_stock}
+                  onChange={(v) => setForm((f) => ({ ...f, current_stock: v }))}
+                  step={0.5}
+                  min={0}
+                  label="Initial stock in cases"
+                />
+              </FormField>
+            )}
 
             <div className="sm:col-span-2 border-t border-slate-300 pt-4">
               <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">Pricing (per case)</p>

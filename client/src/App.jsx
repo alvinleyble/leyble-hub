@@ -20,6 +20,7 @@ import { startOfflineCore, stopOfflineCore, useSyncGate } from './offline';
 import VersionGate from './components/version/VersionGate';
 import AppInfoGate from './components/version/AppInfoGate';
 import FirstSetupGateScreen from './components/setup/FirstSetupGateScreen';
+import EverythingRoute from './components/layout/EverythingRoute';
 
 // Layout route: guards all children behind auth check.
 function ProtectedLayout() {
@@ -75,10 +76,10 @@ function AppRoutes() {
           <Route path="/orders/:id"    element={<OrderDetailPage />} />
           <Route path="/inventory"    element={<InventoryPage />} />
           <Route path="/customers/*"  element={<CustomersPage />} />
-          <Route path="/incoming"     element={<IncomingPage />} />
-          <Route path="/personnel/*"  element={<PersonnelPage />} />
-          <Route path="/tickets"      element={<TicketsPage />} />
-          <Route path="/audit"        element={<AuditPage />} />
+          <Route path="/incoming"     element={<EverythingRoute><IncomingPage /></EverythingRoute>} />
+          <Route path="/personnel/*"  element={<EverythingRoute><PersonnelPage /></EverythingRoute>} />
+          <Route path="/tickets"      element={<EverythingRoute><TicketsPage /></EverythingRoute>} />
+          <Route path="/audit"        element={<EverythingRoute><AuditPage /></EverythingRoute>} />
           <Route path="/settings"     element={<SettingsPage />} />
           <Route path="/settings/:section" element={<SettingsPage />} />
           <Route path="*"             element={<Navigate to="/dashboard" replace />} />

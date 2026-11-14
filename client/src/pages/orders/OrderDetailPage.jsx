@@ -13,7 +13,9 @@ import { formatPeso } from '../../utils/money';
 import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import OrderCloseForm from './OrderCloseForm';
+import { bottleCredit, bottlesReturned, countsReturns } from './bottleReturns.js';
 import { usePrintReceipt } from './usePrintReceipt';
+import { useShowEverything } from '../../config/showEverything';
 import PrinterPicker from './PrinterPicker';
 import { orderRef } from '../../utils/orderRef';
 import {
@@ -163,6 +165,10 @@ export default function OrderDetailPage() {
   const [fromLocalSnapshot, setFromLocalSnapshot] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  // Settings' "Show everything". Off, nothing here moves an order past pending:
+  // Dispatch, Picked Up, Delivered, Close, Reopen and the steps back are hidden. Edit,
+  // Print and Cancel stay, and an order already further along still opens and prints.
+  const { showEverything: stagesShown } = useShowEverything();
   const [editing, setEditing]       = useState(false);
   const [closing, setClosing]       = useState(false);
   // A delta that lands while the operator is forming an edit is held beside the form,
@@ -201,8 +207,7 @@ export default function OrderDetailPage() {
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
     twicePrompt, confirmTwice,
-    printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
-  } = usePrintReceipt(order, returnCounts, setOrder);
+  } = usePrintReceipt(order, returnCounts, setOrder, undefined, { autoTag: true });
 
   const adoptAuthoritativeOrder = useCallback((current) => {
     setOrder(current);
@@ -345,14 +350,12 @@ export default function OrderDetailPage() {
 
   // Reset the in-progress bottle-return entries whenever the set of returnable items
   // changes (initial load, or items added/removed via editing) — otherwise stale
-  // item ids could linger in returnCounts.
+  // item ids could linger in returnCounts. No bottles returned is the default.
   useEffect(() => {
     if (!order || order.status !== 'completed' || bottleItems.length === 0) return;
     const counts = {};
     bottleItems.forEach((i) => {
-      const stored = num(i.bottles_returned);
-      const total  = num(i.quantity) * (num(i.units_per_case) || 1);
-      counts[i.id] = String(stored > 0 ? stored : total);
+      counts[i.id] = String(num(i.bottles_returned));
     });
     setReturnCounts(counts);
     setReturnsDirty(false);
@@ -551,27 +554,19 @@ export default function OrderDetailPage() {
   const onlineOnlyTitle      = unsynced ? 'Waiting to sync'
     : offlineViewingSynced ? 'Needs a connection' : undefined;
   const isPickup      = order.order_type === 'pickup';
-  const isDepositable = order.status === 'done' || order.status === 'completed';
+  const isDepositable = countsReturns(order.status);
   const hasAdj     = num(order.adjustment) !== 0;
 
   const itemsSubtotal = items.length > 0
     ? items.reduce((sum, i) => sum + num(i.quantity) * num(i.unit_price), 0)
     : num(order.total_amount) - num(order.adjustment);
 
-  const itemNetDeposit = (item) => {
-    if (!isDepositable) return 0;
-    const dep = num(item?.unit_deposit_fee);
-    if (!dep) return 0;
-    const totalBottles = num(item.quantity) * (num(item.units_per_case) || 1);
-    const isLive = item.requires_bottle_return && order.status === 'completed'
-                   && returnCounts[item.id] !== undefined && returnCounts[item.id] !== '';
-    const returned = isLive
-      ? Math.max(num(returnCounts[item.id]), 0)
-      : Math.max(num(item.bottles_returned), 0);
-    return (totalBottles - returned) * dep;
-  };
-
-  const depositTotal = items.reduce((sum, i) => sum + itemNetDeposit(i), 0);
+  // The listed price already includes the deposit; returned bottles come off it as a
+  // credit, the same line both receipts print (bottleReturns.js). The counts being typed
+  // on the close form only apply while the order is still waiting to be closed.
+  const liveReturnCounts = order.status === 'completed' ? returnCounts : {};
+  const itemCredit = (item) => (isDepositable ? bottleCredit(item, liveReturnCounts) : 0);
+  const creditTotal = items.reduce((sum, i) => sum + itemCredit(i), 0);
 
   // Decision 4: unset means the line doesn't exist; configured (including a
   // deliberate ₱0.00) always prints its own line. Decision 12: joins the grand
@@ -580,9 +575,8 @@ export default function OrderDetailPage() {
   const deliveryFeeCharged = hasDeliveryFee ? num(order.delivery_fee_charged) : 0;
 
   const liveTotal   = items.length > 0
-    ? itemsSubtotal + depositTotal + deliveryFeeCharged + num(order.adjustment)
+    ? itemsSubtotal - creditTotal + deliveryFeeCharged + num(order.adjustment)
     : num(order.total_amount);
-  const hasDeposits = items.some((i) => num(i?.unit_deposit_fee) > 0);
 
   return (
     <div className="px-4 py-4 md:px-6 md:py-6 max-w-3xl mx-auto" data-testid="order-detail">
@@ -735,7 +729,8 @@ export default function OrderDetailPage() {
               </tr>
             ) : (
               items.map((item) => (
-              <tr key={item.id ?? `${item.product_id}-${item.unit_price}`} className="border-t border-slate-300">
+              <React.Fragment key={item.id ?? `${item.product_id}-${item.unit_price}`}>
+              <tr className="border-t border-slate-300">
                 <td className="px-3 sm:px-5 py-3">
                   {/* A long unbroken SKU (RH1000SUPER) otherwise sets a minimum Product
                       width that, beside a large total, pushes the table past a phone's card. */}
@@ -748,49 +743,32 @@ export default function OrderDetailPage() {
                   {PHP(item.unit_price)}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-slate-500 hidden sm:table-cell">
-                  {num(item.unit_deposit_fee) > 0 && isDepositable ? (
-                    <div>
-                      <div>{PHP(item.unit_deposit_fee)}/bottle</div>
-                      {num(item.bottles_returned) > 0 && (
-                        <div className="text-sm text-green-800 mt-0.5">
-                          −{item.bottles_returned} returned
-                        </div>
-                      )}
-                    </div>
-                  ) : '—'}
+                  {num(item.unit_deposit_fee) > 0 && isDepositable
+                    ? `${PHP(item.unit_deposit_fee)}/bottle`
+                    : '—'}
                 </td>
                 <td className="px-3 sm:px-5 py-3 text-right tabular-nums font-semibold text-slate-800">
-                  <div>{PHP(num(item.quantity) * num(item.unit_price))}</div>
-                  {num(item.unit_deposit_fee) > 0 && isDepositable && (
-                    <div className={`text-sm font-normal mt-0.5 whitespace-nowrap ${itemNetDeposit(item) < 0 ? 'text-green-800' : 'text-slate-600'}`}>
-                      {itemNetDeposit(item) < 0
-                        ? `− ${PHP(Math.abs(itemNetDeposit(item)))} credit`
-                        : `+ ${PHP(itemNetDeposit(item))} dep.`}
-                    </div>
-                  )}
+                  {PHP(num(item.quantity) * num(item.unit_price))}
                 </td>
               </tr>
+              {/* The closing receipt's credit line, word for word; nothing when none came back. */}
+              {itemCredit(item) > 0 && (
+                <tr data-testid="order-bottle-credit">
+                  <SpanCell phone={2} sm={4} className="px-3 sm:px-5 pb-3 text-right text-green-800">
+                    Bottles returned{' '}
+                    <span className="whitespace-nowrap">
+                      {bottlesReturned(item, liveReturnCounts)} × {PHP(item.unit_deposit_fee)}
+                    </span>
+                  </SpanCell>
+                  <td className="px-3 sm:px-5 pb-3 text-right tabular-nums whitespace-nowrap text-green-800">
+                    {PHP(-itemCredit(item))}
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>
             )))}
           </tbody>
           <tfoot>
-            {hasDeposits && isDepositable && (
-              <>
-                <tr className="border-t border-slate-400 bg-slate-50">
-                  <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">Items</TotalsLabel>
-                  <td className="px-3 sm:px-5 py-3 text-right tabular-nums text-slate-700">
-                    {PHP(itemsSubtotal)}
-                  </td>
-                </tr>
-                <tr className="border-t border-slate-300 bg-slate-50">
-                  <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">Deposit fee</TotalsLabel>
-                  <td className={`px-3 sm:px-5 py-3 text-right tabular-nums ${depositTotal < 0 ? 'text-green-700' : 'text-slate-700'}`}>
-                    {depositTotal < 0
-                      ? `− ${PHP(Math.abs(depositTotal))}`
-                      : `+ ${PHP(depositTotal)}`}
-                  </td>
-                </tr>
-              </>
-            )}
             {hasDeliveryFee && (
               <tr className="border-t border-slate-300 bg-slate-50">
                 <TotalsLabel className="px-3 sm:px-5 py-3 text-right text-slate-500">Delivery Fee</TotalsLabel>
@@ -826,7 +804,7 @@ export default function OrderDetailPage() {
       </div>
 
       {/* Bottle returns — review inline before closing */}
-      {order.status === 'completed' && bottleItems.length > 0 && (
+      {stagesShown && order.status === 'completed' && bottleItems.length > 0 && (
         <OrderCloseForm
           order={order}
           returnCounts={returnCounts}
@@ -914,7 +892,7 @@ export default function OrderDetailPage() {
         )}
       </div>
 
-      {order.status === 'completed' && (
+      {stagesShown && order.status === 'completed' && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 mb-4">
           <Button
             className="w-full"
@@ -978,7 +956,7 @@ export default function OrderDetailPage() {
             </Button>
 
             {/* Delivery pending: Start Dispatch */}
-            {order.status === 'pending' && !isPickup && (
+            {stagesShown && order.status === 'pending' && !isPickup && (
               <Button
                 disabled={offlineViewingSynced}
                 title={offlineViewingSynced ? 'Needs a connection' : undefined}
@@ -995,7 +973,7 @@ export default function OrderDetailPage() {
             )}
 
             {/* Pickup pending: Mark as Picked Up */}
-            {order.status === 'pending' && isPickup && (
+            {stagesShown && order.status === 'pending' && isPickup && (
               <Button
                 disabled={offlineViewingSynced}
                 title={offlineViewingSynced ? 'Needs a connection' : undefined}
@@ -1011,7 +989,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'in_transit' && (
+            {stagesShown && order.status === 'in_transit' && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1026,7 +1004,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'in_transit' && (
+            {stagesShown && order.status === 'in_transit' && (
               <Button
                 variant="warning"
                 disabled={offlineViewingSynced}
@@ -1041,7 +1019,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'completed' && !isPickup && (
+            {stagesShown && order.status === 'completed' && !isPickup && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1056,7 +1034,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'completed' && isPickup && (
+            {stagesShown && order.status === 'completed' && isPickup && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1071,7 +1049,7 @@ export default function OrderDetailPage() {
               </Button>
             )}
 
-            {order.status === 'done' && (
+            {stagesShown && order.status === 'done' && (
               <Button
                 variant="secondary"
                 disabled={onlineOnlyDisabled}
@@ -1150,20 +1128,6 @@ export default function OrderDetailPage() {
           loading={printing}
         >
           Print a second copy for your records?
-        </Modal>
-      )}
-
-      {/* Confirm tagging this order as printed */}
-      {printPrompt && (
-        <Modal
-          title="Tag receipt as printed?"
-          onClose={cancelPrintTag}
-          onConfirm={confirmPrintTag}
-          confirmLabel="Yes, tag as printed"
-          loading={taggingPrint}
-        >
-          Do you want to tag Order {orderRef(order)} as printed
-          ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
         </Modal>
       )}
 

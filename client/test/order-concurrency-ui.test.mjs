@@ -6,6 +6,7 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import { __clearReceipts } from '../src/offline/receiptHistory.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const OrderDetailPage = (await import('../src/pages/orders/OrderDetailPage.jsx')).default;
 const OrdersPage = (await import('../src/pages/orders/OrdersPage.jsx')).default;
@@ -132,7 +133,8 @@ test('a delta never replaces an open edit form and instead shows the stale-edit 
   r.unmount();
 });
 
-test('a changed bulk selection stays visible and blocks confirmation until deliberately removed', async () => {
+test('a changed bulk selection stays visible and blocks confirmation until deliberately removed', async (t) => {
+  await showEverythingFor(t);
   let serverRows = [
     order({ id: 41, receipt_number: '1A-00041', revision: '5' }),
     order({ id: 42, receipt_number: '1A-00042', revision: '8' }),
@@ -173,7 +175,8 @@ test('a changed bulk selection stays visible and blocks confirmation until delib
   r.unmount();
 });
 
-test('bulk transition commits each order independently and names the exact skipped stale order', async () => {
+test('bulk transition commits each order independently and names the exact skipped stale order', async (t) => {
+  await showEverythingFor(t);
   const rows = [
     order({ id: 41, receipt_number: '1A-00041', revision: '5' }),
     order({ id: 42, receipt_number: '1A-00042', revision: '8' }),
@@ -562,9 +565,8 @@ test('a parked delta is re-weighed when it is applied, never adopted backwards',
     // answers with the row at revision 7 — the print on top of that remote edit.
     r.click(r.button('Print Receipt'));
     await settle();
+    // A finished print tags the order with no question asked.
     act(() => popup.afterPrint());
-    await settle();
-    r.click(r.button('Yes, tag as printed'));
     await settle();
     assert.deepEqual(posts.map((post) => post.path), ['/orders/42/receipt-printed']);
     assert.match(r.text(), /Printed \(delivered\)/);

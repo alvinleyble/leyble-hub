@@ -14,7 +14,8 @@
     "test:tickets": "node tests/tickets.test.mjs",
     "test:audit": "node tests/audit.test.mjs",
     "test:concurrency": "node tests/concurrency.test.mjs",
-    "test:product-code-clash": "node tests/product-code-clash.test.mjs"
+    "test:product-code-clash": "node tests/product-code-clash.test.mjs",
+    "test:trimmed-default": "node tests/trimmed-default.test.mjs"
   },
   "dependencies": {
     "appium": "^3.7.0",

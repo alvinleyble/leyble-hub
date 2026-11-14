@@ -12,6 +12,7 @@ import { ToastProvider } from '../src/components/ui/Toast.jsx';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { __resetMemoryBackend } from '../src/offline/nativeStore.js';
 import { __clearReceipts } from '../src/offline/receiptHistory.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const OrderDetailPage = (await import('../src/pages/orders/OrderDetailPage.jsx')).default;
 const { createRoot } = await import('react-dom/client');
@@ -107,9 +108,47 @@ test('every totals row spans exactly the visible columns on a phone and a tablet
 
   const rows = assertEveryRowFits(r.container);
   const footer = rows.filter((row) => row.parentElement.tagName === 'TFOOT').map((row) => row.textContent);
-  for (const label of ['Items', 'Deposit fee', 'Delivery Fee', 'Adjustment', 'Order Total']) {
+  for (const label of ['Delivery Fee', 'Adjustment', 'Order Total']) {
     assert.ok(footer.some((text) => text.includes(label)), `${label} row rendered`);
   }
+  // The returned-bottle credit row sits under its product and fits the columns too.
+  assert.ok(rows.some((row) => row.parentElement.tagName === 'TBODY' && row.textContent.includes('Bottles returned')));
+  r.unmount();
+});
+
+// Migration 051: the listed price already includes the deposit. The closing breakdown
+// reads like the closing receipt — the product at its listed price, then one
+// "Bottles returned N × fee" credit line, and nothing at all when none came back.
+const visibleText = (el) => [...el.querySelectorAll('td')]
+  .filter((td) => !td.className.split(/\s+/).includes('hidden'))
+  .map((td) => td.textContent.trim()).join(' | ');
+
+test('a closed order credits the returned bottles under the product, word for word as the receipt', async () => {
+  api.get = async (path) => (path === '/orders/42' ? order() : []);
+  const r = renderDetail();
+  await settle();
+
+  const credit = r.container.querySelector('[data-testid="order-bottle-credit"]');
+  assert.ok(credit, 'the credit row rendered');
+  assert.equal(visibleText(credit), 'Bottles returned 40 × ₱5.00 | −₱200.00');
+  for (const gone of ['Deposit fee', 'dep.', 'credit', 'Net deposit']) {
+    assert.equal(r.container.querySelector('table').textContent.includes(gone), false, gone);
+  }
+  // 2 × ₱300.00 − 40 × ₱5.00 + ₱100.00 delivery − ₱50.00 adjustment
+  assert.match(r.container.textContent, /Order Total₱450\.00/);
+  r.unmount();
+});
+
+test('a closed order with no bottles returned shows nothing extra and totals the listed price', async () => {
+  api.get = async (path) => (path === '/orders/42'
+    ? order({ items: [{ ...order().items[0], bottles_returned: 0 }] }) : []);
+  const r = renderDetail();
+  await settle();
+
+  assert.equal(r.container.querySelector('[data-testid="order-bottle-credit"]'), null);
+  assert.equal(r.container.textContent.includes('Bottles returned'), false);
+  // 2 × ₱300.00 + ₱100.00 delivery − ₱50.00 adjustment
+  assert.match(r.container.textContent, /Order Total₱650\.00/);
   r.unmount();
 });
 
@@ -131,5 +170,30 @@ test('the cold-load skeleton footer spans exactly the visible columns', async ()
   assertEveryRowFits(r.container);
   await act(async () => { release?.(); });
   await settle();
+  r.unmount();
+});
+
+test('closing a delivered order starts at no bottles returned, so its total does not move until some are counted', async (t) => {
+  await showEverythingFor(t);
+  api.get = async (path) => (path === '/orders/42'
+    ? order({ status: 'completed', items: [{ ...order().items[0], bottles_returned: 0 }] }) : []);
+  const r = renderDetail();
+  await settle();
+
+  const input = r.container.querySelector('input[aria-label="Bottles returned for C-8"]');
+  assert.ok(input, 'the close form rendered');
+  assert.equal(input.value, '0', 'no bottles returned is the default');
+  assert.equal(r.container.querySelector('[data-testid="order-bottle-credit"]'), null);
+  assert.match(r.container.textContent, /Order Total₱650\.00/, 'the same total as before closing');
+
+  // Count 40 bottles back: the breakdown and the close form both show the same credit.
+  // jsdom's input event does not reach React's controlled-input tracker; the suite's
+  // usual way in is the element's own onChange prop (see batch-price-sign.test.mjs).
+  const reactProps = Object.keys(input).find((key) => key.startsWith('__reactProps'));
+  act(() => { input[reactProps].onChange({ target: { value: '40' } }); });
+  const credit = r.container.querySelector('[data-testid="order-bottle-credit"]');
+  assert.equal(visibleText(credit), 'Bottles returned 40 × ₱5.00 | −₱200.00');
+  assert.match(r.container.textContent, /Bottles returned 40 × ₱5\.00 = −₱200\.00/);
+  assert.match(r.container.textContent, /Order Total₱450\.00/);
   r.unmount();
 });

@@ -27,6 +27,9 @@ async function migrate() {
     );
     const appliedSet = new Set(applied.map((r) => r.filename));
 
+    // A migration reports what it did with RAISE NOTICE (051 counts the orders it changed).
+    client.on('notice', (msg) => console.log(`  ${msg.message}`));
+
     const migrationsDir = path.join(__dirname, 'migrations');
     const files = fs
       .readdirSync(migrationsDir)

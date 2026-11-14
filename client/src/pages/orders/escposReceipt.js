@@ -1,6 +1,8 @@
 // ESC/POS receipt generator for 80mm thermal printers (48 chars/line at normal size).
 // Produces a Uint8Array sent directly to the printer via Bluetooth — no dialog needed.
 
+import { bottleCredit, bottlesReturned, countsReturns } from './bottleReturns.js';
+
 const W       = 48;
 const ESC = 0x1B;
 const GS  = 0x1D;
@@ -33,22 +35,12 @@ function wrap(text, w = W) {
   return lines;
 }
 
-function itemDepositForPrint(item, returnCounts, showDeposit) {
-  if (!showDeposit) return 0;
-  const dep = Number(item.unit_deposit_fee);
-  if (!dep) return 0;
-  const totalBtl = Number(item.quantity) * (Number(item.units_per_case) || 1);
-  const isLive   = item.requires_bottle_return
-    && returnCounts[item.id] !== undefined && returnCounts[item.id] !== '';
-  const returned = isLive
-    ? Math.max(Number(returnCounts[item.id]) || 0, 0)
-    : Math.max(Number(item.bottles_returned) || 0, 0);
-  return (totalBtl - returned) * dep;
-}
-
 export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   const isPickup    = order.order_type === 'pickup';
-  const showDeposit = order.status === 'completed' || order.status === 'done';
+  // The listed price already includes the deposit (bottleReturns.js). Only the closing
+  // receipt (completed/done) counts returns, as one credit line under the product.
+  const showReturns = countsReturns(order.status);
+  const creditFor   = (item) => (showReturns ? bottleCredit(item, returnCounts) : 0);
 
   const docDate  = new Date(order.created_at);
   const dateStr  = `${String(docDate.getMonth() + 1).padStart(2, '0')}/${String(docDate.getDate()).padStart(2, '0')}/${docDate.getFullYear()}`;
@@ -59,15 +51,15 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
 
   const printAdj       = Number(overrides.adjustment !== undefined ? overrides.adjustment : (order.adjustment || 0)) || 0;
   const printAdjReason = overrides.adjustment_reason !== undefined ? overrides.adjustment_reason : order.adjustment_reason;
-  const itemsTotal     = order.items.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
-  const depTotal       = order.items.reduce((s, i) => s + itemDepositForPrint(i, returnCounts, showDeposit), 0);
+  const itemsTotal     = order.items.reduce(
+    (s, i) => s + Number(i.quantity) * Number(i.unit_price) - creditFor(i), 0);
   // persistent-delivery-fee.md decision 4: unset means the line doesn't exist, not
   // ₱0.00 — a deliberately-configured ₱0.00 still prints its own line.
   const hasDeliveryFee = order.delivery_fee_charged !== null && order.delivery_fee_charged !== undefined;
   const deliveryFee    = hasDeliveryFee ? Number(order.delivery_fee_charged) : 0;
   // Decision 12: delivery fee joins the total ahead of the adjustment term.
-  const printTotal     = itemsTotal + depTotal + deliveryFee + printAdj;
-  const hasSubtotals   = (showDeposit && depTotal > 0) || hasDeliveryFee || printAdj !== 0;
+  const printTotal     = itemsTotal + deliveryFee + printAdj;
+  const hasSubtotals   = hasDeliveryFee || printAdj !== 0;
   const totalCases     = order.items.reduce((s, i) => s + Number(i.quantity), 0);
 
   const buf = [];
@@ -116,10 +108,7 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   hr();
   for (const item of order.items) {
     const qty      = Number(item.quantity);
-    const dep      = Number(item.unit_deposit_fee);
-    const upc      = Number(item.units_per_case) || 1;
-    const itemDep  = itemDepositForPrint(item, returnCounts, showDeposit);
-    const lineTotal = qty * Number(item.unit_price) + itemDep;
+    const lineTotal = qty * Number(item.unit_price);
 
     // Product name / SKU (bold)
     b(ESC, 0x45, 0x01);
@@ -130,21 +119,11 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
     const qtyLabel = `  ${qty} ${item.unit || 'cs'} x ${fmtMoney(item.unit_price)}`;
     ln(padLR(qtyLabel, fmtMoney(lineTotal)));
 
-    // Deposit breakdown
-    if (showDeposit && dep > 0 && itemDep !== 0) {
-      const totalBtl = qty * upc;
-      const isLive   = item.requires_bottle_return
-        && returnCounts[item.id] !== undefined && returnCounts[item.id] !== '';
-      const returned = isLive
-        ? Math.max(Number(returnCounts[item.id]) || 0, 0)
-        : Math.max(Number(item.bottles_returned) || 0, 0);
-
-      ln(padLR(`  Dep: ${totalBtl}btl x ${fmtMoney(dep)}`, fmtMoney(totalBtl * dep)));
-      if (returned > 0) {
-        ln(padLR(`  Ret: ${returned}btl x ${fmtMoney(dep)}`, `-${fmtMoney(returned * dep)}`));
-        const netBtl = totalBtl - returned;
-        ln(padLR(netBtl < 0 ? '  Net credit' : '  Net deposit', fmtMoney(itemDep)));
-      }
+    // Returned bottles, only when some came back: the listed price already holds the deposit.
+    const credit = creditFor(item);
+    if (credit > 0) {
+      ln(padLR(`  Bottles returned ${bottlesReturned(item, returnCounts)} x ${fmtMoney(item.unit_deposit_fee)}`,
+        fmtMoney(-credit)));
     }
   }
 
@@ -153,7 +132,6 @@ export function generateEscPos(order, returnCounts = {}, overrides = {}) {
   ln(padLR('Total Cases', `${totalCases} pcs`));
   if (hasSubtotals) {
     ln(padLR('Items', fmtMoney(itemsTotal)));
-    if (showDeposit && depTotal > 0) ln(padLR('Deposit fee', `+${fmtMoney(depTotal)}`));
     if (hasDeliveryFee) ln(padLR('Delivery Fee', fmtMoney(deliveryFee)));
     if (printAdj !== 0) {
       const adjRaw = printAdjReason ? `Adj (${printAdjReason})` : 'Adjustment';

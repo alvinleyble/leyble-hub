@@ -22,6 +22,7 @@ import { getPossibleDoubleOrderIds } from '../../utils/duplicateOrders';
 import { filterLocalHistory, localOrderRoute } from '../../utils/localOrderHistory';
 import { formatCardDateTime } from '../../utils/dateFormat';
 import { handleStaleOrderWrite, orderStatusLabel } from './orderConcurrency.js';
+import { useShowEverything } from '../../config/showEverything';
 import {
   listRecords, subscribeOutbox, getReceipt, listReceipts, putOrderSnapshot,
   loadParkedOrders, discardLocalDraft,
@@ -31,11 +32,15 @@ const STATUS_TABS = [
   { value: 'all',        label: 'All' },
   { value: 'draft',      label: 'Drafts' },
   { value: 'pending',    label: 'Pending' },
-  { value: 'in_transit', label: 'In Transit' },
-  { value: 'completed',  label: 'Delivered' },
-  { value: 'done',       label: 'Closed' },
+  { value: 'in_transit', label: 'In Transit', everything: true },
+  { value: 'completed',  label: 'Delivered',  everything: true },
+  { value: 'done',       label: 'Closed',     everything: true },
   { value: 'cancelled',  label: 'Cancelled' },
 ];
+// With Settings' "Show everything" off, an order's life on this screen ends at pending:
+// the tabs marked `everything` above and every control that moves an order past
+// pending (Dispatch, Mark Picked Up, Mark Delivered, the review queues) are hidden.
+// Orders already further along still show under All with their status.
 
 // A YYYY-MM-DD filter value, as an active-filter chip says it: "Sep 1, 2026".
 function fmtFilterDate(value) {
@@ -140,6 +145,14 @@ export default function OrdersPage() {
   // synced order history because the server could not be reached.
   const [fromLocalHistory, setFromLocalHistory] = useState(false);
   const [statusTab, setStatusTab] = useState('all');
+  const { showEverything } = useShowEverything();
+  const statusTabs = useMemo(
+    () => (showEverything ? STATUS_TABS : STATUS_TABS.filter((t) => !t.everything)),
+    [showEverything],
+  );
+  useEffect(() => {
+    if (!statusTabs.some((t) => t.value === statusTab)) setStatusTab('all');
+  }, [statusTabs, statusTab]);
   const [fromDate, setFromDate]   = useState('');
   const [toDate, setToDate]       = useState('');
   const [creating, setCreating]   = useState(false);
@@ -184,7 +197,9 @@ export default function OrdersPage() {
   // Slice 3.2 — bulk transitions all POST to the server, so they are meaningless (and
   // would fail one by one) while the table is being served from local history. Hide the
   // selection column entirely rather than offering rows the operator cannot act on.
-  const showCheckboxes = ['draft', 'pending', 'in_transit', 'completed'].includes(statusTab)
+  // Trimmed (Show everything off), Pending's bulk actions are all dispatch steps, so only
+  // Drafts keeps a selection (Discard Selected).
+  const showCheckboxes = (showEverything ? ['draft', 'pending', 'in_transit', 'completed'] : ['draft']).includes(statusTab)
     && !fromLocalHistory;
 
   // Round 4 Fix 7 — locally-created orders (saveOrderLocalFirst, G27) are not on the
@@ -705,7 +720,7 @@ export default function OrdersPage() {
       {/* Status chips (design standard Q4): one row that scrolls, never wraps. Possible
           Duplicates is the last chip, so it is always one tap away. */}
       <ChipRow label="Order status" className="mb-3">
-        {STATUS_TABS.map((tab) => (
+        {statusTabs.map((tab) => (
           <Chip
             key={tab.value}
             selected={statusTab === tab.value}

@@ -329,7 +329,7 @@ describe('V2 accuracy audit', () => {
       assert.equal(Number(adjusted.total_amount) + Number(adjusted.adjustment), 450);
     });
 
-    it('a CLOSED order folds the bottle deposit into total_amount — V2 goods-only math understates it', async () => {
+    it('a CLOSED order takes the returned-bottle credit off total_amount — V2 goods-only math does not', async () => {
       const p = await mkProduct('AUD_TOTAL_DONE', 30, 100, { deposit_fee: 5, requires_bottle_return: true, units_per_case: 24 });
       const { body: order } = await json(await api('/orders', {
         method: 'POST',
@@ -344,13 +344,14 @@ describe('V2 accuracy audit', () => {
         method: 'POST', body: JSON.stringify({ items: [{ id: order.items[0].id, bottles_returned: 4 }] }) }));
 
       assert.equal(closed.status, 'done');
-      // 20 un-returned bottles x PHP5 = 100 deposit, on top of PHP100 goods
-      assert.equal(Number(closed.total_amount), 200);
+      // The listed PHP100 already includes the deposit (migration 051): the 4 returned
+      // bottles x PHP5 come off it, and nothing is added for the 20 that stayed out.
+      assert.equal(Number(closed.total_amount), 80);
 
       const v1Total = Number(closed.total_amount) + Number(closed.adjustment);          // OrderDetailPage
       const v2Total = Number(closed.items[0].quantity) * Number(closed.items[0].unit_price)
                     + Number(closed.adjustment);                                        // posMath.orderTotals
-      assert.equal(v1Total, 220);
+      assert.equal(v1Total, 100);
       assert.equal(v2Total, 120);
       assert.notEqual(v1Total, v2Total);
     });
@@ -696,7 +697,7 @@ describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
     assert.equal(rowTotal, 175.00);
   });
 
-  it('F4 — Closed order includes bottle deposit in totals while completed/pending stay goods-only', async () => {
+  it('F4 — Closed order credits returned bottles while completed/pending stay at the listed price', async () => {
     // Create pending order: 2 cases @ 100/cs = 200 goods, deposit_fee 2.50, units_per_case 24 (48 bottles = 120 deposit)
     const createRes = await api('/orders', {
       method: 'POST',
@@ -761,7 +762,7 @@ describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
     assert.equal(completedDeposit, 0.00);
     assert.equal(completedTotal, 210.00);
 
-    // Close order (0 bottles returned -> deposit owed = 48 * 2.50 = 120.00)
+    // Close order (0 bottles returned -> nothing credited; the listed price already holds the deposit)
     const closeRes = await api(`/orders/${pendingOrder.id}/close`, {
       method: 'POST',
       body: JSON.stringify({
@@ -773,31 +774,30 @@ describe('V2 Customer Accuracy & Correctness Audit Tests (F4 & F10)', () => {
     assert.equal(closeRes.status, 200);
     const closedOrder = await closeRes.json();
 
-    // Closed order status is 'done' and total_amount in DB is 320.00 (goods 200 + deposit 120)
+    // Closed order status is 'done' and total_amount in DB is still 200.00: with no bottles
+    // back, closing changes nothing (migration 051; it used to add 48 x 2.50 = 120 on top)
     assert.equal(closedOrder.status, 'done');
-    assert.equal(Number(closedOrder.total_amount), 320.00);
+    assert.equal(Number(closedOrder.total_amount), 200.00);
 
     // Modal calculation logic for closed order:
-    // Goods: 200.00, Deposit: 120.00, Adjustment: 10.00 -> Total: 330.00
+    // Goods: 200.00, Bottles returned: 0.00, Adjustment: 10.00 -> Total: 210.00
     const items = closedOrder.items;
     const isClosed = closedOrder.status === 'done';
     assert.equal(isClosed, true);
     const goods = items.reduce((s, i) => s + (Number(i.quantity) * Number(i.unit_price)), 0);
-    const deposit = isClosed
-      ? items.reduce((s, i) => s + ((Number(i.quantity) * Number(i.units_per_case) - Number(i.bottles_returned)) * Number(i.unit_deposit_fee)), 0)
-      : 0;
-    const total = goods + deposit + Number(closedOrder.adjustment || 0);
+    const credit = items.reduce((s, i) => s + Number(i.bottles_returned) * Number(i.unit_deposit_fee), 0);
+    const total = goods - credit + Number(closedOrder.adjustment || 0);
 
     assert.equal(goods, 200.00);
-    assert.equal(deposit, 120.00);
-    assert.equal(total, 330.00);
+    assert.equal(credit, 0.00);
+    assert.equal(total, 210.00);
+    assert.equal(total, completedTotal, 'the same total before and after closing');
 
-    // Over-return scenario (e.g. 58 bottles returned for 48 ordered -> -10 unreturned -> -25 deposit credit)
-    const overReturnedItems = [{ ...closedOrder.items[0], bottles_returned: 58 }];
-    const overDeposit = overReturnedItems.reduce((s, i) => s + ((Number(i.quantity) * Number(i.units_per_case) - Number(i.bottles_returned)) * Number(i.unit_deposit_fee)), 0);
-    const overTotal = goods + overDeposit + Number(closedOrder.adjustment || 0);
-    assert.equal(overDeposit, -25.00);
-    assert.equal(overTotal, 185.00);
+    // Returns are credited at the deposit fee each: 48 of 48 back -> 120.00 credit
+    const allReturned = [{ ...closedOrder.items[0], bottles_returned: 48 }];
+    const allCredit = allReturned.reduce((s, i) => s + Number(i.bottles_returned) * Number(i.unit_deposit_fee), 0);
+    assert.equal(allCredit, 120.00);
+    assert.equal(goods - allCredit + Number(closedOrder.adjustment || 0), 90.00);
   });
 
   it('F10 — Custom price detection flags explicit overrides and any saved price (ADR 0009)', () => {

@@ -19,6 +19,7 @@ import { putReceipt, getReceipt } from '../src/offline/receiptHistory.js';
 import { saveOrderLocalFirst, cleanupOrphanedDraftDirect, updateLocalOrder } from '../src/offline/posSave.js';
 import { notifyDrainCompleteWith, handleDrainCompletionWith, __resetDrainNotifierState } from '../src/offline/drainNotifier.js';
 import { startOfflineCore, stopOfflineCore } from '../src/offline/index.js';
+import { showEverythingFor } from './show-everything.mjs';
 
 const { createRoot } = await import('react-dom/client');
 
@@ -473,8 +474,10 @@ function stubOrderModalApis({ customers = [] } = {}) {
   return priceFetches;
 }
 
-test('G29: quick-creating a customer offline queues POST /customers and yields a local-<id> customer, never a direct online POST', async () => {
-  const priceFetches = stubOrderModalApis();
+test('G29: slash quick-create offline queues name + address and immediately makes the note searchable', async () => {
+  const priceFetches = stubOrderModalApis({ customers: [
+    { id: 55, name: 'Legacy Store/brgy dalig', address: null, is_active: true },
+  ] });
   let draftPostCalled = false;
   api.post = async (path) => {
     if (path === '/orders') { draftPostCalled = true; return { id: 1 }; }
@@ -492,12 +495,13 @@ test('G29: quick-creating a customer offline queues POST /customers and yields a
   const custInput = r.byLabel('Customer');
   act(() => {
     custInput.focus();
-    changeInput(custInput, 'Brand New Sari-Sari');
+    changeInput(custInput, 'Brand New Sari-Sari/brgy dalig');
   });
   await act(async () => { await new Promise((res) => setTimeout(res, 20)); });
 
   const createBtn = r.all('button').find((b) => b.textContent.includes('Create') && b.textContent.includes('Brand New Sari-Sari'));
   assert.ok(createBtn, 'quick-create option should be offered');
+  assert.match(createBtn.textContent, /Create “Brand New Sari-Sari” \(brgy dalig\) as a new Customer/);
   // Combobox's create row fires on mousedown (so the tap can't blur-close the list
   // first), not click.
   act(() => { createBtn.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true })); });
@@ -507,10 +511,34 @@ test('G29: quick-creating a customer offline queues POST /customers and yields a
   const customerRecord = records.find((rec) => rec.entity_type === 'customer');
   assert.ok(customerRecord, 'the quick-create must be queued in the outbox');
   assert.equal(customerRecord.payload.name, 'Brand New Sari-Sari');
+  assert.equal(customerRecord.payload.address, 'brgy dalig');
+  assert.match(r.text(), /Address: brgy dalig/, 'the selected customer gets its note before syncing');
+
+  for (const query of ['dalig', 'sari-sari/dalig', ' BRAND NEW SARI-SARI / BRGY DALIG ']) {
+    const searchInput = r.byLabel('Customer'); // the phone header collapses after creation
+    act(() => { searchInput.focus(); changeInput(searchInput, query); });
+    const options = [...searchInput.parentElement.querySelectorAll('[role="option"] button')];
+    const row = options.find((b) =>
+      b.textContent.includes('Brand New Sari-Sari') && !b.textContent.includes('Create'));
+    assert.ok(row, `the new customer is found by ${query}`);
+    assert.match(row.textContent, /brgy dalig/);
+    const createOffered = options.some((b) => b.textContent.includes('Create'));
+    assert.equal(createOffered, query !== ' BRAND NEW SARI-SARI / BRGY DALIG ',
+      'only exact name + note suppresses Create; partial searches may still create');
+  }
+
+  for (const query of ['Legacy Store/brgy dalig', ' LEGACY STORE/BRGY DALIG ']) {
+    const searchInput = r.byLabel('Customer');
+    act(() => { searchInput.focus(); changeInput(searchInput, query); });
+    const options = [...searchInput.parentElement.querySelectorAll('[role="option"] button')];
+    assert.ok(options.some((b) => b.textContent.includes('Legacy Store/brgy dalig')),
+      'an unsplit historical customer remains findable');
+    assert.equal(options.some((b) => b.textContent.includes('Create')), false,
+      'the exact legacy slash-name also suppresses Create');
+  }
 
   // Selecting the freshly quick-created local customer must skip the saved-prices
   // fetch entirely (there is no real id yet to fetch prices for).
-  assert.match(r.text(), /Brand New Sari-Sari/);
   assert.equal(priceFetches.length, 0, 'GET /customers/local-*/prices must never be attempted');
 
   // The early draft-on-customer-pick effect must also skip for a local customer.
@@ -698,7 +726,8 @@ function makeLocalOrder(overrides = {}) {
   };
 }
 
-test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and (ADR 0015 §5) now KEEPS Dispatch enabled while unsynced', async () => {
+test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "Waiting to sync", and (ADR 0015 §5) now KEEPS Dispatch enabled while unsynced', async (t) => {
+  await showEverythingFor(t);
   await putReceipt(makeLocalOrder());
   // Slice 3.2 — "unsynced" is now the outbox's answer, not "we read this locally", so
   // the order has to actually be queued for the banner and the offline transitions to
@@ -735,7 +764,8 @@ test('G27: OrderDetailPage falls back to local receipt history on a 404, shows "
   r.unmount();
 });
 
-test('Slice 3.2: a SYNCED order read from local history offline shows the offline-copy banner, not "Waiting to sync", and gates every transition', async () => {
+test('Slice 3.2: a SYNCED order read from local history offline shows the offline-copy banner, not "Waiting to sync", and gates every transition', async (t) => {
+  await showEverythingFor(t);
   // The order is in local history (the eager sync put it there) but nothing about it
   // is queued — it exists on the server and other tablets can see it. Flagging it
   // "unsynced" would hand the operator ADR 0015 §5's offline transitions on an order

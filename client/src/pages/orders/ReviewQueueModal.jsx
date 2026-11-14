@@ -8,6 +8,7 @@ import OrderCloseForm, { breakdownForItem } from './OrderCloseForm';
 import { Capacitor } from '@capacitor/core';
 import OrderCreateModal from './OrderCreateModal';
 import { usePrintReceipt } from './usePrintReceipt';
+import { useShowEverything } from '../../config/showEverything';
 import PrinterPicker from './PrinterPicker';
 import { orderRef, orderRefFromId } from '../../utils/orderRef';
 import {
@@ -64,6 +65,9 @@ const MODES = {
 // math/live preview stays in one place.
 export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered' }) {
   const cfg = MODES[mode] ?? MODES.delivered;
+  // Settings' "Show everything" off: Outgoing offers no way in here, and should one ever
+  // open, it still never moves an order past pending (no Dispatch / Delivered / Close).
+  const { showEverything: stagesShown } = useShowEverything();
   const { addToast } = useToast();
   const [orders, setOrders]   = useState({});
   const [loading, setLoading] = useState(true);
@@ -185,9 +189,8 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     pickerVisible, pickerDevices, pickerLoading, pickerCurrent, printPending,
     savePrinter, scanWifi, testPrint, closePickerAndCancel, handleChangePrinter,
     twicePrompt, confirmTwice,
-    printPrompt, taggingPrint, confirmPrintTag, cancelPrintTag,
   } = usePrintReceipt(order, returnCounts, (updated) =>
-    setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment);
+    setOrders((prev) => ({ ...prev, [updated.id]: updated })), liveAdjustment, { autoTag: true });
 
   // Reset the bottle-return entries and adjustment fields whenever the active
   // (unprocessed) order changes — otherwise stale values from the previous order
@@ -202,9 +205,10 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
     if (!order || cfg.isProcessed(order)) return;
     const counts = {};
     if (cfg.showDeposit) {
+      // No bottles returned is the default: the listed price already includes the deposit.
       order.items
         .filter((i) => i.requires_bottle_return && Number(i.unit_deposit_fee) > 0)
-        .forEach((i) => { counts[i.id] = String(Number(i.quantity) * (Number(i.units_per_case) || 1)); });
+        .forEach((i) => { counts[i.id] = '0'; });
     }
     setReturnCounts(counts);
     setAdjValue(Number(order.adjustment) ? String(order.adjustment) : '');
@@ -460,15 +464,15 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                           <div className="flex justify-between text-sm">
                             <span className="text-slate-700">{item.sku || item.product_name} — {item.quantity} {item.unit}</span>
                             <span className="font-medium text-slate-900 tabular-nums">
-                              {PHP(cfg.showDeposit ? b.lineTotal : b.basePrice)}
+                              {PHP(b.basePrice)}
                             </span>
                           </div>
-                          {cfg.showDeposit && b.hasDeposit && (
-                            <p className="text-sm text-slate-500 tabular-nums">
-                              {b.unreturned > 0
-                                ? <>{PHP(b.basePrice)} + {PHP(b.depositOwed)} deposit ({b.unreturned} unreturned)</>
-                                : <>{PHP(b.basePrice)} — no deposit, all bottles returned</>}
-                            </p>
+                          {/* The closing receipt's credit line, word for word; nothing when none came back. */}
+                          {cfg.showDeposit && b.credit > 0 && (
+                            <div className="flex justify-between text-sm text-green-800 tabular-nums">
+                              <span>Bottles returned {b.returned} × {PHP(item.unit_deposit_fee)}</span>
+                              <span className="whitespace-nowrap">{PHP(-b.credit)}</span>
+                            </div>
                           )}
                         </li>
                       );
@@ -477,28 +481,28 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
 
                   {(() => {
                     const breakdowns = order.items.map((item) => breakdownForItem(item, returnCounts));
-                    const itemsSubtotal   = breakdowns.reduce((sum, b) => sum + b.basePrice, 0);
-                    const depositSubtotal = cfg.showDeposit
-                      ? breakdowns.reduce((sum, b) => sum + b.depositOwed, 0)
-                      : 0;
+                    // Net of any returned-bottle credit, as the receipt's Items line is.
+                    const itemsSubtotal = breakdowns.reduce(
+                      (sum, b) => sum + (cfg.showDeposit ? b.lineTotal : b.basePrice), 0);
                     const liveAdj = Number(adjValue) || 0;
-                    const orderTotal = itemsSubtotal + depositSubtotal + liveAdj;
-                    const showDepositRows = cfg.showDeposit && bottleItems.length > 0;
-                    const showBreakdown = showDepositRows || liveAdj !== 0;
+                    const hasDeliveryFee = order.delivery_fee_charged !== null
+                      && order.delivery_fee_charged !== undefined;
+                    const deliveryFee = hasDeliveryFee ? Number(order.delivery_fee_charged) : 0;
+                    const orderTotal = itemsSubtotal + deliveryFee + liveAdj;
+                    const showReturns = cfg.showDeposit && bottleItems.length > 0;
+                    const showBreakdown = showReturns || hasDeliveryFee || liveAdj !== 0;
                     if (!showBreakdown) return null;
                     return (
                       <dl className="mt-4 pt-4 border-t border-slate-400 space-y-1.5 text-sm">
-                        {showDepositRows && (
-                          <>
-                            <div className="flex justify-between">
-                              <dt className="text-slate-500">Items subtotal</dt>
-                              <dd className="font-medium text-slate-700 tabular-nums">{PHP(itemsSubtotal)}</dd>
-                            </div>
-                            <div className="flex justify-between">
-                              <dt className="text-slate-500">Deposit subtotal</dt>
-                              <dd className="font-medium text-slate-700 tabular-nums">{PHP(depositSubtotal)}</dd>
-                            </div>
-                          </>
+                        <div className="flex justify-between">
+                          <dt className="text-slate-500">Items subtotal</dt>
+                          <dd className="font-medium text-slate-700 tabular-nums">{PHP(itemsSubtotal)}</dd>
+                        </div>
+                        {hasDeliveryFee && (
+                          <div className="flex justify-between">
+                            <dt className="text-slate-500">Delivery Fee</dt>
+                            <dd className="font-medium text-slate-700 tabular-nums">{PHP(deliveryFee)}</dd>
+                          </div>
                         )}
                         {liveAdj !== 0 && (
                           <div className="flex justify-between">
@@ -578,7 +582,7 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
                       </p>
                     </div>
                   )
-                ) : (
+                ) : stagesShown && (
                   <div className="bg-white rounded-xl border border-slate-200 p-5">
                     <Button
                       className="w-full"
@@ -621,20 +625,6 @@ export default function ReviewQueueModal({ orderIds, onClose, mode = 'delivered'
           loading={printing}
         >
           Print a second copy for your records?
-        </Modal>
-      )}
-
-      {/* Confirm tagging this order as printed, after returning from the print dialog */}
-      {printPrompt && (
-        <Modal
-          title="Tag receipt as printed?"
-          onClose={cancelPrintTag}
-          onConfirm={confirmPrintTag}
-          confirmLabel="Yes, tag as printed"
-          loading={taggingPrint}
-        >
-          Do you want to tag Order {orderRef(orders[printPrompt.orderId] || { id: printPrompt.orderId })} as printed
-          ({printPrompt.phase === 'pending' ? 'Pending' : 'Delivered'})?
         </Modal>
       )}
 

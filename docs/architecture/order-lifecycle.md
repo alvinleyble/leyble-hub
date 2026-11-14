@@ -14,8 +14,8 @@ state. Pickup orders skip `in_transit`.
   history except the Drafts tab. Finalizing (`POST /:id/finalize`) turns it into `pending`.
 - **pending** — confirmed order, not yet dispatched.
 - **in_transit** — out for delivery (delivery orders only).
-- **completed** — delivered / picked up, deposit not yet reconciled.
-- **done** — closed; bottle returns counted, deposit folded into the total.
+- **completed** — delivered / picked up, bottle returns not yet counted.
+- **done** — closed; bottle returns counted and credited off the total.
 - **cancelled** — voided; stock is restored only if it had actually been dispatched.
 
 ## Allowed transitions
@@ -69,27 +69,28 @@ back deduct again, which "was it ever deducted" would have silently skipped.
 
 `order_items.line_total` is a **generated column** (never written directly):
 ```
-quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee
+quantity*unit_price − bottles_returned*unit_deposit_fee
 ```
-So the deposit is charged only on bottles **not** returned.
+The listed price already includes every bottle's deposit (migration 051); each returned
+bottle is credited at the deposit fee.
 
 `recomputeTotal(orderId)` sets `orders.total_amount` differently by status:
-- **While open** (not `done`): `SUM(quantity * unit_price)` — **goods only, deposit excluded.**
-  This is intentional: the refundable deposit is not part of the running total.
-- **When `done`:** `SUM(line_total)` — deposit on un-returned bottles is now folded in.
+- **While open** (not `done`): `SUM(quantity * unit_price)` — the listed price.
+- **When `done`:** `SUM(line_total)` — the returned-bottle credit is now taken off. With no
+  bottles returned the two are equal.
 
 The separate `orders.adjustment` (± manual correction, with `adjustment_reason`) and
 `orders.delivery_fee_charged` (snapshotted from `customers.delivery_fee` — see
 [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal))
 are stored alongside and surfaced in the UI/receipt as client-computed grand-total terms
-(`itemsSubtotal + depositTotal + delivery_fee_charged + adjustment`); neither is part of
+(`itemsSubtotal − bottle credit + delivery_fee_charged + adjustment`); neither is part of
 `recomputeTotal`'s goods sum.
 
 ## Closing an order
 
 `POST /:id/close` accepts an `items[]` array of `{ id, bottles_returned }`, writes
 `bottles_returned` on each line, moves the order to `done`, and recomputes the total (now
-deposit-inclusive). Only products with `requires_bottle_return = true` and a non-zero
+net of the returned-bottle credit). Only products with `requires_bottle_return = true` and a non-zero
 `unit_deposit_fee` participate. This is driven from the **Review Deliveries** batch queue in the
 UI.
 

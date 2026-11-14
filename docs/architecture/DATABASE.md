@@ -96,7 +96,7 @@ Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 
 | `customer_id` | FK |
 | `status` | ∈ `('draft','pending','in_transit','completed','cancelled','done')` (028 added `draft`) |
 | `order_type` | `('delivery','pickup')` default `'delivery'` (018) |
-| `total_amount` | NUMERIC — **goods-only while open**; deposit folded in only when `done` (see [order-lifecycle](order-lifecycle.md)) |
+| `total_amount` | NUMERIC — **qty × listed price while open**; returned-bottle credit taken off only when `done` (see [order-lifecycle](order-lifecycle.md)) |
 | `adjustment`, `adjustment_reason` | manual ± price adjustment (019) |
 | `delivery_fee_charged` | NUMERIC(10,2), nullable, `CHECK (>= 0)` (049) — snapshotted from `customers.delivery_fee` at creation, editable per order, always forced `NULL` when `order_type !== 'delivery'`. Client-side total only (like `adjustment`); `total_amount` excludes it. See [AGENTS.md's "Persistent delivery fee"](../../AGENTS.md#persistent-delivery-fee-see-proposal) |
 | `notes` | text |
@@ -132,12 +132,13 @@ Base64), `is_active`, `updated_at` (watermark index `idx_personnel_updated_at`, 
 | `bottles_returned` | INT default 0 (023) — recorded at close |
 | `line_total` | **GENERATED STORED** — never write directly | 
 
-**`line_total` formula (since 023):**
+**`line_total` formula (since 051):**
 ```
-quantity*unit_price + (quantity*units_per_case − bottles_returned)*unit_deposit_fee
+quantity*unit_price − bottles_returned*unit_deposit_fee
 ```
-i.e. deposit is charged on the bottles that were *not* returned. With defaults
-(`units_per_case=1, bottles_returned=0`) this reduces to the old `quantity*(price+deposit)`.
+i.e. the listed price already includes every bottle's deposit, and each returned bottle
+is credited at the line's deposit fee. Before 051 (from 023) the deposit on un-returned
+bottles was added on top of the listed price.
 
 ### 9. `stations` (033, altered by 037)
 One row per device that has registered ([ADR 0003](../adr/0003-device-issued-receipt-numbers.md)).
