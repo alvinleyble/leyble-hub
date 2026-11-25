@@ -59,7 +59,7 @@ async function withCustomerNames(list) {
 //
 // Invariants:
 // - Never discard, never auto-resolve. (The one exception is a fixed set of five,
-//   removed once on three named devices at the owner's instruction of 2026-11-25 —
+//   removed on three named devices at the owner's instruction of 2026-11-25 —
 //   ADR 0020, offline/stuckRecordCleanup.js. Nothing in this list removes anything.)
 //
 // `onShowSyncDetails`, when given, adds a footer button that opens the read-only sync

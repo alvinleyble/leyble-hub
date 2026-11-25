@@ -114,7 +114,7 @@ When two disconnected devices create customers with identical or similar names o
 * **Attention List Queue:** If the cloud server rejects an outbox receipt during sync (e.g. because a referenced customer was merged or deactivated on another device during the outage), the receipt is **never discarded** and **never auto-reassigned**.
 * **Operator Resolution:** The receipt is moved to a "Needs Attention" queue with a plain-language explanation (e.g., *"Customer Aling Nena was merged into Nena Santos — select destination customer"*). The store owner points the receipt to the correct record in two taps.
 * **Rationale:** The physical receipt is already in the customer's hands; silent dropping or guessing customer identity corrupts financial and operational truth.
-* **One-time exception (2026-11-25):** five named records on three devices were removed once at the owner's explicit instruction. That is a fixed set, not a mechanism, and this rule stands for everything else. See [ADR 0020](../../adr/0020-one-time-removal-of-five-stuck-attention-records.md).
+* **One-time exception (2026-11-25):** five named records on three devices are removed by the app at the owner's explicit instruction. That is a fixed set, not a mechanism, and this rule stands for everything else. See [ADR 0020](../../adr/0020-one-time-removal-of-five-stuck-attention-records.md).
 
 ### D9 — Complete Order Snapshot Local Storage (No Age Limit) [SETTLED, EXPANDED]
 * **Complete Snapshots Stored Locally:** Every order the tablet has ever seen — created locally on this device or fetched from the server while browsing — is stored in full in native storage (`@capacitor/preferences` under `v25.receipt.<receipt_number>`), with **no age limit**.

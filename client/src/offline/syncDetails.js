@@ -70,6 +70,13 @@ function idFromEndpoint(endpoint, pattern = ID_PATH) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+// The order a queued change is addressed to, as this view names it: a receipt number or
+// a bare row id, or null for a record that is not addressed to an order.
+export function targetOrderRef(record) {
+  const fromEndpoint = idFromEndpoint(record?.endpoint, ORDER_PATH);
+  return record?.entity_type === 'order_delete' ? (record.payload?.orderRef ?? fromEndpoint) : fromEndpoint;
+}
+
 /**
  * Names held on the device for ids a record carries. Built once per load from the held
  * catalogue (inactive rows included — a record can name a since-deactivated customer)
@@ -136,17 +143,17 @@ export function describeRecord(record, lookups = buildLookups()) {
     }
     case 'order_status':
       return {
-        title: `Status change: order ${orderName(idFromEndpoint(record.endpoint, ORDER_PATH))}`,
+        title: `Status change: order ${orderName(targetOrderRef(record))}`,
         detail: p.status ? `Mark as ${orderStatusLabel(p.status)}` : null,
       };
     case 'receipt_printed':
       return {
-        title: `Receipt printed: order ${orderName(idFromEndpoint(record.endpoint, ORDER_PATH))}`,
+        title: `Receipt printed: order ${orderName(targetOrderRef(record))}`,
         detail: null,
       };
     case 'order_delete':
       return {
-        title: `Discard draft ${orderName(p.orderRef ?? idFromEndpoint(record.endpoint, ORDER_PATH))}`,
+        title: `Discard draft ${orderName(targetOrderRef(record))}`,
         detail: null,
       };
     case 'customer':

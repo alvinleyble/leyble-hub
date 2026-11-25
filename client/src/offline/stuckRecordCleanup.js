@@ -1,49 +1,75 @@
 import { nativeStore } from './nativeStore.js';
-import { NS, outboxKey, receiptKey } from './keys.js';
+import { outboxKey, receiptKey } from './keys.js';
 import {
-  listRecords, NEEDS_ATTENTION, orderCreatesByReceipt, waitsOn, PARK_STREAK_KEY, notifyOutboxListeners,
+  listRecords, NEEDS_ATTENTION, orderCreatesByReceipt, waitsOn, PARK_STREAK_KEY,
+  notifyOutboxListeners, subscribeOutbox,
 } from './outbox.js';
 import { heldDeviceCodes } from './station.js';
 import { parseReceiptNumber } from './receiptNumbers.js';
+import { targetOrderRef } from './syncDetails.js';
 
-// ADR 0020 — a ONE-TIME removal of five records stuck on the Needs attention list of
-// three production devices, at the owner's explicit instruction of 2026-11-25. The rule
-// that a refused record is never discarded (V2.5 D8) stays in force for everything
-// else; this file is the only place it is set aside, and only for the set below.
+// ADR 0020 — the removal of five records stuck on the Needs attention list of three
+// production devices, at the owner's explicit instruction of 2026-11-25. The rule that
+// a refused record is never discarded (V2.5 D8) stays in force for everything else;
+// this file is the only place it is set aside, and only for the set below.
 //
 // Delete this file, its call in offline/index.js and its test in a later release, once
-// every device in the store has run it. Nothing else depends on it.
+// the five are gone from all three devices. Nothing else depends on it.
 
-// The numbers exactly as they were read off each device's list. The list labels a record
-// `receipt_number || '#' + id`, so a number here is matched in whichever of those two
-// shapes the list would have shown it in (see matchesTarget).
+// The numbers exactly as they were read off each device. See matchesTarget for the
+// shapes a number is matched in.
 export const STUCK_RECORDS_REMOVED_2026_11_25 = Object.freeze({
   '1C': Object.freeze([478, 981]),
   '3D': Object.freeze([1677, 2345]),
   '2A': Object.freeze([2738]),
 });
 
-// Written once the step has run on a device that knew its own code(s), whatever it
-// found. Its presence means the step never runs again on this install, so it can never
-// act on a record created after it ran.
-export const STUCK_RECORDS_MARKER_KEY = `${NS}oneTime.stuckRecordsRemoved20261125`;
+// A named record must have been created before this moment — the end of 2026-11-25 in
+// Manila — so nothing made after the instruction can ever match, however long this file
+// ships. A record with no readable creation time is not matched: enqueue() has stamped
+// one on every record since the outbox was first built.
+const CREATED_BEFORE_MS = Date.parse('2026-11-26T00:00:00+08:00');
 
-// On the named device, a record matches when it is on the attention list RIGHT NOW and
-// the list shows it with the named number: `#478` (no receipt number, queue id 478) or
-// `1C-00478` (a receipt number that parses to this device's code and that sequence).
-// Anything queued, sending or otherwise is never matched. A delivery reference
-// (`1C-DEL-00478`) does not parse as a receipt number, so it is never matched either.
-function matchesTarget(record, code, numbers) {
-  if (record?.status !== NEEDS_ATTENTION) return false;
-  if (!record.receipt_number) return numbers.includes(record.id);
-  const parsed = parseReceiptNumber(record.receipt_number);
-  if (!parsed || !parsed.device) return false;
-  return `${parsed.station}${parsed.device}` === code && numbers.includes(parsed.sequence);
+// `1C-00478` on device 1C. Never another device's code, a pre-letter number (`1-00478`)
+// or a delivery reference (`1C-DEL-00478`, which does not parse as a receipt number).
+function isOwnReceipt(value, code, numbers) {
+  const parsed = parseReceiptNumber(value);
+  return Boolean(parsed?.device)
+    && `${parsed.station}${parsed.device}` === code
+    && numbers.includes(parsed.sequence);
 }
 
-// The matched records plus everything waiting behind them, directly or through a chain,
-// by the same two rules the drain blocks on: `depends_on`, and a write addressed to an
-// order whose create is being removed (`waitsOn`). Nothing else.
+// On the named device, a record matches only while it is on the attention list RIGHT
+// NOW, was created before the cutoff, and one of the two screens that list it shows it
+// with the named number:
+//   - the attention card: `#478` (no receipt number, queue id 478) or `1C-00478` (its
+//     own receipt number);
+//   - Sync details, which names a change addressed to an order by that order
+//     (targetOrderRef): `#478` (the order's row id) or `1C-00478`.
+// Anything queued or sending is never matched.
+function matchesTarget(record, code, numbers) {
+  if (record?.status !== NEEDS_ATTENTION) return false;
+  const createdAt = typeof record.created_at === 'string' ? Date.parse(record.created_at) : NaN;
+  if (!(createdAt < CREATED_BEFORE_MS)) return false;
+
+  const onCard = record.receipt_number
+    ? isOwnReceipt(record.receipt_number, code, numbers)
+    : numbers.includes(record.id);
+  if (onCard) return true;
+
+  const target = targetOrderRef(record);
+  if (target === null || target === undefined) return false;
+  const ref = String(target);
+  return /^\d+$/.test(ref) ? numbers.includes(Number(ref)) : isOwnReceipt(ref, code, numbers);
+}
+
+// The matched records, then everything waiting behind them, directly or through a
+// chain, by the same two rules the drain blocks on: `depends_on`, and a write addressed
+// to an order whose create is being removed (`waitsOn`). Nothing else.
+//
+// In the order found: every waiter comes after a record it waits on. Removing them back
+// to front therefore never leaves a waiter on the device without its chain to a matched
+// record, wherever the removal stops.
 function withWaiters(records, matchedIds) {
   const removing = new Set(matchedIds);
   const createsByReceipt = orderCreatesByReceipt(records);
@@ -58,7 +84,8 @@ function withWaiters(records, matchedIds) {
       }
     }
   }
-  return records.filter((r) => removing.has(r.id));
+  const byId = new Map(records.map((r) => [r.id, r]));
+  return [...removing].map((id) => byId.get(id));
 }
 
 // A sale the server never received leaves its held receipt behind (posSave.js
@@ -84,90 +111,90 @@ async function heldReceiptKeysFor(removed) {
   return keys;
 }
 
-let running = null;
+let lastPass = Promise.resolve();
 
 /**
- * Runs the one-time removal on this device if it has not run here yet. Never throws;
- * resolves to what it did:
- *   { ran: false, reason: 'already-ran' | 'no-device-code' | 'failed' }
- *   { ran: true, removed: <number of outbox records removed> }
+ * Runs one removal pass, after any pass already under way (passes never overlap).
+ * Never throws; resolves to `{ removed }`, the number of outbox records it removed —
+ * 0 when there was nothing to do — plus `failed: true` when storage failed.
  *
- * A failure restores every key it had touched, exactly as it was, and leaves the marker
- * unset so the next start tries again.
+ * A pass with nothing to do writes nothing. A failing pass puts back what it changed,
+ * newest change first; if that fails too it stops, which leaves the device where a
+ * pass cut short would have, and a later pass finishes from there.
  */
 export function runStuckRecordCleanup() {
-  if (!running) {
-    running = cleanup().finally(() => { running = null; });
-  }
-  return running;
+  lastPass = lastPass.then(pass);
+  return lastPass;
 }
 
-async function cleanup() {
-  try {
-    if (await nativeStore.getString(STUCK_RECORDS_MARKER_KEY)) return { ran: false, reason: 'already-ran' };
-  } catch {
-    return { ran: false, reason: 'failed' };
-  }
+let listening = false;
 
-  let codes;
-  try {
-    codes = await heldDeviceCodes();
-  } catch {
-    return { ran: false, reason: 'failed' };
+/**
+ * Runs a pass now, and from then on another whenever a drain moves a record to Needs
+ * attention: a named record that was being retried at this moment is caught the moment
+ * it lands back on the list.
+ */
+export function startStuckRecordCleanup() {
+  if (!listening) {
+    listening = true;
+    subscribeOutbox((event) => {
+      if (event?.type === 'drain' && event.failed > 0) runStuckRecordCleanup();
+    });
   }
-  if (!codes.length) return { ran: false, reason: 'no-device-code' };
+  return runStuckRecordCleanup();
+}
 
-  const touched = new Map(); // key -> raw value before this step, for the restore
+async function pass() {
+  const undo = []; // [key, raw value before], in the order the keys were changed
+  const change = async (key, write) => {
+    undo.push([key, await nativeStore.getString(key)]);
+    await write();
+  };
+
   try {
+    const codes = (await heldDeviceCodes()).filter((code) => STUCK_RECORDS_REMOVED_2026_11_25[code]);
+    if (!codes.length) return { removed: 0 };
+
     const records = await listRecords();
     const matchedIds = records
-      .filter((record) => codes.some((code) => {
-        const numbers = STUCK_RECORDS_REMOVED_2026_11_25[code];
-        return numbers ? matchesTarget(record, code, numbers) : false;
-      }))
+      .filter((record) => codes.some((code) => matchesTarget(record, code, STUCK_RECORDS_REMOVED_2026_11_25[code])))
       .map((r) => r.id);
+    if (!matchedIds.length) return { removed: 0 };
 
-    if (matchedIds.length) {
-      const removed = withWaiters(records, matchedIds);
-      const removedIds = new Set(removed.map((r) => r.id));
-      const receiptKeys = await heldReceiptKeysFor(removed);
+    const removed = withWaiters(records, matchedIds);
+    const removedIds = new Set(removed.map((r) => r.id));
+    const receiptKeys = await heldReceiptKeysFor(removed);
 
-      // The ids moved aside for a 5xx since the last accepted record count toward a cap
-      // on how many more may move aside (outbox.js MAX_CONSECUTIVE_SERVER_ERROR_PARKS);
-      // a removed record must not keep counting.
-      const streak = await nativeStore.getJson(PARK_STREAK_KEY);
-      const streakIds = Array.isArray(streak?.ids) ? streak.ids : [];
-      const keptStreak = streakIds.filter((id) => !removedIds.has(id));
-
-      const keys = [
-        ...removed.map((r) => outboxKey(r.id)),
-        ...receiptKeys,
-        ...(keptStreak.length !== streakIds.length ? [PARK_STREAK_KEY] : []),
-      ];
-      for (const key of keys) touched.set(key, await nativeStore.getString(key));
-
-      if (keptStreak.length !== streakIds.length) {
-        await nativeStore.setJson(PARK_STREAK_KEY, { ...streak, ids: keptStreak });
-      }
-      for (const key of receiptKeys) await nativeStore.remove(key);
-      for (const record of removed) await nativeStore.remove(outboxKey(record.id));
-
-      await nativeStore.setJson(STUCK_RECORDS_MARKER_KEY, { ran_at: new Date().toISOString() });
-      notifyOutboxListeners({ type: 'remove', removed: removed.length });
-      return { ran: true, removed: removed.length };
+    // The ids moved aside for a 5xx since the last accepted record count toward a cap
+    // on how many more may move aside (outbox.js MAX_CONSECUTIVE_SERVER_ERROR_PARKS);
+    // a removed record must not keep counting.
+    const streak = await nativeStore.getJson(PARK_STREAK_KEY);
+    const streakIds = Array.isArray(streak?.ids) ? streak.ids : [];
+    const keptStreak = streakIds.filter((id) => !removedIds.has(id));
+    if (keptStreak.length !== streakIds.length) {
+      await change(PARK_STREAK_KEY, () => nativeStore.setJson(PARK_STREAK_KEY, { ...streak, ids: keptStreak }));
     }
 
-    await nativeStore.setJson(STUCK_RECORDS_MARKER_KEY, { ran_at: new Date().toISOString() });
-    return { ran: true, removed: 0 };
+    // A held receipt goes before its record, and the records go waiters first, matched
+    // last: while anything of a matched record's is left, the record itself is still on
+    // the attention list to hold it back and to be matched again.
+    for (const key of receiptKeys) await change(key, () => nativeStore.remove(key));
+    for (const record of [...removed].reverse()) {
+      const key = outboxKey(record.id);
+      await change(key, () => nativeStore.remove(key));
+    }
+
+    notifyOutboxListeners({ type: 'remove', removed: removed.length });
+    return { removed: removed.length };
   } catch {
-    for (const [key, raw] of touched) {
+    for (const [key, raw] of undo.reverse()) {
       try {
         if (raw === null || raw === undefined) await nativeStore.remove(key);
         else await nativeStore.setString(key, raw);
       } catch {
-        // Nothing more this step can do; the marker stays unset either way.
+        break;
       }
     }
-    return { ran: false, reason: 'failed' };
+    return { removed: 0, failed: true };
   }
 }
