@@ -5,6 +5,7 @@ import { nativeStore } from './nativeStore.js';
 import { runSync } from './sync.js';
 import { screenProductMutations } from './productMutations.js';
 import { startForegroundOrderSync, stopForegroundOrderSync } from './foregroundOrderSync.js';
+import { runStuckRecordCleanup } from './stuckRecordCleanup.js';
 
 // The V2.5 offline core's entry point. startOfflineCore() itself runs unconditionally
 // (G30); individual UI surfaces (the marker, orderRef's receipt-number display) still
@@ -75,6 +76,12 @@ export async function startOfflineCore({ label } = {}) {
   // React StrictMode and logout can stop this async start while registration is in
   // flight. Never let an obsolete continuation resurrect app-wide timers afterwards.
   if (generation !== lifecycleGeneration) return { enabled: false, waiting: 0 };
+
+  // ADR 0020 — the one-time removal of five stuck attention records on three named
+  // devices. Placed after registration so a device that has only just learned its own
+  // code still gets it; not awaited, so it never holds up the start. It does nothing
+  // once it has run, on any other device, or before the device knows its code.
+  runStuckRecordCleanup().catch(() => {});
 
   // ADR 0015 §4 replaced V2.5 D9's rolling 30-day window with "no age limit", so
   // pruneReceipts() is deliberately NOT called here any more — this is the line that
