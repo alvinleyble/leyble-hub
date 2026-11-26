@@ -74,6 +74,15 @@ export async function getReceiptIdentity() {
   return entry;
 }
 
+// Every `<person><letter>` code this device holds, one per person who has completed an
+// online sign-in on it (e.g. ['1C'] on Alvin's phone, ['1A', '2B'] on a shared tablet),
+// whoever is signed in right now. Empty until the first one has.
+export async function heldDeviceCodes() {
+  return Object.values(await readDeviceLetters())
+    .filter((entry) => Number.isInteger(entry?.person) && typeof entry?.letter === 'string' && entry.letter)
+    .map((entry) => receiptSeries(entry));
+}
+
 // The counter this issuance draws from, e.g. '1A' for the letter scheme and '3' for a
 // device still carrying a pre-letter number. Both live in the same map (see readCounters)
 // and can never be confused for one another, because one has a letter and the other

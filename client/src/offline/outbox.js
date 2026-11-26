@@ -146,6 +146,8 @@ export async function waitingCount() {
 }
 
 // D8's queue — records the server refused. Surfaced by piece 4; never discarded here.
+// The one exception is a fixed set of five, removed on three named devices at the
+// owner's instruction of 2026-11-25 (ADR 0020, stuckRecordCleanup.js).
 export async function listNeedsAttention() {
   const records = await listRecords();
   return records.filter((r) => r.status === NEEDS_ATTENTION);
@@ -401,7 +403,9 @@ async function markOfflineUnlessReachable() {
 // sending it again as is and seeing it fail again moves no more of the queue aside. The
 // set of ids is device state — it survives a reload — and any accepted record clears it.
 const MAX_CONSECUTIVE_SERVER_ERROR_PARKS = 2;
-const PARK_STREAK_KEY = `${NS}serverErrorParkStreak`;
+// Exported only for the removal in stuckRecordCleanup.js (ADR 0020), which has to drop
+// the ids it removes from this set.
+export const PARK_STREAK_KEY = `${NS}serverErrorParkStreak`;
 
 async function readParkedSinceAccepted() {
   const stored = await nativeStore.getJson(PARK_STREAK_KEY);
