@@ -51,6 +51,8 @@ Antipolo, Philippines. This folder is the single home for project documentation.
     [0018](adr/0018-supabase-rls-lockdown.md) Supabase Row Level Security (RLS) lockdown across all tables.
   - Order concurrency:
     [0019](adr/0019-order-revision-and-delta-sync.md) server-authoritative order revision & delta sync.
+  - Outbox exceptions:
+    [0020](adr/0020-one-time-removal-of-five-stuck-attention-records.md) one-time removal of five stuck Needs attention records *(narrow exception to V2.5 D8)*.
 
 ### Operations
 - [operations/local-development.md](operations/local-development.md) — run it locally (3-tier model).
